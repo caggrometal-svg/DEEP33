@@ -36,6 +36,18 @@ class SessionStore(
         prefs.edit().remove(KEY_MESSAGES).apply()
     }
 
+    var voiceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_VOICE_ENABLED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_VOICE_ENABLED, value).apply()
+        }
+
+    var personality: String
+        get() = prefs.getString(KEY_PERSONALITY, "NEUTRO") ?: "NEUTRO"
+        set(value) {
+            prefs.edit().putString(KEY_PERSONALITY, value).apply()
+        }
+
     fun loadMessages(): List<UiMessage> {
         val raw = prefs.getString(KEY_MESSAGES, null) ?: return emptyList()
         return try {
@@ -66,6 +78,8 @@ class SessionStore(
         private const val PREFS_NAME = "deep33_session"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MESSAGES = "messages_json"
+        private const val KEY_VOICE_ENABLED = "voice_enabled"
+        private const val KEY_PERSONALITY = "personality"
         private const val MAX_MESSAGES = 50
     }
 }
