@@ -134,6 +134,25 @@ jobs:
           print("PRIMARY_INFERENCE_PASS", body["inference"])
           PY
 
+      - name: Verify PRIMARY DEEP33 Search Engine
+        run: |
+          set -euo pipefail
+          SESSION="ci-search-${{ github.run_id }}"
+          STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/web/status" -H "X-DEEP33-Session-Id: $SESSION")"
+          printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.0.0" and .tool_loop_enabled==true' >/dev/null
+
+          SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/web/search?q=DEEP33%20internet" -H "X-DEEP33-Session-Id: $SESSION")"
+          printf "%s" "$SEARCH" | jq -e '.ok==true and .engine=="DEEP33 Search Engine" and (.results|length)>=1' >/dev/null
+
+          curl -fsS --connect-timeout 8 --max-time 150 "$PRIMARY_URL/v1/ai/generate" \
+            -H "Content-Type: application/json" \
+            -H "X-DEEP33-Session-Id: $SESSION" \
+            -H "X-Idempotency-Key: ci-search-engine-${{ github.run_id }}" \
+            -d '{"messages":[{"role":"user","content":"Busca en internet DEEP33 y usa una fuente real. Indica qué encontraste."}]}' >/tmp/web-ai.json
+
+          jq -e '.web_navigation==true and (.sources|length)>=1' /tmp/web-ai.json >/dev/null
+          echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
+
   android_e2e:
     needs: [production_gate, android_validation]
     runs-on: ubuntu-latest
