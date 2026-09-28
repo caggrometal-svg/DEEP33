@@ -18,3 +18,38 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: python -m pytest tests -q
       - run: python -m compileall -q backend
+
+      - name: Real Render to model E2E
+        if: github.event_name == 'push'
+        env:
+          DEEP33_URL: https://deep33-backend.onrender.com
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for Render to serve the new commit..."
+          for i in $(seq 1 18); do
+            if curl -fsS --max-time 15 "$DEEP33_URL/health" | grep -q '"status":"PASS"'; then
+              break
+            fi
+            sleep 10
+          done
+
+          curl -fsS --max-time 30 "$DEEP33_URL/health" | tee /tmp/health.json
+          curl -fsS --max-time 30 "$DEEP33_URL/v1/network/status" | tee /tmp/network.json
+          curl -fsS --max-time 30 "$DEEP33_URL/v1/ai/status" | tee /tmp/ai.json
+          curl -fsS --max-time 45 "$DEEP33_URL/v1/ai/diagnostics" | tee /tmp/diag.json
+
+          jq -e '.status == "PASS"' /tmp/health.json
+          jq -e '.internet_available == true and .dns_ok == true and .https_ok == true' /tmp/network.json
+          jq -e '.gateway == "PASS"' /tmp/ai.json
+          jq -e '.online == true and .checks.NETWORK == "PASS" and .checks.AI_GATEWAY == "PASS" and .checks.MODEL == "PASS"' /tmp/diag.json
+
+          for n in 1 2 3; do
+            echo "Chat generation attempt $n/3"
+            curl -fsS --max-time 90 \
+              -H 'content-type: application/json' \
+              -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}' \
+              "$DEEP33_URL/v1/chat" | tee "/tmp/chat-$n.json"
+
+            jq -e '((.response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))' "/tmp/chat-$n.json"
+          done
