@@ -48,3 +48,10 @@ def test_redirect_to_private_is_blocked(monkeypatch):
     monkeypatch.setattr(module.httpx,"AsyncClient",Client)
     with pytest.raises(SSRFBlockedError):
         asyncio.run(module.fetch_page("https://example.com/"))
+
+
+def test_web_status_endpoint(monkeypatch):
+    response = __import__("fastapi").testclient.TestClient(__import__("backend.main", fromlist=["app"]).app).get("/v1/web/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tool_loop_enabled"] is True
