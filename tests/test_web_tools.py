@@ -19,6 +19,8 @@ def test_tavily_normalisation(monkeypatch):
     monkeypatch.setattr("tools.web_search._tavily_search",fake)
     result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
     assert result["results"][0]["snippet"]=="Snippet"
+    assert result["engine"] == "DEEP33 Search Engine"
+    assert result["provider"] == "tavily"
 
 def test_tavily_falls_back_to_ddg(monkeypatch):
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
