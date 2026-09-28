@@ -12,6 +12,7 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class Deep33ConnectivityTest {
+    private val baseUrl = BuildConfig.DEEP33_PRIMARY_URL
     private val sessionId = "android-e2e-" + UUID.randomUUID()
 
     @Test
