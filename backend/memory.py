@@ -124,9 +124,18 @@ def merge_messages(
     return merged[-limit:]
 
 
+INTERNAL_CONTEXT_PREFIX = "DEEP33 internal context."
+
+
+def is_internal_context_message(item: dict[str, Any]) -> bool:
+    return str(item.get("content", "")).lstrip().startswith(INTERNAL_CONTEXT_PREFIX)
+
+
 def extract_context_messages(data: dict) -> list[dict[str, Any]]:
     messages = data.get("messages")
-    return messages if isinstance(messages, list) else []
+    if not isinstance(messages, list):
+        return []
+    return [item for item in messages if isinstance(item, dict) and not is_internal_context_message(item)]
 
 
 def extract_context_system_message(data: dict) -> str | None:
