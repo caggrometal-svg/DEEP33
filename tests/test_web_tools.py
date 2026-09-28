@@ -23,6 +23,7 @@ def test_tavily_normalisation(monkeypatch):
     assert result["provider"] == "tavily"
 
 def test_tavily_falls_back_to_ddg(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     async def failing(*args,**kwargs): raise RuntimeError("down")
     async def ddg(*args,**kwargs): return [{"title":"DDG","url":"https://example.com/","snippet":"Fallback"}]
