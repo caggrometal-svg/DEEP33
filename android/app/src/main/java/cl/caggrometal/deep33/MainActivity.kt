@@ -7,6 +7,9 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowInsets
+import android.widget.Space
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -50,6 +53,13 @@ class MainActivity : Activity() {
                 }
             }
         }
+        window.statusBarColor = Color.rgb(8, 10, 15)
+        window.navigationBarColor = Color.rgb(8, 10, 15)
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(WindowInsets.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
         setContentView(buildRoot())
         renderConversation()
         showTab(Tab.CHAT)
@@ -75,7 +85,7 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(8, 10, 15))
-            setPadding(18, 18, 18, 12)
+            setPadding(16, 10, 16, 8)
         }
 
         val header = LinearLayout(this).apply {
@@ -85,7 +95,7 @@ class MainActivity : Activity() {
         val title = TextView(this).apply {
             text = "DEEP33"
             setTextColor(Color.WHITE)
-            textSize = 28f
+            textSize = 25f
             gravity = Gravity.CENTER_HORIZONTAL
         }
         statusView = TextView(this).apply {
@@ -109,7 +119,7 @@ class MainActivity : Activity() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 0)
+            setPadding(0, 6, 0, 2)
         }
         nav.addView(navButton("CHAT") { showTab(Tab.CHAT) }, weightParams())
         nav.addView(navButton("ESTADO") { showTab(Tab.STATUS) }, weightParams())
@@ -125,7 +135,9 @@ class MainActivity : Activity() {
     private fun navButton(label: String, action: () -> Unit): Button =
         Button(this).apply {
             text = label
-            textSize = 11f
+            textSize = 10f
+            minHeight = 52
+            isAllCaps = false
             setOnClickListener { action() }
         }
 
@@ -168,10 +180,10 @@ class MainActivity : Activity() {
         val composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
-            setPadding(0, 10, 0, 0)
-            addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(sendButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            addView(cancelButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setPadding(0, 8, 0, 0)
+            addView(input, LinearLayout.LayoutParams(0, 58, 1f).apply { setMargins(0, 0, 8, 0) })
+            addView(sendButton, LinearLayout.LayoutParams(82, 58).apply { setMargins(0, 0, 6, 0) })
+            addView(cancelButton, LinearLayout.LayoutParams(82, 58))
         }
         box.addView(composer)
         return box
@@ -377,7 +389,8 @@ class MainActivity : Activity() {
 
         activeTask = executor.submit {
             try {
-                val finalText = Deep33Api.stream(
+                val finalText = try {
+                    Deep33Api.stream(
                     payload,
                     store.sessionId,
                     store.personality,
@@ -391,7 +404,12 @@ class MainActivity : Activity() {
                             bubble.text = "DEEP33\n" + next
                         }
                     }
-                )
+                    )
+                } catch (streamError: Deep33ApiException) {
+                    if (streamError.kind == Deep33ApiException.Kind.CANCELLED) throw streamError
+                    val fallback = Deep33Api.generate(payload, store.sessionId, store.personality)
+                    fallback.optString("text").ifBlank { fallback.optJSONObject("result")?.optString("text").orEmpty() }
+                }
 
                 if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
 
@@ -483,6 +501,8 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 16f
             setPadding(18, 14, 18, 14)
+            gravity = Gravity.START
+            includeFontPadding = false
             setBackground(
                 GradientDrawable().apply {
                     setColor(background)
