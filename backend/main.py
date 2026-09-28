@@ -20,7 +20,7 @@ from backend.gateway import (
 )
 
 APP_NAME = "DEEP33 Backend"
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
