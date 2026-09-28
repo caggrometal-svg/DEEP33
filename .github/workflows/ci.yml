@@ -168,7 +168,7 @@ jobs:
           DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 35
+          api-level: 34
           target: google_apis
           arch: x86_64
           profile: pixel_5
@@ -190,10 +190,20 @@ jobs:
             cd android
 
             mkdir -p /tmp/deep33-e2e
-            adb wait-for-device
-            state="$(adb get-state 2>/dev/null || true)"
+            adb wait-for-device || true
+            state=""
+            for i in $(seq 1 60); do
+              state="$(adb get-state 2>/dev/null || true)"
+              if [ "$state" = "device" ]; then
+                echo "ADB_DEVICE_READY attempt=$i state=$state"
+                break
+              fi
+              echo "ADB_WAIT attempt=$i state=$state"
+              adb reconnect offline >/dev/null 2>&1 || true
+              adb devices -l || true
+              sleep 3
+            done
             test "$state" = "device"
-            echo "ADB_DEVICE_READY state=$state"
 
 
             echo "=== EMULATOR DNS ==="
@@ -206,7 +216,13 @@ jobs:
             done
 
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --stacktrace
-            adb wait-for-device
+            for i in $(seq 1 20); do
+              state="$(adb get-state 2>/dev/null || true)"
+              [ "$state" = "device" ] && break
+              adb reconnect offline >/dev/null 2>&1 || true
+              sleep 2
+            done
+            test "$(adb get-state 2>/dev/null || true)" = "device"
             adb install -r app/build/outputs/apk/debug/app-debug.apk
             TEST_APK="$(find app/build/outputs/apk/androidTest -type f -name '*androidTest.apk' | head -n 1)"
             test -n "$TEST_APK"
