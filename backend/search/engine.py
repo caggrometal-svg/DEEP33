@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-TOKEN_RE = re.compile(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
+TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",
     "compara", "contrasta", "verifica", "verificar", "evidencia",
