@@ -1,0 +1,35 @@
+name: DEEP33 Production E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  production-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployed SHA and readiness
+        env:
+          DEEP33_URL: https://deep33-backend.onrender.com
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 18); do
+            curl -fsS --max-time 15 "$DEEP33_URL/health" > /tmp/health.json || true
+            LIVE_SHA="$(jq -r '.git_sha // ""' /tmp/health.json 2>/dev/null || true)"
+            if [ "$LIVE_SHA" = "$EXPECTED_SHA" ]; then break; fi
+            sleep 10
+          done
+          test "$(jq -r '.git_sha' /tmp/health.json)" = "$EXPECTED_SHA"
+          curl -fsS --max-time 30 "$DEEP33_URL/ready" | jq -e '.status=="PASS" and .ready==true'
+      - name: Real inference gate
+        env:
+          DEEP33_URL: https://deep33-backend.onrender.com
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 90 "$DEEP33_URL/v1/ai/diagnostics" | tee /tmp/diag.json
+          jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
+          curl -fsS --max-time 90             -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}"             -H "X-Request-ID: prod-${GITHUB_RUN_ID}"             -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}"             -H 'content-type: application/json'             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'             "$DEEP33_URL/v1/ai/generate" |
+            jq -e '((.result.text // .response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))'
