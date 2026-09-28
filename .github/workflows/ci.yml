@@ -220,11 +220,10 @@ jobs:
           enable-hw-keyboard: false
           channel: stable
           pre-emulator-launch-script: |
-            set -euxo pipefail
+            set -eux
             adb kill-server || true
             adb start-server
             adb devices
-          after-boot-delay: 30
           script: |
             set -eu
             cd android
