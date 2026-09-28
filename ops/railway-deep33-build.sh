@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SHA="${1:?missing DEEP33 git sha}"
+SHA="${1:-}"
+if [ -z "$SHA" ]; then
+  SHA="$(python -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://api.github.com/repos/caggrometal-svg/DEEP33/git/ref/heads/main", timeout=30))["object"]["sha"])')"
+fi
 
 rm -rf /app/deep33 /tmp/deep33src
 mkdir -p /app/deep33 /tmp/deep33src
