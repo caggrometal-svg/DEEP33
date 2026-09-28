@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
-
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,43 @@ class GatewayProvider:
     model: str
 
 
+@dataclass
+class ProviderCircuit:
+    failures: int = 0
+    opened_until: float = 0.0
+    half_open: bool = False
+
+    def available(self, now: float) -> bool:
+        if self.opened_until <= 0:
+            return True
+        if now >= self.opened_until:
+            if not self.half_open:
+                self.half_open = True
+                return True
+            return False
+        return False
+
+    def success(self) -> None:
+        self.failures = 0
+        self.opened_until = 0.0
+        self.half_open = False
+
+    def failure(self, threshold: int, cooldown_seconds: float) -> None:
+        self.failures += 1
+        self.half_open = False
+        if self.failures >= threshold:
+            self.opened_until = time.monotonic() + cooldown_seconds
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
     timeout_seconds: float
+    provider_timeout_seconds: float
+    max_retries: int
+    backoff_seconds: float
+    circuit_failure_threshold: int
+    circuit_cooldown_seconds: float
 
     @classmethod
     def from_env(cls) -> "GatewayConfig":
@@ -82,7 +116,20 @@ class GatewayConfig:
 
         return cls(
             providers=tuple(provider for provider in providers if provider.url),
-            timeout_seconds=float(os.getenv("AI_TIMEOUT_SECONDS", "45")),
+            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75"))),
+            provider_timeout_seconds=max(
+                3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "18"))
+            ),
+            max_retries=max(0, min(2, int(os.getenv("AI_PROVIDER_MAX_RETRIES", "1")))),
+            backoff_seconds=max(
+                0.05, float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "0.6"))
+            ),
+            circuit_failure_threshold=max(
+                1, int(os.getenv("AI_CIRCUIT_FAILURE_THRESHOLD", "3"))
+            ),
+            circuit_cooldown_seconds=max(
+                5.0, float(os.getenv("AI_CIRCUIT_COOLDOWN_SECONDS", "30"))
+            ),
         )
 
     @property
@@ -91,29 +138,69 @@ class GatewayConfig:
 
 
 class AIGateway:
-    """Provider-neutral gateway with controlled provider fallback."""
+    """Provider-neutral gateway with deterministic fallback, retry and circuit breaker."""
 
     def __init__(self, config: GatewayConfig | None = None) -> None:
         self.config = config or GatewayConfig.from_env()
+        self._circuits = {provider.name: ProviderCircuit() for provider in self.config.providers}
 
     @staticmethod
-    def _headers(provider: GatewayProvider) -> dict[str, str]:
+    def _headers(
+        provider: GatewayProvider,
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if provider.api_key:
             headers["Authorization"] = f"Bearer {provider.api_key}"
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         return headers
+
+    def _circuit(self, provider: GatewayProvider) -> ProviderCircuit:
+        return self._circuits.setdefault(provider.name, ProviderCircuit())
+
+    def _sleep_budget(self, attempt: int, deadline: float | None) -> float:
+        delay = self.config.backoff_seconds * (2**attempt) + random.uniform(0, 0.25)
+        if deadline is None:
+            return delay
+        remaining = max(0.0, deadline - time.monotonic())
+        return min(delay, remaining)
+
+    @staticmethod
+    def _remaining(deadline: float | None, default: float) -> float:
+        if deadline is None:
+            return default
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GatewayTimeoutError
+        return max(0.5, min(default, remaining))
+
+    @staticmethod
+    def _provider_payload(payload: dict, provider: GatewayProvider) -> dict:
+        result = dict(payload)
+        if provider.model:
+            result["model"] = provider.model
+        elif not result.get("model"):
+            result.pop("model", None)
+        return result
+
+    @staticmethod
+    def _is_retryable_status(status: int) -> bool:
+        return status == 429 or 500 <= status <= 599
 
     async def probe(self) -> dict:
         started = time.perf_counter()
         failures: list[str] = []
 
         for index, provider in enumerate(self.config.providers):
-            if not provider.health_url:
-                failures.append(f"{provider.name}:health_url_missing")
-                continue
-
             try:
-                async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+                timeout = self.config.provider_timeout_seconds
+                async with httpx.AsyncClient(
+                    timeout=timeout, follow_redirects=True
+                ) as client:
                     response = await client.get(
                         provider.health_url,
                         headers=self._headers(provider),
@@ -124,12 +211,11 @@ class AIGateway:
                         "gateway": "PASS",
                         "provider": provider.name,
                         "model": provider.model or None,
-                        "latency_ms": round(
-                            (time.perf_counter() - started) * 1000, 2
-                        ),
+                        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
                         "last_success": utc_now(),
                         "last_error": None,
                         "fallback_used": index > 0,
+                        "circuit_open": False,
                     }
 
                 failures.append(f"{provider.name}:http:{response.status_code}")
@@ -139,68 +225,132 @@ class AIGateway:
                 failures.append(f"{provider.name}:{type(exc).__name__}")
 
         return {
-            "gateway": "TIMEOUT" if failures and all("timeout" in item for item in failures) else "FAIL",
+            "gateway": "TIMEOUT" if failures and all(":timeout" in item for item in failures) else "FAIL",
             "provider": None,
             "model": self.model or None,
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
             "last_success": None,
             "last_error": ";".join(failures) if failures else "no providers configured",
             "fallback_used": False,
+            "circuit_open": False,
         }
 
-    async def complete(self, payload: dict) -> dict:
+    async def complete(
+        self,
+        payload: dict,
+        *,
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+        deadline: float | None = None,
+    ) -> dict:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
 
         for provider in self.config.providers:
-            try:
-                async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
-                    response = await client.post(
-                        provider.url,
-                        json=payload,
-                        headers=self._headers(provider),
+            circuit = self._circuit(provider)
+            now = time.monotonic()
+            if not circuit.available(now):
+                logger.warning(
+                    "provider_skipped_circuit_open provider=%s",
+                    provider.name,
+                )
+                continue
+
+            provider_succeeded = False
+            provider_failed_transiently = False
+
+            for attempt in range(self.config.max_retries + 1):
+                try:
+                    timeout = self._remaining(
+                        deadline, self.config.provider_timeout_seconds
                     )
-                    response.raise_for_status()
-            except httpx.TimeoutException:
-                saw_timeout = True
-                logger.warning("AI provider timeout provider=%s", provider.name)
-                continue
-            except httpx.HTTPStatusError as exc:
-                saw_http_error = True
-                logger.warning(
-                    "AI provider HTTP failure provider=%s status=%s",
-                    provider.name,
-                    exc.response.status_code,
+                    body = self._provider_payload(payload, provider)
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(
+                            provider.url,
+                            json=body,
+                            headers=self._headers(provider, request_id, idempotency_key),
+                        )
+
+                    if response.status_code >= 400:
+                        status = response.status_code
+                        saw_http_error = True
+                        provider_failed_transiently = self._is_retryable_status(status)
+                        logger.warning(
+                            "ai_provider_http_failure request_id=%s provider=%s status=%s attempt=%s",
+                            request_id,
+                            provider.name,
+                            status,
+                            attempt + 1,
+                        )
+                        if provider_failed_transiently and attempt < self.config.max_retries:
+                            delay = self._sleep_budget(attempt, deadline)
+                            if delay > 0:
+                                await asyncio.sleep(delay)
+                            continue
+                        break
+
+                    try:
+                        data = response.json()
+                    except ValueError:
+                        saw_invalid_response = True
+                        logger.warning(
+                            "ai_provider_invalid_json request_id=%s provider=%s",
+                            request_id,
+                            provider.name,
+                        )
+                        break
+
+                    if not isinstance(data, dict):
+                        saw_invalid_response = True
+                        logger.warning(
+                            "ai_provider_invalid_payload request_id=%s provider=%s",
+                            request_id,
+                            provider.name,
+                        )
+                        break
+
+                    result = dict(data)
+                    result["_deep33_gateway"] = {
+                        "provider": provider.name,
+                        "model": provider.model or data.get("model"),
+                    }
+                    circuit.success()
+                    provider_succeeded = True
+                    return result
+
+                except httpx.TimeoutException:
+                    saw_timeout = True
+                    provider_failed_transiently = True
+                    logger.warning(
+                        "ai_provider_timeout request_id=%s provider=%s attempt=%s",
+                        request_id,
+                        provider.name,
+                        attempt + 1,
+                    )
+                    if attempt < self.config.max_retries:
+                        delay = self._sleep_budget(attempt, deadline)
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        continue
+                    break
+                except httpx.HTTPError as exc:
+                    saw_http_error = True
+                    provider_failed_transiently = False
+                    logger.warning(
+                        "ai_provider_transport_failure request_id=%s provider=%s error=%s",
+                        request_id,
+                        provider.name,
+                        type(exc).__name__,
+                    )
+                    break
+
+            if not provider_succeeded and provider_failed_transiently:
+                circuit.failure(
+                    self.config.circuit_failure_threshold,
+                    self.config.circuit_cooldown_seconds,
                 )
-                continue
-            except httpx.HTTPError as exc:
-                saw_http_error = True
-                logger.warning(
-                    "AI provider transport failure provider=%s error=%s",
-                    provider.name,
-                    type(exc).__name__,
-                )
-                continue
-
-            try:
-                data = response.json()
-            except ValueError:
-                saw_invalid_response = True
-                logger.warning("AI provider invalid JSON provider=%s", provider.name)
-                continue
-
-            if not isinstance(data, dict):
-                saw_invalid_response = True
-                logger.warning("AI provider invalid payload provider=%s", provider.name)
-                continue
-
-            result = dict(data)
-            result["_deep33_gateway"] = {
-                "provider": provider.name,
-                "model": provider.model or data.get("model"),
-            }
-            return result
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
             raise GatewayTimeoutError
@@ -208,44 +358,131 @@ class AIGateway:
             raise GatewayHTTPError
         raise GatewayInvalidResponseError
 
-    async def stream(self, payload: dict) -> AsyncIterator[bytes]:
+    async def diagnostic_inference(
+        self,
+        *,
+        request_id: str | None = None,
+        deadline: float | None = None,
+    ) -> dict:
+        return await self.complete(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Return the requested diagnostic token exactly.",
+                    },
+                    {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
+                ],
+            },
+            request_id=request_id,
+            idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
+            deadline=deadline,
+        )
+
+    async def stream(
+        self,
+        payload: dict,
+        *,
+        request_id: str | None = None,
+        idempotency_key: str | None = None,
+        deadline: float | None = None,
+    ) -> AsyncIterator[bytes]:
+        saw_timeout = False
+        saw_http_error = False
+        saw_invalid_response = False
+
         for provider in self.config.providers:
-            started_output = False
-            try:
-                async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
-                    async with client.stream(
-                        "POST",
-                        provider.url,
-                        json={**payload, "stream": True},
-                        headers=self._headers(provider),
-                    ) as response:
-                        if response.status_code >= 400:
-                            logger.warning(
-                                "AI stream provider HTTP failure provider=%s status=%s",
-                                provider.name,
-                                response.status_code,
-                            )
-                            continue
+            circuit = self._circuit(provider)
+            if not circuit.available(time.monotonic()):
+                continue
 
-                        async for chunk in response.aiter_bytes():
-                            if chunk:
-                                started_output = True
-                                yield chunk
-                return
-            except httpx.TimeoutException:
-                logger.warning("AI stream provider timeout provider=%s", provider.name)
-                if started_output:
-                    raise GatewayTimeoutError
-            except httpx.HTTPError as exc:
-                logger.warning(
-                    "AI stream provider transport failure provider=%s error=%s",
-                    provider.name,
-                    type(exc).__name__,
+            provider_succeeded = False
+            transient_failure = False
+
+            for attempt in range(self.config.max_retries + 1):
+                started_output = False
+                try:
+                    timeout = self._remaining(
+                        deadline, self.config.provider_timeout_seconds
+                    )
+                    body = {**self._provider_payload(payload, provider), "stream": True}
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        async with client.stream(
+                            "POST",
+                            provider.url,
+                            json=body,
+                            headers=self._headers(provider, request_id, idempotency_key),
+                        ) as response:
+                            if response.status_code >= 400:
+                                status = response.status_code
+                                saw_http_error = True
+                                transient_failure = self._is_retryable_status(status)
+                                logger.warning(
+                                    "ai_stream_provider_http_failure request_id=%s provider=%s status=%s attempt=%s",
+                                    request_id,
+                                    provider.name,
+                                    status,
+                                    attempt + 1,
+                                )
+                            else:
+                                async for chunk in response.aiter_bytes():
+                                    if chunk:
+                                        started_output = True
+                                        yield chunk
+                                provider_succeeded = True
+                                circuit.success()
+                                return
+
+                    if provider_succeeded:
+                        return
+                    if transient_failure and attempt < self.config.max_retries and not started_output:
+                        delay = self._sleep_budget(attempt, deadline)
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        continue
+                    break
+                except httpx.TimeoutException:
+                    saw_timeout = True
+                    transient_failure = True
+                    logger.warning(
+                        "ai_stream_provider_timeout request_id=%s provider=%s attempt=%s",
+                        request_id,
+                        provider.name,
+                        attempt + 1,
+                    )
+                    if started_output:
+                        raise GatewayTimeoutError
+                    if attempt < self.config.max_retries:
+                        delay = self._sleep_budget(attempt, deadline)
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        continue
+                    break
+                except httpx.HTTPError as exc:
+                    saw_http_error = True
+                    logger.warning(
+                        "ai_stream_provider_transport_failure request_id=%s provider=%s error=%s",
+                        request_id,
+                        provider.name,
+                        type(exc).__name__,
+                    )
+                    break
+
+            if transient_failure:
+                circuit.failure(
+                    self.config.circuit_failure_threshold,
+                    self.config.circuit_cooldown_seconds,
                 )
-                if started_output:
-                    raise GatewayInvalidResponseError
 
-        raise GatewayHTTPError
+        if saw_timeout and not saw_http_error and not saw_invalid_response:
+            raise GatewayTimeoutError
+        if saw_http_error:
+            raise GatewayHTTPError
+        raise GatewayInvalidResponseError
+
+
+def uuid4_short() -> str:
+    return f"{time.time_ns():x}"[-16:]
 
 
 def utc_now() -> str:
