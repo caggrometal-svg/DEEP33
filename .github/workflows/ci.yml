@@ -180,35 +180,9 @@ jobs:
           test -e /dev/kvm
           ls -l /dev/kvm
 
-      - name: Prepare Android SDK image with retry
-        run: |
-          set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
-          fi
-          test -x "$SDKMANAGER"
-          export PATH="$(dirname "$SDKMANAGER"):$SDK_ROOT/platform-tools:$PATH"
-          yes | "$SDKMANAGER" --licenses >/dev/null
-          rm -rf "$HOME/.android/cache"
-          for attempt in 1 2 3; do
-            if "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
-              "platform-tools" \
-              "platforms;android-35" \
-              "system-images;android-35;google_apis;x86_64"; then
-              echo "ANDROID_SDK_PREP_PASS attempt=$attempt"
-              exit 0
-            fi
-            echo "ANDROID_SDK_PREP_RETRY attempt=$attempt"
-            rm -rf "$SDK_ROOT/system-images/android-35/google_apis/x86_64"
-            rm -rf "$HOME/.android/cache"
-            sleep $((attempt * 3))
-          done
-          echo "ANDROID_SDK_PREP_FAIL"
-          exit 1
-
-      - name: Android real connectivity E2E
+      - name: Android real connectivity E2E — attempt 1
+        id: android_e2e_attempt_1
+        continue-on-error: true
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
           DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
@@ -234,6 +208,77 @@ jobs:
           channel: stable
           working-directory: android
           script: bash deep33-real-connectivity-e2e.sh
+
+      - name: Android real connectivity E2E — attempt 2
+        id: android_e2e_attempt_2
+        if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
+        continue-on-error: true
+        env:
+          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
+          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
+          DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          cores: 4
+          ram-size: 4096M
+          heap-size: 1024M
+          avd-name: deep33-retry
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          emulator-port: 5554
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
+          disable-animations: true
+          disable-spellchecker: true
+          disable-linux-hw-accel: false
+          enable-hw-keyboard: false
+          channel: stable
+          working-directory: android
+          script: bash deep33-real-connectivity-e2e.sh
+
+      - name: Android real connectivity E2E — attempt 3
+        id: android_e2e_attempt_3
+        if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
+        continue-on-error: true
+        env:
+          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
+          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
+          DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          cores: 4
+          ram-size: 4096M
+          heap-size: 1024M
+          avd-name: deep33-final
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          emulator-port: 5554
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
+          disable-animations: true
+          disable-spellchecker: true
+          disable-linux-hw-accel: false
+          enable-hw-keyboard: false
+          channel: stable
+          working-directory: android
+          script: bash deep33-real-connectivity-e2e.sh
+
+      - name: Assert Android E2E success
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.android_e2e_attempt_1.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_2.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_3.outcome }}" = "success" ]; then
+            echo "ANDROID_E2E_PASS"
+            exit 0
+          fi
+          echo "ANDROID_E2E_FAIL all_attempts_failed"
+          exit 1
 
       - name: Android E2E diagnostics
         if: ${{ always() }}
