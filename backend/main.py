@@ -665,6 +665,41 @@ async def web_status() -> dict:
     }
     return status
 
+@app.get("/v1/web/search")
+async def web_search_endpoint(request: Request, q: str) -> dict:
+    session_id = session_id_from_request(request)
+    enforce_client_controls(request, session_id)
+    if not DEEP33_WEB_TOOLS_ENABLED:
+        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+    try:
+        return await search_web(
+            q,
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
+        )
+    except Exception as exc:
+        logger.warning("web_search_endpoint_failed request_id=%s error=%s", request_id_from_request(request), type(exc).__name__)
+        raise HTTPException(status_code=502, detail="WEB_SEARCH_FAILED") from exc
+
+
+@app.get("/v1/web/fetch")
+async def web_fetch_endpoint(request: Request, url: str) -> dict:
+    session_id = session_id_from_request(request)
+    enforce_client_controls(request, session_id)
+    if not DEEP33_WEB_TOOLS_ENABLED:
+        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+    try:
+        return await fetch_page(
+            url,
+            timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8")),
+            max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
+            max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
+        )
+    except Exception as exc:
+        logger.warning("web_fetch_endpoint_failed request_id=%s error=%s", request_id_from_request(request), type(exc).__name__)
+        raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
+
+
 
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
