@@ -11,6 +11,7 @@ import javax.net.ssl.HttpsURLConnection
 class Deep33ApiException(
     val kind: Kind,
     val statusCode: Int? = null,
+    val partialOutput: Boolean = false,
     cause: Throwable? = null
 ) : IOException(messageFor(kind), cause) {
     enum class Kind { NETWORK, TIMEOUT, AUTH, RATE_LIMIT, SERVER, BAD_RESPONSE, CANCELLED }
@@ -34,7 +35,8 @@ object Deep33FailoverPolicy {
         requestBodyStarted: Boolean,
         error: Deep33ApiException.Kind
     ): Boolean = when (error) {
-        Deep33ApiException.Kind.SERVER -> true
+        Deep33ApiException.Kind.SERVER ->
+            !(method.equals("POST", ignoreCase = true) && requestBodyStarted)
         Deep33ApiException.Kind.NETWORK,
         Deep33ApiException.Kind.TIMEOUT -> !(method.equals("POST", ignoreCase = true) && requestBodyStarted)
         Deep33ApiException.Kind.AUTH,
@@ -47,7 +49,7 @@ object Deep33FailoverPolicy {
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val ENDPOINT_ATTEMPTS = 1
+    private const val ENDPOINT_ATTEMPTS = 2
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val values = overrides ?: listOf(
@@ -62,11 +64,6 @@ object Deep33Api {
             .distinct()
             .toList()
     }
-
-    private fun shouldFailover(error: Deep33ApiException): Boolean =
-        error.kind == Deep33ApiException.Kind.NETWORK ||
-            error.kind == Deep33ApiException.Kind.TIMEOUT ||
-            error.kind == Deep33ApiException.Kind.SERVER
 
     @Volatile
     private var activeStreamConnection: HttpsURLConnection? = null
@@ -156,8 +153,8 @@ object Deep33Api {
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
-                    requestBodyStarted = true
                     connection.outputStream.use {
+                        requestBodyStarted = true
                         it.write(
                             JSONObject()
                                 .put("messages", messages)
@@ -176,10 +173,24 @@ object Deep33Api {
                     connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         lines.forEach { line ->
                             if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                            if (line.startsWith("event: error", ignoreCase = true)) {
+                                errorEvent = true
+                                return@forEach
+                            }
+                            if (!line.startsWith("data:")) return@forEach
                             val data = line.removePrefix("data:").trim()
                             if (data.isBlank()) return@forEach
-                            if (data == "[DONE]") return@useLines
-                            if (line.startsWith("event: error")) return@forEach
+                            if (errorEvent) {
+                                throw Deep33ApiException(
+                                    Deep33ApiException.Kind.BAD_RESPONSE,
+                                    connection.responseCode,
+                                    emitted,
+                                )
+                            }
+                            if (data == "[DONE]") {
+                                completed = true
+                                return@useLines
+                            }
                             val chunk = SseTextParser.extractText(data).orEmpty()
                             if (chunk.isNotEmpty()) {
                                 emitted = true
@@ -188,31 +199,45 @@ object Deep33Api {
                             }
                         }
                     }
+                    if (errorEvent || !completed) {
+                        throw Deep33ApiException(
+                            Deep33ApiException.Kind.BAD_RESPONSE,
+                            connection.responseCode,
+                            emitted,
+                        )
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
-                    lastError = e
+                    val marked = if (emitted && !e.partialOutput) {
+                        Deep33ApiException(e.kind, e.statusCode, partialOutput = true, cause = e)
+                    } else e
+                    lastError = marked
                     if (
-                        e.kind == Deep33ApiException.Kind.CANCELLED ||
-                        emitted ||
-                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, e.kind)
-                    ) throw e
+                        marked.kind == Deep33ApiException.Kind.CANCELLED ||
+                        marked.partialOutput ||
+                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, marked.kind)
+                    ) throw marked
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: SocketTimeoutException) {
-                    lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
+                    lastError = Deep33ApiException(
+                        Deep33ApiException.Kind.TIMEOUT,
+                        partialOutput = emitted,
+                        cause = e,
+                    )
                     if (
-                        emitted ||
+                        lastError.partialOutput ||
                         !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, Deep33ApiException.Kind.TIMEOUT)
                     ) throw lastError
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: IOException) {
                     lastError = if (isCancelled()) {
-                        Deep33ApiException(Deep33ApiException.Kind.CANCELLED, cause = e)
+                        Deep33ApiException(Deep33ApiException.Kind.CANCELLED, partialOutput = emitted, cause = e)
                     } else {
-                        Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
+                        Deep33ApiException(Deep33ApiException.Kind.NETWORK, partialOutput = emitted, cause = e)
                     }
                     if (
                         lastError.kind == Deep33ApiException.Kind.CANCELLED ||
-                        emitted ||
+                        lastError.partialOutput ||
                         !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, lastError.kind)
                     ) throw lastError
                     if (attempt >= ENDPOINT_ATTEMPTS) break
