@@ -11,7 +11,7 @@ on:
 
 env:
   PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://deep33-backup.onrender.com
+  SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
 
 jobs:
   backend_unit:
