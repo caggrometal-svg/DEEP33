@@ -45,12 +45,22 @@ jobs:
           jq -e '.gateway == "PASS"' /tmp/ai.json
           jq -e '.online == true and .checks.NETWORK == "PASS" and .checks.AI_GATEWAY == "PASS" and .checks.MODEL == "PASS"' /tmp/diag.json
 
+          SESSION_ID="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           for n in 1 2 3; do
             echo "Chat generation attempt $n/3"
-            curl -fsS --max-time 90               -H 'content-type: application/json'               -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'               "$DEEP33_URL/v1/ai/generate" | tee "/tmp/chat-$n.json"
+            curl -fsS --max-time 90               -H "X-DEEP33-Session-Id: $SESSION_ID"               -H 'content-type: application/json'               -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'               "$DEEP33_URL/v1/ai/generate" | tee "/tmp/chat-$n.json"
 
             jq -e '((.response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))' "/tmp/chat-$n.json"
           done
+
+          curl -fsS --max-time 30 -H "X-DEEP33-Session-Id: $SESSION_ID" "$DEEP33_URL/v1/memory/context" | tee /tmp/memory-before.json
+          jq -e '.messages | length >= 3 and any(.[]; (.content // "") | contains("DEEP33_E2E_OK"))' /tmp/memory-before.json
+
+          curl -fsS --max-time 30             -X POST             -H "X-DEEP33-Session-Id: $SESSION_ID"             -H 'content-type: application/json'             -d '{"kind":"explicit","content":"DEEP33_EXPLICIT_MEMORY_E2E_OK"}'             "$DEEP33_URL/v1/memory/remember" | tee /tmp/memory-remember.json
+          jq -e '.remembered == true or .ok == true' /tmp/memory-remember.json
+
+          curl -fsS --max-time 30 -H "X-DEEP33-Session-Id: $SESSION_ID" "$DEEP33_URL/v1/memory/context" | tee /tmp/memory-after.json
+          jq -e '.memories | any(.[]; (.content // "") | contains("DEEP33_EXPLICIT_MEMORY_E2E_OK"))' /tmp/memory-after.json
 
   android:
     needs: backend
