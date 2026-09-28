@@ -1,3 +1,7 @@
+concurrency:
+  group: deep33-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 name: DEEP33 CI
 
 permissions:
