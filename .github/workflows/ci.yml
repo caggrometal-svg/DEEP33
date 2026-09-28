@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           SESSION="ci-hybrid-${{ github.run_id }}"
           STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/search/hybrid/status" -H "X-DEEP33-Session-Id: $SESSION")"
-          if ! printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_postgrest_rpc"' >/dev/null; then
+          if ! printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function" and .vector_backend=="pgvector" and .keyword_backend=="postgresql_tsvector"' >/dev/null; then
             echo "PRIMARY_HYBRID_STATUS_FAIL"
             printf "%s\n" "$STATUS"
             exit 1
