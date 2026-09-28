@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import re
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -279,10 +280,38 @@ async def _bing_search(query, timeout_seconds, max_results):
             raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
         if len(response.content) > 3 * 1024 * 1024:
             raise WebSearchError("WEB_SEARCH_BING_RESPONSE_TOO_LARGE")
-    parser = BingParser()
-    parser.feed(response.text)
-    parser.close()
-    return _normalise_results(parser.results, max_results)
+
+        parser = BingParser()
+        parser.feed(response.text)
+        parser.close()
+        results = _normalise_results(parser.results, max_results)
+        if results:
+            return results
+
+        # Bing occasionally returns a valid 200 HTML shell/bot page without
+        # the classic b_algo nodes. Retry against its RSS representation.
+        rss = await client.get(
+            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
+        )
+        if rss.status_code >= 400:
+            raise WebSearchError(f"WEB_SEARCH_BING_RSS_HTTP_{rss.status_code}")
+        if len(rss.content) > 2 * 1024 * 1024:
+            raise WebSearchError("WEB_SEARCH_BING_RSS_RESPONSE_TOO_LARGE")
+
+    try:
+        from xml.etree import ElementTree
+
+        root = ElementTree.fromstring(rss.text)
+        rss_results = []
+        for item in root.findall(".//item"):
+            title = item.findtext("title") or ""
+            url = item.findtext("link") or ""
+            snippet = item.findtext("description") or ""
+            rss_results.append({"title": title, "url": url, "snippet": snippet})
+        return _normalise_results(rss_results, max_results)
+    except Exception as exc:
+        raise WebSearchError("WEB_SEARCH_BING_RSS_INVALID_RESPONSE") from exc
 
 
 async def search_web(
