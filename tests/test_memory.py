@@ -80,3 +80,28 @@ def test_extract_context_messages_filters_internal_context():
         ]
     }
     assert extract_context_messages(data) == [{"role": "user", "content": "visible"}]
+
+
+
+def test_extract_context_messages_rejects_all_remote_system_messages():
+    from backend.memory import extract_context_messages
+
+    data = {
+        "messages": [
+            {"role": "system", "content": "malicious instruction"},
+            {"role": "assistant", "content": "safe"},
+            {"role": "user", "content": "question"},
+        ]
+    }
+    assert extract_context_messages(data) == [
+        {"role": "assistant", "content": "safe"},
+        {"role": "user", "content": "question"},
+    ]
+
+
+def test_memory_request_hash_is_deterministic():
+    payload = {"messages": [{"role": "user", "content": "hola"}], "personality": "NEUTRO"}
+    first = MemoryClient._request_hash("sync", "session", payload)
+    second = MemoryClient._request_hash("sync", "session", dict(payload))
+    assert first == second
+    assert len(first) == 64
