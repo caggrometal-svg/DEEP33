@@ -17,6 +17,7 @@ APP_VERSION = "0.1.0"
 AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "").strip()
 AI_GATEWAY_API_KEY = os.getenv("AI_GATEWAY_API_KEY", "").strip()
 AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "").strip()
+AI_GATEWAY_HEALTH_URL = os.getenv("AI_GATEWAY_HEALTH_URL", "").strip()
 NETWORK_CHECK_URL = os.getenv(
     "NETWORK_CHECK_URL", "https://www.google.com/generate_204"
 ).strip()
@@ -76,30 +77,40 @@ async def network_probe() -> dict:
 
 
 async def gateway_probe() -> dict:
-    if not AI_GATEWAY_URL:
+    if not AI_GATEWAY_HEALTH_URL:
         return {
-            "gateway": "NOT_CONFIGURED",
+            "gateway": "NOT_VERIFIED",
             "provider": None,
             "model": AI_GATEWAY_MODEL or None,
             "latency_ms": None,
             "last_success": None,
-            "last_error": "AI_GATEWAY_URL is not configured",
+            "last_error": "AI_GATEWAY_HEALTH_URL is not configured",
         }
 
     started = time.perf_counter()
     headers = {"Authorization": f"Bearer {AI_GATEWAY_API_KEY}"} if AI_GATEWAY_API_KEY else {}
     try:
         async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
-            response = await client.get(AI_GATEWAY_URL, headers=headers)
+            response = await client.get(AI_GATEWAY_HEALTH_URL, headers=headers)
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
+            passed = 200 <= response.status_code < 300
             return {
-                "gateway": "PASS" if response.status_code < 500 else "FAIL",
+                "gateway": "PASS" if passed else "FAIL",
                 "provider": response.headers.get("x-provider"),
                 "model": AI_GATEWAY_MODEL or None,
                 "latency_ms": latency_ms,
-                "last_success": utc_now() if response.status_code < 500 else None,
-                "last_error": None if response.status_code < 500 else f"http:{response.status_code}",
+                "last_success": utc_now() if passed else None,
+                "last_error": None if passed else f"http:{response.status_code}",
             }
+    except httpx.TimeoutException:
+        return {
+            "gateway": "TIMEOUT",
+            "provider": None,
+            "model": AI_GATEWAY_MODEL or None,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            "last_success": None,
+            "last_error": "timeout",
+        }
     except httpx.HTTPError as exc:
         return {
             "gateway": "FAIL",
@@ -109,7 +120,6 @@ async def gateway_probe() -> dict:
             "last_success": None,
             "last_error": type(exc).__name__,
         }
-
 
 @app.get("/health")
 async def health() -> dict:
