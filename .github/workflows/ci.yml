@@ -71,7 +71,7 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_FALLBACK_OK"}],"model":"kilo-auto/free"}' \
             "$DEEP33_URL/v1/ai/generate" | tee /tmp/fallback-generation.json
-          jq -e '.result.provider == "pollinations" and ((.result.text // "") | contains("DEEP33_FALLBACK_OK"))' /tmp/fallback-generation.json
+          jq -e '.result.provider == "kilo-secondary" and ((.result.text // "") | contains("DEEP33_FALLBACK_OK"))' /tmp/fallback-generation.json
 
   android:
     needs: backend
