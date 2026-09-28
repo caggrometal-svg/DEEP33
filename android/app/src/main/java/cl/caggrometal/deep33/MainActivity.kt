@@ -161,6 +161,12 @@ class MainActivity : Activity() {
             setOnClickListener { toggleSidebar() }
         }, LinearLayout.LayoutParams(dp(56), dp(54)))
 
+        statusView = TextView(this).apply {
+            text = "PROCESANDO · DEEP33"
+            textSize = 12f
+            setPadding(0, dp(2), 0, 0)
+        }
+
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_VERTICAL
