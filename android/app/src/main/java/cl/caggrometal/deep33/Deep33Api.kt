@@ -303,10 +303,10 @@ object Deep33Api {
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
                     if (body != null) {
-                        requestBodyStarted = true
                         connection.doOutput = true
                         connection.setRequestProperty("Content-Type", "application/json")
                         connection.outputStream.use {
+                            requestBodyStarted = true
                             it.write(body.toString().toByteArray(Charsets.UTF_8))
                         }
                     }
