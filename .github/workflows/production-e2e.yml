@@ -6,8 +6,6 @@ name: DEEP33 Production E2E
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
