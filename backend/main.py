@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import time
@@ -20,6 +21,9 @@ from backend.gateway import (
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.1.2"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("deep33")
 
 # Network remains owned by the HTTP API; provider-specific transport/configuration
 # lives behind backend.gateway.AIGateway so the provider can be replaced without
@@ -165,8 +169,33 @@ async def call_gateway(payload: dict) -> dict:
         ) from exc
 
 
-@app.post("/v1/chat")
-async def chat(request: ChatRequest) -> dict:
+def normalized_generation(data: dict) -> dict:
+    response = data.get("choices")
+    if not isinstance(response, list) or not response:
+        raise HTTPException(status_code=502, detail="AI_RESPONSE_CHOICES_MISSING")
+
+    first = response[0]
+    if not isinstance(first, dict):
+        raise HTTPException(status_code=502, detail="AI_RESPONSE_CHOICE_INVALID")
+
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=502, detail="AI_RESPONSE_MESSAGE_MISSING")
+
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(status_code=502, detail="AI_RESPONSE_CONTENT_MISSING")
+
+    gateway_meta = data.get("_deep33_gateway", {})
+    return {
+        "role": "assistant",
+        "text": content,
+        "model": data.get("model") or gateway_meta.get("model"),
+        "provider": gateway_meta.get("provider"),
+    }
+
+
+async def generate(request: ChatRequest) -> dict:
     request_id = str(uuid.uuid4())
     payload = {
         "messages": [message.model_dump() for message in request.messages],
@@ -177,11 +206,33 @@ async def chat(request: ChatRequest) -> dict:
 
     started = time.perf_counter()
     data = await call_gateway(payload)
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    result = normalized_generation(data)
+
+    logger.info(
+        "ai_request request_id=%s provider=%s model=%s latency_ms=%s success=true",
+        request_id,
+        result.get("provider"),
+        result.get("model"),
+        elapsed_ms,
+    )
+
     return {
         "request_id": request_id,
-        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        "latency_ms": elapsed_ms,
+        "result": result,
         "response": data,
     }
+
+
+@app.post("/v1/ai/generate")
+async def ai_generate(request: ChatRequest) -> dict:
+    return await generate(request)
+
+
+@app.post("/v1/chat")
+async def chat(request: ChatRequest) -> dict:
+    return await generate(request)
 
 
 async def stream_gateway(payload: dict) -> AsyncIterator[bytes]:
