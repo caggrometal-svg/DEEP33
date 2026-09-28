@@ -718,14 +718,21 @@ async def generate(
         }
         cache_put(session_id, idempotency_key, request_hash, output)
         if memory.enabled:
-            await memory.idempotency_complete(
-                session_id,
-                idempotency_key,
-                request_hash,
-                lease_token,
-                200,
-                output,
-            )
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    200,
+                    output,
+                )
+            except MemoryUnavailableError as exc:
+                logger.error(
+                    "ai_idempotency_complete_unavailable request_id=%s error=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
 
         logger.info(
             "ai_request request_id=%s session_id=%s provider=%s model=%s latency_ms=%s success=true",
@@ -907,14 +914,21 @@ async def stream_gateway(
     )
     cache_put(session_id, idempotency_key, request_hash, output)
     if memory.enabled:
-        await memory.idempotency_complete(
-            session_id,
-            idempotency_key,
-            request_hash,
-            lease_token,
-            200,
-            output,
-        )
+        try:
+            await memory.idempotency_complete(
+                session_id,
+                idempotency_key,
+                request_hash,
+                lease_token,
+                200,
+                output,
+            )
+        except MemoryUnavailableError as exc:
+            logger.error(
+                "stream_idempotency_complete_unavailable request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
 
 
 @app.post("/v1/chat/stream")
