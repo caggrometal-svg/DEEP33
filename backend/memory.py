@@ -69,16 +69,15 @@ class MemoryClient:
         self,
         session_id: str,
         messages: list[dict[str, str]],
-        personality: str = "NEUTRO",
+        personality: str | None = None,
         preferences: dict[str, Any] | None = None,
     ) -> dict:
-        return await self._call(
-            "sync",
-            session_id,
-            messages=messages[-50:],
-            personality=personality,
-            preferences=preferences or {},
-        )
+        payload: dict[str, Any] = {"messages": messages[-50:]}
+        if personality:
+            payload["personality"] = personality
+        if preferences is not None:
+            payload["preferences"] = preferences
+        return await self._call("sync", session_id, **payload)
 
     async def remember(self, session_id: str, kind: str, content: str) -> dict:
         return await self._call(
@@ -94,12 +93,12 @@ class MemoryClient:
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
     ) -> dict:
-        return await self._call(
-            "preferences",
-            session_id,
-            personality=personality,
-            preferences=preferences or {},
-        )
+        payload: dict[str, Any] = {}
+        if personality:
+            payload["personality"] = personality
+        if preferences is not None:
+            payload["preferences"] = preferences
+        return await self._call("preferences", session_id, **payload)
 
 
 def merge_messages(
