@@ -55,29 +55,55 @@ class Deep33ConnectivityTest {
         connection.setRequestProperty("Content-Type", "application/json")
         connection.setRequestProperty("Accept", "text/event-stream")
         connection.doOutput = true
+
         val payload = JSONObject().put("messages", JSONArray().put(
-            JSONObject().put("role", "user").put("content", "Return only this exact token: DEEP33_STREAM_E2E_OK")
+            JSONObject().put(
+                "role",
+                "user"
+            ).put(
+                "content",
+                "Return only this exact token: DEEP33_STREAM_E2E_OK"
+            )
         ))
         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
         val code = connection.responseCode
         assertTrue("stream HTTP " + code, code in 200..299)
+        assertTrue(
+            "unexpected content-type: " + connection.contentType,
+            connection.contentType.orEmpty().contains("text/event-stream", ignoreCase = true)
+        )
 
         val reader = connection.inputStream.bufferedReader(Charsets.UTF_8)
-        var combined = ""
+        val combined = StringBuilder()
         try {
             while (true) {
                 val line = reader.readLine() ?: break
-                combined += line
-                if (combined.contains("DEEP33_STREAM_E2E_OK")) break
-                if (line.trim() == "data: [DONE]") break
+                if (!line.startsWith("data:")) continue
+
+                val data = line.removePrefix("data:").trim()
+                if (data == "[DONE]") break
+                if (data.isBlank()) continue
+
+                val json = JSONObject(data)
+                val choices = json.optJSONArray("choices") ?: continue
+                val first = choices.optJSONObject(0) ?: continue
+                val delta = first.optJSONObject("delta") ?: continue
+                val chunk = delta.optString("content")
+                if (chunk.isNotEmpty()) {
+                    combined.append(chunk)
+                    if (combined.contains("DEEP33_STREAM_E2E_OK")) break
+                }
             }
         } finally {
             reader.close()
             connection.disconnect()
         }
 
-        assertTrue("stream token missing: " + combined, combined.contains("DEEP33_STREAM_E2E_OK"))
-        assertTrue("stream content-type", "text/event-stream".contains("text/event-stream"))
+        assertTrue(
+            "stream token missing: " + combined,
+            combined.contains("DEEP33_STREAM_E2E_OK")
+        )
     }
 
     private fun get(path: String): JSONObject {
