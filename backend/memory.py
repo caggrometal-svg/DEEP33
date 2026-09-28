@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import random
@@ -40,12 +42,31 @@ class MemoryClient:
             return {}
 
         body = {"action": action, "session_id": session_id, **payload}
+
+        # Remote memory writes are retried, so every mutating request must be
+        # idempotent at the edge-function boundary as well.
+        if action in {"sync", "remember", "preferences"}:
+            canonical = json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            idempotency_key = (
+                f"memory-{action}-{hashlib.sha256((session_id + "|" + canonical).encode("utf-8")).hexdigest()[:48]}"
+            )
+            body["request_hash"] = request_hash
+            body["idempotency_key"] = idempotency_key
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "apikey": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if "idempotency_key" in body:
+            headers["X-Idempotency-Key"] = str(body["idempotency_key"])
 
         for attempt in range(self.max_retries + 1):
             try:
