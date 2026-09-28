@@ -17,8 +17,24 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningReady) {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = false
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     buildFeatures {
@@ -38,6 +54,17 @@ android {
         ?.trim()
         ?.takeIf { it.isNotBlank() }
         ?: "https://deep33-backup.onrender.com"
+
+    val releaseKeystorePath = System.getenv("DEEP33_RELEASE_KEYSTORE_PATH")?.trim().orEmpty()
+    val releaseStorePassword = System.getenv("DEEP33_RELEASE_STORE_PASSWORD")?.trim().orEmpty()
+    val releaseKeyAlias = System.getenv("DEEP33_RELEASE_KEY_ALIAS")?.trim().orEmpty()
+    val releaseKeyPassword = System.getenv("DEEP33_RELEASE_KEY_PASSWORD")?.trim().orEmpty()
+    val releaseSigningReady = listOf(
+        releaseKeystorePath,
+        releaseStorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+    ).all { it.isNotBlank() }
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
