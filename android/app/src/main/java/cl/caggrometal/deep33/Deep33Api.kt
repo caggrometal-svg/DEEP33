@@ -171,6 +171,16 @@ object Deep33Api {
         activeStreamConnection?.disconnect()
     }
 
+    private fun mapError(code: Int): Deep33ApiException = Deep33ApiException(
+        when (code) {
+            401, 403 -> Deep33ApiException.Kind.AUTH
+            429 -> Deep33ApiException.Kind.RATE_LIMIT
+            in 500..599 -> Deep33ApiException.Kind.SERVER
+            else -> Deep33ApiException.Kind.BAD_RESPONSE
+        },
+        code
+    )
+
     private fun request(
         method: String,
         path: String,
