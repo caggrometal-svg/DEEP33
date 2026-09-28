@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
-from unittest.mock import AsyncMock
+import asyncio
 
 import httpx
-import asyncio
-from fastapi import FastAPI
 
-from backend.memory import MemoryClient, MemoryUnavailableError, merge_messages
+from backend.memory import MemoryClient, extract_context_system_message, merge_messages
 
 
 def test_merge_messages_deduplicates_remote_and_request():
@@ -52,3 +49,21 @@ def test_memory_client_success():
         assert result["ok"] is True
     finally:
         httpx.AsyncClient = original
+
+
+
+def test_context_system_message_contains_preferences_and_memory():
+    context = {
+        "session": {
+            "personality": "DIRECTO",
+            "preferences": {"language": "es"},
+        },
+        "memories": [
+            {"kind": "explicit", "content": "El proyecto se llama DEEP33."},
+        ],
+    }
+    system = extract_context_system_message(context)
+    assert system is not None
+    assert "DIRECTO" in system
+    assert "DEEP33" in system
+    assert "Do not reveal" in system
