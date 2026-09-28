@@ -483,11 +483,13 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 16f
             setPadding(18, 14, 18, 14)
-            background = GradientDrawable().apply {
-                setColor(background)
-                cornerRadius = 24f
-                if (isAssistant) setStroke(2, accent)
-            }
+            setBackground(
+                GradientDrawable().apply {
+                    setColor(background)
+                    cornerRadius = 24f
+                    if (isAssistant) setStroke(2, accent)
+                }
+            )
         }
         val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, 0, 0, 12)
