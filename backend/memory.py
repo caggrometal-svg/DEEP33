@@ -126,6 +126,19 @@ class MemoryClient:
             stale_after_seconds=stale_after_seconds,
         )
 
+    async def idempotency_status(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> dict:
+        return await self._call(
+            "idempotency_status",
+            session_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+
     async def idempotency_complete(
         self,
         session_id: str,
