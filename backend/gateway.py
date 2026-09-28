@@ -68,11 +68,11 @@ class ProviderCircuit:
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
     timeout_seconds: float
-    provider_timeout_seconds: float
-    max_retries: int
-    backoff_seconds: float
-    circuit_failure_threshold: int
-    circuit_cooldown_seconds: float
+    provider_timeout_seconds: float = 18.0
+    max_retries: int = 1
+    backoff_seconds: float = 0.6
+    circuit_failure_threshold: int = 3
+    circuit_cooldown_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> "GatewayConfig":
