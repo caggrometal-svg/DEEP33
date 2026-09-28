@@ -384,7 +384,7 @@ async def stream_gateway(payload: dict, session_id: str) -> AsyncIterator[bytes]
 @app.post("/v1/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
-    messages = await prepare_messages(request, session_id)
+    messages, personality = await prepare_messages(request, session_id)
     payload = {
         "messages": messages,
         "model": request.model or AI_GATEWAY_MODEL,
@@ -398,7 +398,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     )
 
     return StreamingResponse(
-        stream_gateway(payload, session_id),
+        stream_gateway(payload, session_id, personality),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
