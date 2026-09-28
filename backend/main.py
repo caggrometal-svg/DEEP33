@@ -23,7 +23,7 @@ AI_GATEWAY_URL = os.getenv(
     "https://api.kilo.ai/api/gateway/chat/completions",
 ).strip()
 AI_GATEWAY_API_KEY = os.getenv("AI_GATEWAY_API_KEY", "").strip()
-AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "kilo-auto/free").strip()
+AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "kilo-auto/small").strip()
 AI_GATEWAY_HEALTH_URL = os.getenv(
     "AI_GATEWAY_HEALTH_URL",
     "https://api.kilo.ai/api/gateway/models",
