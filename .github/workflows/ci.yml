@@ -139,19 +139,12 @@ jobs:
         run: |
           set -euo pipefail
           SESSION="ci-hybrid-${{ github.run_id }}"
-
           STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/search/hybrid/status" -H "X-DEEP33-Session-Id: $SESSION")"
           printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function"' >/dev/null
 
-          EMBEDDING="$(python - <<'PY2'
-import json
-print(json.dumps([1.0] + [0.0] * 1535))
-PY2
-)"
+          EMBEDDING="$(python -c 'import json; print(json.dumps([1.0]+[0.0]*1535))')"
           BODY="$(jq -n --arg q "DEEP33 hybrid verification" --argjson e "$EMBEDDING" '{query:$q,embedding:$e,limit:5,metadata_filter:{}}')"
-
-          SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/search/hybrid"             -H "Content-Type: application/json"             -H "X-DEEP33-Session-Id: $SESSION"             -d "$BODY")"
-
+          SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/search/hybrid" -H "Content-Type: application/json" -H "X-DEEP33-Session-Id: $SESSION" -d "$BODY")"
           printf "%s" "$SEARCH" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .mode=="hybrid" and (.results|type)=="array"' >/dev/null
           echo "PRIMARY_HYBRID_SEARCH_PASS"
 
