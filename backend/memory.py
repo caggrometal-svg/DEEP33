@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 from typing import Any
 
 import httpx
@@ -18,7 +20,7 @@ class MemoryClient:
         self,
         function_url: str | None = None,
         api_key: str | None = None,
-        timeout_seconds: float = 8.0,
+        timeout_seconds: float | None = None,
     ) -> None:
         self.function_url = (
             function_url if function_url is not None else os.getenv("DEEP33_MEMORY_URL", "")
@@ -26,7 +28,8 @@ class MemoryClient:
         self.api_key = (
             api_key if api_key is not None else os.getenv("SUPABASE_ANON_KEY", "")
         ).strip()
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
+        self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
 
     @property
     def enabled(self) -> bool:
