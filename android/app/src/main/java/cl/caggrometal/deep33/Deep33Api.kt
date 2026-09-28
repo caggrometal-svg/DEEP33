@@ -29,20 +29,29 @@ class Deep33ApiException(
 }
 
 object Deep33Api {
-    private const val GLOBAL_TIMEOUT_MS = 90_000
+    private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val CONNECT_TIMEOUT_MS = 15_000
+    private const val ENDPOINT_ATTEMPTS = 2
 
-    private fun endpoints(): List<String> = listOf(
-        BuildConfig.DEEP33_PRIMARY_URL,
-        BuildConfig.DEEP33_SECONDARY_URL
-    ).map { it.trim().trimEnd('/') }
-        .filter { it.isNotBlank() && it.startsWith("https://") }
-        .distinct()
+    private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
+        val values = overrides ?: listOf(
+            BuildConfig.DEEP33_PRIMARY_URL,
+            BuildConfig.DEEP33_SECONDARY_URL,
+            BuildConfig.DEEP33_TERTIARY_URL
+        )
+        return values
+            .asSequence()
+            .map { it.trim().trimEnd('/') }
+            .filter { it.isNotBlank() && it.startsWith("https://") }
+            .distinct()
+            .toList()
+    }
 
     private fun shouldFailover(error: Deep33ApiException): Boolean =
         error.kind == Deep33ApiException.Kind.NETWORK ||
             error.kind == Deep33ApiException.Kind.TIMEOUT ||
             error.kind == Deep33ApiException.Kind.SERVER
+
     @Volatile
     private var activeStreamConnection: HttpsURLConnection? = null
 
@@ -54,7 +63,8 @@ object Deep33Api {
         sessionId: String,
         personality: String = "NEUTRO",
         requestId: String = UUID.randomUUID().toString(),
-        idempotencyKey: String = requestId
+        idempotencyKey: String = requestId,
+        endpointOverride: List<String>? = null
     ): JSONObject =
         request(
             "POST",
@@ -62,7 +72,8 @@ object Deep33Api {
             JSONObject().put("messages", messages).put("personality", personality),
             sessionId,
             requestId,
-            idempotencyKey
+            idempotencyKey,
+            endpointOverride
         )
 
     fun memoryContext(sessionId: String): JSONObject =
@@ -75,7 +86,6 @@ object Deep33Api {
             JSONObject().put("kind", kind).put("content", content),
             sessionId
         )
-
 
     fun setPreferences(
         sessionId: String,
@@ -103,67 +113,89 @@ object Deep33Api {
         val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
         var lastError: Deep33ApiException? = null
 
-        for (endpoint in endpoints()) {
-            val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
-            if (remainingMs <= 3_000L) break
-            val connection = URL(endpoint + "/v1/chat/stream").openConnection() as HttpsURLConnection
-            activeStreamConnection = connection
-            val output = StringBuilder()
-            var emitted = false
-            try {
-                connection.requestMethod = "POST"
-                connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
-                connection.readTimeout = remainingMs.toInt()
-                connection.useCaches = false
-                connection.doInput = true
-                connection.doOutput = true
-                connection.instanceFollowRedirects = false
-                connection.setRequestProperty("Accept", "text/event-stream")
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                connection.setRequestProperty("X-Request-ID", requestId)
-                connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
-                connection.outputStream.use {
-                    it.write(JSONObject().put("messages", messages).put("personality", personality).toString().toByteArray(Charsets.UTF_8))
-                }
+        for (endpoint in normalizedEndpoints()) {
+            var attempt = 0
+            while (attempt < ENDPOINT_ATTEMPTS) {
+                attempt++
+                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
+                if (remainingMs <= 3_000L) break
 
-                val code = connection.responseCode
-                if (code !in 200..299) throw mapError(code)
-                if (!connection.contentType.orEmpty().contains("text/event-stream", ignoreCase = true)) {
-                    throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
-                }
+                val connection = URL(endpoint + "/v1/chat/stream").openConnection() as HttpsURLConnection
+                activeStreamConnection = connection
+                val output = StringBuilder()
+                var emitted = false
 
-                connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                    lines.forEach { line ->
-                        if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
-                        val data = line.removePrefix("data:").trim()
-                        if (data.isBlank()) return@forEach
-                        if (data == "[DONE]") return@useLines
-                        if (line.startsWith("event: error")) return@forEach
-                        val chunk = SseTextParser.extractText(data).orEmpty()
-                        if (chunk.isNotEmpty()) {
-                            emitted = true
-                            output.append(chunk)
-                            onText(chunk)
+                try {
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.readTimeout = remainingMs.toInt()
+                    connection.useCaches = false
+                    connection.doInput = true
+                    connection.doOutput = true
+                    connection.instanceFollowRedirects = false
+                    connection.setRequestProperty("Accept", "text/event-stream")
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
+                    connection.setRequestProperty("X-Request-ID", requestId)
+                    connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
+
+                    connection.outputStream.use {
+                        it.write(
+                            JSONObject()
+                                .put("messages", messages)
+                                .put("personality", personality)
+                                .toString()
+                                .toByteArray(Charsets.UTF_8)
+                        )
+                    }
+
+                    val code = connection.responseCode
+                    if (code !in 200..299) throw mapError(code)
+                    if (!connection.contentType.orEmpty().contains("text/event-stream", ignoreCase = true)) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
+                    }
+
+                    connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        lines.forEach { line ->
+                            if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                            val data = line.removePrefix("data:").trim()
+                            if (data.isBlank()) return@forEach
+                            if (data == "[DONE]") return@useLines
+                            if (line.startsWith("event: error")) return@forEach
+                            val chunk = SseTextParser.extractText(data).orEmpty()
+                            if (chunk.isNotEmpty()) {
+                                emitted = true
+                                output.append(chunk)
+                                onText(chunk)
+                            }
                         }
                     }
+                    return output.toString()
+                } catch (e: Deep33ApiException) {
+                    lastError = e
+                    if (e.kind == Deep33ApiException.Kind.CANCELLED || emitted || !shouldFailover(e)) throw e
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } catch (e: SocketTimeoutException) {
+                    lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
+                    if (emitted || attempt >= ENDPOINT_ATTEMPTS) {
+                        if (emitted) throw lastError
+                        break
+                    }
+                } catch (e: IOException) {
+                    lastError = if (isCancelled()) {
+                        Deep33ApiException(Deep33ApiException.Kind.CANCELLED, cause = e)
+                    } else {
+                        Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
+                    }
+                    if (lastError.kind == Deep33ApiException.Kind.CANCELLED || emitted) throw lastError
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } finally {
+                    if (activeStreamConnection === connection) activeStreamConnection = null
+                    connection.disconnect()
                 }
-                return output.toString()
-            } catch (e: Deep33ApiException) {
-                lastError = e
-                if (e.kind == Deep33ApiException.Kind.CANCELLED || emitted || !shouldFailover(e)) throw e
-            } catch (e: SocketTimeoutException) {
-                lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
-                if (emitted) throw lastError
-            } catch (e: IOException) {
-                lastError = if (isCancelled()) Deep33ApiException(Deep33ApiException.Kind.CANCELLED, cause = e)
-                else Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
-                if (lastError.kind == Deep33ApiException.Kind.CANCELLED || emitted) throw lastError
-            } finally {
-                if (activeStreamConnection === connection) activeStreamConnection = null
-                connection.disconnect()
             }
         }
+
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
 
@@ -187,54 +219,69 @@ object Deep33Api {
         body: JSONObject?,
         sessionId: String,
         requestId: String = UUID.randomUUID().toString(),
-        idempotencyKey: String = requestId
+        idempotencyKey: String = requestId,
+        endpointOverride: List<String>? = null
     ): JSONObject {
         val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
         var lastError: Deep33ApiException? = null
 
-        for (endpoint in endpoints()) {
-            val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
-            if (remainingMs <= 3_000L) break
-            val url = URL(endpoint + path)
-            val connection = url.openConnection() as HttpsURLConnection
-            try {
-                connection.requestMethod = method
-                connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
-                connection.readTimeout = remainingMs.toInt()
-                connection.useCaches = false
-                connection.doInput = true
-                connection.instanceFollowRedirects = false
-                connection.setRequestProperty("Accept", "application/json")
-                connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                connection.setRequestProperty("X-Request-ID", requestId)
-                connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
-                if (body != null) {
-                    connection.doOutput = true
-                    connection.setRequestProperty("Content-Type", "application/json")
-                    connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+        for (endpoint in normalizedEndpoints(endpointOverride)) {
+            var attempt = 0
+            while (attempt < ENDPOINT_ATTEMPTS) {
+                attempt++
+                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
+                if (remainingMs <= 3_000L) break
+
+                val url = URL(endpoint + path)
+                val connection = url.openConnection() as HttpsURLConnection
+
+                try {
+                    connection.requestMethod = method
+                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.readTimeout = remainingMs.toInt()
+                    connection.useCaches = false
+                    connection.doInput = true
+                    connection.instanceFollowRedirects = false
+                    connection.setRequestProperty("Accept", "application/json")
+                    connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
+                    connection.setRequestProperty("X-Request-ID", requestId)
+                    connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
+
+                    if (body != null) {
+                        connection.doOutput = true
+                        connection.setRequestProperty("Content-Type", "application/json")
+                        connection.outputStream.use {
+                            it.write(body.toString().toByteArray(Charsets.UTF_8))
+                        }
+                    }
+
+                    val code = connection.responseCode
+                    if (code !in 200..299) throw mapError(code)
+
+                    val payload = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    return try {
+                        JSONObject(payload)
+                    } catch (e: Exception) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code, e)
+                    }
+                } catch (e: Deep33ApiException) {
+                    lastError = e
+                    if (!shouldFailover(e)) throw e
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } catch (e: SocketTimeoutException) {
+                    lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } catch (e: IOException) {
+                    lastError = Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } finally {
+                    connection.disconnect()
                 }
-                val code = connection.responseCode
-                if (code !in 200..299) throw mapError(code)
-                val payload = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                return try {
-                    JSONObject(payload)
-                } catch (e: Exception) {
-                    throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code, e)
-                }
-            } catch (e: Deep33ApiException) {
-                lastError = e
-                if (!shouldFailover(e)) throw e
-            } catch (e: SocketTimeoutException) {
-                lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
-            } catch (e: IOException) {
-                lastError = Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
-            } finally {
-                connection.disconnect()
             }
         }
+
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
-
 }
 
 object SseTextParser {
