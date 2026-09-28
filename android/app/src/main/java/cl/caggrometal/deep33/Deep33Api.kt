@@ -31,7 +31,7 @@ class Deep33ApiException(
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val CONNECT_TIMEOUT_MS = 15_000
-    private const val ENDPOINT_ATTEMPTS = 2
+    private const val ENDPOINT_ATTEMPTS = 1
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val values = overrides ?: listOf(
