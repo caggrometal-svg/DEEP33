@@ -24,6 +24,7 @@ async def fake_gateway_probe() -> dict:
         "latency_ms": 10.0,
         "last_success": "2026-01-01T00:00:00+00:00",
         "last_error": None,
+        "fallback_used": False,
     }
 
 
@@ -41,6 +42,10 @@ async def fake_call_gateway(payload: dict) -> dict:
                 "finish_reason": "stop",
             }
         ],
+        "_deep33_gateway": {
+            "provider": "kilo",
+            "model": payload["model"],
+        },
     }
 
 
@@ -85,6 +90,7 @@ def test_ai_status_contract(monkeypatch) -> None:
         "latency_ms",
         "last_success",
         "last_error",
+        "fallback_used",
     ):
         assert key in body
     assert body["gateway"] == "PASS"
@@ -116,3 +122,18 @@ def test_chat_contract(monkeypatch) -> None:
         body["response"]["choices"][0]["message"]["content"]
         == "DEEP33 connectivity PASS"
     )
+    assert body["result"]["text"] == "DEEP33 connectivity PASS"
+
+
+def test_generate_contract(monkeypatch) -> None:
+    monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
+    response = client.post(
+        "/v1/ai/generate",
+        json={"messages": [{"role": "user", "content": "Hola DEEP33"}]},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["request_id"]
+    assert body["result"]["role"] == "assistant"
+    assert body["result"]["provider"] == "kilo"
+    assert body["result"]["text"] == "DEEP33 connectivity PASS"
