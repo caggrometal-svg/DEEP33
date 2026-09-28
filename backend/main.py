@@ -13,16 +13,27 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 APP_NAME = "DEEP33 Backend"
-APP_VERSION = "0.1.0"
-AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "").strip()
+APP_VERSION = "0.1.1"
+
+# Connectivity is part of the backend core. The provider remains replaceable,
+# but DEEP33 boots with a keyless free gateway so the backbone can be proven
+# before adding any paid or private provider.
+AI_GATEWAY_URL = os.getenv(
+    "AI_GATEWAY_URL",
+    "https://api.kilo.ai/api/gateway/chat/completions",
+).strip()
 AI_GATEWAY_API_KEY = os.getenv("AI_GATEWAY_API_KEY", "").strip()
-AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "").strip()
-AI_GATEWAY_HEALTH_URL = os.getenv("AI_GATEWAY_HEALTH_URL", "").strip()
+AI_GATEWAY_MODEL = os.getenv("AI_GATEWAY_MODEL", "kilo-auto/free").strip()
+AI_GATEWAY_HEALTH_URL = os.getenv(
+    "AI_GATEWAY_HEALTH_URL",
+    "https://api.kilo.ai/api/gateway/models",
+).strip()
+
 NETWORK_CHECK_URL = os.getenv(
     "NETWORK_CHECK_URL", "https://www.google.com/generate_204"
 ).strip()
-NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "5"))
-AI_TIMEOUT = float(os.getenv("AI_TIMEOUT_SECONDS", "30"))
+NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
+AI_TIMEOUT = float(os.getenv("AI_TIMEOUT_SECONDS", "45"))
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
@@ -57,7 +68,9 @@ async def network_probe() -> dict:
 
     if dns_ok:
         try:
-            async with httpx.AsyncClient(timeout=NETWORK_TIMEOUT, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=NETWORK_TIMEOUT, follow_redirects=True
+            ) as client:
                 response = await client.get(NETWORK_CHECK_URL)
                 https_ok = 200 <= response.status_code < 400
                 if not https_ok:
@@ -88,7 +101,12 @@ async def gateway_probe() -> dict:
         }
 
     started = time.perf_counter()
-    headers = {"Authorization": f"Bearer {AI_GATEWAY_API_KEY}"} if AI_GATEWAY_API_KEY else {}
+    headers = (
+        {"Authorization": f"Bearer {AI_GATEWAY_API_KEY}"}
+        if AI_GATEWAY_API_KEY
+        else {}
+    )
+
     try:
         async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
             response = await client.get(AI_GATEWAY_HEALTH_URL, headers=headers)
@@ -121,9 +139,15 @@ async def gateway_probe() -> dict:
             "last_error": type(exc).__name__,
         }
 
+
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "PASS", "service": APP_NAME, "version": APP_VERSION, "timestamp": utc_now()}
+    return {
+        "status": "PASS",
+        "service": APP_NAME,
+        "version": APP_VERSION,
+        "timestamp": utc_now(),
+    }
 
 
 @app.get("/ready")
@@ -174,16 +198,17 @@ async def ai_diagnostics() -> dict:
 
 
 async def call_gateway(payload: dict) -> dict:
-    if not AI_GATEWAY_URL:
-        raise HTTPException(status_code=503, detail="AI_GATEWAY_NOT_CONFIGURED")
-
     headers = {"Content-Type": "application/json"}
     if AI_GATEWAY_API_KEY:
         headers["Authorization"] = f"Bearer {AI_GATEWAY_API_KEY}"
 
     try:
         async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
-            response = await client.post(AI_GATEWAY_URL, json=payload, headers=headers)
+            response = await client.post(
+                AI_GATEWAY_URL,
+                json=payload,
+                headers=headers,
+            )
             response.raise_for_status()
             return response.json()
     except httpx.TimeoutException as exc:
@@ -191,7 +216,9 @@ async def call_gateway(payload: dict) -> dict:
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=502, detail="AI_GATEWAY_HTTP_ERROR") from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
+        raise HTTPException(
+            status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE"
+        ) from exc
 
 
 @app.post("/v1/chat")
@@ -214,19 +241,21 @@ async def chat(request: ChatRequest) -> dict:
 
 
 async def stream_gateway(payload: dict) -> AsyncIterator[bytes]:
-    if not AI_GATEWAY_URL:
-        raise HTTPException(status_code=503, detail="AI_GATEWAY_NOT_CONFIGURED")
-
     headers = {"Content-Type": "application/json"}
     if AI_GATEWAY_API_KEY:
         headers["Authorization"] = f"Bearer {AI_GATEWAY_API_KEY}"
 
     async with httpx.AsyncClient(timeout=AI_TIMEOUT) as client:
         async with client.stream(
-            "POST", AI_GATEWAY_URL, json={**payload, "stream": True}, headers=headers
+            "POST",
+            AI_GATEWAY_URL,
+            json={**payload, "stream": True},
+            headers=headers,
         ) as response:
             if response.status_code >= 400:
-                raise HTTPException(status_code=502, detail="AI_GATEWAY_STREAM_ERROR")
+                raise HTTPException(
+                    status_code=502, detail="AI_GATEWAY_STREAM_ERROR"
+                )
             async for chunk in response.aiter_bytes():
                 if chunk:
                     yield chunk
