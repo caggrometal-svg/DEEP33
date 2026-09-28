@@ -115,6 +115,7 @@ def test_chat_contract(monkeypatch) -> None:
     response = client.post(
         "/v1/chat",
         json={"messages": [{"role": "user", "content": "Hola"}]},
+        headers={"X-DEEP33-Session-Id": "test-session"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -130,6 +131,7 @@ def test_generate_contract(monkeypatch) -> None:
     response = client.post(
         "/v1/ai/generate",
         json={"messages": [{"role": "user", "content": "Hola DEEP33"}]},
+        headers={"X-DEEP33-Session-Id": "test-session"},
     )
     assert response.status_code == 200
     body = response.json()
