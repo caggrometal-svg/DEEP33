@@ -18,9 +18,9 @@ def test_web_tool_loop_search_then_fetch(monkeypatch: pytest.MonkeyPatch):
             return {"model":"test","choices":[{"message":{"role":"assistant","content":None,"tool_calls":[{"id":"c2","type":"function","function":{"name":"web_fetch","arguments":json.dumps({"url":"https://example.com/"})}}]}}]}
         assert sum(m.get("role")=="tool" for m in payload["messages"])==2
         return {"model":"test","choices":[{"message":{"role":"assistant","content":"Respuesta verificada."}}]}
-    async def fake_search(query):
+    async def fake_search(query, **kwargs):
         return {"ok":True,"query":query,"results":[{"title":"Example","url":"https://example.com/","snippet":"Snippet"}]}
-    async def fake_fetch(url):
+    async def fake_fetch(url, **kwargs):
         return {"ok":True,"url":url,"final_url":url,"title":"Example","text":"Example content"}
     monkeypatch.setattr(main,"call_gateway",fake_gateway)
     monkeypatch.setattr(main,"search_web",fake_search)
