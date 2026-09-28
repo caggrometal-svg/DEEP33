@@ -32,7 +32,7 @@ private object Deep33Api {
     }
 
     fun chat(messages: JSONArray): JSONObject {
-        val connection = open("POST", "/v1/chat")
+        val connection = open("POST", "/v1/ai/generate")
         return try {
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
