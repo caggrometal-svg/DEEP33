@@ -112,7 +112,7 @@ jobs:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
-          api-level: 35
+          api-level: 34
           target: google_apis
           arch: x86_64
           profile: pixel_5
@@ -123,9 +123,9 @@ jobs:
           force-avd-creation: true
           emulator-boot-timeout: 900
           emulator-port: 5554
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-load -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          disable-spellchecker: false
+          disable-spellchecker: true
           disable-linux-hw-accel: auto
           enable-hw-keyboard: false
           channel: stable
