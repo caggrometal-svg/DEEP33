@@ -151,7 +151,21 @@ def extract_context_messages(data: dict) -> list[dict[str, Any]]:
     messages = data.get("messages")
     if not isinstance(messages, list):
         return []
-    return [item for item in messages if isinstance(item, dict) and not is_internal_context_message(item)]
+    # Remote memory is data, never an instruction channel.
+    # Only user/assistant turns are allowed back into the model context.
+    return [
+        {
+            "role": str(item.get("role")),
+            "content": str(item.get("content")).strip(),
+        }
+        for item in messages
+        if (
+            isinstance(item, dict)
+            and str(item.get("role", "")).strip() in {"user", "assistant"}
+            and str(item.get("content", "")).strip()
+            and not is_internal_context_message(item)
+        )
+    ]
 
 
 def extract_context_system_message(data: dict) -> str | None:
