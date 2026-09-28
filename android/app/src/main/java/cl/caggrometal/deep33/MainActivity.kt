@@ -93,7 +93,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(chatContainer) }
         input = EditText(this).apply {
             hint = "Escribe un mensaje"
-            hintTextColor = Color.GRAY
+            setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
             maxLines = 4
             setBackgroundColor(Color.rgb(18, 22, 30))
