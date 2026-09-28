@@ -144,7 +144,7 @@ def test_generate_contract(monkeypatch) -> None:
 def test_personality_is_injected_into_model_context(monkeypatch) -> None:
     captured: dict = {}
 
-    async def capture_gateway(payload: dict) -> dict:
+    async def capture_gateway(payload: dict, **_kwargs) -> dict:
         captured["messages"] = payload["messages"]
         return await fake_call_gateway(payload)
 
