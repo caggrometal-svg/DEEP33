@@ -51,6 +51,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
+    personality: str | None = Field(default=None, pattern="^(AGRESIVO|NEUTRO|CONSPIRANOICO)$")
 
 
 class MemoryRememberRequest(BaseModel):
@@ -186,7 +187,7 @@ async def call_gateway(payload: dict) -> dict:
         raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
 
 
-def normalized_generation(data: dict) -> dict:
+def normalized_generation(data: dict, personality: str = "NEUTRO") -> dict:
     response = data.get("choices")
     if not isinstance(response, list) or not response:
         raise HTTPException(status_code=502, detail="AI_RESPONSE_CHOICES_MISSING")
@@ -209,13 +210,15 @@ def normalized_generation(data: dict) -> dict:
         "text": content,
         "model": data.get("model") or gateway_meta.get("model"),
         "provider": gateway_meta.get("provider"),
+        "personality": normalize_personality(personality),
     }
 
 
-async def prepare_messages(request: ChatRequest, session_id: str) -> list[dict[str, str]]:
+async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[dict[str, str]], str]:
     requested = [message.model_dump() for message in request.messages]
+    selected = normalize_personality(request.personality)
     if not memory.enabled:
-        return requested[-50:]
+        return [{"role": "system", "content": personality_prompt(selected)}, *requested[-49:]], selected
 
     try:
         context = await memory.context(session_id)
@@ -223,11 +226,11 @@ async def prepare_messages(request: ChatRequest, session_id: str) -> list[dict[s
         merged = merge_messages(remote, requested, limit=49)
         system_context = extract_context_system_message(context)
         if system_context:
-            return [{"role": "system", "content": system_context}, *merged]
-        return merged
+            return [{"role": "system", "content": personality_prompt(selected) + "\n\n" + system_context}, *merged], selected
+        return [{"role": "system", "content": personality_prompt(selected)}, *merged], selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
-        return requested[-50:]
+        return [{"role": "system", "content": personality_prompt(selected)}, *requested[-49:]], selected
 
 
 async def persist_messages(
@@ -246,7 +249,7 @@ async def persist_messages(
 
 async def generate(request: ChatRequest, session_id: str) -> dict:
     request_id = str(uuid.uuid4())
-    messages = await prepare_messages(request, session_id)
+    messages, personality = await prepare_messages(request, session_id)
 
     payload = {
         "messages": messages,
@@ -263,7 +266,7 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
     started = time.perf_counter()
     data = await call_gateway(payload)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    result = normalized_generation(data)
+    result = normalized_generation(data, personality)
 
     assistant_message = {"role": "assistant", "content": result["text"]}
     await persist_messages(
@@ -399,3 +402,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/v1/personalities")
+async def personalities() -> dict:
+    return {"default": DEFAULT_PERSONALITY, "personalities": [{"name": key} for key in PERSONALITIES]}

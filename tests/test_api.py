@@ -139,3 +139,27 @@ def test_generate_contract(monkeypatch) -> None:
     assert body["result"]["role"] == "assistant"
     assert body["result"]["provider"] == "kilo"
     assert body["result"]["text"] == "DEEP33 connectivity PASS"
+
+
+def test_personality_is_exposed_and_validated(monkeypatch) -> None:
+    monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
+    response = client.post(
+        "/v1/ai/generate",
+        json={
+            "personality": "AGRESIVO",
+            "messages": [{"role": "user", "content": "Hola"}],
+        },
+        headers={"X-DEEP33-Session-Id": "personality-test"},
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["personality"] == "AGRESIVO"
+
+
+def test_personality_catalog() -> None:
+    response = client.get("/v1/personalities")
+    assert response.status_code == 200
+    assert [p["name"] for p in response.json()["personalities"]] == [
+        "AGRESIVO",
+        "NEUTRO",
+        "CONSPIRANOICO",
+    ]

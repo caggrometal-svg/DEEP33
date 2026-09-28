@@ -37,11 +37,11 @@ object Deep33Api {
     fun get(path: String, sessionId: String): JSONObject =
         request("GET", path, null, sessionId)
 
-    fun generate(messages: JSONArray, sessionId: String): JSONObject =
+    fun generate(messages: JSONArray, sessionId: String, personality: String = "NEUTRO"): JSONObject =
         request(
             "POST",
             "/v1/ai/generate",
-            JSONObject().put("messages", messages),
+            JSONObject().put("messages", messages).put("personality", personality),
             sessionId
         )
 
@@ -74,6 +74,7 @@ object Deep33Api {
     fun stream(
         messages: JSONArray,
         sessionId: String,
+        personality: String = "NEUTRO",
         isCancelled: () -> Boolean = { false },
         onText: (String) -> Unit
     ): String {
@@ -94,7 +95,7 @@ object Deep33Api {
             connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
             connection.setRequestProperty("X-Request-ID", UUID.randomUUID().toString())
             connection.outputStream.use {
-                it.write(JSONObject().put("messages", messages).toString().toByteArray(Charsets.UTF_8))
+                it.write(JSONObject().put("messages", messages).put("personality", personality).toString().toByteArray(Charsets.UTF_8))
             }
 
             val code = try {

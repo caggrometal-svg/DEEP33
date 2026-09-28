@@ -53,6 +53,7 @@ class MainActivity : Activity() {
         setContentView(buildRoot())
         renderConversation()
         showTab(Tab.CHAT)
+        applyPersonalityTheme(Personality.fromKey(store.personality))
         checkConnectivity()
         loadRemoteContext()
     }
@@ -215,15 +216,25 @@ class MainActivity : Activity() {
                 if (!store.voiceEnabled) textToSpeech?.stop()
             }
         }
-        val personalityButton = Button(this).apply {
+        val personalityTitle = TextView(this).apply {
             text = "PERSONALIDAD: " + store.personality
-            setOnClickListener {
-                val options = listOf("NEUTRO", "DIRECTO", "TECNICO", "CERCANO")
-                val next = options[(options.indexOf(store.personality).coerceAtLeast(0) + 1) % options.size]
-                store.personality = next
-                text = "PERSONALIDAD: " + next
-                syncPreferences()
-            }
+            setTextColor(Personality.fromKey(store.personality).accent)
+            textSize = 15f
+            setPadding(16, 12, 16, 8)
+        }
+        val personalityRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        Personality.entries.forEach { option ->
+            personalityRow.addView(Button(this).apply {
+                text = option.key + " · " + option.description
+                setTextColor(option.accent)
+                setOnClickListener {
+                    selectPersonality(option)
+                    personalityTitle.text = "PERSONALIDAD: " + option.key
+                    showTab(Tab.CHAT)
+                }
+            })
         }
         val clearConversation = Button(this).apply {
             text = "BORRAR CONVERSACIÓN"
@@ -245,10 +256,23 @@ class MainActivity : Activity() {
         }
         box.addView(sessionView)
         box.addView(voiceButton, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        box.addView(personalityButton, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(personalityTitle, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(personalityRow, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(clearConversation, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(newSession, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         return box
+    }
+
+    private fun selectPersonality(personality: Personality) {
+        store.personality = personality.key
+        applyPersonalityTheme(personality)
+        syncPreferences()
+    }
+
+    private fun applyPersonalityTheme(personality: Personality) {
+        statusView.setTextColor(personality.accent)
+        if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
     }
 
     private fun syncPreferences() {
@@ -356,6 +380,7 @@ class MainActivity : Activity() {
                 val finalText = Deep33Api.stream(
                     payload,
                     store.sessionId,
+                    store.personality,
                     isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
                     onText = { chunk ->
                         runOnUiThread {
@@ -458,7 +483,11 @@ class MainActivity : Activity() {
             setPadding(18, 14, 18, 14)
             setBackground(
                 GradientDrawable().apply {
-                    setColor(background)
+                    setColor(if (isAssistant) {
+                        (Color.red(background) + Color.red(personality.accent)) / 2 shl 16 or
+                            ((Color.green(background) + Color.green(personality.accent)) / 2 shl 8) or
+                            ((Color.blue(background) + Color.blue(personality.accent)) / 2)
+                    } else background)
                     cornerRadius = 24f
                 }
             )
