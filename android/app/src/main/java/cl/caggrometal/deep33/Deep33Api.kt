@@ -11,8 +11,8 @@ import javax.net.ssl.HttpsURLConnection
 class Deep33ApiException(
     val kind: Kind,
     val statusCode: Int? = null,
-    val partialOutput: Boolean = false,
-    cause: Throwable? = null
+    cause: Throwable? = null,
+    val partialOutput: Boolean = false
 ) : IOException(messageFor(kind), cause) {
     enum class Kind { NETWORK, TIMEOUT, AUTH, RATE_LIMIT, SERVER, BAD_RESPONSE, CANCELLED }
 
