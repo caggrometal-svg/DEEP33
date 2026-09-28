@@ -16,7 +16,6 @@ import android.text.method.LinkMovementMethod
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -104,8 +103,13 @@ class MainActivity : Activity() {
         window.statusBarColor = Color.rgb(8, 10, 15)
         window.navigationBarColor = Color.rgb(8, 10, 15)
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            @Suppress("DEPRECATION")
+            view.setPadding(
+                insets.systemWindowInsetLeft,
+                insets.systemWindowInsetTop,
+                insets.systemWindowInsetRight,
+                insets.systemWindowInsetBottom
+            )
             insets
         }
 
