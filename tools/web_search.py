@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import httpx
 from tools.web_fetch import validate_public_url
 
-TAVILY_URL="https://api.tavily.com/search"
+DEFAULT_TAVILY_URL="https://api.tavily.com/search"
 DUCKDUCKGO_URL="https://html.duckduckgo.com/html/"
 DEFAULT_TIMEOUT_SECONDS=8.0
 DEFAULT_MAX_RESULTS=5
@@ -59,7 +59,7 @@ def _normalise_results(results,limit):
 async def _tavily_search(query,api_key,timeout_seconds,max_results):
     payload={"query":query,"search_depth":"basic","topic":"general","max_results":max_results,"include_answer":False,"include_raw_content":False,"include_images":False,"safe_search":False}
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds),follow_redirects=True,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json","User-Agent":"DEEP33-WebSearch/1.0"}) as client:
-        response=await client.post(TAVILY_URL,json=payload)
+        response=await client.post(os.getenv("WEB_SEARCH_API_URL",DEFAULT_TAVILY_URL),json=payload)
         if response.status_code>=400: raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
         data=response.json()
     raw=data.get("results")
