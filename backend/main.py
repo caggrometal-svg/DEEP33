@@ -331,11 +331,20 @@ async def health() -> dict:
 async def ready(response: Response) -> dict:
     network = await network_probe()
     gateway_status = await gateway_probe()
+    memory_status = {"configured": memory.enabled, "reachable": True}
+    if memory.enabled:
+        try:
+            memory_status = await memory.probe()
+        except MemoryUnavailableError as exc:
+            logger.warning("memory_readiness_failed error=%s", exc)
+            memory_status = {"configured": True, "reachable": False}
+
     ready_ok = (
         network["internet_available"]
         and gateway_status.get("gateway") == "PASS"
         and bool(gateway_status.get("model"))
         and bool(gateway.config.providers)
+        and (not memory.enabled or memory_status.get("reachable") is True)
     )
     response.status_code = 200 if ready_ok else 503
     return {
@@ -348,6 +357,7 @@ async def ready(response: Response) -> dict:
         "network": network,
         "gateway": gateway_status,
         "memory_configured": memory.enabled,
+        "memory": memory_status,
     }
 
 
@@ -405,6 +415,13 @@ async def ai_diagnostics(request: Request) -> dict:
     gateway_status = await gateway_probe()
     inference_status, inference_data, inference_text = await run_inference_check(request_id)
     model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
+    memory_status = {"enabled": memory.enabled, "reachable": True}
+    if memory.enabled:
+        try:
+            await memory.probe()
+        except MemoryUnavailableError as exc:
+            logger.warning("memory_diagnostics_unavailable error=%s", exc)
+            memory_status = {"enabled": True, "reachable": False}
 
     return {
         "timestamp": utc_now(),
@@ -420,7 +437,7 @@ async def ai_diagnostics(request: Request) -> dict:
             "AI_GATEWAY": gateway_status["gateway"],
             "MODEL": "PASS" if model_pass else inference_status,
             "CHAT": "PASS" if model_pass else "FAIL",
-            "MEMORY": "PASS" if memory.enabled else "DEGRADED",
+            "MEMORY": "PASS" if (memory.enabled and memory_status.get("reachable") is True) else ("DEGRADED" if not memory.enabled else "FAIL"),
         },
         "network": network,
         "gateway": gateway_status,
@@ -439,6 +456,7 @@ async def ai_diagnostics(request: Request) -> dict:
         },
         "memory": {
             "enabled": memory.enabled,
+            "reachable": memory_status.get("reachable", False),
             "backend": "supabase-edge-function" if memory.enabled else None,
         },
         "online": bool(
