@@ -63,6 +63,51 @@ def test_complete_uses_fallback_after_primary_http_failure() -> None:
     assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
 
 
+
+def test_complete_never_retries_or_fails_over_after_ambiguous_read_timeout() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        raise httpx.ReadTimeout("ambiguous response timeout", request=request)
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=2,
+    )
+    gateway = AIGateway(config)
+
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    try:
+        import asyncio
+
+        with pytest.raises(Exception) as exc_info:
+            asyncio.run(
+                gateway.complete(
+                    {"messages": [{"role": "user", "content": "hi"}]},
+                    request_id="timeout-test",
+                    idempotency_key="timeout-test",
+                )
+            )
+        assert exc_info.type.__name__ == "GatewayTimeoutError"
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == ["https://primary.test/chat"]
+
+
 def test_complete_raises_when_all_providers_fail() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(502, request=request)
