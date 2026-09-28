@@ -37,7 +37,6 @@ jobs:
         run: python -m pytest tests -q
 
   android_validation:
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     needs: backend_unit
     runs-on: ubuntu-latest
     steps:
