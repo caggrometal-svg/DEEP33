@@ -5,6 +5,41 @@ from backend import main
 client = TestClient(main.app)
 
 
+class FakeMemory:
+    enabled = True
+
+    async def ping(self) -> dict:
+        return {"ok": True}
+
+    async def context(self, session_id: str) -> dict:
+        return {"session": {"session_id": session_id}, "messages": [], "memories": []}
+
+    async def sync(self, *args, **kwargs) -> dict:
+        return {"ok": True}
+
+    async def remember(self, *args, **kwargs) -> dict:
+        return {"ok": True}
+
+    async def set_preferences(self, *args, **kwargs) -> dict:
+        return {"ok": True}
+
+    async def idempotency_claim(self, *args, **kwargs) -> dict:
+        return {"state": "CLAIMED", "lease_token": "test-lease"}
+
+    async def idempotency_status(self, *args, **kwargs) -> dict:
+        return {"state": "IN_PROGRESS"}
+
+    async def idempotency_complete(self, *args, **kwargs) -> dict:
+        return {"ok": True}
+
+    async def idempotency_fail(self, *args, **kwargs) -> dict:
+        return {"ok": True}
+
+
+def patch_memory(monkeypatch) -> None:
+    monkeypatch.setattr(main, "memory", FakeMemory())
+
+
 async def fake_network_probe() -> dict:
     return {
         "internet_available": True,
@@ -55,7 +90,8 @@ def test_health() -> None:
     assert response.json()["status"] == "PASS"
 
 
-def test_ready() -> None:
+def test_ready(monkeypatch) -> None:
+    patch_memory(monkeypatch)
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["ready"] is True
@@ -111,6 +147,7 @@ def test_ai_diagnostics_contract(monkeypatch) -> None:
 
 
 def test_chat_contract(monkeypatch) -> None:
+    patch_memory(monkeypatch)
     monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
     response = client.post(
         "/v1/chat",
@@ -127,6 +164,7 @@ def test_chat_contract(monkeypatch) -> None:
 
 
 def test_generate_contract(monkeypatch) -> None:
+    patch_memory(monkeypatch)
     monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
     response = client.post(
         "/v1/ai/generate",
@@ -142,6 +180,7 @@ def test_generate_contract(monkeypatch) -> None:
 
 
 def test_personality_is_injected_into_model_context(monkeypatch) -> None:
+    patch_memory(monkeypatch)
     captured: dict = {}
 
     async def capture_gateway(payload: dict, **_kwargs) -> dict:
