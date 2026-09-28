@@ -66,7 +66,7 @@ jobs:
             sleep 10
           done
           curl -fsS --max-time 30 "$DEEP33_URL/v1/ai/status" | tee /tmp/fallback-status.json
-          jq -e '.gateway == "PASS" and .provider == "pollinations" and .fallback_used == true' /tmp/fallback-status.json
+          jq -e '.gateway == "PASS" and .provider == "kilo-secondary" and .fallback_used == true' /tmp/fallback-status.json
           curl -fsS --max-time 90 \
             -H 'content-type: application/json' \
             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_FALLBACK_OK"}],"model":"kilo-auto/free"}' \
