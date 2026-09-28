@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import socket
@@ -8,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -27,13 +29,20 @@ from backend.memory import (
 )
 
 APP_NAME = "DEEP33 Backend"
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.2.0"
+GIT_SHA = os.getenv("RENDER_GIT_COMMIT", "").strip() or os.getenv("DEEP33_GIT_SHA", "unknown").strip()
+BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
+GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
+GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
+RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
+RATE_LIMIT_WINDOW = max(10.0, float(os.getenv("DEEP33_RATE_LIMIT_WINDOW_SECONDS", "60")))
+CLIENT_AUTH_TOKEN = os.getenv("DEEP33_CLIENT_AUTH_TOKEN", "").strip()
 
 gateway = AIGateway()
 memory = MemoryClient()
@@ -65,12 +74,21 @@ PERSONALITIES: dict[str, dict[str, str]] = {
         ),
     },
 }
-
 DEFAULT_PERSONALITY = "NEUTRO"
+
+_rate_state: dict[str, tuple[float, int]] = {}
+_idempotency_cache: dict[str, tuple[float, dict]] = {}
+CACHE_TTL_SECONDS = 300.0
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 def normalize_personality(value: str | None) -> str:
     candidate = (value or "").strip().upper()
     return candidate if candidate in PERSONALITIES else DEFAULT_PERSONALITY
+
 
 def personality_prompt(personality: str) -> str:
     profile = PERSONALITIES[normalize_personality(personality)]
@@ -103,15 +121,66 @@ class MemoryPreferencesRequest(BaseModel):
     preferences: dict = Field(default_factory=dict)
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def session_id_from_request(request: Request) -> str:
     value = request.headers.get("X-DEEP33-Session-Id", "").strip()
     if not value:
         raise HTTPException(status_code=400, detail="DEEP33_SESSION_ID_REQUIRED")
     return value[:128]
+
+
+def request_id_from_request(request: Request) -> str:
+    value = request.headers.get("X-Request-ID", "").strip()
+    return value[:128] if value else str(uuid.uuid4())
+
+
+def idempotency_key_from_request(request: Request, request_id: str) -> str:
+    value = request.headers.get("X-Idempotency-Key", "").strip()
+    return value[:256] if value else request_id
+
+
+def client_key(request: Request, session_id: str) -> str:
+    ip = request.client.host if request.client else "unknown"
+    return f"{ip}:{session_id[:64]}"
+
+
+def enforce_client_controls(request: Request, session_id: str) -> None:
+    if CLIENT_AUTH_TOKEN:
+        supplied = request.headers.get("Authorization", "")
+        if supplied != f"Bearer {CLIENT_AUTH_TOKEN}":
+            raise HTTPException(status_code=401, detail="DEEP33_CLIENT_AUTH_REQUIRED")
+
+    now = time.monotonic()
+    key = client_key(request, session_id)
+    window_start, count = _rate_state.get(key, (now, 0))
+    if now - window_start >= RATE_LIMIT_WINDOW:
+        _rate_state[key] = (now, 1)
+        return
+    if count >= RATE_LIMIT_COUNT:
+        raise HTTPException(status_code=429, detail="DEEP33_RATE_LIMITED")
+    _rate_state[key] = (window_start, count + 1)
+
+
+def cache_key(session_id: str, idempotency_key: str) -> str:
+    return f"{session_id}:{idempotency_key}"
+
+
+def cache_get(session_id: str, idempotency_key: str) -> dict | None:
+    key = cache_key(session_id, idempotency_key)
+    entry = _idempotency_cache.get(key)
+    if entry is None:
+        return None
+    expires_at, data = entry
+    if expires_at <= time.monotonic():
+        _idempotency_cache.pop(key, None)
+        return None
+    return data
+
+
+def cache_put(session_id: str, idempotency_key: str, data: dict) -> None:
+    _idempotency_cache[cache_key(session_id, idempotency_key)] = (
+        time.monotonic() + CACHE_TTL_SECONDS,
+        data,
+    )
 
 
 async def network_probe() -> dict:
@@ -141,12 +210,11 @@ async def network_probe() -> dict:
         except Exception as exc:
             error = f"https:{type(exc).__name__}"
 
-    latency_ms = round((time.perf_counter() - started) * 1000, 2)
     return {
         "internet_available": bool(dns_ok and https_ok),
         "dns_ok": dns_ok,
         "https_ok": https_ok,
-        "latency_ms": latency_ms,
+        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "timestamp": utc_now(),
         "error": error,
     }
@@ -156,19 +224,52 @@ async def gateway_probe() -> dict:
     return await gateway.probe()
 
 
+@app.get("/liveness")
+async def liveness() -> dict:
+    return {
+        "status": "PASS",
+        "service": APP_NAME,
+        "version": APP_VERSION,
+        "git_sha": GIT_SHA,
+        "build_id": BUILD_ID,
+        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "timestamp": utc_now(),
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
     return {
         "status": "PASS",
         "service": APP_NAME,
         "version": APP_VERSION,
+        "git_sha": GIT_SHA,
+        "build_id": BUILD_ID,
+        "git_branch": GIT_BRANCH,
+        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
         "timestamp": utc_now(),
     }
 
 
 @app.get("/ready")
-async def ready() -> dict:
-    return {"status": "PASS", "ready": True, "timestamp": utc_now()}
+async def ready(response: Response) -> dict:
+    network = await network_probe()
+    gateway_status = await gateway_probe()
+    ready_ok = (
+        network["internet_available"]
+        and gateway_status.get("gateway") == "PASS"
+        and bool(gateway_status.get("model"))
+        and bool(gateway.config.providers)
+    )
+    response.status_code = 200 if ready_ok else 503
+    return {
+        "status": "PASS" if ready_ok else "FAIL",
+        "ready": ready_ok,
+        "timestamp": utc_now(),
+        "network": network,
+        "gateway": gateway_status,
+        "memory_configured": memory.enabled,
+    }
 
 
 @app.get("/v1/network/status")
@@ -186,27 +287,78 @@ async def ai_status() -> dict:
     return await gateway_probe()
 
 
+async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
+    deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+    try:
+        data = await asyncio.wait_for(
+            gateway.diagnostic_inference(request_id=request_id, deadline=deadline),
+            timeout=GLOBAL_AI_TIMEOUT,
+        )
+        result = normalized_generation(data, DEFAULT_PERSONALITY)
+        return "PASS", data, result["text"]
+    except GatewayTimeoutError:
+        return "TIMEOUT", None, None
+    except (GatewayHTTPError, GatewayInvalidResponseError, HTTPException):
+        return "FAIL", None, None
+    except Exception as exc:
+        logger.warning("inference_check_failed request_id=%s error=%s", request_id, type(exc).__name__)
+        return "FAIL", None, None
+
+
+@app.get("/v1/ai/inference-check")
+async def inference_check(request: Request) -> dict:
+    request_id = request_id_from_request(request)
+    status, data, text = await run_inference_check(request_id)
+    return {
+        "status": status,
+        "request_id": request_id,
+        "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
+        "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
+        "text_ok": text == "DEEP33_DIAGNOSTIC_OK",
+        "timestamp": utc_now(),
+    }
+
+
 @app.get("/v1/ai/diagnostics")
-async def ai_diagnostics() -> dict:
+async def ai_diagnostics(request: Request) -> dict:
+    request_id = request_id_from_request(request)
     network = await network_probe()
     gateway_status = await gateway_probe()
-    model_pass = gateway_status["gateway"] == "PASS" and bool(gateway_status.get("model"))
+    inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    model_pass = inference_status == "PASS" and inference_text == "DEEP33_DIAGNOSTIC_OK"
 
     return {
         "timestamp": utc_now(),
+        "request_id": request_id,
         "checks": {
             "NETWORK": "PASS" if network["internet_available"] else "FAIL",
             "DNS": "PASS" if network["dns_ok"] else "FAIL",
             "HTTPS": "PASS" if network["https_ok"] else "FAIL",
             "BACKEND": "PASS",
             "AI_GATEWAY": gateway_status["gateway"],
-            "MODEL": "PASS" if model_pass else "FAIL",
-            "CHAT": "NOT_TESTED",
-            "MEMORY": "PASS" if memory.enabled else "NOT_CONFIGURED",
+            "MODEL": "PASS" if model_pass else inference_status,
+            "CHAT": "PASS" if model_pass else "FAIL",
+            "MEMORY": "PASS" if memory.enabled else "DEGRADED",
         },
         "network": network,
         "gateway": gateway_status,
-        "memory": {"enabled": memory.enabled, "backend": "supabase-edge-function" if memory.enabled else None},
+        "inference": {
+            "status": inference_status,
+            "provider": (
+                inference_data.get("_deep33_gateway", {}).get("provider")
+                if isinstance(inference_data, dict)
+                else None
+            ),
+            "model": (
+                inference_data.get("_deep33_gateway", {}).get("model")
+                if isinstance(inference_data, dict)
+                else None
+            ),
+        },
+        "memory": {
+            "enabled": memory.enabled,
+            "backend": "supabase-edge-function" if memory.enabled else None,
+        },
         "online": bool(
             network["internet_available"]
             and gateway_status["gateway"] == "PASS"
@@ -215,9 +367,25 @@ async def ai_diagnostics() -> dict:
     }
 
 
-async def call_gateway(payload: dict) -> dict:
+async def call_gateway(
+    payload: dict,
+    *,
+    request_id: str,
+    idempotency_key: str,
+) -> dict:
+    deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     try:
-        return await gateway.complete(payload)
+        return await asyncio.wait_for(
+            gateway.complete(
+                payload,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                deadline=deadline,
+            ),
+            timeout=GLOBAL_AI_TIMEOUT,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
     except GatewayTimeoutError as exc:
         raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
     except GatewayHTTPError as exc:
@@ -226,19 +394,16 @@ async def call_gateway(payload: dict) -> dict:
         raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
 
 
-def normalized_generation(data: dict, personality: str = "NEUTRO") -> dict:
+def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) -> dict:
     response = data.get("choices")
     if not isinstance(response, list) or not response:
         raise HTTPException(status_code=502, detail="AI_RESPONSE_CHOICES_MISSING")
-
     first = response[0]
     if not isinstance(first, dict):
         raise HTTPException(status_code=502, detail="AI_RESPONSE_CHOICE_INVALID")
-
     message = first.get("message")
     if not isinstance(message, dict):
         raise HTTPException(status_code=502, detail="AI_RESPONSE_MESSAGE_MISSING")
-
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=502, detail="AI_RESPONSE_CONTENT_MISSING")
@@ -265,7 +430,10 @@ async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[
         merged = merge_messages(remote, requested, limit=49)
         system_context = extract_context_system_message(context)
         if system_context:
-            return [{"role": "system", "content": personality_prompt(selected) + "\n\n" + system_context}, *merged], selected
+            return [
+                {"role": "system", "content": personality_prompt(selected) + "\n\n" + system_context},
+                *merged,
+            ], selected
         return [{"role": "system", "content": personality_prompt(selected)}, *merged], selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
@@ -286,10 +454,23 @@ async def persist_messages(
         logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
 
 
-async def generate(request: ChatRequest, session_id: str) -> dict:
-    request_id = str(uuid.uuid4())
-    messages, personality = await prepare_messages(request, session_id)
+async def generate(
+    request: ChatRequest,
+    session_id: str,
+    *,
+    request_id: str,
+    idempotency_key: str,
+) -> dict:
+    cached = cache_get(session_id, idempotency_key)
+    if cached is not None:
+        logger.info(
+            "ai_idempotency_hit request_id=%s session_id=%s",
+            request_id,
+            session_id,
+        )
+        return cached
 
+    messages, personality = await prepare_messages(request, session_id)
     payload = {
         "messages": messages,
         "model": request.model or AI_GATEWAY_MODEL,
@@ -300,10 +481,15 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
     await persist_messages(
         session_id,
         [message for message in messages if message.get("role") != "system"],
+        personality=personality,
     )
 
     started = time.perf_counter()
-    data = await call_gateway(payload)
+    data = await call_gateway(
+        payload,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     result = normalized_generation(data, personality)
 
@@ -311,7 +497,16 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
     await persist_messages(
         session_id,
         [message for message in messages if message.get("role") != "system"] + [assistant_message],
+        personality=personality,
     )
+
+    output = {
+        "request_id": request_id,
+        "latency_ms": elapsed_ms,
+        "result": result,
+        "response": data,
+    }
+    cache_put(session_id, idempotency_key, output)
 
     logger.info(
         "ai_request request_id=%s session_id=%s provider=%s model=%s latency_ms=%s success=true",
@@ -321,23 +516,41 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
         result.get("model"),
         elapsed_ms,
     )
-
-    return {
-        "request_id": request_id,
-        "latency_ms": elapsed_ms,
-        "result": result,
-        "response": data,
-    }
+    return output
 
 
 @app.post("/v1/ai/generate")
-async def ai_generate(request: ChatRequest, http_request: Request) -> dict:
-    return await generate(request, session_id_from_request(http_request))
+async def ai_generate(request: ChatRequest, http_request: Request, response: Response) -> dict:
+    session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    request_id = request_id_from_request(http_request)
+    idempotency_key = idempotency_key_from_request(http_request, request_id)
+    output = await generate(
+        request,
+        session_id,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Idempotency-Key"] = idempotency_key
+    return output
 
 
 @app.post("/v1/chat")
-async def chat(request: ChatRequest, http_request: Request) -> dict:
-    return await generate(request, session_id_from_request(http_request))
+async def chat(request: ChatRequest, http_request: Request, response: Response) -> dict:
+    session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    request_id = request_id_from_request(http_request)
+    idempotency_key = idempotency_key_from_request(http_request, request_id)
+    output = await generate(
+        request,
+        session_id,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Idempotency-Key"] = idempotency_key
+    return output
 
 
 @app.get("/v1/memory/context")
@@ -345,11 +558,11 @@ async def memory_context(http_request: Request) -> dict:
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
     try:
-        data = await memory.context(session_id)
+        return await memory.context(session_id)
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
-    return data
 
 
 @app.post("/v1/memory/remember")
@@ -360,6 +573,7 @@ async def memory_remember(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
     try:
         return await memory.remember(session_id, payload.kind, payload.content)
     except MemoryUnavailableError as exc:
@@ -374,6 +588,7 @@ async def memory_preferences(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
     try:
         return await memory.set_preferences(
             session_id,
@@ -388,11 +603,30 @@ async def stream_gateway(
     payload: dict,
     session_id: str,
     personality: str,
+    *,
+    request_id: str,
+    idempotency_key: str,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
-    async for chunk in gateway.stream(payload):
-        collected.extend(chunk)
-        yield chunk
+    try:
+        deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+        async for chunk in gateway.stream(
+            payload,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            deadline=deadline,
+        ):
+            collected.extend(chunk)
+            yield chunk
+    except GatewayTimeoutError:
+        yield b'event: error\ndata: {"code":"AI_GATEWAY_TIMEOUT"}\n\n'
+        return
+    except GatewayHTTPError:
+        yield b'event: error\ndata: {"code":"AI_GATEWAY_HTTP_ERROR"}\n\n'
+        return
+    except GatewayInvalidResponseError:
+        yield b'event: error\ndata: {"code":"AI_GATEWAY_INVALID_RESPONSE"}\n\n'
+        return
 
     try:
         text = collected.decode("utf-8", errors="ignore")
@@ -404,7 +638,6 @@ async def stream_gateway(
             if not data or data == "[DONE]":
                 continue
             try:
-                import json
                 event = json.loads(data)
                 choices = event.get("choices")
                 if choices and isinstance(choices[0], dict):
@@ -414,6 +647,7 @@ async def stream_gateway(
                         assistant_parts.append(content)
             except Exception:
                 continue
+
         assistant_text = "".join(assistant_parts)
         if assistant_text:
             context = await memory.context(session_id) if memory.enabled else {}
@@ -423,14 +657,56 @@ async def stream_gateway(
                 session_id,
                 [message for message in merged if message.get("role") != "system"]
                 + [{"role": "assistant", "content": assistant_text}],
+                personality=personality,
+            )
+            cache_put(
+                session_id,
+                idempotency_key,
+                {
+                    "request_id": request_id,
+                    "latency_ms": None,
+                    "result": {
+                        "role": "assistant",
+                        "text": assistant_text,
+                        "model": payload.get("model"),
+                        "provider": None,
+                        "personality": personality,
+                    },
+                },
             )
     except MemoryUnavailableError as exc:
         logger.warning("memory_stream_sync_unavailable session_id=%s error=%s", session_id, exc)
+    except Exception as exc:
+        logger.warning(
+            "stream_result_parse_failed request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
 
 
 @app.post("/v1/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    request_id = request_id_from_request(http_request)
+    idempotency_key = idempotency_key_from_request(http_request, request_id)
+
+    cached = cache_get(session_id, idempotency_key)
+    if cached is not None:
+        text_value = cached.get("result", {}).get("text", "")
+        async def cached_stream() -> AsyncIterator[bytes]:
+            yield f'data: {json.dumps({"choices":[{"delta":{"content":text_value}}]})}\n\n'.encode()
+            yield b"data: [DONE]\n\n"
+        return StreamingResponse(
+            cached_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Request-ID": request_id,
+            },
+        )
+
     messages, personality = await prepare_messages(request, session_id)
     payload = {
         "messages": messages,
@@ -442,12 +718,39 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     await persist_messages(
         session_id,
         [message for message in messages if message.get("role") != "system"],
+        personality=personality,
     )
 
+    iterator = stream_gateway(
+        payload,
+        session_id,
+        personality,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+    )
+    try:
+        first = await anext(iterator)
+    except GatewayTimeoutError as exc:
+        raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
+    except GatewayHTTPError as exc:
+        raise HTTPException(status_code=502, detail="AI_GATEWAY_HTTP_ERROR") from exc
+    except GatewayInvalidResponseError as exc:
+        raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
+
+    async def body() -> AsyncIterator[bytes]:
+        yield first
+        async for chunk in iterator:
+            yield chunk
+
     return StreamingResponse(
-        stream_gateway(payload, session_id, personality),
+        body(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Request-ID": request_id,
+            "X-Idempotency-Key": idempotency_key,
+        },
     )
 
 
