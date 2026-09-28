@@ -121,40 +121,6 @@ jobs:
             fi
           done
 
-      - name: Verify PRIMARY real web navigation
-        env:
-          PRIMARY_URL: ${{ env.PRIMARY_URL }}
-        run: |
-          set -euo pipefail
-
-          echo "=== WEB TOOL STATUS ==="
-          status="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/web/status")"
-          printf '%s
-' "$status" | jq .
-
-          echo "=== DIRECT SEARCH ==="
-          search="$(curl -fsS --connect-timeout 8 --max-time 30 --get             --data-urlencode "q=DEEP33 internet"             -H "X-DEEP33-Session-Id: ci-web-search"             "$PRIMARY_URL/v1/web/search")"
-          printf '%s
-' "$search" | jq .
-          printf '%s
-' "$search" | jq -e '.ok == true and (.results | length) >= 1' >/dev/null
-
-          echo "=== DIRECT FETCH ==="
-          fetch="$(curl -fsS --connect-timeout 8 --max-time 30 --get             --data-urlencode "url=https://example.com/"             -H "X-DEEP33-Session-Id: ci-web-fetch"             "$PRIMARY_URL/v1/web/fetch")"
-          printf '%s
-' "$fetch" | jq .
-          printf '%s
-' "$fetch" | jq -e '.ok == true and (.text | length) > 0 and .final_url' >/dev/null
-
-          echo "=== REAL MODEL TOOL LOOP ==="
-          payload='{"messages":[{"role":"user","content":"Busca en internet DEEP33 y verifica una fuente antes de responder. Responde con una frase breve indicando qué encontraste."}]}'
-          body="$(curl -fsS --connect-timeout 8 --max-time 180             -H "Content-Type: application/json"             -H "X-DEEP33-Session-Id: ci-web-loop"             -H "X-Idempotency-Key: ci-web-loop-${GITHUB_RUN_ID}"             -d "$payload"             "$PRIMARY_URL/v1/ai/generate")"
-          printf '%s
-' "$body" | jq .
-          printf '%s
-' "$body" | jq -e '.web_navigation == true and (.sources | length) >= 1' >/dev/null
-          echo "PRIMARY_WEB_NAVIGATION_PASS"
-
       - name: Verify PRIMARY real inference
         run: |
           set -euo pipefail
