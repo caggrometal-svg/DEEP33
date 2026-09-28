@@ -138,6 +138,15 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Enable KVM for Android Emulator
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+          ls -l /dev/kvm
+
       - name: Android real connectivity E2E
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
@@ -156,10 +165,10 @@ jobs:
           force-avd-creation: true
           emulator-boot-timeout: 900
           emulator-port: 5554
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
           disable-animations: true
           disable-spellchecker: true
-          disable-linux-hw-accel: auto
+          disable-linux-hw-accel: false
           enable-hw-keyboard: false
           channel: stable
           script: |
