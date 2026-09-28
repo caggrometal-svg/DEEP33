@@ -25,13 +25,17 @@ jobs:
             url="${entry#*|}"
             ok=0
             for i in $(seq 1 18); do
-              if curl -fsS --connect-timeout 8 --max-time 20 "$url/health" >/dev/null; then
-                echo "${name}_WARM_PASS attempt=$i"
+              if curl -fsS --connect-timeout 8 --max-time 20 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null; then
+                echo "${name}_READY_PASS attempt=$i"
                 ok=1
                 break
               fi
               sleep 5
             done
+
+          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" |
+            jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' >/dev/null
+          echo "PRIMARY_DIAGNOSTIC_WARM_PASS"
             if [ "$ok" != 1 ]; then
               echo "${name}_WARM_FAIL"
               exit 1
