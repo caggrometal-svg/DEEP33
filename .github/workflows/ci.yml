@@ -6,8 +6,12 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  PRIMARY_URL: https://deep33-backend.onrender.com
+  SECONDARY_URL: https://iac33-backup-production.up.railway.app
+
 jobs:
-  backend:
+  backend_unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,40 +23,92 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - name: Import and syntax gate
         run: |
-          python -c "import backend.main, backend.gateway, backend.memory; print(\"DEEP33_IMPORT_OK\")"
+          python -c "import backend.main, backend.gateway, backend.memory; print('DEEP33_IMPORT_OK')"
           python -m compileall -q backend
-      - run: python -m pytest tests -q
+      - name: Unit and contract tests
+        run: python -m pytest tests -q
 
+  production_gate:
+    needs: backend_unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render to serve this exact GitHub SHA
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 36); do
+            body="$(curl -fsS --max-time 10 "$PRIMARY_URL/health" || true)"
+            sha="$(python -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' <<< "$body" 2>/dev/null || true)"
+            if [ "$sha" = "$EXPECTED_SHA" ]; then
+              ok=1
+              echo "RENDER_SHA_PASS $sha"
+              break
+            fi
+            echo "RENDER_SHA_WAIT attempt=$i runtime_sha=$sha expected=$EXPECTED_SHA"
+            sleep 5
+          done
+          test "$ok" = 1
 
-  android:
-    needs: backend
+      - name: Verify Render liveness and readiness
+        run: |
+          set -euo pipefail
+          curl -fsS "$PRIMARY_URL/liveness" > /tmp/liveness.json
+          curl -fsS "$PRIMARY_URL/ready" > /tmp/ready.json
+          python - <<'PY'
+          import json
+          ready=json.load(open("/tmp/ready.json"))
+          assert ready["status"]=="PASS" and ready["ready"] is True, ready
+          print("RENDER_READY_PASS")
+          PY
+
+      - name: Verify real production inference
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 95 "$PRIMARY_URL/v1/ai/diagnostics" > /tmp/diag.json
+          python - <<'PY'
+          import json
+          d=json.load(open("/tmp/diag.json"))
+          assert d["online"] is True, d
+          assert d["checks"]["MODEL"]=="PASS", d
+          print("MODEL_PASS", d["inference"])
+          PY
+
+      - name: Verify Railway backup health and inference
+        run: |
+          set -euo pipefail
+          curl -fsS "$SECONDARY_URL/health" > /tmp/backup_health.json
+          curl -fsS "$SECONDARY_URL/ready" > /tmp/backup_ready.json
+          curl -fsS --max-time 95 "$SECONDARY_URL/v1/ai/diagnostics" > /tmp/backup_diag.json
+          python - <<'PY'
+          import json
+          h=json.load(open("/tmp/backup_health.json"))
+          r=json.load(open("/tmp/backup_ready.json"))
+          d=json.load(open("/tmp/backup_diag.json"))
+          assert h["status"]=="PASS", h
+          assert r["status"]=="PASS" and r["ready"] is True, r
+          assert d["online"] is True and d["checks"]["MODEL"]=="PASS", d
+          print("RAILWAY_BACKUP_PASS")
+          PY
+
+  android_e2e:
+    needs: production_gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-
-      - name: Android build
-        working-directory: android
-        run: gradle :app:assembleDebug --no-daemon
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
       - name: Android real connectivity E2E
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
+          DEEP33_SECONDARY_URL: https://iac33-backup-production.up.railway.app
         with:
           api-level: 35
           target: google_apis
@@ -67,18 +123,31 @@ jobs:
           disable-linux-hw-accel: auto
           enable-hw-keyboard: false
           channel: stable
-          script: cd android && gradle :app:connectedDebugAndroidTest --no-daemon
+          script: cd android && gradle :app:assembleDebug :app:connectedDebugAndroidTest --no-daemon
+      - name: Publish APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEEP33-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
-      - name: Android failover E2E PRIMARY down -> BACKUP
+  android_failover:
+    needs: production_gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Verify Android PRIMARY-down to Railway SECONDARY failover
+        uses: reactivecircus/android-emulator-runner@v2
         env:
           DEEP33_PRIMARY_URL: https://deep33-primary.invalid
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-        run: |
-          cd android
-          gradle :app:assembleDebug --no-daemon
-          cd ..
-      - name: Android emulator failover verification
-        uses: reactivecircus/android-emulator-runner@v2
+          DEEP33_SECONDARY_URL: https://iac33-backup-production.up.railway.app
         with:
           api-level: 35
           target: google_apis
@@ -90,14 +159,30 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           disable-spellchecker: false
-          disable-linux-hw-accel: auto
           enable-hw-keyboard: false
           channel: stable
-          script: cd android && DEEP33_PRIMARY_URL=https://deep33-primary.invalid DEEP33_SECONDARY_URL=https://deep33-backup.onrender.com gradle :app:connectedDebugAndroidTest --no-daemon
+          script: cd android && gradle :app:connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33FailoverTest
 
-      - name: Publish APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DEEP33-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+  recovery_gate:
+    needs: [android_e2e, android_failover]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify primary recovery after failover exercise
+        run: |
+          set -euo pipefail
+          curl -fsS "$PRIMARY_URL/health" >/tmp/recovery-health.json
+          curl -fsS --max-time 95 "$PRIMARY_URL/v1/ai/diagnostics" >/tmp/recovery-diag.json
+          python - <<'PY'
+          import json
+          h=json.load(open("/tmp/recovery-health.json"))
+          d=json.load(open("/tmp/recovery-diag.json"))
+          assert h["status"]=="PASS", h
+          assert d["online"] is True and d["checks"]["MODEL"]=="PASS", d
+          print("RECOVERY_PASS")
+          PY
+
+  release_gate:
+    needs: recovery_gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "DEEP33_CRITICAL_GATES_PASS"

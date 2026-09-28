@@ -18,3 +18,11 @@ services:
         value: "75"
       - key: AI_PROVIDER_TIMEOUT_SECONDS
         value: "18"
+      - key: AI_PROVIDER_MAX_RETRIES
+        value: "1"
+      - key: AI_RETRY_BACKOFF_SECONDS
+        value: "0.6"
+      - key: AI_CIRCUIT_FAILURE_THRESHOLD
+        value: "3"
+      - key: AI_CIRCUIT_COOLDOWN_SECONDS
+        value: "30"

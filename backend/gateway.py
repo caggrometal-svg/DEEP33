@@ -188,6 +188,16 @@ class AIGateway:
         return result
 
     @staticmethod
+    def _classify_http_status(status: int) -> str:
+        if status in {401, 403}:
+            return "auth"
+        if status == 429:
+            return "rate-limit"
+        if 500 <= status <= 599:
+            return "http"
+        return "invalid-response"
+
+    @staticmethod
     def _is_retryable_status(status: int) -> bool:
         return status == 429 or 500 <= status <= 599
 
@@ -275,13 +285,15 @@ class AIGateway:
 
                     if response.status_code >= 400:
                         status = response.status_code
+                        error_class = self._classify_http_status(status)
                         saw_http_error = True
                         provider_failed_transiently = self._is_retryable_status(status)
                         logger.warning(
-                            "ai_provider_http_failure request_id=%s provider=%s status=%s attempt=%s",
+                            "ai_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
                             request_id,
                             provider.name,
                             status,
+                            error_class,
                             attempt + 1,
                         )
                         if provider_failed_transiently and attempt < self.config.max_retries:
@@ -415,13 +427,15 @@ class AIGateway:
                         ) as response:
                             if response.status_code >= 400:
                                 status = response.status_code
+                                error_class = self._classify_http_status(status)
                                 saw_http_error = True
                                 transient_failure = self._is_retryable_status(status)
                                 logger.warning(
-                                    "ai_stream_provider_http_failure request_id=%s provider=%s status=%s attempt=%s",
+                                    "ai_stream_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
                                     request_id,
                                     provider.name,
                                     status,
+                                    error_class,
                                     attempt + 1,
                                 )
                             else:

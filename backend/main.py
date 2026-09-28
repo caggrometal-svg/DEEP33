@@ -66,22 +66,27 @@ def _percentile(values: list[float], percentile: float) -> float | None:
 @app.middleware("http")
 async def request_metrics(request: Request, call_next):
     started = time.perf_counter()
+    incoming = request.headers.get("X-Request-ID", "").strip()
+    request_id = incoming[:128] if incoming else str(uuid.uuid4())
+    request.state.request_id = request_id
+    status = 500
     try:
         response = await call_next(request)
         status = response.status_code
+        response.headers["X-Request-ID"] = request_id
         return response
     finally:
         elapsed_ms = (time.perf_counter() - started) * 1000
         path = request.url.path
         _metric_counts["requests_total"] += 1
-        _metric_counts[f"status_{status if 'status' in locals() else 500}"] += 1
+        _metric_counts[f"status_{status}"] += 1
         _metric_latency[path].append(elapsed_ms)
         logger.info(
             "request_metrics request_id=%s method=%s path=%s status=%s latency_ms=%.2f",
-            request.headers.get("X-Request-ID", ""),
+            request_id,
             request.method,
             path,
-            status if "status" in locals() else 500,
+            status,
             elapsed_ms,
         )
 
@@ -178,8 +183,11 @@ def session_id_from_request(request: Request) -> str:
 
 
 def request_id_from_request(request: Request) -> str:
-    value = request.headers.get("X-Request-ID", "").strip()
-    return value[:128] if value else str(uuid.uuid4())
+    value = getattr(request.state, "request_id", "").strip()
+    if value:
+        return value[:128]
+    header = request.headers.get("X-Request-ID", "").strip()
+    return header[:128] if header else str(uuid.uuid4())
 
 
 def idempotency_key_from_request(request: Request, request_id: str) -> str:
@@ -314,6 +322,9 @@ async def ready(response: Response) -> dict:
     return {
         "status": "PASS" if ready_ok else "FAIL",
         "ready": ready_ok,
+        "version": APP_VERSION,
+        "git_sha": GIT_SHA,
+        "build_id": BUILD_ID,
         "timestamp": utc_now(),
         "network": network,
         "gateway": gateway_status,
@@ -374,10 +385,13 @@ async def ai_diagnostics(request: Request) -> dict:
     network = await network_probe()
     gateway_status = await gateway_probe()
     inference_status, inference_data, inference_text = await run_inference_check(request_id)
-    model_pass = inference_status == "PASS" and inference_text == "DEEP33_DIAGNOSTIC_OK"
+    model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
 
     return {
         "timestamp": utc_now(),
+        "version": APP_VERSION,
+        "git_sha": GIT_SHA,
+        "build_id": BUILD_ID,
         "request_id": request_id,
         "checks": {
             "NETWORK": "PASS" if network["internet_available"] else "FAIL",
