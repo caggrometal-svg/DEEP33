@@ -180,6 +180,28 @@ jobs:
           test -e /dev/kvm
           ls -l /dev/kvm
 
+      - name: Prepare Android SDK image with retry
+        run: |
+          set -euo pipefail
+          SDK_ROOT="\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          yes | sdkmanager --licenses >/dev/null
+          rm -rf "$HOME/.android/cache"
+          for attempt in 1 2 3; do
+            if sdkmanager --sdk_root="$SDK_ROOT" --install \
+              "platform-tools" \
+              "platforms;android-35" \
+              "system-images;android-35;google_apis;x86_64"; then
+              echo "ANDROID_SDK_PREP_PASS attempt=$attempt"
+              exit 0
+            fi
+            echo "ANDROID_SDK_PREP_RETRY attempt=$attempt"
+            rm -rf "$SDK_ROOT/system-images/android-35/google_apis/x86_64"
+            rm -rf "$HOME/.android/cache"
+            sleep $((attempt * 3))
+          done
+          echo "ANDROID_SDK_PREP_FAIL"
+          exit 1
+
       - name: Android real connectivity E2E
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
@@ -187,7 +209,7 @@ jobs:
           DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 34
+          api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_5
