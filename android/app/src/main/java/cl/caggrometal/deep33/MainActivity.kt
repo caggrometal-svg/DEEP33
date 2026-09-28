@@ -590,8 +590,8 @@ class MainActivity : Activity() {
         executor.submit {
             try {
                 Deep33Api.setPreferences(store.sessionId, personality)
-            } catch (_: Exception) {
-                // Keep local preference when remote persistence is temporarily unavailable.
+            } catch (e: Exception) {
+                Log.e(TAG, "syncPreferences failed", e)
             }
         }
     }
