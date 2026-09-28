@@ -42,6 +42,7 @@ class MainActivity : Activity() {
         renderConversation()
         showTab(Tab.CHAT)
         checkConnectivity()
+        loadRemoteContext()
     }
 
     override fun onDestroy() {
@@ -213,6 +214,38 @@ class MainActivity : Activity() {
         box.addView(clearConversation, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(newSession, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         return box
+    }
+
+    private fun loadRemoteContext() {
+        executor.submit {
+            try {
+                val remote = Deep33Api.memoryContext(store.sessionId)
+                val messages = remote.optJSONArray("messages") ?: return@submit
+                val remoteMessages = buildList {
+                    for (i in 0 until messages.length()) {
+                        val item = messages.optJSONObject(i) ?: continue
+                        val role = item.optString("role")
+                        val content = item.optString("content")
+                        if (role.isNotBlank() && content.isNotBlank()) {
+                            add(UiMessage(role, content))
+                        }
+                    }
+                }
+
+                val merged = mutableListOf<UiMessage>()
+                val seen = mutableSetOf<Pair<String, String>>()
+                (remoteMessages + conversation.takeLast(50)).forEach { item ->
+                    if (seen.add(item.role to item.content)) merged.add(item)
+                }
+
+                conversation.clear()
+                conversation.addAll(merged.takeLast(50))
+                store.saveMessages(conversation)
+                runOnUiThread { renderConversation() }
+            } catch (_: Exception) {
+                // Keep local cache when remote memory is temporarily unavailable.
+            }
+        }
     }
 
     private fun checkConnectivity() {
