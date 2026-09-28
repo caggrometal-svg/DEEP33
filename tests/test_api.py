@@ -141,18 +141,34 @@ def test_generate_contract(monkeypatch) -> None:
     assert body["result"]["text"] == "DEEP33 connectivity PASS"
 
 
-def test_personality_is_exposed_and_validated(monkeypatch) -> None:
-    monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
-    response = client.post(
-        "/v1/ai/generate",
-        json={
-            "personality": "AGRESIVO",
-            "messages": [{"role": "user", "content": "Hola"}],
-        },
-        headers={"X-DEEP33-Session-Id": "personality-test"},
-    )
-    assert response.status_code == 200
-    assert response.json()["result"]["personality"] == "AGRESIVO"
+def test_personality_is_injected_into_model_context(monkeypatch) -> None:
+    captured: dict = {}
+
+    async def capture_gateway(payload: dict) -> dict:
+        captured["messages"] = payload["messages"]
+        return await fake_call_gateway(payload)
+
+    monkeypatch.setattr(main, "call_gateway", capture_gateway)
+
+    for name, phrase in {
+        "AGRESIVO": "directa, firme y provocadora",
+        "NEUTRO": "equilibrada, profesional, natural y clara",
+        "CONSPIRANOICO": "enigmático y tecnológico",
+    }.items():
+        response = client.post(
+            "/v1/ai/generate",
+            json={
+                "personality": name,
+                "messages": [{"role": "user", "content": "Hola"}],
+            },
+            headers={"X-DEEP33-Session-Id": "personality-" + name.lower()},
+        )
+        assert response.status_code == 200
+        assert response.json()["result"]["personality"] == name
+        system = captured["messages"][0]
+        assert system["role"] == "system"
+        assert name in system["content"]
+        assert phrase in system["content"]
 
 
 def test_personality_catalog() -> None:
