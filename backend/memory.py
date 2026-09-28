@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryUnavailableError(RuntimeError):
+    pass
+
+
+class MemoryClient:
+    def __init__(
+        self,
+        function_url: str | None = None,
+        api_key: str | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> None:
+        self.function_url = (
+            function_url if function_url is not None else os.getenv("DEEP33_MEMORY_URL", "")
+        ).strip().rstrip("/")
+        self.api_key = (
+            api_key if api_key is not None else os.getenv("SUPABASE_ANON_KEY", "")
+        ).strip()
+        self.timeout_seconds = timeout_seconds
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.function_url and self.api_key)
+
+    async def _call(self, action: str, session_id: str, **payload: Any) -> dict:
+        if not self.enabled:
+            return {}
+
+        body = {"action": action, "session_id": session_id, **payload}
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "apikey": self.api_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(self.function_url, json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise MemoryUnavailableError(type(exc).__name__) from exc
+
+        if not 200 <= response.status_code < 300:
+            raise MemoryUnavailableError(f"memory_http_{response.status_code}")
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise MemoryUnavailableError("memory_invalid_json") from exc
+
+        if not isinstance(data, dict):
+            raise MemoryUnavailableError("memory_invalid_payload")
+        return data
+
+    async def context(self, session_id: str) -> dict:
+        return await self._call("context", session_id)
+
+    async def sync(
+        self,
+        session_id: str,
+        messages: list[dict[str, str]],
+        personality: str = "NEUTRO",
+        preferences: dict[str, Any] | None = None,
+    ) -> dict:
+        return await self._call(
+            "sync",
+            session_id,
+            messages=messages[-50:],
+            personality=personality,
+            preferences=preferences or {},
+        )
+
+    async def remember(self, session_id: str, kind: str, content: str) -> dict:
+        return await self._call(
+            "remember",
+            session_id,
+            kind=kind,
+            content=content,
+        )
+
+    async def set_preferences(
+        self,
+        session_id: str,
+        personality: str | None = None,
+        preferences: dict[str, Any] | None = None,
+    ) -> dict:
+        return await self._call(
+            "preferences",
+            session_id,
+            personality=personality,
+            preferences=preferences or {},
+        )
+
+
+def merge_messages(
+    remote_messages: list[dict[str, Any]],
+    requested_messages: list[dict[str, Any]],
+    limit: int = 50,
+) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for source in (remote_messages, requested_messages):
+        for item in source:
+            role = str(item.get("role", "")).strip()
+            content = str(item.get("content", "")).strip()
+            if role not in {"system", "user", "assistant"} or not content:
+                continue
+            key = (role, content)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({"role": role, "content": content})
+
+    return merged[-limit:]
+
+
+def extract_context_messages(data: dict) -> list[dict[str, Any]]:
+    messages = data.get("messages")
+    return messages if isinstance(messages, list) else []
