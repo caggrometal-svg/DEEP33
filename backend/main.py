@@ -564,8 +564,8 @@ async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[
             ], selected
         return [{"role": "system", "content": personality_prompt(selected)}, *merged], selected
     except MemoryUnavailableError as exc:
-        logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
-        return [{"role": "system", "content": personality_prompt(selected)}, *requested[-49:]], selected
+        logger.error("memory_context_unavailable session_id=%s error=%s", session_id, exc)
+        raise
 
 
 async def persist_messages(
@@ -576,10 +576,7 @@ async def persist_messages(
 ) -> None:
     if not memory.enabled:
         return
-    try:
-        await memory.sync(session_id, messages, personality=personality)
-    except MemoryUnavailableError as exc:
-        logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
+    await memory.sync(session_id, messages, personality=personality)
 
 
 async def generate(
@@ -666,7 +663,6 @@ async def generate(
         payload,
         request_id=request_id,
         idempotency_key=idempotency_key,
-        request_hash=request_hash,
     )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     result = normalized_generation(data, personality)
