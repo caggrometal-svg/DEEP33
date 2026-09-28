@@ -140,13 +140,41 @@ jobs:
           set -euo pipefail
           SESSION="ci-hybrid-${{ github.run_id }}"
           STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/search/hybrid/status" -H "X-DEEP33-Session-Id: $SESSION")"
-          printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function"' >/dev/null
+          python - "$STATUS" <<'PY'
+import json, sys
+body = json.loads(sys.argv[1])
+required = {
+    "engine": "DEEP33 Hybrid Search",
+    "engine_version": "1.1.0",
+    "enabled": True,
+    "configured": True,
+    "dimensions": 1536,
+    "transport": "supabase_postgrest_rpc",
+}
+failed = {k: body.get(k) for k, v in required.items() if body.get(k) != v}
+if failed:
+    print("PRIMARY_HYBRID_STATUS_FAIL", json.dumps(failed, sort_keys=True))
+    print("PRIMARY_HYBRID_STATUS_BODY", json.dumps(body, sort_keys=True))
+    raise SystemExit(1)
+print("PRIMARY_HYBRID_STATUS_PASS", json.dumps({k: body[k] for k in required}, sort_keys=True))
+PY
 
           EMBEDDING="$(python -c 'import json; print(json.dumps([1.0]+[0.0]*1535))')"
           BODY="$(jq -n --arg q "DEEP33 hybrid verification" --argjson e "$EMBEDDING" '{query:$q,embedding:$e,limit:5,metadata_filter:{}}')"
           SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/search/hybrid" -H "Content-Type: application/json" -H "X-DEEP33-Session-Id: $SESSION" -d "$BODY")"
-          printf "%s" "$SEARCH" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .mode=="hybrid" and (.results|type)=="array"' >/dev/null
-          echo "PRIMARY_HYBRID_SEARCH_PASS"
+          python - "$SEARCH" <<'PY'
+import json, sys
+body = json.loads(sys.argv[1])
+if not (
+    body.get("engine") == "DEEP33 Hybrid Search"
+    and body.get("engine_version") == "1.1.0"
+    and body.get("mode") == "hybrid"
+    and isinstance(body.get("results"), list)
+):
+    print("PRIMARY_HYBRID_SEARCH_FAIL", json.dumps(body, sort_keys=True))
+    raise SystemExit(1)
+print("PRIMARY_HYBRID_SEARCH_PASS results=", len(body["results"]))
+PY
 
       - name: Verify PRIMARY DEEP33 Search Engine
         run: |
