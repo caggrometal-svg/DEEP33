@@ -17,7 +17,7 @@ class Deep33ConnectivityTest {
     fun backendHealthIsPass() {
         val json = get("/health")
         assertTrue(json.optString("status") == "PASS")
-        assertTrue(json.optString("version") == "0.1.2")
+        assertTrue(json.optString("version") == "0.1.3")
     }
 
     @Test
@@ -32,7 +32,7 @@ class Deep33ConnectivityTest {
 
     @Test
     fun realChatReturnsE2EToken() {
-        val connection = open("POST", "/v1/chat")
+        val connection = open("POST", "/v1/ai/generate")
         connection.setRequestProperty("Content-Type", "application/json")
         connection.doOutput = true
         val payload = JSONObject()
