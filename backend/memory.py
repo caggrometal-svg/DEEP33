@@ -84,6 +84,65 @@ class MemoryClient:
         data = await self._call("context", "__deep33_readiness_probe__")
         return {"configured": True, "reachable": isinstance(data, dict)}
 
+    async def idempotency_begin(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        operation: str,
+        request_hash: str,
+        lock_token: str,
+        ttl_seconds: int = 120,
+        stale_after_seconds: int = 90,
+    ) -> dict:
+        return await self._call(
+            "idempotency_begin",
+            session_id,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            request_hash=request_hash,
+            lock_token=lock_token,
+            ttl_seconds=ttl_seconds,
+            stale_after_seconds=stale_after_seconds,
+        )
+
+    async def idempotency_complete(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        operation: str,
+        request_hash: str,
+        lock_token: str,
+        response: dict,
+        status_code: int = 200,
+    ) -> dict:
+        return await self._call(
+            "idempotency_complete",
+            session_id,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            request_hash=request_hash,
+            lock_token=lock_token,
+            response=response,
+            status_code=status_code,
+        )
+
+    async def idempotency_release(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        operation: str,
+        request_hash: str,
+        lock_token: str,
+    ) -> dict:
+        return await self._call(
+            "idempotency_release",
+            session_id,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            request_hash=request_hash,
+            lock_token=lock_token,
+        )
+
     async def context(self, session_id: str) -> dict:
         return await self._call("context", session_id)
 
