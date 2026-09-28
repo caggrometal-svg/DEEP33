@@ -1163,7 +1163,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         "personality": personality,
     })
 
-    cached = cache_get(session_id, idempotency_key, request_hash)
+    try:
+        cached = cache_get(session_id, idempotency_key, request_hash)
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
         text_value = cached.get("result", {}).get("text", "")
         async def cached_stream():
