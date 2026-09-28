@@ -8,9 +8,24 @@ enum class Personality(
     val accent: Int,
     val description: String
 ) {
-    AGRESIVO("AGRESIVO", "A", Color.rgb(255, 23, 68), "Directo, firme y provocador."),
-    NEUTRO("NEUTRO", "N", Color.rgb(0, 229, 255), "Equilibrado, profesional y claro."),
-    CONSPIRANOICO("CONSPIRANOICO", "C", Color.rgb(179, 136, 255), "Enigmático, tecnológico y analítico.");
+    AGRESIVO(
+        "AGRESIVO",
+        "A",
+        Color.rgb(255, 23, 68),
+        "Directo, impaciente, sarcástico y confrontacional."
+    ),
+    NEUTRO(
+        "NEUTRO",
+        "N",
+        Color.rgb(0, 229, 255),
+        "Analítico, formal, objetivo y basado en datos."
+    ),
+    CONSPIRANOICO(
+        "CONSPIRANOICO",
+        "C",
+        Color.rgb(179, 136, 255),
+        "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis."
+    );
 
     companion object {
         fun fromKey(value: String?): Personality =

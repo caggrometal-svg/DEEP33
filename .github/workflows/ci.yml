@@ -30,7 +30,24 @@ jobs:
       - name: Unit and contract tests
         run: python -m pytest tests -q
 
+  android_validation:
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    needs: backend_unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Android lint and build
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
   production_gate:
+    if: ${{ github.event_name != 'pull_request' }}
     needs: backend_unit
     runs-on: ubuntu-latest
     steps:

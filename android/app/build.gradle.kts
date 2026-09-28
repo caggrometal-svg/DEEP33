@@ -22,7 +22,7 @@ android {
         compose = true
     }
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL") ?: "https://deep33-backend.onrender.com"
-    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: "https://iac33-fastapi-edge-production.up.railway.app"
+    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: ""
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", "\"$primaryUrl\"")
         buildConfigField("String", "DEEP33_SECONDARY_URL", "\"$secondaryUrl\"")
@@ -38,6 +38,7 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.7.8")
     implementation("androidx.compose.material3:material3:1.3.1")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
+    testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
 }
