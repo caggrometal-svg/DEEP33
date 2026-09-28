@@ -160,22 +160,24 @@ def _text_score(query_tokens: list[str], item: dict) -> float:
 
 def deduplicate(results: list[dict], limit: int) -> list[dict]:
     seen_urls = set()
-    seen_titles = set()
+    seen_title_domain = set()
     seen_domains = set()
     output = []
 
-    # Pass 1: guarantee source-domain diversity where possible.
+    # Pass 1: guarantee source-domain diversity where possible. Identical titles
+    # from different domains are retained because they are evidence of corroboration.
     for item in results:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
         domain = _host(url)
-        if not url or url in seen_urls or (title and title in seen_titles):
+        title_key = (domain, title) if title else None
+        if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
         if domain and domain in seen_domains:
             continue
         seen_urls.add(url)
-        if title:
-            seen_titles.add(title)
+        if title_key:
+            seen_title_domain.add(title_key)
         if domain:
             seen_domains.add(domain)
         output.append({**item, "url": url})
@@ -192,13 +194,14 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
         domain = _host(url)
-        if not url or url in seen_urls or (title and title in seen_titles):
+        title_key = (domain, title) if title else None
+        if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
         if domain and domain_counts.get(domain, 0) >= 2:
             continue
         seen_urls.add(url)
-        if title:
-            seen_titles.add(title)
+        if title_key:
+            seen_title_domain.add(title_key)
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
         output.append({**item, "url": url})
         if len(output) >= limit:
