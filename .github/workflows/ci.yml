@@ -113,7 +113,7 @@ jobs:
       - name: Android real connectivity E2E
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
+          DEEP33_SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 35
@@ -127,7 +127,7 @@ jobs:
           force-avd-creation: true
           emulator-boot-timeout: 900
           emulator-port: 5554
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot-load -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           disable-spellchecker: false
           disable-linux-hw-accel: auto
