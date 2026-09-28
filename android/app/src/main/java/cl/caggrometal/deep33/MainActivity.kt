@@ -2,6 +2,7 @@ package cl.caggrometal.deep33
 
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -14,6 +15,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.Locale
+import android.speech.tts.TextToSpeech
 import java.util.concurrent.atomic.AtomicBoolean
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
@@ -33,11 +36,20 @@ class MainActivity : Activity() {
     private var activeTask: Future<*>? = null
     private var activeBubble: TextView? = null
     private val cancelRequested = AtomicBoolean(false)
+    private var textToSpeech: TextToSpeech? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
         conversation.addAll(store.loadMessages())
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = textToSpeech?.setLanguage(Locale("es", "CL"))
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    textToSpeech?.language = Locale("es")
+                }
+            }
+        }
         setContentView(buildRoot())
         renderConversation()
         showTab(Tab.CHAT)
@@ -50,6 +62,9 @@ class MainActivity : Activity() {
         Deep33Api.cancelActiveStream()
         activeTask?.cancel(true)
         executor.shutdownNow()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        textToSpeech = null
         super.onDestroy()
     }
 
@@ -192,6 +207,24 @@ class MainActivity : Activity() {
             textSize = 13f
             setPadding(16, 16, 16, 16)
         }
+        val voiceButton = Button(this).apply {
+            text = if (store.voiceEnabled) "VOZ: ACTIVADA" else "VOZ: DESACTIVADA"
+            setOnClickListener {
+                store.voiceEnabled = !store.voiceEnabled
+                text = if (store.voiceEnabled) "VOZ: ACTIVADA" else "VOZ: DESACTIVADA"
+                if (!store.voiceEnabled) textToSpeech?.stop()
+            }
+        }
+        val personalityButton = Button(this).apply {
+            text = "PERSONALIDAD: " + store.personality
+            setOnClickListener {
+                val options = listOf("NEUTRO", "DIRECTO", "TECNICO", "CERCANO")
+                val next = options[(options.indexOf(store.personality).coerceAtLeast(0) + 1) % options.size]
+                store.personality = next
+                text = "PERSONALIDAD: " + next
+                syncPreferences()
+            }
+        }
         val clearConversation = Button(this).apply {
             text = "BORRAR CONVERSACIÓN"
             setOnClickListener {
@@ -211,15 +244,31 @@ class MainActivity : Activity() {
             }
         }
         box.addView(sessionView)
+        box.addView(voiceButton, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        box.addView(personalityButton, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(clearConversation, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         box.addView(newSession, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         return box
+    }
+
+    private fun syncPreferences() {
+        val personality = store.personality
+        executor.submit {
+            try {
+                Deep33Api.setPreferences(store.sessionId, personality)
+            } catch (_: Exception) {
+                // Remote persistence is retried on the next preference change.
+            }
+        }
     }
 
     private fun loadRemoteContext() {
         executor.submit {
             try {
                 val remote = Deep33Api.memoryContext(store.sessionId)
+                val session = remote.optJSONObject("session")
+                val remotePersonality = session?.optString("personality").orEmpty()
+                if (remotePersonality.isNotBlank()) store.personality = remotePersonality
                 val messages = remote.optJSONArray("messages") ?: return@submit
                 val remoteMessages = buildList {
                     for (i in 0 until messages.length()) {
@@ -324,7 +373,10 @@ class MainActivity : Activity() {
                 conversation.add(UiMessage("assistant", finalText))
                 store.saveMessages(conversation)
 
-                runOnUiThread { cleanupGeneration(true) }
+                runOnUiThread {
+                    speakAssistant(finalText)
+                    cleanupGeneration(true)
+                }
             } catch (e: Deep33ApiException) {
                 if (e.kind == Deep33ApiException.Kind.CANCELLED || cancelRequested.get()) {
                     runOnUiThread {
@@ -381,6 +433,11 @@ class MainActivity : Activity() {
         statusView.setTextColor(color)
     }
 
+    private fun speakAssistant(text: String) {
+        if (!store.voiceEnabled || text.isBlank()) return
+        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "deep33-response")
+    }
+
     private fun renderConversation() {
         if (!::chatContainer.isInitialized) return
         chatContainer.removeAllViews()
@@ -399,7 +456,10 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 16f
             setPadding(18, 14, 18, 14)
-            setBackgroundColor(background)
+            background = GradientDrawable().apply {
+                setColor(background)
+                cornerRadius = 24f
+            }
         }
         val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, 0, 0, 12)
