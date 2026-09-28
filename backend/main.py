@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections import defaultdict, deque
 import logging
@@ -150,8 +151,13 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 DEFAULT_PERSONALITY = "NEUTRO"
 
 _rate_state: dict[str, tuple[float, int]] = {}
-_idempotency_cache: dict[str, tuple[float, dict]] = {}
+_idempotency_cache: dict[str, tuple[float, str, dict]] = {}
 CACHE_TTL_SECONDS = 300.0
+IDEMPOTENCY_LEASE_SECONDS = 180
+IDEMPOTENCY_WAIT_SECONDS = 80
+
+class IdempotencyConflictError(RuntimeError):
+    pass
 
 
 def utc_now() -> str:
@@ -240,23 +246,103 @@ def cache_key(session_id: str, idempotency_key: str) -> str:
     return f"{session_id}:{idempotency_key}"
 
 
-def cache_get(session_id: str, idempotency_key: str) -> dict | None:
+def payload_hash(value: dict) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def cache_prune() -> None:
+    now = time.monotonic()
+    expired = [key for key, value in _idempotency_cache.items() if value[0] <= now]
+    for key in expired[:200]:
+        _idempotency_cache.pop(key, None)
+
+
+def cache_get(session_id: str, idempotency_key: str, request_hash: str) -> dict | None:
+    cache_prune()
     key = cache_key(session_id, idempotency_key)
     entry = _idempotency_cache.get(key)
     if entry is None:
         return None
-    expires_at, data = entry
+    expires_at, stored_hash, data = entry
     if expires_at <= time.monotonic():
         _idempotency_cache.pop(key, None)
         return None
+    if stored_hash != request_hash:
+        raise IdempotencyConflictError("IDEMPOTENCY_KEY_REUSED")
     return data
 
 
-def cache_put(session_id: str, idempotency_key: str, data: dict) -> None:
+def cache_put(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+    data: dict,
+) -> None:
+    cache_prune()
     _idempotency_cache[cache_key(session_id, idempotency_key)] = (
         time.monotonic() + CACHE_TTL_SECONDS,
+        request_hash,
         data,
     )
+
+
+async def shared_idempotency_claim(
+    session_id: str,
+    idempotency_key: str,
+    operation: str,
+    request_hash: str,
+) -> tuple[str, dict]:
+    if not memory.enabled:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE")
+
+    try:
+        claim = await memory.idempotency_claim(
+            session_id,
+            idempotency_key,
+            operation,
+            request_hash,
+            lease_seconds=IDEMPOTENCY_LEASE_SECONDS,
+        )
+        state = str(claim.get("state", "")).upper()
+        if state == "CONFLICT":
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        if state in {"CLAIMED", "COMPLETED", "FAILED"}:
+            return state, claim
+
+        deadline = time.monotonic() + IDEMPOTENCY_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            status = await memory.idempotency_status(
+                session_id,
+                idempotency_key,
+                request_hash,
+            )
+            state = str(status.get("state", "")).upper()
+            if state in {"COMPLETED", "FAILED"}:
+                return state, status
+            if state == "CONFLICT":
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        raise HTTPException(status_code=504, detail="IDEMPOTENCY_IN_PROGRESS")
+    except MemoryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE") from exc
+
+
+def replay_idempotent(state: str, record: dict, *, default_status: int = 200) -> dict:
+    status_code = int(record.get("status_code", default_status))
+    response = record.get("response")
+    if status_code >= 400:
+        detail = response.get("detail", "IDEMPOTENT_REQUEST_FAILED") if isinstance(response, dict) else "IDEMPOTENT_REQUEST_FAILED"
+        raise HTTPException(status_code=status_code, detail=detail)
+    if not isinstance(response, dict):
+        raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+    return response
+
+
+def error_record(exc: Exception) -> tuple[int, dict]:
+    if isinstance(exc, HTTPException):
+        return int(exc.status_code), {"detail": str(exc.detail)}
+    return 500, {"detail": "DEEP33_INTERNAL_ERROR"}
 
 
 async def network_probe() -> dict:
@@ -331,11 +417,20 @@ async def health() -> dict:
 async def ready(response: Response) -> dict:
     network = await network_probe()
     gateway_status = await gateway_probe()
+    memory_ok = False
+    if memory.enabled:
+        try:
+            await memory.ping()
+            memory_ok = True
+        except MemoryUnavailableError:
+            memory_ok = False
+
     ready_ok = (
         network["internet_available"]
         and gateway_status.get("gateway") == "PASS"
         and bool(gateway_status.get("model"))
         and bool(gateway.config.providers)
+        and memory_ok
     )
     response.status_code = 200 if ready_ok else 503
     return {
@@ -348,6 +443,7 @@ async def ready(response: Response) -> dict:
         "network": network,
         "gateway": gateway_status,
         "memory_configured": memory.enabled,
+        "memory_ready": memory_ok,
     }
 
 
@@ -501,7 +597,11 @@ def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) ->
 
 
 async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[dict[str, str]], str]:
-    requested = [message.model_dump() for message in request.messages]
+    requested = [
+        message.model_dump()
+        for message in request.messages
+        if message.role in {"user", "assistant"}
+    ]
     selected = normalize_personality(request.personality)
     if not memory.enabled:
         return [{"role": "system", "content": personality_prompt(selected)}, *requested[-49:]], selected
@@ -543,62 +643,125 @@ async def generate(
     request_id: str,
     idempotency_key: str,
 ) -> dict:
-    cached = cache_get(session_id, idempotency_key)
+    personality = normalize_personality(request.personality)
+    client_payload = {
+        "messages": [message.model_dump() for message in request.messages if message.role in {"user", "assistant"}],
+        "model": request.model,
+        "temperature": request.temperature,
+        "personality": personality,
+    }
+    request_hash = payload_hash(client_payload)
+
+    try:
+        cached = cache_get(session_id, idempotency_key, request_hash)
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
         logger.info(
-            "ai_idempotency_hit request_id=%s session_id=%s",
+            "ai_idempotency_local_hit request_id=%s session_id=%s",
             request_id,
             session_id,
         )
         return cached
 
-    messages, personality = await prepare_messages(request, session_id)
-    payload = {
-        "messages": messages,
-        "model": request.model or AI_GATEWAY_MODEL,
-    }
-    if request.temperature is not None:
-        payload["temperature"] = request.temperature
-
-    await persist_messages(
+    state, record = await shared_idempotency_claim(
         session_id,
-        [message for message in messages if message.get("role") != "system"],
-        personality=personality,
+        idempotency_key,
+        "deep33.ai.generate",
+        request_hash,
     )
+    if state in {"COMPLETED", "FAILED"}:
+        output = replay_idempotent(state, record)
+        cache_put(session_id, idempotency_key, request_hash, output)
+        return output
 
-    started = time.perf_counter()
-    data = await call_gateway(
-        payload,
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-    )
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    result = normalized_generation(data, personality)
+    lease_token = str(record.get("lease_token", "")).strip()
+    if not lease_token:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
-    assistant_message = {"role": "assistant", "content": result["text"]}
-    await persist_messages(
-        session_id,
-        [message for message in messages if message.get("role") != "system"] + [assistant_message],
-        personality=personality,
-    )
+    try:
+        messages, personality = await prepare_messages(request, session_id)
+        payload = {
+            "messages": messages,
+            "model": request.model or AI_GATEWAY_MODEL,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
 
-    output = {
-        "request_id": request_id,
-        "latency_ms": elapsed_ms,
-        "result": result,
-        "response": data,
-    }
-    cache_put(session_id, idempotency_key, output)
+        await persist_messages(
+            session_id,
+            [message for message in messages if message.get("role") != "system"],
+            personality=personality,
+        )
 
-    logger.info(
-        "ai_request request_id=%s session_id=%s provider=%s model=%s latency_ms=%s success=true",
-        request_id,
-        session_id,
-        result.get("provider"),
-        result.get("model"),
-        elapsed_ms,
-    )
-    return output
+        started = time.perf_counter()
+        data = await call_gateway(
+            payload,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        result = normalized_generation(data, personality)
+
+        assistant_message = {"role": "assistant", "content": result["text"]}
+        await persist_messages(
+            session_id,
+            [message for message in messages if message.get("role") != "system"] + [assistant_message],
+            personality=personality,
+        )
+
+        output = {
+            "request_id": request_id,
+            "latency_ms": elapsed_ms,
+            "result": result,
+            "response": data,
+        }
+        cache_put(session_id, idempotency_key, request_hash, output)
+        if memory.enabled:
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    200,
+                    output,
+                )
+            except MemoryUnavailableError as exc:
+                logger.error(
+                    "ai_idempotency_complete_unavailable request_id=%s error=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
+
+        logger.info(
+            "ai_request request_id=%s session_id=%s provider=%s model=%s latency_ms=%s success=true",
+            request_id,
+            session_id,
+            result.get("provider"),
+            result.get("model"),
+            elapsed_ms,
+        )
+        return output
+    except Exception as exc:
+        status_code, stored = error_record(exc)
+        try:
+            if memory.enabled:
+                await memory.idempotency_fail(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    status_code,
+                    stored,
+                )
+        except Exception as store_exc:
+            logger.warning(
+                "ai_idempotency_failure_record_failed request_id=%s error=%s",
+                request_id,
+                type(store_exc).__name__,
+            )
+        raise
 
 
 @app.post("/v1/ai/generate")
@@ -688,6 +851,8 @@ async def stream_gateway(
     *,
     request_id: str,
     idempotency_key: str,
+    request_hash: str,
+    lease_token: str,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
@@ -700,60 +865,70 @@ async def stream_gateway(
         collected.extend(chunk)
         yield chunk
 
-    try:
-        text = collected.decode("utf-8", errors="ignore")
-        assistant_parts: list[str] = []
-        for line in text.splitlines():
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if not data or data == "[DONE]":
-                continue
-            try:
-                event = json.loads(data)
-                choices = event.get("choices")
-                if choices and isinstance(choices[0], dict):
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if isinstance(content, str):
-                        assistant_parts.append(content)
-            except Exception:
-                continue
+    text = collected.decode("utf-8", errors="ignore")
+    assistant_parts: list[str] = []
+    saw_done = False
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data:
+            continue
+        if data == "[DONE]":
+            saw_done = True
+            continue
+        try:
+            event = json.loads(data)
+            choices = event.get("choices")
+            if choices and isinstance(choices[0], dict):
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if isinstance(content, str):
+                    assistant_parts.append(content)
+        except Exception:
+            continue
 
-        assistant_text = "".join(assistant_parts)
-        if assistant_text:
-            context = await memory.context(session_id) if memory.enabled else {}
-            remote = extract_context_messages(context)
-            merged = merge_messages(remote, payload["messages"], limit=50)
-            await persist_messages(
-                session_id,
-                [message for message in merged if message.get("role") != "system"]
-                + [{"role": "assistant", "content": assistant_text}],
-                personality=personality,
-            )
-            cache_put(
+    if not saw_done or not assistant_parts:
+        raise GatewayInvalidResponseError
+
+    assistant_text = "".join(assistant_parts)
+    output = {
+        "request_id": request_id,
+        "latency_ms": None,
+        "result": {
+            "role": "assistant",
+            "text": assistant_text,
+            "model": payload.get("model"),
+            "provider": None,
+            "personality": personality,
+        },
+    }
+    context = await memory.context(session_id) if memory.enabled else {}
+    remote = extract_context_messages(context)
+    merged = merge_messages(remote, payload["messages"], limit=50)
+    await persist_messages(
+        session_id,
+        [message for message in merged if message.get("role") != "system"]
+        + [{"role": "assistant", "content": assistant_text}],
+        personality=personality,
+    )
+    cache_put(session_id, idempotency_key, request_hash, output)
+    if memory.enabled:
+        try:
+            await memory.idempotency_complete(
                 session_id,
                 idempotency_key,
-                {
-                    "request_id": request_id,
-                    "latency_ms": None,
-                    "result": {
-                        "role": "assistant",
-                        "text": assistant_text,
-                        "model": payload.get("model"),
-                        "provider": None,
-                        "personality": personality,
-                    },
-                },
+                request_hash,
+                lease_token,
+                200,
+                output,
             )
-    except MemoryUnavailableError as exc:
-        logger.warning("memory_stream_sync_unavailable session_id=%s error=%s", session_id, exc)
-    except Exception as exc:
-        logger.warning(
-            "stream_result_parse_failed request_id=%s error=%s",
-            request_id,
-            type(exc).__name__,
-        )
+        except MemoryUnavailableError as exc:
+            logger.error(
+                "stream_idempotency_complete_unavailable request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
 
 
 @app.post("/v1/chat/stream")
@@ -762,8 +937,18 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
+    personality = normalize_personality(request.personality)
+    request_hash = payload_hash({
+        "messages": [message.model_dump() for message in request.messages if message.role in {"user", "assistant"}],
+        "model": request.model,
+        "temperature": request.temperature,
+        "personality": personality,
+    })
 
-    cached = cache_get(session_id, idempotency_key)
+    try:
+        cached = cache_get(session_id, idempotency_key, request_hash)
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
         text_value = cached.get("result", {}).get("text", "")
         async def cached_stream() -> AsyncIterator[bytes]:
@@ -779,6 +964,32 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             },
         )
 
+    state, record = await shared_idempotency_claim(
+        session_id,
+        idempotency_key,
+        "deep33.chat.stream",
+        request_hash,
+    )
+    if state in {"COMPLETED", "FAILED"}:
+        cached = replay_idempotent(state, record)
+        text_value = cached.get("result", {}).get("text", "")
+        async def replay_stream() -> AsyncIterator[bytes]:
+            yield f'data: {json.dumps({"choices":[{"delta":{"content":text_value}}]})}\n\n'.encode()
+            yield b"data: [DONE]\n\n"
+        return StreamingResponse(
+            replay_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Request-ID": request_id,
+            },
+        )
+
+    lease_token = str(record.get("lease_token", "")).strip()
+    if not lease_token:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
+
     messages, personality = await prepare_messages(request, session_id)
     payload = {
         "messages": messages,
@@ -787,27 +998,46 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     if request.temperature is not None:
         payload["temperature"] = request.temperature
 
-    await persist_messages(
-        session_id,
-        [message for message in messages if message.get("role") != "system"],
-        personality=personality,
-    )
-
-    iterator = stream_gateway(
-        payload,
-        session_id,
-        personality,
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-    )
     try:
+        await persist_messages(
+            session_id,
+            [message for message in messages if message.get("role") != "system"],
+            personality=personality,
+        )
+        iterator = stream_gateway(
+            payload,
+            session_id,
+            personality,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            lease_token=lease_token,
+        )
         first = await anext(iterator)
-    except GatewayTimeoutError as exc:
-        raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
-    except GatewayHTTPError as exc:
-        raise HTTPException(status_code=502, detail="AI_GATEWAY_HTTP_ERROR") from exc
-    except GatewayInvalidResponseError as exc:
-        raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
+    except Exception as exc:
+        status_code, stored = error_record(exc)
+        try:
+            await memory.idempotency_fail(
+                session_id,
+                idempotency_key,
+                request_hash,
+                lease_token,
+                status_code,
+                stored,
+            )
+        except Exception as store_exc:
+            logger.warning(
+                "stream_idempotency_failure_record_failed request_id=%s error=%s",
+                request_id,
+                type(store_exc).__name__,
+            )
+        if isinstance(exc, GatewayTimeoutError):
+            raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
+        if isinstance(exc, GatewayHTTPError):
+            raise HTTPException(status_code=502, detail="AI_GATEWAY_HTTP_ERROR") from exc
+        if isinstance(exc, GatewayInvalidResponseError):
+            raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
+        raise
 
     async def body() -> AsyncIterator[bytes]:
         yield first
@@ -815,10 +1045,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             async for chunk in iterator:
                 yield chunk
         except GatewayTimeoutError:
+            await memory.idempotency_fail(session_id, idempotency_key, request_hash, lease_token, 504, {"detail":"AI_GATEWAY_TIMEOUT"})
             yield b'event: error\ndata: {"code":"AI_GATEWAY_TIMEOUT"}\n\n'
         except GatewayHTTPError:
+            await memory.idempotency_fail(session_id, idempotency_key, request_hash, lease_token, 502, {"detail":"AI_GATEWAY_HTTP_ERROR"})
             yield b'event: error\ndata: {"code":"AI_GATEWAY_HTTP_ERROR"}\n\n'
         except GatewayInvalidResponseError:
+            await memory.idempotency_fail(session_id, idempotency_key, request_hash, lease_token, 502, {"detail":"AI_GATEWAY_INVALID_RESPONSE"})
             yield b'event: error\ndata: {"code":"AI_GATEWAY_INVALID_RESPONSE"}\n\n'
 
     return StreamingResponse(

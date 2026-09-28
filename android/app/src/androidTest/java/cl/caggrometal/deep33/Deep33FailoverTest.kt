@@ -32,4 +32,28 @@ class Deep33FailoverTest {
 
         assertTrue("Unexpected failover response: $response", value.contains("DEEP33_FAILOVER_E2E_OK"))
     }
+    @Test
+    fun primaryAndSecondaryDownFallBackToTertiary() {
+        val sessionId = "android-tertiary-" + UUID.randomUUID()
+        val messages = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Return only this exact token: DEEP33_TERTIARY_E2E_OK")
+        )
+
+        val deadPrimary = "https://127.0.0.1:65531"
+        val deadSecondary = "https://127.0.0.1:65532"
+        val tertiary = BuildConfig.DEEP33_TERTIARY_URL
+        assertTrue("Tertiary endpoint must be configured", tertiary.isNotBlank())
+
+        val response = Deep33Api.generate(
+            messages = messages,
+            sessionId = sessionId,
+            personality = "NEUTRO",
+            endpointOverride = listOf(deadPrimary, deadSecondary, tertiary)
+        )
+        val value = response.getJSONObject("result").optString("text")
+
+        assertTrue("Unexpected tertiary failover response: $response", value.contains("DEEP33_TERTIARY_E2E_OK"))
+    }
+
 }

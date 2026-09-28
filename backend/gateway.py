@@ -199,7 +199,9 @@ class AIGateway:
 
     @staticmethod
     def _is_retryable_status(status: int) -> bool:
-        return status == 429 or 500 <= status <= 599
+        # 5xx is ambiguous for inference requests: the provider may have accepted the
+        # request before returning the error. Retrying/failing over can duplicate inference.
+        return status == 429
 
     async def probe(self) -> dict:
         started = time.perf_counter()
@@ -296,6 +298,14 @@ class AIGateway:
                             error_class,
                             attempt + 1,
                         )
+                        if 500 <= status <= 599:
+                            # A provider 5xx is ambiguous after a POST. Do not retry or
+                            # switch providers because the inference may already exist.
+                            circuit.failure(
+                                self.config.circuit_failure_threshold,
+                                self.config.circuit_cooldown_seconds,
+                            )
+                            raise GatewayHTTPError
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
@@ -463,6 +473,8 @@ class AIGateway:
                                     error_class,
                                     attempt + 1,
                                 )
+                                if 500 <= status <= 599:
+                                    raise GatewayHTTPError
                             else:
                                 async for chunk in response.aiter_bytes():
                                     if chunk:

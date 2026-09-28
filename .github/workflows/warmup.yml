@@ -25,7 +25,9 @@ jobs:
             url="${entry#*|}"
             ok=0
             for i in $(seq 1 18); do
-              if curl -fsS --connect-timeout 8 --max-time 20 "$url/health" >/dev/null; then
+              if curl -fsS --connect-timeout 8 --max-time 20 "$url/health" >/dev/null &&
+                curl -fsS --connect-timeout 8 --max-time 30 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null &&
+                curl -fsS --connect-timeout 8 --max-time 30 "$url/v1/ai/status" | jq -e '.gateway=="PASS"' >/dev/null; then
                 echo "${name}_WARM_PASS attempt=$i"
                 ok=1
                 break

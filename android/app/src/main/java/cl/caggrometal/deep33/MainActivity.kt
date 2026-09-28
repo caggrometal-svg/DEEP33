@@ -13,6 +13,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.text.method.LinkMovementMethod
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -588,8 +589,8 @@ class MainActivity : Activity() {
         executor.submit {
             try {
                 Deep33Api.setPreferences(store.sessionId, personality)
-            } catch (_: Exception) {
-                // Keep local preference when remote persistence is temporarily unavailable.
+            } catch (e: Exception) {
+                Log.w("DEEP33", "Remote preference sync failed: ${e.javaClass.simpleName}")
             }
         }
     }
@@ -644,7 +645,9 @@ class MainActivity : Activity() {
                         val item = messages.optJSONObject(i) ?: continue
                         val role = item.optString("role")
                         val content = item.optString("content")
-                        if (role.isNotBlank() && content.isNotBlank()) add(UiMessage(role, content))
+                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                            add(UiMessage(role, content))
+                        }
                     }
                 }
 
@@ -663,8 +666,8 @@ class MainActivity : Activity() {
                     renderConversation()
                     refreshSidebarHistory()
                 }
-            } catch (_: Exception) {
-                // Keep local state when remote memory is temporarily unavailable.
+            } catch (e: Exception) {
+                Log.w("DEEP33", "Remote memory load failed: ${e.javaClass.simpleName}")
             }
         }
     }
@@ -760,18 +763,7 @@ class MainActivity : Activity() {
                         }
                     )
                 } catch (streamError: Deep33ApiException) {
-                    if (streamError.kind == Deep33ApiException.Kind.CANCELLED) throw streamError
-                    val fallback = Deep33Api.generate(
-                        payload,
-                        store.sessionId,
-                        store.personality,
-                        requestId = requestId + "-fallback",
-                        idempotencyKey = idempotencyKey + "-fallback"
-                    )
-                    fallback.optJSONObject("result")
-                        ?.optString("text")
-                        .orEmpty()
-                        .ifBlank { fallback.optString("text") }
+                    throw streamError
                 }
 
                 if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)

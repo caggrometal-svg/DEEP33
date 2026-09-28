@@ -7,11 +7,22 @@ import org.junit.Test
 
 class Deep33FailoverPolicyTest {
     @Test
-    fun serverFailureCanFailOverAfterPostBodyStarted() {
-        assertTrue(
+    fun serverFailureCannotFailOverAfterPostBodyStarted() {
+        assertFalse(
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
+                error = Deep33ApiException.Kind.SERVER
+            )
+        )
+    }
+
+    @Test
+    fun serverFailureCanFailOverBeforePostBodyStarts() {
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = false,
                 error = Deep33ApiException.Kind.SERVER
             )
         )

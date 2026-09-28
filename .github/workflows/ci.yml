@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:testDebugUnitTest --no-daemon
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
   production_gate:
     if: ${{ github.event_name != 'pull_request' }}
@@ -121,7 +121,7 @@ jobs:
           PY
 
   android_e2e:
-    needs: production_gate
+    needs: [production_gate, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -251,8 +251,8 @@ jobs:
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/recovery-diag.json
 
   rollback_on_failure:
-    needs: [backend_unit, production_gate, android_e2e, recovery_gate]
-    if: ${{ github.event_name == 'push' && failure() }}
+    needs: [backend_unit, production_gate, android_validation, android_e2e, recovery_gate]
+    if: ${{ always() && github.event_name == 'push' && (needs.backend_unit.result == 'failure' || needs.production_gate.result == 'failure' || needs.android_validation.result == 'failure' || needs.android_e2e.result == 'failure' || needs.recovery_gate.result == 'failure') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -271,10 +271,11 @@ jobs:
             exit 0
           fi
 
-          pass="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/production-pass" --jq '.object.sha' 2>/dev/null || true)"
+          git fetch origin refs/tags/production-pass --force >/dev/null 2>&1 || true
+          pass="$(git rev-parse refs/tags/production-pass^{commit} 2>/dev/null || true)"
           if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "ROLLBACK_ABORT no_certified_production_pass"
-            exit 1
+            echo "ROLLBACK_UNAVAILABLE no_certified_production_pass"
+            exit 0
           fi
 
           test "$pass" != "$GITHUB_SHA"
