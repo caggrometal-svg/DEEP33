@@ -54,7 +54,7 @@ class MemoryClient:
             )
             request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
             idempotency_key = (
-                f"memory-{action}-{hashlib.sha256((session_id + "|" + canonical).encode("utf-8")).hexdigest()[:48]}"
+                f'memory-{action}-{hashlib.sha256((session_id + "|" + canonical).encode("utf-8")).hexdigest()[:48]}'
             )
             body["request_hash"] = request_hash
             body["idempotency_key"] = idempotency_key
