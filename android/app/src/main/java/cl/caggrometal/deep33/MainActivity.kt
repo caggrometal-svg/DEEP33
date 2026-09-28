@@ -644,7 +644,9 @@ class MainActivity : Activity() {
                         val item = messages.optJSONObject(i) ?: continue
                         val role = item.optString("role")
                         val content = item.optString("content")
-                        if (role.isNotBlank() && content.isNotBlank()) add(UiMessage(role, content))
+                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                            add(UiMessage(role, content))
+                        }
                     }
                 }
 
@@ -760,13 +762,17 @@ class MainActivity : Activity() {
                         }
                     )
                 } catch (streamError: Deep33ApiException) {
-                    if (streamError.kind == Deep33ApiException.Kind.CANCELLED) throw streamError
+                    if (
+                        streamError.kind == Deep33ApiException.Kind.CANCELLED ||
+                        streamError.partialOutput
+                    ) throw streamError
+
                     val fallback = Deep33Api.generate(
                         payload,
                         store.sessionId,
                         store.personality,
-                        requestId = requestId + "-fallback",
-                        idempotencyKey = idempotencyKey + "-fallback"
+                        requestId = requestId,
+                        idempotencyKey = idempotencyKey
                     )
                     fallback.optJSONObject("result")
                         ?.optString("text")
