@@ -8,7 +8,7 @@ on:
 
 env:
   PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://iac33-backup-production.up.railway.app
+  SECONDARY_URL: https://deep33-backup.onrender.com
 
 jobs:
   backend_unit:
@@ -75,7 +75,7 @@ jobs:
           print("MODEL_PASS", d["inference"])
           PY
 
-      - name: Verify Railway backup health and inference
+      - name: Verify SECONDARY backup health and inference
         run: |
           set -euo pipefail
           curl -fsS "$SECONDARY_URL/health" > /tmp/backup_health.json
@@ -108,7 +108,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://iac33-backup-production.up.railway.app
+          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
         with:
           api-level: 35
           target: google_apis
@@ -143,11 +143,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Verify Android PRIMARY-down to Railway SECONDARY failover
+      - name: Verify Android PRIMARY-down to SECONDARY failover
         uses: reactivecircus/android-emulator-runner@v2
         env:
           DEEP33_PRIMARY_URL: https://deep33-primary.invalid
-          DEEP33_SECONDARY_URL: https://iac33-backup-production.up.railway.app
+          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
         with:
           api-level: 35
           target: google_apis
