@@ -56,6 +56,21 @@ object Deep33Api {
             sessionId
         )
 
+
+    fun setPreferences(
+        sessionId: String,
+        personality: String,
+        preferences: JSONObject = JSONObject()
+    ): JSONObject =
+        request(
+            "PUT",
+            "/v1/memory/preferences",
+            JSONObject()
+                .put("personality", personality)
+                .put("preferences", preferences),
+            sessionId
+        )
+
     fun stream(
         messages: JSONArray,
         sessionId: String,
