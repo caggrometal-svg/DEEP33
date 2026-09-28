@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections import defaultdict, deque
 import logging
@@ -150,8 +151,13 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 DEFAULT_PERSONALITY = "NEUTRO"
 
 _rate_state: dict[str, tuple[float, int]] = {}
-_idempotency_cache: dict[str, tuple[float, dict]] = {}
+_idempotency_cache: dict[str, tuple[float, str, dict]] = {}
 CACHE_TTL_SECONDS = 300.0
+IDEMPOTENCY_LEASE_SECONDS = 180
+IDEMPOTENCY_WAIT_SECONDS = 80
+
+class IdempotencyConflictError(RuntimeError):
+    pass
 
 
 def utc_now() -> str:
@@ -240,23 +246,103 @@ def cache_key(session_id: str, idempotency_key: str) -> str:
     return f"{session_id}:{idempotency_key}"
 
 
-def cache_get(session_id: str, idempotency_key: str) -> dict | None:
+def payload_hash(value: dict) -> str:
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def cache_prune() -> None:
+    now = time.monotonic()
+    expired = [key for key, value in _idempotency_cache.items() if value[0] <= now]
+    for key in expired[:200]:
+        _idempotency_cache.pop(key, None)
+
+
+def cache_get(session_id: str, idempotency_key: str, request_hash: str) -> dict | None:
+    cache_prune()
     key = cache_key(session_id, idempotency_key)
     entry = _idempotency_cache.get(key)
     if entry is None:
         return None
-    expires_at, data = entry
+    expires_at, stored_hash, data = entry
     if expires_at <= time.monotonic():
         _idempotency_cache.pop(key, None)
         return None
+    if stored_hash != request_hash:
+        raise IdempotencyConflictError("IDEMPOTENCY_KEY_REUSED")
     return data
 
 
-def cache_put(session_id: str, idempotency_key: str, data: dict) -> None:
+def cache_put(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+    data: dict,
+) -> None:
+    cache_prune()
     _idempotency_cache[cache_key(session_id, idempotency_key)] = (
         time.monotonic() + CACHE_TTL_SECONDS,
+        request_hash,
         data,
     )
+
+
+async def shared_idempotency_claim(
+    session_id: str,
+    idempotency_key: str,
+    operation: str,
+    request_hash: str,
+) -> tuple[str, dict]:
+    if not memory.enabled:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE")
+
+    try:
+        claim = await memory.idempotency_claim(
+            session_id,
+            idempotency_key,
+            operation,
+            request_hash,
+            lease_seconds=IDEMPOTENCY_LEASE_SECONDS,
+        )
+        state = str(claim.get("state", "")).upper()
+        if state == "CONFLICT":
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        if state in {"CLAIMED", "COMPLETED", "FAILED"}:
+            return state, claim
+
+        deadline = time.monotonic() + IDEMPOTENCY_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            status = await memory.idempotency_status(
+                session_id,
+                idempotency_key,
+                request_hash,
+            )
+            state = str(status.get("state", "")).upper()
+            if state in {"COMPLETED", "FAILED"}:
+                return state, status
+            if state == "CONFLICT":
+                raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        raise HTTPException(status_code=504, detail="IDEMPOTENCY_IN_PROGRESS")
+    except MemoryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE") from exc
+
+
+def replay_idempotent(state: str, record: dict, *, default_status: int = 200) -> dict:
+    status_code = int(record.get("status_code", default_status))
+    response = record.get("response")
+    if status_code >= 400:
+        detail = response.get("detail", "IDEMPOTENT_REQUEST_FAILED") if isinstance(response, dict) else "IDEMPOTENT_REQUEST_FAILED"
+        raise HTTPException(status_code=status_code, detail=detail)
+    if not isinstance(response, dict):
+        raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+    return response
+
+
+def error_record(exc: Exception) -> tuple[int, dict]:
+    if isinstance(exc, HTTPException):
+        return int(exc.status_code), {"detail": str(exc.detail)}
+    return 500, {"detail": "DEEP33_INTERNAL_ERROR"}
 
 
 async def network_probe() -> dict:
@@ -331,11 +417,20 @@ async def health() -> dict:
 async def ready(response: Response) -> dict:
     network = await network_probe()
     gateway_status = await gateway_probe()
+    memory_ok = False
+    if memory.enabled:
+        try:
+            await memory.ping()
+            memory_ok = True
+        except MemoryUnavailableError:
+            memory_ok = False
+
     ready_ok = (
         network["internet_available"]
         and gateway_status.get("gateway") == "PASS"
         and bool(gateway_status.get("model"))
         and bool(gateway.config.providers)
+        and memory_ok
     )
     response.status_code = 200 if ready_ok else 503
     return {
@@ -348,6 +443,7 @@ async def ready(response: Response) -> dict:
         "network": network,
         "gateway": gateway_status,
         "memory_configured": memory.enabled,
+        "memory_ready": memory_ok,
     }
 
 
