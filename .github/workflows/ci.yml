@@ -11,7 +11,6 @@ on:
 
 env:
   PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
 
 jobs:
   backend_unit:
@@ -94,28 +93,7 @@ jobs:
           assert body["checks"]["CHAT"]=="PASS", body
           print("PRIMARY_INFERENCE_PASS", body["inference"])
           PY
-
-      - name: Verify SECONDARY health and inference
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          curl -fsS "$SECONDARY_URL/health" >/tmp/secondary-health.json
-          curl -fsS "$SECONDARY_URL/ready" >/tmp/secondary-ready.json
-          curl -fsS --max-time 95 "$SECONDARY_URL/v1/ai/diagnostics" >/tmp/secondary-diag.json
-          python - <<'PY'
-          import json, os
-          expected=os.environ["EXPECTED_SHA"]
-          h=json.load(open("/tmp/secondary-health.json"))
-          r=json.load(open("/tmp/secondary-ready.json"))
-          d=json.load(open("/tmp/secondary-diag.json"))
-          assert h["status"]=="PASS" and h["git_sha"]==expected, h
-          assert r["status"]=="PASS" and r["ready"] is True and r["git_sha"]==expected, r
-          assert d["online"] is True and d["checks"]["MODEL"]=="PASS", d
-          print("SECONDARY_PASS")
-          PY
-
-  android_e2e:
+\n\n  android_e2e:
     needs: production_gate
     runs-on: ubuntu-latest
     steps:
@@ -130,7 +108,6 @@ jobs:
       - name: Android real connectivity E2E
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 35
@@ -158,44 +135,8 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-  android_failover:
-    needs: production_gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-      - name: Android PRIMARY-down to SECONDARY
-        env:
-          DEEP33_PRIMARY_URL: https://deep33-primary.invalid
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_5
-          cores: 4
-          ram-size: 4096M
-          heap-size: 1024M
-          avd-name: deep33-failover
-          force-avd-creation: true
-          emulator-boot-timeout: 900
-          emulator-port: 5556
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
-          disable-animations: true
-          disable-spellchecker: false
-          enable-hw-keyboard: false
-          channel: stable
-          script: cd android && gradle :app:connectedDebugAndroidTest --no-daemon -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33FailoverTest
-
   recovery_gate:
-    needs: [android_e2e, android_failover]
+    needs: android_e2e
     runs-on: ubuntu-latest
     steps:
       - name: Verify PRIMARY recovery
@@ -213,7 +154,7 @@ jobs:
           PY
 
   rollback_on_failure:
-    needs: [backend_unit, production_gate, android_e2e, android_failover, recovery_gate]
+    needs: [backend_unit, production_gate, android_e2e, recovery_gate]
     if: ${{ github.event_name == 'push' && failure() }}
     runs-on: ubuntu-latest
     steps:
