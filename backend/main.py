@@ -729,8 +729,15 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
 
     async def body() -> AsyncIterator[bytes]:
         yield first
-        async for chunk in iterator:
-            yield chunk
+        try:
+            async for chunk in iterator:
+                yield chunk
+        except GatewayTimeoutError:
+            yield b'event: error\ndata: {"code":"AI_GATEWAY_TIMEOUT"}\n\n'
+        except GatewayHTTPError:
+            yield b'event: error\ndata: {"code":"AI_GATEWAY_HTTP_ERROR"}\n\n'
+        except GatewayInvalidResponseError:
+            yield b'event: error\ndata: {"code":"AI_GATEWAY_INVALID_RESPONSE"}\n\n'
 
     return StreamingResponse(
         body(),
