@@ -8,10 +8,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class Deep33ConnectivityTest {
     private val baseUrl = "https://deep33-backend.onrender.com"
+    private val sessionId = "android-e2e-" + UUID.randomUUID()
 
     @Test
     fun backendHealthIsPass() {
@@ -32,7 +34,7 @@ class Deep33ConnectivityTest {
 
     @Test
     fun realChatReturnsE2EToken() {
-        val connection = open("POST", "/v1/ai/generate")
+        val connection = open("POST", "/v1/ai/generate", sessionId)
         connection.setRequestProperty("Content-Type", "application/json")
         connection.doOutput = true
         val payload = JSONObject().put("messages", JSONArray().put(
@@ -51,7 +53,7 @@ class Deep33ConnectivityTest {
 
     @Test
     fun streamEndpointReturnsRealToken() {
-        val connection = open("POST", "/v1/chat/stream")
+        val connection = open("POST", "/v1/chat/stream", sessionId)
         connection.setRequestProperty("Content-Type", "application/json")
         connection.setRequestProperty("Accept", "text/event-stream")
         connection.doOutput = true
@@ -116,12 +118,48 @@ class Deep33ConnectivityTest {
         return JSONObject(body)
     }
 
-    private fun open(method: String, path: String): HttpURLConnection =
+    @Test
+    fun remoteMemoryContainsPersistedConversation() {
+        val connection = open("POST", "/v1/ai/generate", sessionId)
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.doOutput = true
+        val payload = JSONObject().put("messages", JSONArray().put(
+            JSONObject().put("role", "user").put("content", "Return only this exact token: DEEP33_MEMORY_E2E_OK")
+        ))
+        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val code = connection.responseCode
+        val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        connection.disconnect()
+        assertTrue("memory generation HTTP " + code + ": " + body, code in 200..299)
+
+        val context = open("GET", "/v1/memory/context", sessionId)
+        val contextCode = context.responseCode
+        val contextBody = (if (contextCode in 200..299) context.inputStream else context.errorStream)
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        context.disconnect()
+        assertTrue("memory context HTTP " + contextCode + ": " + contextBody, contextCode in 200..299)
+
+        val messages = JSONObject(contextBody).getJSONArray("messages")
+        var found = false
+        for (i in 0 until messages.length()) {
+            if (messages.optJSONObject(i)?.optString("content").orEmpty().contains("DEEP33_MEMORY_E2E_OK")) {
+                found = true
+                break
+            }
+        }
+        assertTrue("persisted memory token missing: " + contextBody, found)
+    }
+
+    private fun open(method: String, path: String, sessionId: String? = null): HttpURLConnection =
         (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15000
             readTimeout = 90000
             useCaches = false
             setRequestProperty("Accept", "application/json")
+            if (!sessionId.isNullOrBlank()) {
+                setRequestProperty("X-DEEP33-Session-Id", sessionId)
+            }
         }
 }
