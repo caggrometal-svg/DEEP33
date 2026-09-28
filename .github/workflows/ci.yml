@@ -1,5 +1,8 @@
 name: DEEP33 CI
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -8,7 +11,7 @@ on:
 
 env:
   PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://deep33-backup.onrender.com
+  SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
 
 jobs:
   backend_unit:
@@ -17,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.13.15"
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
@@ -83,11 +86,13 @@ jobs:
           curl -fsS --max-time 95 "$SECONDARY_URL/v1/ai/diagnostics" > /tmp/backup_diag.json
           python - <<'PY'
           import json
+          import os
+          expected=os.environ["EXPECTED_SHA"]
           h=json.load(open("/tmp/backup_health.json"))
           r=json.load(open("/tmp/backup_ready.json"))
           d=json.load(open("/tmp/backup_diag.json"))
-          assert h["status"]=="PASS", h
-          assert r["status"]=="PASS" and r["ready"] is True, r
+          assert h["status"]=="PASS" and h["git_sha"]==expected, h
+          assert r["status"]=="PASS" and r["ready"] is True and r["git_sha"]==expected, r
           assert d["online"] is True and d["checks"]["MODEL"]=="PASS", d
           print("RAILWAY_BACKUP_PASS")
           PY
@@ -181,8 +186,46 @@ jobs:
           print("RECOVERY_PASS")
           PY
 
-  release_gate:
-    needs: recovery_gate
+  rollback_on_failure:
+    needs: [backend_unit, production_gate, android_e2e, android_failover, recovery_gate]
+    if: ${{ github.event_name == 'push' && failure() }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo "DEEP33_CRITICAL_GATES_PASS"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Roll back main to last PASS release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$current" != "$GITHUB_SHA" ]; then
+            echo "ROLLBACK_SKIPPED_CONCURRENT_COMMIT current=$current failed=$GITHUB_SHA"
+            exit 0
+          fi
+          pass="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/production-pass" --jq '.object.sha' 2>/dev/null || true)"
+          if [ -z "$pass" ]; then
+            pass="${{ github.event.before }}"
+          fi
+          test -n "$pass"
+          test "$pass" != "$GITHUB_SHA"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f sha="$pass" -F force=true
+          echo "ROLLBACK_PASS target=$pass"
+
+  release_gate:
+    needs: recovery_gate
+    if: ${{ github.event_name == 'push' && success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mark exact release as PASS
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f production-pass "$GITHUB_SHA"
+          git push origin refs/tags/production-pass --force
+          echo "DEEP33_CRITICAL_GATES_PASS $GITHUB_SHA"
