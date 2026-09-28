@@ -199,7 +199,9 @@ class AIGateway:
 
     @staticmethod
     def _is_retryable_status(status: int) -> bool:
-        return status == 429 or 500 <= status <= 599
+        # 5xx is ambiguous for inference requests: the provider may have accepted the
+        # request before returning the error. Retrying/failing over can duplicate inference.
+        return status == 429
 
     async def probe(self) -> dict:
         started = time.perf_counter()
