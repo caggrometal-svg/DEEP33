@@ -45,13 +45,6 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon
 
-      - name: Publish APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: DEEP33-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -75,3 +68,36 @@ jobs:
           enable-hw-keyboard: false
           channel: stable
           script: cd android && gradle :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Android failover E2E PRIMARY down -> BACKUP
+        env:
+          DEEP33_PRIMARY_URL: https://deep33-primary.invalid
+          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
+        run: |
+          cd android
+          gradle :app:assembleDebug --no-daemon
+          cd ..
+      - name: Android emulator failover verification
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          avd-name: failover
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          emulator-port: 5556
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          disable-spellchecker: false
+          disable-linux-hw-accel: auto
+          enable-hw-keyboard: false
+          channel: stable
+          script: cd android && DEEP33_PRIMARY_URL=https://deep33-primary.invalid DEEP33_SECONDARY_URL=https://deep33-backup.onrender.com gradle :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Publish APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEEP33-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
