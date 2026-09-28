@@ -1,11 +1,13 @@
 concurrency:
-  group: deep33-production-e2e-${{ github.ref }}
+  group: deep33-production-${{ github.ref }}
   cancel-in-progress: true
 
 name: DEEP33 Production E2E
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read

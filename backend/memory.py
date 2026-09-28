@@ -37,29 +37,36 @@ class MemoryClient:
     def enabled(self) -> bool:
         return bool(self.function_url and self.api_key)
 
-    async def _call(
-        self,
-        action: str,
-        session_id: str,
-        *,
-        idempotency_key: str | None = None,
-        request_hash: str | None = None,
-        **payload: Any,
-    ) -> dict:
+    async def _call(self, action: str, session_id: str, **payload: Any) -> dict:
         if not self.enabled:
             return {}
 
         body = {"action": action, "session_id": session_id, **payload}
-        if idempotency_key:
-            body["idempotency_key"] = idempotency_key
-        if request_hash:
+
+        # Remote memory writes are retried, so every mutating request must be
+        # idempotent at the edge-function boundary as well.
+        if action in {"sync", "remember", "preferences"}:
+            canonical = json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            idempotency_key = (
+                f'memory-{action}-{hashlib.sha256((session_id + "|" + canonical).encode("utf-8")).hexdigest()[:48]}'
+            )
             body["request_hash"] = request_hash
+            body["idempotency_key"] = idempotency_key
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "apikey": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if "idempotency_key" in body:
+            headers["X-Idempotency-Key"] = str(body["idempotency_key"])
 
         for attempt in range(self.max_retries + 1):
             try:
@@ -92,73 +99,11 @@ class MemoryClient:
             raise MemoryUnavailableError("memory_invalid_payload")
         return data
 
-    @staticmethod
-    def _request_hash(action: str, session_id: str, payload: dict[str, Any]) -> str:
-        canonical = json.dumps(
-            {"action": action, "session_id": session_id, "payload": payload},
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    async def ping(self) -> dict:
-        return await self._call("ping", "deep33-health")
-
-    async def context(self, session_id: str) -> dict:
-        return await self._call("context", session_id)
-
-    async def sync(
-        self,
-        session_id: str,
-        messages: list[dict[str, str]],
-        personality: str | None = None,
-        preferences: dict[str, Any] | None = None,
-    ) -> dict:
-        payload: dict[str, Any] = {"messages": messages[-50:]}
-        if personality:
-            payload["personality"] = personality
-        if preferences is not None:
-            payload["preferences"] = preferences
-        request_hash = self._request_hash("sync", session_id, payload)
-        return await self._call(
-            "sync",
-            session_id,
-            idempotency_key=f"memory:sync:{request_hash}",
-            request_hash=request_hash,
-            **payload,
-        )
-
-    async def remember(self, session_id: str, kind: str, content: str) -> dict:
-        payload = {"kind": kind, "content": content}
-        request_hash = self._request_hash("remember", session_id, payload)
-        return await self._call(
-            "remember",
-            session_id,
-            idempotency_key=f"memory:remember:{request_hash}",
-            request_hash=request_hash,
-            **payload,
-        )
-
-    async def set_preferences(
-        self,
-        session_id: str,
-        personality: str | None = None,
-        preferences: dict[str, Any] | None = None,
-    ) -> dict:
-        payload: dict[str, Any] = {}
-        if personality:
-            payload["personality"] = personality
-        if preferences is not None:
-            payload["preferences"] = preferences
-        request_hash = self._request_hash("preferences", session_id, payload)
-        return await self._call(
-            "preferences",
-            session_id,
-            idempotency_key=f"memory:preferences:{request_hash}",
-            request_hash=request_hash,
-            **payload,
-        )
+    async def probe(self) -> dict:
+        if not self.enabled:
+            return {"configured": False, "reachable": False}
+        data = await self._call("context", "__deep33_readiness_probe__")
+        return {"configured": True, "reachable": isinstance(data, dict)}
 
     async def idempotency_claim(
         self,
@@ -172,8 +117,8 @@ class MemoryClient:
             "idempotency_claim",
             session_id,
             idempotency_key=idempotency_key,
-            request_hash=request_hash,
             operation=operation,
+            request_hash=request_hash,
             lease_seconds=lease_seconds,
         )
 
@@ -196,8 +141,8 @@ class MemoryClient:
         idempotency_key: str,
         request_hash: str,
         lease_token: str,
-        status_code: int,
         response: dict,
+        status_code: int = 200,
     ) -> dict:
         return await self._call(
             "idempotency_complete",
@@ -205,28 +150,47 @@ class MemoryClient:
             idempotency_key=idempotency_key,
             request_hash=request_hash,
             lease_token=lease_token,
-            status_code=status_code,
             response=response,
+            status_code=status_code,
         )
 
-    async def idempotency_fail(
+    async def context(self, session_id: str) -> dict:
+        return await self._call("context", session_id)
+
+    async def sync(
         self,
         session_id: str,
-        idempotency_key: str,
-        request_hash: str,
-        lease_token: str,
-        status_code: int,
-        response: dict,
+        messages: list[dict[str, str]],
+        personality: str | None = None,
+        preferences: dict[str, Any] | None = None,
     ) -> dict:
+        payload: dict[str, Any] = {"messages": messages[-50:]}
+        if personality:
+            payload["personality"] = personality
+        if preferences is not None:
+            payload["preferences"] = preferences
+        return await self._call("sync", session_id, **payload)
+
+    async def remember(self, session_id: str, kind: str, content: str) -> dict:
         return await self._call(
-            "idempotency_fail",
+            "remember",
             session_id,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            lease_token=lease_token,
-            status_code=status_code,
-            response=response,
+            kind=kind,
+            content=content,
         )
+
+    async def set_preferences(
+        self,
+        session_id: str,
+        personality: str | None = None,
+        preferences: dict[str, Any] | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {}
+        if personality:
+            payload["personality"] = personality
+        if preferences is not None:
+            payload["preferences"] = preferences
+        return await self._call("preferences", session_id, **payload)
 
 
 def merge_messages(
@@ -241,7 +205,7 @@ def merge_messages(
         for item in source:
             role = str(item.get("role", "")).strip()
             content = str(item.get("content", "")).strip()
-            if role not in {"user", "assistant"} or not content:
+            if role not in {"system", "user", "assistant"} or not content:
                 continue
             key = (role, content)
             if key in seen:
@@ -263,7 +227,21 @@ def extract_context_messages(data: dict) -> list[dict[str, Any]]:
     messages = data.get("messages")
     if not isinstance(messages, list):
         return []
-    return [item for item in messages if isinstance(item, dict) and item.get("role") in {"user", "assistant"} and not is_internal_context_message(item)]
+    # Remote memory is data, never an instruction channel.
+    # Only user/assistant turns are allowed back into the model context.
+    return [
+        {
+            "role": str(item.get("role")),
+            "content": str(item.get("content")).strip(),
+        }
+        for item in messages
+        if (
+            isinstance(item, dict)
+            and str(item.get("role", "")).strip() in {"user", "assistant"}
+            and str(item.get("content", "")).strip()
+            and not is_internal_context_message(item)
+        )
+    ]
 
 
 def extract_context_system_message(data: dict) -> str | None:

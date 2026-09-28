@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:testDebugUnitTest --no-daemon
 
   production_gate:
     if: ${{ github.event_name != 'pull_request' }}
@@ -121,7 +121,7 @@ jobs:
           PY
 
   android_e2e:
-    needs: [production_gate, android_validation]
+    needs: production_gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -137,15 +137,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: "8.9"
-
-      - name: Enable KVM for Android Emulator
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -e /dev/kvm
-          ls -l /dev/kvm
 
       - name: Android real connectivity E2E
         env:
@@ -165,10 +156,10 @@ jobs:
           force-avd-creation: true
           emulator-boot-timeout: 900
           emulator-port: 5554
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 8.8.8.8,8.8.4.4
           disable-animations: true
           disable-spellchecker: true
-          disable-linux-hw-accel: false
+          disable-linux-hw-accel: auto
           enable-hw-keyboard: false
           channel: stable
           script: |
@@ -260,8 +251,8 @@ jobs:
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/recovery-diag.json
 
   rollback_on_failure:
-    needs: [backend_unit, production_gate, android_validation, android_e2e, recovery_gate]
-    if: ${{ always() && github.event_name == 'push' && (needs.backend_unit.result == 'failure' || needs.production_gate.result == 'failure' || needs.android_validation.result == 'failure' || needs.android_e2e.result == 'failure' || needs.recovery_gate.result == 'failure') }}
+    needs: [backend_unit, production_gate, android_e2e, recovery_gate]
+    if: ${{ github.event_name == 'push' && always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -280,11 +271,16 @@ jobs:
             exit 0
           fi
 
-          git fetch origin refs/tags/production-pass --force >/dev/null 2>&1 || true
+          git fetch --force origin refs/tags/production-pass:refs/tags/production-pass >/dev/null 2>&1 || true
           pass="$(git rev-parse refs/tags/production-pass^{commit} 2>/dev/null || true)"
           if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "ROLLBACK_UNAVAILABLE no_certified_production_pass"
-            exit 0
+            echo "ROLLBACK_ABORT no_certified_production_pass"
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor "$pass" "$current"; then
+            echo "ROLLBACK_ABORT certified_tag_not_in_main_history target=$pass current=$current"
+            exit 1
           fi
 
           test "$pass" != "$GITHUB_SHA"

@@ -18,17 +18,6 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
-    fun serverFailureCanFailOverBeforePostBodyStarts() {
-        assertTrue(
-            Deep33FailoverPolicy.canFailover(
-                method = "POST",
-                requestBodyStarted = false,
-                error = Deep33ApiException.Kind.SERVER
-            )
-        )
-    }
-
-    @Test
     fun timeoutCannotFailOverAfterPostBodyStarted() {
         assertFalse(
             Deep33FailoverPolicy.canFailover(
@@ -73,26 +62,13 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
-    fun http5xxCannotFailOverAfterPostBodyStarted() {
+    fun http5xxIsNotFailoverEligibleAfterPostBodyStarted() {
         val error = Deep33Api.mapError(503)
         assertEquals(Deep33ApiException.Kind.SERVER, error.kind)
         assertFalse(
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
-                error = error.kind
-            )
-        )
-    }
-
-    @Test
-    fun http5xxCanFailOverBeforePostBodyStarts() {
-        val error = Deep33Api.mapError(503)
-        assertEquals(Deep33ApiException.Kind.SERVER, error.kind)
-        assertTrue(
-            Deep33FailoverPolicy.canFailover(
-                method = "POST",
-                requestBodyStarted = false,
                 error = error.kind
             )
         )

@@ -34,6 +34,7 @@ import kotlin.math.roundToInt
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
 class MainActivity : Activity() {
+    companion object { private const val TAG = "DEEP33/MainActivity" }
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
     private lateinit var sidebar: LinearLayout
@@ -590,7 +591,7 @@ class MainActivity : Activity() {
             try {
                 Deep33Api.setPreferences(store.sessionId, personality)
             } catch (e: Exception) {
-                Log.w("DEEP33", "Remote preference sync failed: ${e.javaClass.simpleName}")
+                Log.e(TAG, "syncPreferences failed", e)
             }
         }
     }
@@ -667,7 +668,7 @@ class MainActivity : Activity() {
                     refreshSidebarHistory()
                 }
             } catch (e: Exception) {
-                Log.w("DEEP33", "Remote memory load failed: ${e.javaClass.simpleName}")
+                Log.e(TAG, "loadRemoteContext failed", e)
             }
         }
     }
@@ -763,7 +764,22 @@ class MainActivity : Activity() {
                         }
                     )
                 } catch (streamError: Deep33ApiException) {
-                    throw streamError
+                    if (
+                        streamError.kind == Deep33ApiException.Kind.CANCELLED ||
+                        streamError.partialOutput
+                    ) throw streamError
+
+                    val fallback = Deep33Api.generate(
+                        payload,
+                        store.sessionId,
+                        store.personality,
+                        requestId = requestId,
+                        idempotencyKey = idempotencyKey
+                    )
+                    fallback.optJSONObject("result")
+                        ?.optString("text")
+                        .orEmpty()
+                        .ifBlank { fallback.optString("text") }
                 }
 
                 if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)

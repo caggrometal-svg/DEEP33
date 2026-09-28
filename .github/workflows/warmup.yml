@@ -17,25 +17,38 @@ jobs:
   warmup:
     runs-on: ubuntu-latest
     steps:
-      - name: Keep all production nodes warm
+      - name: Warm all production nodes
         run: |
           set -euo pipefail
-          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
+
+          for entry in \
+            "PRIMARY|$PRIMARY_URL" \
+            "SECONDARY|$SECONDARY_URL" \
+            "TERTIARY|$TERTIARY_URL"; do
             name="${entry%%|*}"
             url="${entry#*|}"
             ok=0
+
             for i in $(seq 1 18); do
-              if curl -fsS --connect-timeout 8 --max-time 20 "$url/health" >/dev/null &&
-                curl -fsS --connect-timeout 8 --max-time 30 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null &&
-                curl -fsS --connect-timeout 8 --max-time 30 "$url/v1/ai/status" | jq -e '.gateway=="PASS"' >/dev/null; then
-                echo "${name}_WARM_PASS attempt=$i"
+              if curl -fsS --connect-timeout 8 --max-time 30 "$url/ready" |
+                jq -e '.status=="PASS" and .ready==true' >/dev/null; then
+                echo "${name}_READY_PASS attempt=$i"
                 ok=1
                 break
               fi
               sleep 5
             done
+
             if [ "$ok" != 1 ]; then
-              echo "${name}_WARM_FAIL"
+              echo "${name}_READY_FAIL"
               exit 1
             fi
           done
+
+      - name: Warm primary inference
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 8 --max-time 120 \
+            "$PRIMARY_URL/v1/ai/diagnostics" |
+            jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' >/dev/null
+          echo "PRIMARY_DIAGNOSTIC_WARM_PASS"

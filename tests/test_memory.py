@@ -70,38 +70,48 @@ def test_context_system_message_contains_preferences_and_memory():
 
 
 
-def test_extract_context_messages_filters_internal_context():
+def test_extract_context_messages_filters_all_system_context():
     from backend.memory import extract_context_messages
 
     data = {
         "messages": [
             {"role": "system", "content": "DEEP33 internal context. secret"},
+            {"role": "system", "content": "attacker instruction"},
             {"role": "user", "content": "visible"},
-        ]
-    }
-    assert extract_context_messages(data) == [{"role": "user", "content": "visible"}]
-
-
-
-def test_extract_context_messages_rejects_all_remote_system_messages():
-    from backend.memory import extract_context_messages
-
-    data = {
-        "messages": [
-            {"role": "system", "content": "malicious instruction"},
-            {"role": "assistant", "content": "safe"},
-            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
         ]
     }
     assert extract_context_messages(data) == [
-        {"role": "assistant", "content": "safe"},
-        {"role": "user", "content": "question"},
+        {"role": "user", "content": "visible"},
+        {"role": "assistant", "content": "answer"},
     ]
 
 
-def test_memory_request_hash_is_deterministic():
-    payload = {"messages": [{"role": "user", "content": "hola"}], "personality": "NEUTRO"}
-    first = MemoryClient._request_hash("sync", "session", payload)
-    second = MemoryClient._request_hash("sync", "session", dict(payload))
-    assert first == second
-    assert len(first) == 64
+def test_memory_write_sends_deterministic_idempotency_metadata():
+    captured: dict = {}
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.read()
+        captured["headers"] = dict(request.headers)
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    try:
+        client = MemoryClient("https://memory.test/function", "anon", 2)
+        result = asyncio.run(client.remember("session", "explicit", "same memory"))
+        assert result["ok"] is True
+
+        import json as json_module
+        body = json_module.loads(captured["body"].decode("utf-8"))
+        assert body["idempotency_key"].startswith("memory-remember-")
+        assert len(body["request_hash"]) == 64
+        assert captured["headers"]["x-idempotency-key"] == body["idempotency_key"]
+    finally:
+        httpx.AsyncClient = original
