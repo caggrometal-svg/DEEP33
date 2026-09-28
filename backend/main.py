@@ -5,6 +5,7 @@ import json
 from collections import defaultdict, deque
 import logging
 import os
+from pathlib import Path
 import socket
 import time
 import uuid
@@ -31,7 +32,22 @@ from backend.memory import (
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
-GIT_SHA = os.getenv("RENDER_GIT_COMMIT", "").strip() or os.getenv("DEEP33_GIT_SHA", "unknown").strip()
+def _resolve_git_sha() -> str:
+    runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
+    if runtime:
+        return runtime
+    env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
+    if env_sha:
+        return env_sha
+    try:
+        file_sha = Path("/app/deep33/.deployed_sha").read_text(encoding="utf-8").strip()
+        if file_sha:
+            return file_sha
+    except OSError:
+        pass
+    return "unknown"
+
+GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
 GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
 
