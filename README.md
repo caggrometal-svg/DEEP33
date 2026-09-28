@@ -4,9 +4,9 @@ DEEP33 is a new AI product built independently from IAC33, C-33 and Andrew2.0.
 
 ## First gate: real connectivity
 
-DEEP33 is considered online only when this chain is proven:
+The current production chain is:
 
-Android → Internet → Railway → DEEP33 Backend → AI Gateway → Model → Android
+Android → Internet → DEEP33 Backend (Render) → AI Gateway → Model → Android
 
 The backend exposes observable checks instead of a single opaque ONLINE flag.
 
@@ -18,14 +18,16 @@ The backend exposes observable checks instead of a single opaque ONLINE flag.
 - tests/ — automated tests
 - .github/workflows/ — CI
 
-## Phase 0 / Phase 1
+## Connectivity status
 
-- Repository: initialized
-- Backend: minimal FastAPI implementation
-- Health/readiness: implemented
+- Backend health/readiness: implemented
 - Network diagnostics: implemented
 - AI status/diagnostics: implemented
 - Chat + streaming contracts: implemented
-- Railway deployment: next step
+- Android HTTP client: implemented
+- Android instrumented E2E: implemented
+- No provider credential is stored in the repository or APK.
 
-No provider credential is stored in the repository or APK.
+FASE 3 is closed only after the Android E2E job proves:
+
+Android → Internet → DEEP33 Backend → AI Gateway → Model → Android
