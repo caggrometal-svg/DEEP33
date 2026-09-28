@@ -608,25 +608,15 @@ async def stream_gateway(
     idempotency_key: str,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
-    try:
-        deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        async for chunk in gateway.stream(
-            payload,
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-            deadline=deadline,
-        ):
-            collected.extend(chunk)
-            yield chunk
-    except GatewayTimeoutError:
-        yield b'event: error\ndata: {"code":"AI_GATEWAY_TIMEOUT"}\n\n'
-        return
-    except GatewayHTTPError:
-        yield b'event: error\ndata: {"code":"AI_GATEWAY_HTTP_ERROR"}\n\n'
-        return
-    except GatewayInvalidResponseError:
-        yield b'event: error\ndata: {"code":"AI_GATEWAY_INVALID_RESPONSE"}\n\n'
-        return
+    deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+    async for chunk in gateway.stream(
+        payload,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        deadline=deadline,
+    ):
+        collected.extend(chunk)
+        yield chunk
 
     try:
         text = collected.decode("utf-8", errors="ignore")
