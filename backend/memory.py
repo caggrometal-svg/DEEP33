@@ -78,6 +78,12 @@ class MemoryClient:
             raise MemoryUnavailableError("memory_invalid_payload")
         return data
 
+    async def probe(self) -> dict:
+        if not self.enabled:
+            return {"configured": False, "reachable": False}
+        data = await self._call("context", "__deep33_readiness_probe__")
+        return {"configured": True, "reachable": isinstance(data, dict)}
+
     async def context(self, session_id: str) -> dict:
         return await self._call("context", session_id)
 
