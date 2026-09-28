@@ -62,10 +62,10 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
-    fun http5xxIsAFailoverEligibleServerFailure() {
+    fun http5xxIsNotFailoverEligibleAfterPostBodyStarted() {
         val error = Deep33Api.mapError(503)
         assertEquals(Deep33ApiException.Kind.SERVER, error.kind)
-        assertTrue(
+        assertFalse(
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
