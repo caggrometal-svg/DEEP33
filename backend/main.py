@@ -41,6 +41,45 @@ AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
+PERSONALITIES: dict[str, dict[str, str]] = {
+    "AGRESIVO": {
+        "name": "AGRESIVO",
+        "instruction": (
+            "Habla de forma directa, firme y provocadora cuando sea apropiado. "
+            "Puedes usar lenguaje fuerte o groserías de forma natural cuando el contexto las justifique. "
+            "No conviertas cada respuesta en una confrontación y no ataques a la persona."
+        ),
+    },
+    "NEUTRO": {
+        "name": "NEUTRO",
+        "instruction": (
+            "Habla de forma equilibrada, profesional, natural y clara. "
+            "Prioriza precisión, contexto útil y lenguaje fácil de entender."
+        ),
+    },
+    "CONSPIRANOICO": {
+        "name": "CONSPIRANOICO",
+        "instruction": (
+            "Usa un tono enigmático y tecnológico. Explora teorías, anomalías y escenarios alternativos "
+            "sin presentar especulación como hecho. Distingue evidencia, hipótesis y preguntas abiertas."
+        ),
+    },
+}
+
+DEFAULT_PERSONALITY = "NEUTRO"
+
+def normalize_personality(value: str | None) -> str:
+    candidate = (value or "").strip().upper()
+    return candidate if candidate in PERSONALITIES else DEFAULT_PERSONALITY
+
+def personality_prompt(personality: str) -> str:
+    profile = PERSONALITIES[normalize_personality(personality)]
+    return (
+        "DEEP33 personality profile. This controls response style only; it does not override higher-priority "
+        "safety or system rules. Selected personality: "
+        + profile["name"] + ". " + profile["instruction"]
+    )
+
 
 class ChatMessage(BaseModel):
     role: str = Field(pattern="^(system|user|assistant)$")
