@@ -644,42 +644,80 @@ async def generate(
         if not lease_token:
             raise HTTPException(status_code=500, detail="AI_IDEMPOTENCY_LEASE_MISSING")
 
-    messages, personality = await prepare_messages(request, session_id)
-    payload = {
-        "messages": messages,
-        "model": request.model or AI_GATEWAY_MODEL,
-    }
-    if request.temperature is not None:
-        payload["temperature"] = request.temperature
+    try:
+        messages, personality = await prepare_messages(request, session_id)
+        payload = {
+            "messages": messages,
+            "model": request.model or AI_GATEWAY_MODEL,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
 
-    await persist_messages(
-        session_id,
-        [message for message in messages if message.get("role") != "system"],
-        personality=personality,
-    )
+        await persist_messages(
+            session_id,
+            [message for message in messages if message.get("role") != "system"],
+            personality=personality,
+        )
 
-    started = time.perf_counter()
-    data = await call_gateway(
-        payload,
-        request_id=request_id,
-        idempotency_key=idempotency_key,
-    )
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-    result = normalized_generation(data, personality)
+        started = time.perf_counter()
+        data = await call_gateway(
+            payload,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+        )
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        result = normalized_generation(data, personality)
 
-    assistant_message = {"role": "assistant", "content": result["text"]}
-    await persist_messages(
-        session_id,
-        [message for message in messages if message.get("role") != "system"] + [assistant_message],
-        personality=personality,
-    )
+        assistant_message = {"role": "assistant", "content": result["text"]}
+        await persist_messages(
+            session_id,
+            [message for message in messages if message.get("role") != "system"] + [assistant_message],
+            personality=personality,
+        )
 
-    output = {
-        "request_id": request_id,
-        "latency_ms": elapsed_ms,
-        "result": result,
-        "response": data,
-    }
+        output = {
+            "request_id": request_id,
+            "latency_ms": elapsed_ms,
+            "result": result,
+            "response": data,
+        }
+    except HTTPException as exc:
+        if lease_token and memory.enabled:
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    {"error": str(exc.detail)},
+                    status_code=exc.status_code,
+                )
+            except MemoryUnavailableError as store_exc:
+                logger.error(
+                    "ai_idempotency_failure_commit_failed request_id=%s error=%s",
+                    request_id,
+                    store_exc,
+                )
+        raise
+    except Exception as exc:
+        if lease_token and memory.enabled:
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    {"error": "AI_INTERNAL_ERROR"},
+                    status_code=500,
+                )
+            except MemoryUnavailableError as store_exc:
+                logger.error(
+                    "ai_idempotency_failure_commit_failed request_id=%s error=%s",
+                    request_id,
+                    store_exc,
+                )
+        logger.exception("ai_request_failed request_id=%s", request_id)
+        raise HTTPException(status_code=500, detail="AI_INTERNAL_ERROR") from exc
 
     if lease_token:
         try:
