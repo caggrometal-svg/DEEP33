@@ -64,27 +64,19 @@ class Deep33ConnectivityTest {
     @Test
     fun remoteMemoryContainsPersistedConversation() {
         if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
-        val connection = open("POST", "/v1/ai/generate", sessionId)
-        connection.setRequestProperty("Content-Type", "application/json")
-        connection.doOutput = true
-        val payload = JSONObject().put("messages", JSONArray().put(
-            JSONObject().put("role", "user").put("content", "Return only this exact token: DEEP33_MEMORY_E2E_OK")
-        ))
-        connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-        val code = connection.responseCode
-        val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
-            .bufferedReader(Charsets.UTF_8).use { it.readText() }
-        connection.disconnect()
-        assertTrue("memory generation HTTP " + code + ": " + body, code in 200..299)
 
-        val context = open("GET", "/v1/memory/context", sessionId)
-        val contextCode = context.responseCode
-        val contextBody = (if (contextCode in 200..299) context.inputStream else context.errorStream)
-            .bufferedReader(Charsets.UTF_8).use { it.readText() }
-        context.disconnect()
-        assertTrue("memory context HTTP " + contextCode + ": " + contextBody, contextCode in 200..299)
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Return only this exact token: DEEP33_MEMORY_E2E_OK")
+        )
 
-        val messages = JSONObject(contextBody).getJSONArray("messages")
+        val generated = Deep33Api.generate(payload, sessionId)
+        val generatedText = generated.optJSONObject("result")?.optString("text").orEmpty()
+        assertTrue("memory generation response: " + generated, generatedText.contains("DEEP33_MEMORY_E2E_OK"))
+
+        val context = Deep33Api.memoryContext(sessionId)
+        val messages = context.optJSONArray("messages") ?: JSONArray()
+
         var found = false
         for (i in 0 until messages.length()) {
             if (messages.optJSONObject(i)?.optString("content").orEmpty().contains("DEEP33_MEMORY_E2E_OK")) {
@@ -92,8 +84,10 @@ class Deep33ConnectivityTest {
                 break
             }
         }
-        assertTrue("persisted memory token missing: " + contextBody, found)
+
+        assertTrue("persisted memory token missing: " + context, found)
     }
+
 
     private fun open(method: String, path: String, sessionId: String? = null): HttpURLConnection =
         (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
