@@ -4,7 +4,7 @@ import json
 from unittest.mock import AsyncMock
 
 import httpx
-import pytest
+import asyncio
 from fastapi import FastAPI
 
 from backend.memory import MemoryClient, MemoryUnavailableError, merge_messages
@@ -31,8 +31,7 @@ def test_disabled_memory_is_noop():
     assert client.enabled is False
 
 
-@pytest.mark.asyncio
-async def test_memory_client_success():
+def test_memory_client_success():
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
@@ -49,7 +48,7 @@ async def test_memory_client_success():
     httpx.AsyncClient = Client
     try:
         client = MemoryClient("https://memory.test/function", "anon", 2)
-        result = await client.context("session")
+        result = asyncio.run(client.context("session"))
         assert result["ok"] is True
     finally:
         httpx.AsyncClient = original
