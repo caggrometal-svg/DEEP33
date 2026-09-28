@@ -894,8 +894,9 @@ async def stream_gateway(
                         "provider": None,
                         "personality": personality,
                     },
-                    request_hash=request_hash,
-                )
+                },
+                request_hash,
+            )
     except MemoryUnavailableError as exc:
         logger.warning("memory_stream_sync_unavailable session_id=%s error=%s", session_id, exc)
     except Exception as exc:
@@ -950,6 +951,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         personality,
         request_id=request_id,
         idempotency_key=idempotency_key,
+        request_hash=request_hash,
     )
     try:
         first = await anext(iterator)
