@@ -234,7 +234,7 @@ async def persist_messages(
     session_id: str,
     messages: list[dict[str, str]],
     *,
-    personality: str = "NEUTRO",
+    personality: str | None = None,
 ) -> None:
     if not memory.enabled:
         return
@@ -257,7 +257,7 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
 
     await persist_messages(
         session_id,
-        messages,
+        [message for message in messages if message.get("role") != "system"],
     )
 
     started = time.perf_counter()
@@ -268,7 +268,10 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
     assistant_message = {"role": "assistant", "content": result["text"]}
     await persist_messages(
         session_id,
-        messages + [assistant_message],
+        [message for message in messages if message.get("role") != "system"] + [assistant_message],
+        personality=(await memory.context(session_id)).get("session", {}).get("personality")
+        if memory.enabled
+        else None,
     )
 
     logger.info(
@@ -389,7 +392,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     if request.temperature is not None:
         payload["temperature"] = request.temperature
 
-    await persist_messages(session_id, messages)
+    await persist_messages(
+        session_id,
+        [message for message in messages if message.get("role") != "system"],
+    )
 
     return StreamingResponse(
         stream_gateway(payload, session_id),
