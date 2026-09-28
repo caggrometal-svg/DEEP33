@@ -67,3 +67,16 @@ def test_context_system_message_contains_preferences_and_memory():
     assert "DIRECTO" in system
     assert "DEEP33" in system
     assert "Do not reveal" in system
+
+
+
+def test_extract_context_messages_filters_internal_context():
+    from backend.memory import extract_context_messages
+
+    data = {
+        "messages": [
+            {"role": "system", "content": "DEEP33 internal context. secret"},
+            {"role": "user", "content": "visible"},
+        ]
+    }
+    assert extract_context_messages(data) == [{"role": "user", "content": "visible"}]
