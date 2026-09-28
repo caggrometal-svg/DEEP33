@@ -223,7 +223,7 @@ jobs:
             exit 1
           fi
           test "$pass" != "$GITHUB_SHA"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -f "force=true"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -F "force=true"
           echo "ROLLBACK_PASS target=$pass"
 
   release_gate:
