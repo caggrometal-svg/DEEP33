@@ -62,6 +62,7 @@ class Deep33ConnectivityTest {
 
     @Test
     fun remoteMemoryContainsPersistedConversation() {
+        if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
         val connection = open("POST", "/v1/ai/generate", sessionId)
         connection.setRequestProperty("Content-Type", "application/json")
         connection.doOutput = true
