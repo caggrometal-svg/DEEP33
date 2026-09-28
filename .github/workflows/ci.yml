@@ -219,28 +219,16 @@ jobs:
           disable-linux-hw-accel: false
           enable-hw-keyboard: false
           channel: stable
-          pre-emulator-launch-script: |
-            set -eux
-            adb kill-server || true
-            adb start-server
-            adb devices
           script: |
             set -eu
             cd android
 
             mkdir -p /tmp/deep33-e2e
-            adb kill-server || true
-            adb start-server
-            for i in $(seq 1 30); do
-              state="$(adb get-state 2>/dev/null || true)"
-              if [ "$state" = "device" ]; then
-                echo "ADB_DEVICE_READY attempt=$i"
-                break
-              fi
-              adb reconnect offline || true
-              sleep 2
-            done
-            test "$(adb get-state 2>/dev/null || true)" = "device"
+            adb wait-for-device
+            state="$(adb get-state 2>/dev/null || true)"
+            test "$state" = "device"
+            echo "ADB_DEVICE_READY state=$state"
+
 
             echo "=== EMULATOR DNS ==="
             adb shell getprop net.dns1 || true
