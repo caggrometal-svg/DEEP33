@@ -75,7 +75,7 @@ def test_hybrid_status_contract_exposes_real_transport():
         assert status["enabled"] is True
         assert status["configured"] is True
         assert status["dimensions"] == 1536
-        assert status["transport"] == "supabase_postgrest_rpc"
+        assert status["transport"] == "supabase_edge_function"
         assert status["vector_backend"] == "pgvector"
         assert status["keyword_backend"] == "postgresql_tsvector"
     finally:
@@ -83,6 +83,39 @@ def test_hybrid_status_contract_exposes_real_transport():
             os.environ.pop("DEEP33_HYBRID_SEARCH_ENABLED", None)
         else:
             os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = previous
+
+
+def test_hybrid_client_derives_edge_url_and_uses_existing_memory_key():
+    previous = {
+        key: os.environ.get(key)
+        for key in (
+            "DEEP33_HYBRID_SEARCH_URL",
+            "DEEP33_KNOWLEDGE_DB_URL",
+            "DEEP33_KNOWLEDGE_DB_KEY",
+            "DEEP33_MEMORY_URL",
+            "SUPABASE_ANON_KEY",
+            "DEEP33_HYBRID_SEARCH_ENABLED",
+        )
+    }
+    for key in previous:
+        os.environ.pop(key, None)
+    os.environ["DEEP33_MEMORY_URL"] = (
+        "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-memory"
+    )
+    os.environ["SUPABASE_ANON_KEY"] = "anon-key"
+    try:
+        client = HybridSearchClient()
+        assert client.base_url == (
+            "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-hybrid-search"
+        )
+        assert client.api_key == "anon-key"
+        assert client.enabled is True
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_hybrid_client_sends_vector_and_keyword_query():
@@ -135,10 +168,11 @@ def test_hybrid_client_sends_vector_and_keyword_query():
         )
         assert result["ok"] is True
         assert result["mode"] == "hybrid"
-        assert seen["url"].endswith("/rest/v1/rpc/search_deep33_chunks")
-        assert seen["payload"]["p_query"] == "DEEP33"
-        assert seen["payload"]["p_metadata_filter"] == {"language": "es"}
-        assert seen["payload"]["p_embedding"] == "[0.1,0.2,0.3]"
+        assert seen["url"] == "https://db.test"
+        assert seen["payload"]["action"] == "search"
+        assert seen["payload"]["query"] == "DEEP33"
+        assert seen["payload"]["metadata_filter"] == {"language": "es"}
+        assert seen["payload"]["embedding"] == [0.1, 0.2, 0.3]
     finally:
         if previous is None:
             os.environ.pop("DEEP33_HYBRID_SEARCH_ENABLED", None)
