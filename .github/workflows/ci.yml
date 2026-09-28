@@ -168,7 +168,7 @@ jobs:
           DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 34
+          api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_5
@@ -185,9 +185,29 @@ jobs:
           disable-linux-hw-accel: false
           enable-hw-keyboard: false
           channel: stable
+          pre-emulator-launch-script: |
+            set -euxo pipefail
+            adb kill-server || true
+            adb start-server
+            adb devices
+          after-boot-delay: 30
           script: |
             set -eu
             cd android
+
+            mkdir -p /tmp/deep33-e2e
+            adb kill-server || true
+            adb start-server
+            for i in $(seq 1 30); do
+              state="$(adb get-state 2>/dev/null || true)"
+              if [ "$state" = "device" ]; then
+                echo "ADB_DEVICE_READY attempt=$i"
+                break
+              fi
+              adb reconnect offline || true
+              sleep 2
+            done
+            test "$(adb get-state 2>/dev/null || true)" = "device"
 
             echo "=== EMULATOR DNS ==="
             adb shell getprop net.dns1 || true
@@ -204,7 +224,6 @@ jobs:
             TEST_APK="$(find app/build/outputs/apk/androidTest -type f -name '*androidTest.apk' | head -n 1)"
             test -n "$TEST_APK"
             adb install -r "$TEST_APK"
-            mkdir -p /tmp/deep33-e2e
             set +e
             timeout --foreground 15m adb shell am instrument -w -r cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner > /tmp/deep33-e2e/instrumentation.log 2>&1
             instrument_status=$?
@@ -217,6 +236,7 @@ jobs:
         if: ${{ always() }}
         run: |
           set +e
+          mkdir -p /tmp/deep33-e2e
           echo "=== ADB DEVICES ==="
           adb devices -l || true
           echo "=== SDK ==="
