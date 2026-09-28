@@ -76,7 +76,9 @@ jobs:
           assert body["checks"]["CHAT"]=="PASS", body
           print("PRIMARY_INFERENCE_PASS", body["inference"])
           PY
-\n\n  android_e2e:
+
+
+  android_e2e:
     needs: production_gate
     runs-on: ubuntu-latest
     steps:
