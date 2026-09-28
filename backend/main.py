@@ -11,7 +11,7 @@ import socket
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -32,6 +32,7 @@ from backend.memory import (
 )
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
+from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -67,6 +68,7 @@ DEEP33_WEB_TOOLS_ENABLED = os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip()
 
 gateway = AIGateway()
 memory = MemoryClient()
+hybrid_search = HybridSearchClient()
 AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
@@ -201,6 +203,22 @@ class MemoryRememberRequest(BaseModel):
 class MemoryPreferencesRequest(BaseModel):
     personality: str | None = Field(default=None, max_length=32)
     preferences: dict = Field(default_factory=dict)
+
+
+class HybridSearchRequest(BaseModel):
+    query: str = Field(default="", max_length=2000)
+    embedding: list[float] | None = Field(default=None, max_length=1536)
+    limit: int = Field(default=8, ge=1, le=20)
+    metadata_filter: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeIndexRequest(BaseModel):
+    document_id: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=500000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    embeddings: list[list[float]] | None = None
+    target_chars: int = Field(default=1400, ge=400, le=4000)
+    overlap_chars: int = Field(default=220, ge=0, le=2000)
 
 
 def session_id_from_request(request: Request) -> str:
@@ -652,6 +670,63 @@ async def network_status(request: Request) -> dict:
 @app.get("/v1/ai/status")
 async def ai_status() -> dict:
     return await gateway_probe()
+
+
+@app.get("/v1/search/hybrid/status")
+async def hybrid_search_status() -> dict:
+    return hybrid_search.status()
+
+
+@app.post("/v1/search/hybrid")
+async def hybrid_search_endpoint(
+    payload: HybridSearchRequest,
+    http_request: Request,
+) -> dict:
+    session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    try:
+        return await hybrid_search.search(
+            payload.query,
+            embedding=payload.embedding,
+            limit=payload.limit,
+            metadata_filter=payload.metadata_filter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HybridSearchUnavailableError as exc:
+        logger.warning(
+            "hybrid_search_endpoint_unavailable request_id=%s error=%s",
+            request_id_from_request(http_request),
+            exc,
+        )
+        raise HTTPException(status_code=503, detail="HYBRID_SEARCH_UNAVAILABLE") from exc
+
+
+@app.post("/v1/search/index")
+async def hybrid_index_endpoint(
+    payload: KnowledgeIndexRequest,
+    http_request: Request,
+) -> dict:
+    session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    try:
+        return await hybrid_search.index_document(
+            payload.document_id,
+            payload.content,
+            metadata=payload.metadata,
+            embeddings=payload.embeddings,
+            target_chars=payload.target_chars,
+            overlap_chars=payload.overlap_chars,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HybridSearchUnavailableError as exc:
+        logger.warning(
+            "hybrid_index_endpoint_unavailable request_id=%s error=%s",
+            request_id_from_request(http_request),
+            exc,
+        )
+        raise HTTPException(status_code=503, detail="HYBRID_SEARCH_UNAVAILABLE") from exc
 
 
 @app.get("/v1/web/status")

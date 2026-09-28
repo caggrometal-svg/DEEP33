@@ -263,46 +263,15 @@ async def _duckduckgo_search(query, timeout_seconds, max_results):
     return _normalise_results(parser.results, max_results)
 
 
-async def _bing_search(query, timeout_seconds, max_results):
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout_seconds),
-        follow_redirects=True,
-        headers={
-            "User-Agent": "DEEP33-WebSearch/1.0",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-    ) as client:
-        response = await client.get(
-            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-            params={"q": query, "setlang": "es", "cc": "cl"},
-        )
-        if response.status_code >= 400:
-            raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
-        if len(response.content) > 3 * 1024 * 1024:
-            raise WebSearchError("WEB_SEARCH_BING_RESPONSE_TOO_LARGE")
-
-        parser = BingParser()
-        parser.feed(response.text)
-        parser.close()
-        results = _normalise_results(parser.results, max_results)
-        if results:
-            return results
-
-        # Bing occasionally returns a valid 200 HTML shell/bot page without
-        # the classic b_algo nodes. Retry against its RSS representation.
-        rss = await client.get(
-            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
-        )
-        if rss.status_code >= 400:
-            raise WebSearchError(f"WEB_SEARCH_BING_RSS_HTTP_{rss.status_code}")
-        if len(rss.content) > 2 * 1024 * 1024:
-            raise WebSearchError("WEB_SEARCH_BING_RSS_RESPONSE_TOO_LARGE")
-
+async def _parse_bing_rss(response, max_results):
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_BING_RSS_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_BING_RSS_RESPONSE_TOO_LARGE")
     try:
         from xml.etree import ElementTree
 
-        root = ElementTree.fromstring(rss.text)
+        root = ElementTree.fromstring(response.text)
         rss_results = []
         for item in root.findall(".//item"):
             title = item.findtext("title") or ""
@@ -312,6 +281,46 @@ async def _bing_search(query, timeout_seconds, max_results):
         return _normalise_results(rss_results, max_results)
     except Exception as exc:
         raise WebSearchError("WEB_SEARCH_BING_RSS_INVALID_RESPONSE") from exc
+
+
+async def _bing_search(query, timeout_seconds, max_results):
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout_seconds),
+        follow_redirects=True,
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    ) as client:
+        html_error = None
+        try:
+            response = await client.get(
+                os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+                params={"q": query, "setlang": "es", "cc": "cl"},
+            )
+            if response.status_code >= 400:
+                raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
+            if len(response.content) > 3 * 1024 * 1024:
+                raise WebSearchError("WEB_SEARCH_BING_RESPONSE_TOO_LARGE")
+            parser = BingParser()
+            parser.feed(response.text)
+            parser.close()
+            results = _normalise_results(parser.results, max_results)
+            if results:
+                return results
+        except Exception as exc:
+            html_error = exc
+
+        rss = await client.get(
+            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
+        )
+        try:
+            return await _parse_bing_rss(rss, max_results)
+        except Exception as rss_error:
+            if html_error is not None:
+                raise WebSearchError(f"{html_error};{rss_error}") from rss_error
+            raise
 
 
 async def search_web(

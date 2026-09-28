@@ -36,6 +36,31 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
     assert result["provider"]=="duckduckgo"
 
+def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                if request.url.params.get("format") == "rss":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        content=b"""<?xml version="1.0"?><rss><channel><item><title>DEEP33</title><link>https://example.org/deep33</link><description>Search result</description></item></channel></rss>""",
+                    )
+                return httpx.Response(502, request=request)
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr("tools.web_search.httpx.AsyncClient", Client)
+    result = asyncio.run(search_web("DEEP33", provider="bing", api_key=""))
+    assert result["ok"] is True
+    assert result["provider"] == "bing"
+    assert result["results"][0]["url"] == "https://example.org/deep33"
+
+
 def test_redirect_to_private_is_blocked(monkeypatch):
     import tools.web_fetch as module
     monkeypatch.setattr(
