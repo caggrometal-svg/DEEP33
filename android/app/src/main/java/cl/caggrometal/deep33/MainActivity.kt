@@ -13,6 +13,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.text.method.LinkMovementMethod
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -33,6 +34,7 @@ import kotlin.math.roundToInt
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
 class MainActivity : Activity() {
+    companion object { private const val TAG = "DEEP33/MainActivity" }
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
     private lateinit var sidebar: LinearLayout
@@ -665,8 +667,8 @@ class MainActivity : Activity() {
                     renderConversation()
                     refreshSidebarHistory()
                 }
-            } catch (_: Exception) {
-                // Keep local state when remote memory is temporarily unavailable.
+            } catch (e: Exception) {
+                Log.e(TAG, "loadRemoteContext failed", e)
             }
         }
     }
