@@ -11,7 +11,7 @@ on:
 
 env:
   PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://iac33-fastapi-edge-production.up.railway.app
+  SECONDARY_URL: https://deep33-backup.onrender.com
 
 jobs:
   backend_unit:
@@ -94,7 +94,7 @@ jobs:
           assert h["status"]=="PASS" and h["git_sha"]==expected, h
           assert r["status"]=="PASS" and r["ready"] is True and r["git_sha"]==expected, r
           assert d["online"] is True and d["checks"]["MODEL"]=="PASS", d
-          print("RAILWAY_BACKUP_PASS")
+          print("SECONDARY_BACKUP_PASS")
           PY
 
   android_e2e:
