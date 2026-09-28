@@ -39,3 +39,10 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Warm primary diagnostics
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 8 --max-time 120             "$PRIMARY_URL/v1/ai/diagnostics" |
+            jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' >/dev/null
+          echo "PRIMARY_DIAGNOSTICS_PASS"
