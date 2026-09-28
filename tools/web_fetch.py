@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import socket
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
@@ -9,6 +10,12 @@ import httpx
 
 MAX_REDIRECTS=3
 MAX_RESPONSE_BYTES=512*1024
+
+def _max_response_bytes() -> int:
+    try:
+        return max(64*1024, min(MAX_RESPONSE_BYTES, int(os.getenv("WEB_FETCH_MAX_RESPONSE_BYTES", str(MAX_RESPONSE_BYTES)))))
+    except ValueError:
+        return MAX_RESPONSE_BYTES
 MAX_TEXT_CHARS=50_000
 DEFAULT_TIMEOUT_SECONDS=8.0
 DEFAULT_USER_AGENT="DEEP33-WebFetcher/1.0"
@@ -129,9 +136,9 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
                     declared=response.headers.get("content-length")
                     if declared:
                         try:
-                            if int(declared)>MAX_RESPONSE_BYTES: raise DownloadLimitError("WEB_FETCH_DOWNLOAD_TOO_LARGE")
+                            if int(declared)>_max_response_bytes(): raise DownloadLimitError("WEB_FETCH_DOWNLOAD_TOO_LARGE")
                         except ValueError: pass
-                    content=await _read_limited(response,MAX_RESPONSE_BYTES)
+                    content=await _read_limited(response,_max_response_bytes())
                 title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
                 if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
                 return {"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects)}
