@@ -5,7 +5,7 @@ from backend import main
 client = TestClient(main.app)
 
 
-def fake_network_probe() -> dict:
+async def fake_network_probe() -> dict:
     return {
         "internet_available": True,
         "dns_ok": True,
@@ -16,7 +16,7 @@ def fake_network_probe() -> dict:
     }
 
 
-def fake_gateway_probe() -> dict:
+async def fake_gateway_probe() -> dict:
     return {
         "gateway": "PASS",
         "provider": "kilo",
@@ -27,7 +27,7 @@ def fake_gateway_probe() -> dict:
     }
 
 
-def fake_call_gateway(payload: dict) -> dict:
+async def fake_call_gateway(payload: dict) -> dict:
     return {
         "id": "test",
         "model": payload["model"],
