@@ -45,6 +45,17 @@ object Deep33Api {
             sessionId
         )
 
+    fun memoryContext(sessionId: String): JSONObject =
+        request("GET", "/v1/memory/context", null, sessionId)
+
+    fun remember(sessionId: String, kind: String, content: String): JSONObject =
+        request(
+            "POST",
+            "/v1/memory/remember",
+            JSONObject().put("kind", kind).put("content", content),
+            sessionId
+        )
+
     fun stream(
         messages: JSONArray,
         sessionId: String,
