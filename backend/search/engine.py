@@ -128,7 +128,7 @@ class SearchEngine:
     def plan(self, query: str) -> SearchPlan:
         cleaned = " ".join(query.split()).strip()
         lowered = cleaned.lower()
-        exact_deep = bool(re.search(r"\\bdeep\\b", lowered))
+        exact_deep = bool(re.search(r"\bdeep\b", lowered))
         deep_signal = exact_deep or any(
             term != "deep" and term in lowered for term in DEEP_TERMS
         )
@@ -229,6 +229,26 @@ class SearchEngine:
                     except Exception as exc:
                         errors.append(f"{name}:{type(exc).__name__}")
 
+        executed_queries = list(plan.queries)
+        if not successful:
+            tokens = _tokens(plan.original_query)
+            rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
+            if rescue and rescue.lower() != plan.original_query.lower():
+                executed_queries.append(rescue)
+                for name in providers:
+                    try:
+                        result = await self._provider_search(
+                            name,
+                            rescue,
+                            timeout_seconds=timeout_seconds,
+                            api_key=api_key,
+                        )
+                        if result:
+                            successful.append((rescue, name, result))
+                            break
+                    except Exception as exc:
+                        errors.append(f"{name}:{type(exc).__name__}")
+
         merged = []
         providers_used = []
         for planned_query, name, items in successful:
@@ -251,7 +271,7 @@ class SearchEngine:
             "engine_version": "1.0.0",
             "query": plan.original_query,
             "depth": plan.depth,
-            "queries": plan.queries,
+            "queries": executed_queries,
             "providers": providers_used,
             "provider": providers_used[0] if len(providers_used) == 1 else "multi" if providers_used else None,
             "results": selected,
