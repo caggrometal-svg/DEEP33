@@ -28,6 +28,6 @@ The backend exposes observable checks instead of a single opaque ONLINE flag.
 - Android instrumented E2E: implemented
 - No provider credential is stored in the repository or APK.
 
-FASE 3 is closed only after the Android E2E job proves:
+Canonical generation contract: `POST /v1/ai/generate` (the legacy `/v1/chat` remains as a compatibility alias).\n\nFASE 3 is closed only after the Android E2E job proves:
 
 Android → Internet → DEEP33 Backend → AI Gateway → Model → Android
