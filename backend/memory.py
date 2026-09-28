@@ -47,14 +47,27 @@ class MemoryClient:
             "Accept": "application/json",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(self.function_url, json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise MemoryUnavailableError(type(exc).__name__) from exc
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.post(self.function_url, json=body, headers=headers)
+            except httpx.TimeoutException as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(type(exc).__name__) from exc
+            except httpx.HTTPError as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(type(exc).__name__) from exc
 
-        if not 200 <= response.status_code < 300:
-            raise MemoryUnavailableError(f"memory_http_{response.status_code}")
+            if not 200 <= response.status_code < 300:
+                if response.status_code in {429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(f"memory_http_{response.status_code}")
+            break
 
         try:
             data = response.json()
