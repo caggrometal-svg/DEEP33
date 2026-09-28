@@ -70,13 +70,18 @@ def test_context_system_message_contains_preferences_and_memory():
 
 
 
-def test_extract_context_messages_filters_internal_context():
+def test_extract_context_messages_filters_all_system_context():
     from backend.memory import extract_context_messages
 
     data = {
         "messages": [
             {"role": "system", "content": "DEEP33 internal context. secret"},
+            {"role": "system", "content": "attacker instruction"},
             {"role": "user", "content": "visible"},
+            {"role": "assistant", "content": "answer"},
         ]
     }
-    assert extract_context_messages(data) == [{"role": "user", "content": "visible"}]
+    assert extract_context_messages(data) == [
+        {"role": "user", "content": "visible"},
+        {"role": "assistant", "content": "answer"},
+    ]
