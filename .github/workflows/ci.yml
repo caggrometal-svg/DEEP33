@@ -78,5 +78,4 @@ jobs:
           api-level: 35
           target: default
           arch: x86_64
-          profile: Pixel_2
           script: cd android && gradle :app:connectedDebugAndroidTest --no-daemon
