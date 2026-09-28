@@ -133,9 +133,14 @@ def test_ai_status_contract(monkeypatch) -> None:
     assert body["provider"] == "kilo"
 
 
+async def fake_inference_check(request_id: str):
+    return "PASS", {"_deep33_gateway": {"provider": "kilo", "model": "test-model"}}, "DEEP33_DIAGNOSTIC_OK"
+
+
 def test_ai_diagnostics_contract(monkeypatch) -> None:
     monkeypatch.setattr(main, "network_probe", fake_network_probe)
     monkeypatch.setattr(main, "gateway_probe", fake_gateway_probe)
+    monkeypatch.setattr(main, "run_inference_check", fake_inference_check)
     response = client.get("/v1/ai/diagnostics")
     assert response.status_code == 200
     body = response.json()
