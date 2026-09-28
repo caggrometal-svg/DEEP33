@@ -3,9 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
 android {
     namespace = "cl.caggrometal.deep33"
     compileSdk = 35
+
     defaultConfig {
         applicationId = "cl.caggrometal.deep33"
         minSdk = 26
@@ -14,25 +16,48 @@ android {
         versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
     buildTypes {
         release { isMinifyEnabled = false }
     }
+
     buildFeatures {
         buildConfig = true
         compose = true
     }
-    val primaryUrl = System.getenv("DEEP33_PRIMARY_URL") ?: "https://deep33-backend.onrender.com"
-    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: ""
+
+    fun quoteBuildConfig(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://deep33-backend.onrender.com"
+
+    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://deep33-backup.onrender.com"
+
+    val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://deep33-api.onrender.com"
+
     buildTypes.all {
-        buildConfigField("String", "DEEP33_PRIMARY_URL", "\"$primaryUrl\"")
-        buildConfigField("String", "DEEP33_SECONDARY_URL", "\"$secondaryUrl\"")
+        buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
+        buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
+        buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions { jvmTarget = "17" }
 }
+
 dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.ui:ui:1.7.8")

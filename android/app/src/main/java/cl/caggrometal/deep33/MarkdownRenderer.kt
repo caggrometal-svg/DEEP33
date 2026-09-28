@@ -11,7 +11,7 @@ object MarkdownRenderer {
         html = html.replace(Regex("(?m)^##\\s+(.+)$"), "<big><b>$1</b></big>")
         html = html.replace(Regex("(?m)^#\\s+(.+)$"), "<big><big><b>$1</b></big></big>")
         html = html.replace(Regex("(?m)^[-*]\\s+"), "• ")
-        html = html.replace(Regex("""\\[([^]]+)]\\((https?://[^)]+)\\)"""), "<a href=\"$2\">$1</a>")
+        html = html.replace(Regex("""\\[([^]]+)\\]\\((https?://[^)]+)\\)"""), "<a href=\"$2\">$1</a>")
         val backtick = "\u0060"
         html = html.replace(
             Regex(backtick + "([^" + backtick + "]+)" + backtick),
@@ -19,7 +19,11 @@ object MarkdownRenderer {
         )
         html = html.replace(Regex("\\*\\*(.+?)\\*\\*"), "<b>$1</b>")
         html = html.replace(Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)"), "<i>$1</i>")
-        html = html.replace("\\n", "<br>")
+        html = html
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("\\n", "<br>")
+            .replace("\n", "<br>")
 
         @Suppress("DEPRECATION")
         return Html.fromHtml(html)

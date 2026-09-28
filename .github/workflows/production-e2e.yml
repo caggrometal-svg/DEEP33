@@ -5,31 +5,50 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  PRIMARY_URL: https://deep33-backend.onrender.com
+  SECONDARY_URL: https://deep33-backup.onrender.com
+  TERTIARY_URL: https://deep33-api.onrender.com
+
 jobs:
   production-e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify deployed SHA and readiness
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify all deployed SHAs and readiness
         env:
-          DEEP33_URL: https://deep33-backend.onrender.com
           EXPECTED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          for i in $(seq 1 18); do
-            curl -fsS --max-time 15 "$DEEP33_URL/health" > /tmp/health.json || true
-            LIVE_SHA="$(jq -r '.git_sha // ""' /tmp/health.json 2>/dev/null || true)"
-            if [ "$LIVE_SHA" = "$EXPECTED_SHA" ]; then break; fi
-            sleep 10
+          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
+            name="${entry%%|*}"
+            url="${entry#*|}"
+            ok=0
+            for i in $(seq 1 36); do
+              body="$(curl -fsS --connect-timeout 8 --max-time 20 "$url/health" || true)"
+              sha="$(python -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' <<< "$body" 2>/dev/null || true)"
+              if [ "$sha" = "$EXPECTED_SHA" ]; then
+                echo "${name}_SHA_PASS $sha"
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+            test "$ok" = 1
           done
-          test "$(jq -r '.git_sha' /tmp/health.json)" = "$EXPECTED_SHA"
-          curl -fsS --max-time 30 "$DEEP33_URL/ready" | jq -e '.status=="PASS" and .ready==true'
-      - name: Real inference gate
-        env:
-          DEEP33_URL: https://deep33-backend.onrender.com
+
+      - name: Verify readiness and real inference
         run: |
           set -euo pipefail
-          curl -fsS --max-time 90 "$DEEP33_URL/v1/ai/diagnostics" | tee /tmp/diag.json
+          for url in "$PRIMARY_URL" "$SECONDARY_URL" "$TERTIARY_URL"; do
+            curl -fsS --connect-timeout 8 --max-time 45 "$url/ready" | jq -e '.status=="PASS" and .ready==true'
+          done
+
+          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
-          curl -fsS --max-time 90             -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}"             -H "X-Request-ID: prod-${GITHUB_RUN_ID}"             -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}"             -H 'content-type: application/json'             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'             "$DEEP33_URL/v1/ai/generate" |
+
+          curl -fsS --connect-timeout 8 --max-time 120             -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}"             -H "X-Request-ID: prod-${GITHUB_RUN_ID}"             -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}"             -H 'content-type: application/json'             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'             "$PRIMARY_URL/v1/ai/generate" |
             jq -e '((.result.text // .response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))'
