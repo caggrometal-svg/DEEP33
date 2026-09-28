@@ -5,7 +5,7 @@ import pytest
 from tools.web_fetch import SSRFBlockedError, validate_public_url
 from tools.web_search import search_web
 
-def test_ssrf_blocks_private_hosts():
+def test_ssrf_blocks_private_hosts(monkeypatch):
     for url in ["http://127.0.0.1/","http://localhost/","http://10.0.0.1/","http://192.168.1.1/","http://169.254.169.254/","http://metadata.google.internal/"]:
         with pytest.raises(SSRFBlockedError): validate_public_url(url)
 
@@ -14,12 +14,14 @@ def test_url_policy():
     with pytest.raises(SSRFBlockedError): validate_public_url("https://example.com:8080/")
 
 def test_tavily_normalisation(monkeypatch):
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     async def fake(*args,**kwargs): return [{"title":"Example","url":"https://example.com/","content":"Snippet"}]
     monkeypatch.setattr("tools.web_search._tavily_search",fake)
     result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
     assert result["results"][0]["snippet"]=="Snippet"
 
 def test_tavily_falls_back_to_ddg(monkeypatch):
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     async def failing(*args,**kwargs): raise RuntimeError("down")
     async def ddg(*args,**kwargs): return [{"title":"DDG","url":"https://example.com/","snippet":"Fallback"}]
     monkeypatch.setattr("tools.web_search._tavily_search",failing)
@@ -29,10 +31,20 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
 
 def test_redirect_to_private_is_blocked(monkeypatch):
     import tools.web_fetch as module
-    module._resolve_public_addresses=lambda hostname:["93.184.216.34"]
+    monkeypatch.setattr(
+        module.socket,
+        "getaddrinfo",
+        lambda *args,**kwargs: [(2,1,6,"",("93.184.216.34",443))],
+    )
     class Client(httpx.AsyncClient):
         def __init__(self,*args,**kwargs):
-            kwargs["transport"]=httpx.MockTransport(lambda request:httpx.Response(302,request=request,headers={"location":"http://127.0.0.1/secret"}))
+            kwargs["transport"]=httpx.MockTransport(
+                lambda request:httpx.Response(
+                    302,request=request,
+                    headers={"location":"http://127.0.0.1/secret"},
+                )
+            )
             super().__init__(*args,**kwargs)
     monkeypatch.setattr(module.httpx,"AsyncClient",Client)
-    with pytest.raises(SSRFBlockedError): asyncio.run(module.fetch_page("https://example.com/"))
+    with pytest.raises(SSRFBlockedError):
+        asyncio.run(module.fetch_page("https://example.com/"))
