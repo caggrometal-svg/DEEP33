@@ -22,4 +22,4 @@ def test_health_contract_is_stable() -> None:
     body = response.json()
     assert body["status"] == "PASS"
     assert body["service"] == "DEEP33 Backend"
-    assert body["version"] == "0.1.3"
+    assert body["version"] == "0.2.0"
