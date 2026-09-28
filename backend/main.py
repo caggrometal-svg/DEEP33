@@ -432,7 +432,7 @@ async def execute_web_tool(name,arguments):
                 max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","5")),
             )
         except Exception as exc:
-            logger.warning("web_search_tool_failed error=%s",type(exc).__name__)
+            logger.warning("web_search_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
             return {"ok":False,"error":"WEB_SEARCH_FAILED"}
 
     if name=="web_fetch":
@@ -446,7 +446,7 @@ async def execute_web_tool(name,arguments):
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
             )
         except Exception as exc:
-            logger.warning("web_fetch_tool_failed error=%s",type(exc).__name__)
+            logger.warning("web_fetch_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
             return {"ok":False,"error":str(exc)}
 
     return {"ok":False,"error":"WEB_TOOL_NOT_FOUND"}
