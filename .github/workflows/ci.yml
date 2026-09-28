@@ -204,13 +204,35 @@ jobs:
             echo "ROLLBACK_SKIPPED_CONCURRENT_COMMIT current=$current failed=$GITHUB_SHA"
             exit 0
           fi
-          pass="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/production-pass" --jq '.object.sha' 2>/dev/null || true)"
-          if [ -z "$pass" ]; then
+          if pass="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/production-pass" --jq '.object.sha' 2>/dev/null)"; then
+            :
+          else
             pass="${{ github.event.before }}"
           fi
-          test -n "$pass"
+          if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}
+
+  release_gate:
+    needs: recovery_gate
+    if: ${{ github.event_name == 'push' && success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Mark exact release as PASS
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f production-pass "$GITHUB_SHA"
+          git push origin refs/tags/production-pass --force
+          echo "DEEP33_CRITICAL_GATES_PASS $GITHUB_SHA"
+; then
+            echo "ROLLBACK_ABORT invalid_target=$pass"
+            exit 1
+          fi
           test "$pass" != "$GITHUB_SHA"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f sha="$pass" -F force=true
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -f "force=true"
           echo "ROLLBACK_PASS target=$pass"
 
   release_gate:
