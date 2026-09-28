@@ -91,20 +91,34 @@ jobs:
       - name: Verify all production nodes readiness
         run: |
           set -euo pipefail
-          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
+          for entry in \
+            "PRIMARY|$PRIMARY_URL" \
+            "SECONDARY|$SECONDARY_URL" \
+            "TERTIARY|$TERTIARY_URL"; do
             name="${entry%%|*}"
             url="${entry#*|}"
             ok=0
+            last_body=""
             for i in $(seq 1 6); do
-              body="$(curl -fsS --connect-timeout 8 --max-time 30 "$url/ready" || true)"
-              if printf '%s' "$body" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
+              last_body="$(curl -sS --connect-timeout 8 --max-time 45 "$url/ready" || true)"
+              if printf "%s" "$last_body" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
                 echo "${name}_READY_PASS"
                 ok=1
                 break
               fi
               sleep 5
             done
-            test "$ok" = 1
+            if [ "$ok" != 1 ]; then
+              echo "${name}_READY_FAIL"
+              echo "${name}_READY_BODY_BEGIN"
+              printf "%s\n" "$last_body"
+              echo "${name}_READY_BODY_END"
+              diag="$(curl -sS --connect-timeout 8 --max-time 90 "$url/v1/ai/diagnostics" || true)"
+              echo "${name}_DIAGNOSTICS_BEGIN"
+              printf "%s\n" "$diag"
+              echo "${name}_DIAGNOSTICS_END"
+              exit 1
+            fi
           done
 
       - name: Verify PRIMARY real inference
