@@ -234,8 +234,8 @@ jobs:
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/recovery-diag.json
 
   rollback_on_failure:
-    needs: [backend_unit, production_gate, android_e2e]
-    if: ${{ always() && github.event_name == 'push' && (needs.backend_unit.result == 'failure' || needs.production_gate.result == 'failure' || needs.android_e2e.result == 'failure') }}
+    needs: [backend_unit, production_gate, android_validation, android_e2e, recovery_gate]
+    if: ${{ always() && github.event_name == 'push' && (needs.backend_unit.result == 'failure' || needs.production_gate.result == 'failure' || needs.android_validation.result == 'failure' || needs.android_e2e.result == 'failure' || needs.recovery_gate.result == 'failure') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
