@@ -269,9 +269,6 @@ async def generate(request: ChatRequest, session_id: str) -> dict:
     await persist_messages(
         session_id,
         [message for message in messages if message.get("role") != "system"] + [assistant_message],
-        personality=(await memory.context(session_id)).get("session", {}).get("personality")
-        if memory.enabled
-        else None,
     )
 
     logger.info(
