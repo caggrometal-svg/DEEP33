@@ -90,6 +90,13 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --no-daemon
 
+      - name: Publish APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEEP33-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
