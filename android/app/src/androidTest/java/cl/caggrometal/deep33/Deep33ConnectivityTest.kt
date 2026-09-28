@@ -19,7 +19,7 @@ class Deep33ConnectivityTest {
     fun backendHealthIsPass() {
         val json = get("/health")
         assertTrue(json.optString("status") == "PASS")
-        assertTrue(json.optString("version") == "0.1.3")
+        assertTrue(json.optString("version") == "0.2.0")
     }
 
     @Test
