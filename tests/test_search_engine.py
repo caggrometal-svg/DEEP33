@@ -12,32 +12,53 @@ def test_search_plan_expands_deep_queries():
     assert plan.queries[0] == "investiga DEEP33"
 
 
-def test_rank_results_prefers_relevant_and_quality_sources():
+def test_rank_results_prefers_relevant_and_corroborated_sources():
     results = rank_results(
         "DEEP33 internet",
         [
-            {"title": "Something else", "url": "https://example.net/", "snippet": "unrelated"},
-            {"title": "DEEP33 internet", "url": "https://example.gov/", "snippet": "DEEP33 internet source"},
+            {
+                "title": "Something unrelated",
+                "url": "https://example.net/",
+                "snippet": "different topic",
+            },
+            {
+                "title": "DEEP33 internet report",
+                "url": "https://source-a.org/report",
+                "snippet": "DEEP33 internet source evidence",
+            },
+            {
+                "title": "DEEP33 internet findings",
+                "url": "https://source-b.org/findings",
+                "snippet": "DEEP33 internet source evidence",
+            },
         ],
     )
-    assert results[0]["url"] == "https://example.gov/"
-    assert results[0]["score"] > results[1]["score"]
+    assert results[0]["corroborated"] is True
+    assert results[0]["corroboration_count"] >= 1
+    assert results[0]["score"] > results[2]["score"]
 
 
-def test_deduplicate_normalizes_url_and_title():
+def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
     results = deduplicate(
         [
-            {"title": "Same", "url": "https://example.com/a/"},
-            {"title": "Same", "url": "https://example.com/a#fragment"},
-            {"title": "Other", "url": "https://example.com/b"},
+            {"title": "A1", "url": "https://example.com/a/"},
+            {"title": "A2", "url": "https://example.com/b"},
+            {"title": "B1", "url": "https://other.example/a"},
+            {"title": "Same", "url": "https://other.example/a#fragment"},
         ],
-        5,
+        3,
     )
-    assert len(results) == 2
+    assert len(results) == 3
     assert results[0]["url"] == "https://example.com/a"
+    assert {item["source_domain"] if "source_domain" in item else item["url"].split("/")[2] for item in results} >= {
+        "example.com",
+        "other.example",
+    }
 
 
-def test_engine_merges_planned_searches(monkeypatch):
+def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
+
     async def fake_tavily(query, api_key, timeout_seconds, max_results):
         return [
             {
@@ -59,7 +80,82 @@ def test_engine_merges_planned_searches(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
+    assert result["engine_version"] == "1.1.0"
+    assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
+
+
+def test_deep_search_uses_multiple_independent_providers(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+
+    async def fake_tavily(query, api_key, timeout_seconds, max_results):
+        return [{
+            "title": "Shared finding",
+            "url": "https://alpha.org/finding",
+            "snippet": "DEEP33 internet finding evidence",
+        }]
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        return [{
+            "title": "Shared finding",
+            "url": "https://beta.org/finding",
+            "snippet": "DEEP33 internet finding evidence",
+        }]
+
+    async def fake_ddg(query, timeout_seconds, max_results):
+        return [{
+            "title": "Different result",
+            "url": "https://gamma.net/other",
+            "snippet": "unrelated",
+        }]
+
+    monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "investiga DEEP33",
+            provider="auto",
+            api_key="test-key",
+            timeout_seconds=8,
+            fallback_ddg=True,
+        )
+    )
+    assert result["ok"] is True
+    assert set(result["providers"]) == {"tavily", "bing", "duckduckgo"}
+    assert result["verification"]["distinct_providers"] == 3
+    assert result["verification"]["distinct_domains"] >= 3
+    assert result["verification"]["corroborated_results"] >= 1
+
+
+def test_standard_search_falls_through_on_weak_primary_results(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        return [{"title": "Weak", "url": "https://a.org/1", "snippet": query}]
+
+    async def fake_ddg(query, timeout_seconds, max_results):
+        return [
+            {"title": "Strong 1", "url": "https://b.org/1", "snippet": query},
+            {"title": "Strong 2", "url": "https://c.org/2", "snippet": query},
+            {"title": "Strong 3", "url": "https://d.org/3", "snippet": query},
+        ]
+
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "DEEP33 internet",
+            provider="bing",
+            api_key="",
+            timeout_seconds=8,
+            fallback_ddg=True,
+        )
+    )
+    assert result["providers"] == ["bing", "duckduckgo"]
+    assert len(result["results"]) == 4
