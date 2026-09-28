@@ -14,6 +14,8 @@ def test_url_policy():
     with pytest.raises(SSRFBlockedError): validate_public_url("https://example.com:8080/")
 
 def test_tavily_normalisation(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
+    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     async def fake(*args,**kwargs): return [{"title":"Example","url":"https://example.com/","snippet":"Snippet"}]
     monkeypatch.setattr("tools.web_search._tavily_search",fake)
