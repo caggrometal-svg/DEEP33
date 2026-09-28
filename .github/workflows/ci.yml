@@ -17,8 +17,11 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
+      - name: Import and syntax gate
+        run: |
+          python -c "import backend.main, backend.gateway, backend.memory; print(\"DEEP33_IMPORT_OK\")"
+          python -m compileall -q backend
       - run: python -m pytest tests -q
-      - run: python -m compileall -q backend
 
 
   android:
