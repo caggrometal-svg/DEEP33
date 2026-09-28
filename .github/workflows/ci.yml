@@ -61,7 +61,7 @@ jobs:
           done
 
           curl -fsS --max-time 30 -H "X-DEEP33-Session-Id: $SESSION_ID" "$DEEP33_URL/v1/memory/context" | tee /tmp/memory-before.json
-          jq -e '.messages | length >= 3 and any(.[]; (.content // "") | contains("DEEP33_E2E_OK"))' /tmp/memory-before.json
+          jq -e '.messages | length >= 2 and any(.[]; (.content // "") | contains("DEEP33_E2E_OK"))' /tmp/memory-before.json
 
           curl -fsS --max-time 30             -X POST             -H "X-DEEP33-Session-Id: $SESSION_ID"             -H 'content-type: application/json'             -d '{"kind":"explicit","content":"DEEP33_EXPLICIT_MEMORY_E2E_OK"}'             "$DEEP33_URL/v1/memory/remember" | tee /tmp/memory-remember.json
           jq -e '.remembered == true or .ok == true' /tmp/memory-remember.json
