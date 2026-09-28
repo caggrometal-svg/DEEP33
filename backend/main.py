@@ -22,6 +22,7 @@ from backend.memory import (
     MemoryClient,
     MemoryUnavailableError,
     extract_context_messages,
+    extract_context_system_message,
     merge_messages,
 )
 
@@ -219,7 +220,11 @@ async def prepare_messages(request: ChatRequest, session_id: str) -> list[dict[s
     try:
         context = await memory.context(session_id)
         remote = extract_context_messages(context)
-        return merge_messages(remote, requested, limit=50)
+        merged = merge_messages(remote, requested, limit=49)
+        system_context = extract_context_system_message(context)
+        if system_context:
+            return [{"role": "system", "content": system_context}, *merged]
+        return merged
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
         return requested[-50:]
