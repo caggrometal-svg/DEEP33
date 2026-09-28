@@ -384,7 +384,11 @@ async def memory_preferences(
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
 
-async def stream_gateway(payload: dict, session_id: str) -> AsyncIterator[bytes]:
+async def stream_gateway(
+    payload: dict,
+    session_id: str,
+    personality: str,
+) -> AsyncIterator[bytes]:
     collected = bytearray()
     async for chunk in gateway.stream(payload):
         collected.extend(chunk)
@@ -415,7 +419,11 @@ async def stream_gateway(payload: dict, session_id: str) -> AsyncIterator[bytes]
             context = await memory.context(session_id) if memory.enabled else {}
             remote = extract_context_messages(context)
             merged = merge_messages(remote, payload["messages"], limit=50)
-            await persist_messages(session_id, merged + [{"role": "assistant", "content": assistant_text}])
+            await persist_messages(
+                session_id,
+                [message for message in merged if message.get("role") != "system"]
+                + [{"role": "assistant", "content": assistant_text}],
+            )
     except MemoryUnavailableError as exc:
         logger.warning("memory_stream_sync_unavailable session_id=%s error=%s", session_id, exc)
 
