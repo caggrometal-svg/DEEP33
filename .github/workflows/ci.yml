@@ -172,7 +172,7 @@ jobs:
           enable-hw-keyboard: false
           channel: stable
           script: |
-            set -euo pipefail
+            set -eu
             cd android
 
             echo "=== EMULATOR DNS ==="
@@ -192,8 +192,9 @@ jobs:
             adb install -r "$TEST_APK"
             mkdir -p /tmp/deep33-e2e
             set +e
-            timeout --foreground 15m adb shell am instrument -w -r cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee /tmp/deep33-e2e/instrumentation.log
-            instrument_status=${PIPESTATUS[0]}
+            timeout --foreground 15m adb shell am instrument -w -r cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner > /tmp/deep33-e2e/instrumentation.log 2>&1
+            instrument_status=$?
+            cat /tmp/deep33-e2e/instrumentation.log
             set -e
             cp -R app/build/outputs/androidTest-results /tmp/deep33-e2e/connected-results 2>/dev/null || true
             exit "$instrument_status"
