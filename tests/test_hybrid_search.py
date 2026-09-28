@@ -61,6 +61,30 @@ def test_hybrid_reranker_fuses_rrf_and_metadata():
     assert rows[0]["rerank_score"] > rows[1]["rerank_score"]
 
 
+def test_hybrid_status_contract_exposes_real_transport():
+    previous = os.environ.get("DEEP33_HYBRID_SEARCH_ENABLED")
+    os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = "true"
+    try:
+        status = HybridSearchClient(
+            base_url="https://db.test",
+            api_key="key",
+            dimensions=1536,
+        ).status()
+        assert status["engine"] == "DEEP33 Hybrid Search"
+        assert status["engine_version"] == "1.1.0"
+        assert status["enabled"] is True
+        assert status["configured"] is True
+        assert status["dimensions"] == 1536
+        assert status["transport"] == "supabase_postgrest_rpc"
+        assert status["vector_backend"] == "pgvector"
+        assert status["keyword_backend"] == "postgresql_tsvector"
+    finally:
+        if previous is None:
+            os.environ.pop("DEEP33_HYBRID_SEARCH_ENABLED", None)
+        else:
+            os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = previous
+
+
 def test_hybrid_client_sends_vector_and_keyword_query():
     seen = {}
 
