@@ -273,29 +273,7 @@ jobs:
 
           git fetch --force origin refs/tags/production-pass:refs/tags/production-pass >/dev/null 2>&1 || true
           pass="$(git rev-parse refs/tags/production-pass^{commit} 2>/dev/null || true)"
-          if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}
-
-  release_gate:
-    needs: recovery_gate
-    if: ${{ github.event_name == 'push' && success() }}
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
-      - name: Mark exact release PASS
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa production-pass "$GITHUB_SHA" -m "DEEP33 certified production release $GITHUB_SHA"
-          git push origin refs/tags/production-pass --force
-          echo "DEEP33_CRITICAL_GATES_PASS $GITHUB_SHA"
-; then
+          if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "ROLLBACK_ABORT no_certified_production_pass"
             exit 1
           fi
