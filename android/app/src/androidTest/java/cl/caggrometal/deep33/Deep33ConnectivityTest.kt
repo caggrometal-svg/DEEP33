@@ -6,6 +6,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.net.InetAddress
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
@@ -14,6 +15,20 @@ import java.util.UUID
 class Deep33ConnectivityTest {
     private val baseUrl = BuildConfig.DEEP33_PRIMARY_URL
     private val sessionId = "android-e2e-" + UUID.randomUUID()
+
+    @Test
+    fun allFailoverEndpointHostsResolveInsideAndroid() {
+        val urls = listOf(
+            BuildConfig.DEEP33_PRIMARY_URL,
+            BuildConfig.DEEP33_SECONDARY_URL,
+            BuildConfig.DEEP33_TERTIARY_URL
+        )
+        urls.forEach { endpoint ->
+            val host = URL(endpoint).host
+            val addresses = InetAddress.getAllByName(host)
+            assertTrue("DNS resolution failed for " + host, addresses.isNotEmpty())
+        }
+    }
 
     @Test
     fun backendHealthIsPass() {
