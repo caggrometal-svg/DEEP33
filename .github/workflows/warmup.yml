@@ -1,0 +1,15 @@
+name: DEEP33 Warmup
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep PRIMARY warm
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 30 https://deep33-backend.onrender.com/liveness >/dev/null
