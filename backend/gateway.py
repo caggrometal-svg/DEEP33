@@ -332,6 +332,31 @@ class AIGateway:
                     provider_succeeded = True
                     return result
 
+                except httpx.ConnectTimeout:
+                    saw_timeout = True
+                    provider_failed_transiently = True
+                    logger.warning(
+                        "ai_provider_connect_timeout request_id=%s provider=%s attempt=%s",
+                        request_id,
+                        provider.name,
+                        attempt + 1,
+                    )
+                    if attempt < self.config.max_retries:
+                        delay = self._sleep_budget(attempt, deadline)
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        continue
+                    break
+                except (httpx.ReadTimeout, httpx.WriteTimeout):
+                    saw_timeout = True
+                    provider_failed_transiently = False
+                    logger.warning(
+                        "ai_provider_ambiguous_timeout request_id=%s provider=%s attempt=%s",
+                        request_id,
+                        provider.name,
+                        attempt + 1,
+                    )
+                    raise GatewayTimeoutError
                 except httpx.TimeoutException:
                     saw_timeout = True
                     provider_failed_transiently = True
