@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import defaultdict, deque
 import logging
 import os
 import socket
@@ -49,6 +50,54 @@ memory = MemoryClient()
 AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
+
+_metric_counts: dict[str, int] = defaultdict(int)
+_metric_latency: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=500))
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int(round((percentile / 100) * (len(ordered) - 1)))))
+    return round(ordered[index], 2)
+
+
+@app.middleware("http")
+async def request_metrics(request: Request, call_next):
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        path = request.url.path
+        _metric_counts["requests_total"] += 1
+        _metric_counts[f"status_{status if 'status' in locals() else 500}"] += 1
+        _metric_latency[path].append(elapsed_ms)
+        logger.info(
+            "request_metrics request_id=%s method=%s path=%s status=%s latency_ms=%.2f",
+            request.headers.get("X-Request-ID", ""),
+            request.method,
+            path,
+            status if "status" in locals() else 500,
+            elapsed_ms,
+        )
+
+
+@app.get("/metrics")
+async def metrics() -> dict:
+    endpoints = {}
+    for path, values in _metric_latency.items():
+        snapshot = list(values)
+        endpoints[path] = {
+            "count": len(snapshot),
+            "p50_ms": _percentile(snapshot, 50),
+            "p95_ms": _percentile(snapshot, 95),
+            "p99_ms": _percentile(snapshot, 99),
+        }
+    return {"counters": dict(_metric_counts), "endpoints": endpoints, "timestamp": utc_now()}
 
 PERSONALITIES: dict[str, dict[str, str]] = {
     "AGRESIVO": {

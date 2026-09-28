@@ -16,6 +16,13 @@ android {
     buildTypes {
         release { isMinifyEnabled = false }
     }
+    buildFeatures { buildConfig = true }
+    val primaryUrl = System.getenv("DEEP33_PRIMARY_URL") ?: "https://deep33-backend.onrender.com"
+    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: ""
+    buildTypes.all {
+        buildConfigField("String", "DEEP33_PRIMARY_URL", "\"$primaryUrl\"")
+        buildConfigField("String", "DEEP33_SECONDARY_URL", "\"$secondaryUrl\"")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

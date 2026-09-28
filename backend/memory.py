@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 from typing import Any
 
 import httpx
@@ -18,7 +20,7 @@ class MemoryClient:
         self,
         function_url: str | None = None,
         api_key: str | None = None,
-        timeout_seconds: float = 8.0,
+        timeout_seconds: float | None = None,
     ) -> None:
         self.function_url = (
             function_url if function_url is not None else os.getenv("DEEP33_MEMORY_URL", "")
@@ -26,7 +28,8 @@ class MemoryClient:
         self.api_key = (
             api_key if api_key is not None else os.getenv("SUPABASE_ANON_KEY", "")
         ).strip()
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
+        self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
 
     @property
     def enabled(self) -> bool:
@@ -44,14 +47,27 @@ class MemoryClient:
             "Accept": "application/json",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(self.function_url, json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise MemoryUnavailableError(type(exc).__name__) from exc
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.post(self.function_url, json=body, headers=headers)
+            except httpx.TimeoutException as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(type(exc).__name__) from exc
+            except httpx.HTTPError as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(type(exc).__name__) from exc
 
-        if not 200 <= response.status_code < 300:
-            raise MemoryUnavailableError(f"memory_http_{response.status_code}")
+            if not 200 <= response.status_code < 300:
+                if response.status_code in {429, 500, 502, 503, 504} and attempt < self.max_retries:
+                    await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
+                    continue
+                raise MemoryUnavailableError(f"memory_http_{response.status_code}")
+            break
 
         try:
             data = response.json()

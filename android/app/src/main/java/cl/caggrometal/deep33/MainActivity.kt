@@ -21,6 +21,7 @@ import java.util.concurrent.Future
 import java.util.Locale
 import android.speech.tts.TextToSpeech
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
@@ -389,13 +390,19 @@ class MainActivity : Activity() {
 
         activeTask = executor.submit {
             try {
+                val requestId = UUID.randomUUID().toString()
+                val idempotencyKey = "chat-" + requestId
+                val streamedText = StringBuilder()
                 val finalText = try {
                     Deep33Api.stream(
                     payload,
                     store.sessionId,
                     store.personality,
+                    requestId = requestId,
+                    idempotencyKey = idempotencyKey,
                     isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
                     onText = { chunk ->
+                        streamedText.append(chunk)
                         runOnUiThread {
                             val bubble = activeBubble ?: return@runOnUiThread
                             val current = bubble.text.toString()
