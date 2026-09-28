@@ -3,6 +3,7 @@ package cl.caggrometal.deep33
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -12,8 +13,7 @@ class Deep33BasePersistenceTest {
     @Test
     fun sessionAndMessagesSurviveStoreRecreation() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val name = "deep33_phase3_test"
-        val first = SessionStore(context, name)
+        val first = SessionStore(context, "deep33_phase3_test")
         first.resetSession()
         val sessionId = first.sessionId
         first.saveMessages(
@@ -23,7 +23,7 @@ class Deep33BasePersistenceTest {
             )
         )
 
-        val second = SessionStore(context, name)
+        val second = SessionStore(context, "deep33_phase3_test")
         assertEquals(sessionId, second.sessionId)
         val restored = second.loadMessages()
         assertEquals(2, restored.size)
@@ -33,6 +33,6 @@ class Deep33BasePersistenceTest {
 
         second.resetSession()
         assertEquals(0, second.loadMessages().size)
-        assertTrue(second.sessionId != sessionId)
+        assertNotEquals(sessionId, second.sessionId)
     }
 }

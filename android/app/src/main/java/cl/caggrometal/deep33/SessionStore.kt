@@ -40,15 +40,13 @@ class SessionStore(
         val raw = prefs.getString(KEY_MESSAGES, null) ?: return emptyList()
         return try {
             val json = JSONArray(raw)
-            buildList(minOf(json.length(), MAX_MESSAGES)) {
+            buildList {
                 val start = maxOf(0, json.length() - MAX_MESSAGES)
                 for (i in start until json.length()) {
                     val item = json.optJSONObject(i) ?: continue
                     val role = item.optString("role")
                     val content = item.optString("content")
-                    if (role.isNotBlank() && content.isNotBlank()) {
-                        add(UiMessage(role, content))
-                    }
+                    if (role.isNotBlank() && content.isNotBlank()) add(UiMessage(role, content))
                 }
             }
         } catch (_: Exception) {

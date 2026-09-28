@@ -3,7 +3,7 @@ package cl.caggrometal.deep33
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
 import javax.net.ssl.HttpsURLConnection
@@ -12,11 +12,11 @@ class Deep33ApiException(
     val kind: Kind,
     val statusCode: Int? = null,
     cause: Throwable? = null
-) : IOException(messageFor(kind, statusCode), cause) {
+) : IOException(messageFor(kind), cause) {
     enum class Kind { NETWORK, TIMEOUT, AUTH, RATE_LIMIT, SERVER, BAD_RESPONSE }
 
     companion object {
-        private fun messageFor(kind: Kind, statusCode: Int?): String = when (kind) {
+        private fun messageFor(kind: Kind): String = when (kind) {
             Kind.NETWORK -> "Sin conexión con DEEP33."
             Kind.TIMEOUT -> "DEEP33 no respondió a tiempo."
             Kind.AUTH -> "El acceso al backend fue rechazado."
@@ -31,7 +31,7 @@ object Deep33Api {
     const val BASE_URL = "https://deep33-backend.onrender.com"
 
     fun get(path: String, sessionId: String): JSONObject =
-        request("GET", path, null, sessionId).json
+        request("GET", path, null, sessionId)
 
     fun generate(messages: JSONArray, sessionId: String): JSONObject =
         request(
@@ -39,22 +39,19 @@ object Deep33Api {
             "/v1/ai/generate",
             JSONObject().put("messages", messages),
             sessionId
-        ).json
-
-    private data class ResponseData(val code: Int, val json: JSONObject)
+        )
 
     private fun request(
         method: String,
         path: String,
         body: JSONObject?,
         sessionId: String
-    ): ResponseData {
+    ): JSONObject {
         val url = URL(BASE_URL + path)
         if (url.protocol.lowercase() != "https") {
             throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
         }
 
-        val requestId = UUID.randomUUID().toString()
         val connection = url.openConnection() as HttpsURLConnection
         try {
             connection.requestMethod = method
@@ -65,7 +62,7 @@ object Deep33Api {
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-            connection.setRequestProperty("X-Request-ID", requestId)
+            connection.setRequestProperty("X-Request-ID", UUID.randomUUID().toString())
 
             if (body != null) {
                 connection.doOutput = true
@@ -77,7 +74,7 @@ object Deep33Api {
 
             val code = try {
                 connection.responseCode
-            } catch (e: java.net.SocketTimeoutException) {
+            } catch (e: SocketTimeoutException) {
                 throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
             } catch (e: IOException) {
                 throw Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
@@ -100,12 +97,11 @@ object Deep33Api {
                 throw Deep33ApiException(kind, code)
             }
 
-            val json = try {
+            return try {
                 JSONObject(payload)
             } catch (e: Exception) {
                 throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code, e)
             }
-            return ResponseData(code, json)
         } finally {
             connection.disconnect()
         }
