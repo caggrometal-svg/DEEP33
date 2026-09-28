@@ -10,7 +10,7 @@ import httpx
 from backend.search.chunking import chunk_document
 
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 _TOKEN_RE = re.compile(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 
 
@@ -143,6 +143,9 @@ class HybridSearchClient:
             "enabled": self.enabled,
             "configured": bool(self.base_url and self.api_key),
             "dimensions": self.dimensions,
+            "transport": "supabase_postgrest_rpc",
+            "vector_backend": "pgvector",
+            "keyword_backend": "postgresql_tsvector",
             "fusion": "weighted_reciprocal_rank_fusion_plus_metadata_rerank",
             "schema": "deep33_knowledge_chunks",
         }
