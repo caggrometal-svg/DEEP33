@@ -35,6 +35,7 @@ def test_complete_uses_fallback_after_primary_http_failure() -> None:
             provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
+        max_retries=0,
     )
     gateway = AIGateway(config)
 
