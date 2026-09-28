@@ -28,7 +28,7 @@ async def fake_gateway_probe() -> dict:
     }
 
 
-async def fake_call_gateway(payload: dict) -> dict:
+async def fake_call_gateway(payload: dict, **_kwargs) -> dict:
     return {
         "id": "test",
         "model": payload["model"],
