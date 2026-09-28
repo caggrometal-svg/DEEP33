@@ -87,3 +87,5 @@ def test_complete_raises_when_all_providers_fail() -> None:
             asyncio.run(gateway.complete({"messages": [{"role": "user", "content": "hi"}]}))
     finally:
         httpx.AsyncClient = original
+
+# fallback E2E trigger marker
