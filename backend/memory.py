@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import random
@@ -35,11 +37,23 @@ class MemoryClient:
     def enabled(self) -> bool:
         return bool(self.function_url and self.api_key)
 
-    async def _call(self, action: str, session_id: str, **payload: Any) -> dict:
+    async def _call(
+        self,
+        action: str,
+        session_id: str,
+        *,
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
+        **payload: Any,
+    ) -> dict:
         if not self.enabled:
             return {}
 
         body = {"action": action, "session_id": session_id, **payload}
+        if idempotency_key:
+            body["idempotency_key"] = idempotency_key
+        if request_hash:
+            body["request_hash"] = request_hash
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "apikey": self.api_key,
@@ -78,6 +92,16 @@ class MemoryClient:
             raise MemoryUnavailableError("memory_invalid_payload")
         return data
 
+    @staticmethod
+    def _request_hash(action: str, session_id: str, payload: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            {"action": action, "session_id": session_id, "payload": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     async def context(self, session_id: str) -> dict:
         return await self._call("context", session_id)
 
@@ -93,14 +117,24 @@ class MemoryClient:
             payload["personality"] = personality
         if preferences is not None:
             payload["preferences"] = preferences
-        return await self._call("sync", session_id, **payload)
+        request_hash = self._request_hash("sync", session_id, payload)
+        return await self._call(
+            "sync",
+            session_id,
+            idempotency_key=f"memory:sync:{request_hash}",
+            request_hash=request_hash,
+            **payload,
+        )
 
     async def remember(self, session_id: str, kind: str, content: str) -> dict:
+        payload = {"kind": kind, "content": content}
+        request_hash = self._request_hash("remember", session_id, payload)
         return await self._call(
             "remember",
             session_id,
-            kind=kind,
-            content=content,
+            idempotency_key=f"memory:remember:{request_hash}",
+            request_hash=request_hash,
+            **payload,
         )
 
     async def set_preferences(
@@ -114,7 +148,82 @@ class MemoryClient:
             payload["personality"] = personality
         if preferences is not None:
             payload["preferences"] = preferences
-        return await self._call("preferences", session_id, **payload)
+        request_hash = self._request_hash("preferences", session_id, payload)
+        return await self._call(
+            "preferences",
+            session_id,
+            idempotency_key=f"memory:preferences:{request_hash}",
+            request_hash=request_hash,
+            **payload,
+        )
+
+    async def idempotency_claim(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        operation: str,
+        request_hash: str,
+        lease_seconds: int = 180,
+    ) -> dict:
+        return await self._call(
+            "idempotency_claim",
+            session_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            operation=operation,
+            lease_seconds=lease_seconds,
+        )
+
+    async def idempotency_status(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        request_hash: str,
+    ) -> dict:
+        return await self._call(
+            "idempotency_status",
+            session_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+
+    async def idempotency_complete(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        request_hash: str,
+        lease_token: str,
+        status_code: int,
+        response: dict,
+    ) -> dict:
+        return await self._call(
+            "idempotency_complete",
+            session_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            lease_token=lease_token,
+            status_code=status_code,
+            response=response,
+        )
+
+    async def idempotency_fail(
+        self,
+        session_id: str,
+        idempotency_key: str,
+        request_hash: str,
+        lease_token: str,
+        status_code: int,
+        response: dict,
+    ) -> dict:
+        return await self._call(
+            "idempotency_fail",
+            session_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            lease_token=lease_token,
+            status_code=status_code,
+            response=response,
+        )
 
 
 def merge_messages(
@@ -129,7 +238,7 @@ def merge_messages(
         for item in source:
             role = str(item.get("role", "")).strip()
             content = str(item.get("content", "")).strip()
-            if role not in {"system", "user", "assistant"} or not content:
+            if role not in {"user", "assistant"} or not content:
                 continue
             key = (role, content)
             if key in seen:
@@ -151,7 +260,7 @@ def extract_context_messages(data: dict) -> list[dict[str, Any]]:
     messages = data.get("messages")
     if not isinstance(messages, list):
         return []
-    return [item for item in messages if isinstance(item, dict) and not is_internal_context_message(item)]
+    return [item for item in messages if isinstance(item, dict) and item.get("role") in {"user", "assistant"} and not is_internal_context_message(item)]
 
 
 def extract_context_system_message(data: dict) -> str | None:
