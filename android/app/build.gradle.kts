@@ -22,7 +22,7 @@ android {
         compose = true
     }
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL") ?: "https://deep33-backend.onrender.com"
-    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: "https://deep33-backup.onrender.com"
+    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL") ?: "https://iac33-fastapi-edge-production.up.railway.app"
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", "\"$primaryUrl\"")
         buildConfigField("String", "DEEP33_SECONDARY_URL", "\"$secondaryUrl\"")
