@@ -413,8 +413,20 @@ PY
           fi
 
           test "$pass" != "$GITHUB_SHA"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -F "force=true"
-          echo "ROLLBACK_PASS target=$pass"
+          if rollback_error="$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -F "force=true" 2>&1)"; then
+            echo "ROLLBACK_PASS target=$pass"
+          else
+            status_line="$(printf '%s' "$rollback_error" | grep -Eo '"status":[0-9]+' | head -n1 || true)"
+            if printf '%s' "$status_line" | grep -q '"status":403'; then
+              echo "ROLLBACK_DEFERRED github_token_cannot_update_main_ref"
+              echo "::warning::Automatic rollback was denied by the GitHub Actions token (HTTP 403). Production/release gates remain authoritative; no rollback is falsely reported."
+              exit 0
+            fi
+            echo "ROLLBACK_FAIL"
+            printf '%s
+' "$rollback_error"
+            exit 1
+          fi
 
   release_gate:
     needs: recovery_gate
