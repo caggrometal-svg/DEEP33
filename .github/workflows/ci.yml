@@ -52,6 +52,27 @@ jobs:
             jq -e '((.response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))' "/tmp/chat-$n.json"
           done
 
+      - name: Real Render fallback E2E
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[fallback-test]')
+        env:
+          DEEP33_URL: https://deep33-backend.onrender.com
+        run: |
+          set -euo pipefail
+          echo "Waiting for Render fallback configuration..."
+          for i in $(seq 1 18); do
+            if curl -fsS --max-time 15 "$DEEP33_URL/v1/ai/status" | jq -e '.gateway == "PASS" and .provider == "pollinations" and .fallback_used == true' >/dev/null; then
+              break
+            fi
+            sleep 10
+          done
+          curl -fsS --max-time 30 "$DEEP33_URL/v1/ai/status" | tee /tmp/fallback-status.json
+          jq -e '.gateway == "PASS" and .provider == "pollinations" and .fallback_used == true' /tmp/fallback-status.json
+          curl -fsS --max-time 90 \
+            -H 'content-type: application/json' \
+            -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_FALLBACK_OK"}],"model":"openai-fast"}' \
+            "$DEEP33_URL/v1/ai/generate" | tee /tmp/fallback-generation.json
+          jq -e '.result.provider == "pollinations" and ((.result.text // "") | contains("DEEP33_FALLBACK_OK"))' /tmp/fallback-generation.json
+
   android:
     needs: backend
     runs-on: ubuntu-latest
