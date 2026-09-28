@@ -476,21 +476,18 @@ class MainActivity : Activity() {
     }
 
     private fun appendBubble(label: String, content: String, background: Int): TextView {
+        val isAssistant = label == "DEEP33"
+        val accent = Personality.fromKey(store.personality).accent
         val bubble = TextView(this).apply {
             text = label + "\n" + content
             setTextColor(Color.WHITE)
             textSize = 16f
             setPadding(18, 14, 18, 14)
-            setBackground(
-                GradientDrawable().apply {
-                    setColor(if (isAssistant) {
-                        (Color.red(background) + Color.red(personality.accent)) / 2 shl 16 or
-                            ((Color.green(background) + Color.green(personality.accent)) / 2 shl 8) or
-                            ((Color.blue(background) + Color.blue(personality.accent)) / 2)
-                    } else background)
-                    cornerRadius = 24f
-                }
-            )
+            background = GradientDrawable().apply {
+                setColor(background)
+                cornerRadius = 24f
+                if (isAssistant) setStroke(2, accent)
+            }
         }
         val params = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, 0, 0, 12)
