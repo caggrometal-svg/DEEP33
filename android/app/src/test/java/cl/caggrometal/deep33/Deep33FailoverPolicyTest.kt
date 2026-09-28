@@ -61,6 +61,19 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
+    fun http5xxIsAFailoverEligibleServerFailure() {
+        val error = Deep33Api.mapError(503)
+        assertEquals(Deep33ApiException.Kind.SERVER, error.kind)
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = error.kind
+            )
+        )
+    }
+
+    @Test
     fun authRateLimitBadResponseAndCancelNeverFailOver() {
         val blocked = listOf(
             Deep33ApiException.Kind.AUTH,
