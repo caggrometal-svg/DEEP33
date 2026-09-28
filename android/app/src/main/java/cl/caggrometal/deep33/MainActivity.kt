@@ -408,7 +408,7 @@ class MainActivity : Activity() {
                 } catch (streamError: Deep33ApiException) {
                     if (streamError.kind == Deep33ApiException.Kind.CANCELLED) throw streamError
                     val fallback = Deep33Api.generate(payload, store.sessionId, store.personality)
-                    fallback.optString("text").ifBlank { fallback.optJSONObject("result")?.optString("text").orEmpty() }
+                    fallback.optJSONObject("result")?.optString("text").orEmpty().ifBlank { fallback.optString("text") }
                 }
 
                 if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
