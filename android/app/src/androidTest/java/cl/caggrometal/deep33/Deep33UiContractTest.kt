@@ -14,8 +14,8 @@ class Deep33UiContractTest {
 
     @Test
     fun markdownRendererProducesReadableText() {
-        val rendered = MarkdownRenderer.render("**DEEP33**\\n" + "\u0060test\u0060").toString()
-        assertEquals("DEEP33\\ntest", rendered)
+        val rendered = MarkdownRenderer.render("**DEEP33**\n" + "`test`").toString()
+        assertEquals("DEEP33\ntest", rendered)
     }
 
     @Test
