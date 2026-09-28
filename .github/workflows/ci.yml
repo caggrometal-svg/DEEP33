@@ -114,7 +114,7 @@ jobs:
         env:
           DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
           DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 35
           target: google_apis
