@@ -18,6 +18,17 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
+    fun serverFailureCannotFailOverAfterPostBodyStartedWithoutDistributedDedup() {
+        assertFalse(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = Deep33ApiException.Kind.SERVER
+            )
+        )
+    }
+
+    @Test
     fun timeoutCannotFailOverAfterPostBodyStarted() {
         assertFalse(
             Deep33FailoverPolicy.canFailover(
