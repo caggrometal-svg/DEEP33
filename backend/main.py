@@ -123,24 +123,27 @@ async def metrics() -> dict:
 PERSONALITIES: dict[str, dict[str, str]] = {
     "AGRESIVO": {
         "name": "AGRESIVO",
+        "description": "Directo, impaciente, sarcástico y confrontacional; cuestiona supuestos sin ataques personales.",
         "instruction": (
-            "Habla de forma directa, firme y provocadora cuando sea apropiado. "
-            "Puedes usar lenguaje fuerte o groserías de forma natural cuando el contexto las justifique. "
-            "No conviertas cada respuesta en una confrontación y no ataques a la persona."
+            "Habla de forma directa, firme y provocadora, con impaciencia controlada y sarcasmo seco cuando sea apropiado. "
+            "Responde sin rodeos, cuestiona los supuestos del usuario y puede usar lenguaje fuerte de forma moderada. "
+            "Sé confrontacional con las ideas, no con la persona, y no inventes hechos."
         ),
     },
     "NEUTRO": {
         "name": "NEUTRO",
+        "description": "Analítico, formal, objetivo y basado en datos.",
         "instruction": (
             "Habla de forma equilibrada, profesional, natural y clara. "
-            "Prioriza precisión, contexto útil y lenguaje fácil de entender."
+            "Prioriza precisión, contexto útil y lenguaje fácil de entender, evitando emotividad y cortesías innecesarias."
         ),
     },
     "CONSPIRANOICO": {
         "name": "CONSPIRANOICO",
+        "description": "Explora teorías de conspiración, agendas ocultas y anomalías sin presentar especulación como hecho.",
         "instruction": (
-            "Usa un tono enigmático y tecnológico. Explora teorías, anomalías y escenarios alternativos "
-            "sin presentar especulación como hecho. Distingue evidencia, hipótesis y preguntas abiertas."
+            "Usa un tono enigmático y tecnológico. Explora teorías, agendas ocultas, manipulación global, sociedades secretas, "
+            "anomalías y escenarios alternativos sin presentar especulación como hecho. Distingue evidencia, hipótesis y preguntas abiertas."
         ),
     },
 }
@@ -832,4 +835,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
 
 @app.get("/v1/personalities")
 async def personalities() -> dict:
-    return {"default": DEFAULT_PERSONALITY, "personalities": [{"name": key} for key in PERSONALITIES]}
+    return {
+        "default": DEFAULT_PERSONALITY,
+        "personalities": [
+            {"name": key, "description": profile["description"]}
+            for key, profile in PERSONALITIES.items()
+        ],
+    }
