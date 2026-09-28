@@ -1,28 +1,7 @@
 services:
   - type: web
     name: deep33-backend
-    runtime: python
-    plan: free
-    region: oregon
-    branch: main
-    autoDeployTrigger: commit
+    env: python
     buildCommand: pip install -r backend/requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.13.15"
-      - key: NETWORK_CHECK_URL
-        value: https://www.google.com/generate_204
-      - key: AI_TIMEOUT_SECONDS
-        value: "75"
-      - key: AI_PROVIDER_TIMEOUT_SECONDS
-        value: "18"
-      - key: AI_PROVIDER_MAX_RETRIES
-        value: "1"
-      - key: AI_RETRY_BACKOFF_SECONDS
-        value: "0.6"
-      - key: AI_CIRCUIT_FAILURE_THRESHOLD
-        value: "3"
-      - key: AI_CIRCUIT_COOLDOWN_SECONDS
-        value: "30"
