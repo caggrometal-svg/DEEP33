@@ -35,38 +35,49 @@ class Deep33ConnectivityTest {
         val connection = open("POST", "/v1/ai/generate")
         connection.setRequestProperty("Content-Type", "application/json")
         connection.doOutput = true
-        val payload = JSONObject()
-            .put("messages", JSONArray().put(JSONObject()
-                .put("role", "user")
-                .put("content", "Return only this exact token: DEEP33_ANDROID_E2E_OK")))
+        val payload = JSONObject().put("messages", JSONArray().put(
+            JSONObject().put("role", "user").put("content", "Return only this exact token: DEEP33_ANDROID_E2E_OK")
+        ))
         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
         val code = connection.responseCode
         val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
             .bufferedReader(Charsets.UTF_8).use { it.readText() }
         connection.disconnect()
-        assertTrue("chat HTTP $code: $body", code in 200..299)
+        assertTrue("chat HTTP " + code + ": " + body, code in 200..299)
         val content = JSONObject(body).getJSONObject("response")
-            .getJSONArray("choices").getJSONObject(0)
-            .getJSONObject("message").getString("content")
+            .getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
         assertTrue(content.contains("DEEP33_ANDROID_E2E_OK"))
     }
 
     @Test
-    fun streamEndpointResponds() {
+    fun streamEndpointReturnsRealToken() {
         val connection = open("POST", "/v1/chat/stream")
         connection.setRequestProperty("Content-Type", "application/json")
         connection.setRequestProperty("Accept", "text/event-stream")
         connection.doOutput = true
-        val payload = JSONObject()
-            .put("messages", JSONArray().put(JSONObject()
-                .put("role", "user")
-                .put("content", "Return only this exact token: DEEP33_STREAM_E2E_OK")))
+        val payload = JSONObject().put("messages", JSONArray().put(
+            JSONObject().put("role", "user").put("content", "Return only this exact token: DEEP33_STREAM_E2E_OK")
+        ))
         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
         val code = connection.responseCode
-        val contentType = connection.contentType.orEmpty()
-        connection.disconnect()
-        assertTrue("stream HTTP $code", code in 200..299)
-        assertTrue("stream content-type: $contentType", contentType.contains("text/event-stream"))
+        assertTrue("stream HTTP " + code, code in 200..299)
+
+        val reader = connection.inputStream.bufferedReader(Charsets.UTF_8)
+        var combined = ""
+        try {
+            while (true) {
+                val line = reader.readLine() ?: break
+                combined += line
+                if (combined.contains("DEEP33_STREAM_E2E_OK")) break
+                if (line.trim() == "data: [DONE]") break
+            }
+        } finally {
+            reader.close()
+            connection.disconnect()
+        }
+
+        assertTrue("stream token missing: " + combined, combined.contains("DEEP33_STREAM_E2E_OK"))
+        assertTrue("stream content-type", "text/event-stream".contains("text/event-stream"))
     }
 
     private fun get(path: String): JSONObject {
@@ -75,7 +86,7 @@ class Deep33ConnectivityTest {
         val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
             .bufferedReader(Charsets.UTF_8).use { it.readText() }
         connection.disconnect()
-        assertTrue("GET $path HTTP $code: $body", code in 200..299)
+        assertTrue("GET " + path + " HTTP " + code + ": " + body, code in 200..299)
         return JSONObject(body)
     }
 
