@@ -137,6 +137,8 @@ object Deep33Api {
                 activeStreamConnection = connection
                 val output = StringBuilder()
                 var emitted = false
+                var completed = false
+                var errorEvent = false
                 var requestBodyStarted = false
 
                 try {
