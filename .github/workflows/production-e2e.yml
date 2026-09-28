@@ -1,3 +1,7 @@
+concurrency:
+  group: deep33-production-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 name: DEEP33 Production E2E
 
 on:
