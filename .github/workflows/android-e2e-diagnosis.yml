@@ -55,7 +55,7 @@ jobs:
           enable-hw-keyboard: false
           channel: stable
           script: |
-            set -euo pipefail
+            set -eu
             mkdir -p diagnosis
             cd android
             {
@@ -75,8 +75,9 @@ jobs:
               adb install -r "$TEST_APK"
               echo "=== INSTRUMENTATION ==="
               set +e
-              timeout --foreground 15m adb shell am instrument -w -r cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee ../diagnosis/instrumentation.log
-              status="${PIPESTATUS[0]}"
+              timeout --foreground 15m adb shell am instrument -w -r cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner > ../diagnosis/instrumentation.log 2>&1
+              status="$?"
+              cat ../diagnosis/instrumentation.log
               set -e
               echo "INSTRUMENTATION_EXIT=$status"
               cp -R app/build/outputs/androidTest-results ../diagnosis/androidTest-results 2>/dev/null || true
