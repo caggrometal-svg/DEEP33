@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections import defaultdict, deque
 import logging
@@ -236,12 +237,28 @@ def enforce_client_controls(request: Request, session_id: str) -> None:
     _rate_state[key] = (window_start, count + 1)
 
 
-def cache_key(session_id: str, idempotency_key: str) -> str:
-    return f"{session_id}:{idempotency_key}"
+def request_payload_hash(session_id: str, request: ChatRequest) -> str:
+    canonical = json.dumps(
+        request.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(
+        f"{session_id}|{canonical}".encode("utf-8")
+    ).hexdigest()
 
 
-def cache_get(session_id: str, idempotency_key: str) -> dict | None:
-    key = cache_key(session_id, idempotency_key)
+def cache_key(session_id: str, idempotency_key: str, request_hash: str = "") -> str:
+    return f"{session_id}:{idempotency_key}:{request_hash}"
+
+
+def cache_get(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str = "",
+) -> dict | None:
+    key = cache_key(session_id, idempotency_key, request_hash)
     entry = _idempotency_cache.get(key)
     if entry is None:
         return None
@@ -252,9 +269,20 @@ def cache_get(session_id: str, idempotency_key: str) -> dict | None:
     return data
 
 
-def cache_put(session_id: str, idempotency_key: str, data: dict) -> None:
-    _idempotency_cache[cache_key(session_id, idempotency_key)] = (
-        time.monotonic() + CACHE_TTL_SECONDS,
+def cache_put(
+    session_id: str,
+    idempotency_key: str,
+    data: dict,
+    request_hash: str = "",
+) -> None:
+    now = time.monotonic()
+    for key, (expires_at, _) in list(_idempotency_cache.items()):
+        if expires_at <= now:
+            _idempotency_cache.pop(key, None)
+    while len(_idempotency_cache) >= 2048:
+        _idempotency_cache.pop(next(iter(_idempotency_cache)))
+    _idempotency_cache[cache_key(session_id, idempotency_key, request_hash)] = (
+        now + CACHE_TTL_SECONDS,
         data,
     )
 
@@ -561,14 +589,63 @@ async def generate(
     request_id: str,
     idempotency_key: str,
 ) -> dict:
-    cached = cache_get(session_id, idempotency_key)
+    request_hash = request_payload_hash(session_id, request)
+    cached = cache_get(session_id, idempotency_key, request_hash)
     if cached is not None:
         logger.info(
-            "ai_idempotency_hit request_id=%s session_id=%s",
+            "ai_idempotency_local_hit request_id=%s session_id=%s",
             request_id,
             session_id,
         )
         return cached
+
+    lease_token: str | None = None
+    if memory.enabled:
+        claim = await memory.idempotency_claim(
+            session_id,
+            idempotency_key,
+            "deep33.ai.generate",
+            request_hash,
+            lease_seconds=180,
+        )
+        state = claim.get("state")
+        if state == "CONFLICT":
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        if state == "COMPLETED":
+            stored = claim.get("response")
+            if isinstance(stored, dict):
+                cache_put(session_id, idempotency_key, stored, request_hash)
+                return stored
+            raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+        if state == "FAILED":
+            status_code = int(claim.get("status_code") or 500)
+            stored = claim.get("response")
+            detail = stored.get("error", "AI_PREVIOUS_REQUEST_FAILED") if isinstance(stored, dict) else "AI_PREVIOUS_REQUEST_FAILED"
+            raise HTTPException(status_code=status_code, detail=detail)
+        if state == "IN_PROGRESS":
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.25)
+                status = await memory.idempotency_status(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                )
+                if status.get("state") == "COMPLETED":
+                    stored = status.get("response")
+                    if isinstance(stored, dict):
+                        cache_put(session_id, idempotency_key, stored, request_hash)
+                        return stored
+                    raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+                if status.get("state") == "FAILED":
+                    raise HTTPException(
+                        status_code=int(status.get("status_code") or 500),
+                        detail="AI_PREVIOUS_REQUEST_FAILED",
+                    )
+            raise HTTPException(status_code=409, detail="AI_IDEMPOTENCY_IN_PROGRESS")
+        lease_token = str(claim.get("lease_token") or "")
+        if not lease_token:
+            raise HTTPException(status_code=500, detail="AI_IDEMPOTENCY_LEASE_MISSING")
 
     messages, personality = await prepare_messages(request, session_id)
     payload = {
@@ -589,6 +666,7 @@ async def generate(
         payload,
         request_id=request_id,
         idempotency_key=idempotency_key,
+        request_hash=request_hash,
     )
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     result = normalized_generation(data, personality)
@@ -606,7 +684,26 @@ async def generate(
         "result": result,
         "response": data,
     }
-    cache_put(session_id, idempotency_key, output)
+
+    if lease_token:
+        try:
+            await memory.idempotency_complete(
+                session_id,
+                idempotency_key,
+                request_hash,
+                lease_token,
+                output,
+                status_code=200,
+            )
+        except MemoryUnavailableError as exc:
+            logger.error(
+                "ai_idempotency_commit_failed request_id=%s error=%s",
+                request_id,
+                exc,
+            )
+            raise HTTPException(status_code=503, detail="AI_IDEMPOTENCY_COMMIT_FAILED") from exc
+
+    cache_put(session_id, idempotency_key, output, request_hash)
 
     logger.info(
         "ai_request request_id=%s session_id=%s provider=%s model=%s latency_ms=%s success=true",
@@ -706,6 +803,7 @@ async def stream_gateway(
     *,
     request_id: str,
     idempotency_key: str,
+    request_hash: str,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
@@ -762,8 +860,8 @@ async def stream_gateway(
                         "provider": None,
                         "personality": personality,
                     },
-                },
-            )
+                    request_hash=request_hash,
+                )
     except MemoryUnavailableError as exc:
         logger.warning("memory_stream_sync_unavailable session_id=%s error=%s", session_id, exc)
     except Exception as exc:
@@ -780,8 +878,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
+    request_hash = request_payload_hash(session_id, request)
 
-    cached = cache_get(session_id, idempotency_key)
+    cached = cache_get(session_id, idempotency_key, request_hash)
     if cached is not None:
         text_value = cached.get("result", {}).get("text", "")
         async def cached_stream() -> AsyncIterator[bytes]:
