@@ -102,6 +102,9 @@ class MemoryClient:
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    async def ping(self) -> dict:
+        return await self._call("ping", "deep33-health")
+
     async def context(self, session_id: str) -> dict:
         return await self._call("context", session_id)
 
