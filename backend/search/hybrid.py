@@ -102,11 +102,25 @@ class HybridSearchClient:
         timeout_seconds: float | None = None,
         dimensions: int | None = None,
     ) -> None:
-        self.base_url = (
-            base_url if base_url is not None else os.getenv("DEEP33_KNOWLEDGE_DB_URL", "")
-        ).strip().rstrip("/")
+        explicit_url = os.getenv("DEEP33_HYBRID_SEARCH_URL", "").strip().rstrip("/")
+        if base_url is not None:
+            self.base_url = base_url.strip().rstrip("/")
+        elif explicit_url:
+            self.base_url = explicit_url
+        else:
+            memory_url = os.getenv("DEEP33_MEMORY_URL", "").strip().rstrip("/")
+            marker = "/functions/v1/deep33-memory"
+            self.base_url = (
+                f"{memory_url.rsplit(marker, 1)[0]}/functions/v1/deep33-hybrid-search"
+                if marker in memory_url
+                else ""
+            )
+
         self.api_key = (
-            api_key if api_key is not None else os.getenv("DEEP33_KNOWLEDGE_DB_KEY", "")
+            api_key
+            if api_key is not None
+            else os.getenv("DEEP33_KNOWLEDGE_DB_KEY")
+            or os.getenv("SUPABASE_ANON_KEY", "")
         ).strip()
         self.timeout_seconds = max(
             3.0,
@@ -130,11 +144,12 @@ class HybridSearchClient:
 
     @property
     def enabled(self) -> bool:
-        return bool(
-            os.getenv("DEEP33_HYBRID_SEARCH_ENABLED", "false").strip().lower() == "true"
-            and self.base_url
-            and self.api_key
-        )
+        flag = os.getenv("DEEP33_HYBRID_SEARCH_ENABLED", "auto").strip().lower()
+        if flag in {"false", "0", "no", "off"}:
+            return False
+        if flag not in {"auto", "true", "1", "yes", "on"}:
+            return False
+        return bool(self.base_url and self.api_key)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -143,7 +158,7 @@ class HybridSearchClient:
             "enabled": self.enabled,
             "configured": bool(self.base_url and self.api_key),
             "dimensions": self.dimensions,
-            "transport": "supabase_postgrest_rpc",
+            "transport": "supabase_edge_function",
             "vector_backend": "pgvector",
             "keyword_backend": "postgresql_tsvector",
             "fusion": "weighted_reciprocal_rank_fusion_plus_metadata_rerank",
@@ -161,10 +176,41 @@ class HybridSearchClient:
     async def _rpc(self, function_name: str, payload: dict[str, Any]) -> Any:
         if not self.enabled:
             raise HybridSearchUnavailableError("HYBRID_SEARCH_NOT_CONFIGURED")
-        url = f"{self.base_url}/rest/v1/rpc/{function_name}"
+        action = {
+            "search_deep33_chunks": "search",
+            "index_deep33_chunks": "index",
+        }.get(function_name)
+        if action is None:
+            raise HybridSearchUnavailableError("HYBRID_FUNCTION_NOT_SUPPORTED")
+
+        body: dict[str, Any] = {"action": action}
+        if action == "search":
+            body.update(
+                {
+                    "query": payload.get("p_query", ""),
+                    "embedding": (
+                        [
+                            float(value)
+                            for value in str(payload["p_embedding"])[1:-1].split(",")
+                        ]
+                        if payload.get("p_embedding")
+                        else None
+                    ),
+                    "limit": payload.get("p_limit", 8),
+                    "metadata_filter": payload.get("p_metadata_filter") or {},
+                }
+            )
+        else:
+            body.update(
+                {
+                    "document_id": payload.get("p_document_id", ""),
+                    "chunks": payload.get("p_chunks") or [],
+                }
+            )
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(url, json=payload, headers=self._headers())
+                response = await client.post(self.base_url, json=body, headers=self._headers())
         except httpx.HTTPError as exc:
             raise HybridSearchUnavailableError(type(exc).__name__) from exc
         if not 200 <= response.status_code < 300:
