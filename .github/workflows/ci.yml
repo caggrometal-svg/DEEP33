@@ -183,11 +183,17 @@ jobs:
       - name: Prepare Android SDK image with retry
         run: |
           set -euo pipefail
-          SDK_ROOT="\${ANDROID_HOME:-\${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          yes | sdkmanager --licenses >/dev/null
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          fi
+          test -x "$SDKMANAGER"
+          export PATH="$(dirname "$SDKMANAGER"):$SDK_ROOT/platform-tools:$PATH"
+          yes | "$SDKMANAGER" --licenses >/dev/null
           rm -rf "$HOME/.android/cache"
           for attempt in 1 2 3; do
-            if sdkmanager --sdk_root="$SDK_ROOT" --install \
+            if "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
               "platform-tools" \
               "platforms;android-35" \
               "system-images;android-35;google_apis;x86_64"; then
