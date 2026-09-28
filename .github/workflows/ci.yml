@@ -26,9 +26,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Waiting for Render to serve the new commit..."
+          echo "Waiting for Render to serve DEEP33 0.1.2..."
           for i in $(seq 1 18); do
-            if curl -fsS --max-time 15 "$DEEP33_URL/health" | grep -q '"status":"PASS"'; then
+            if curl -fsS --max-time 15 "$DEEP33_URL/health" | jq -e '.status == "PASS" and .version == "0.1.2"' >/dev/null; then
               break
             fi
             sleep 10
@@ -39,7 +39,7 @@ jobs:
           curl -fsS --max-time 30 "$DEEP33_URL/v1/ai/status" | tee /tmp/ai.json
           curl -fsS --max-time 45 "$DEEP33_URL/v1/ai/diagnostics" | tee /tmp/diag.json
 
-          jq -e '.status == "PASS"' /tmp/health.json
+          jq -e '.status == "PASS" and .version == "0.1.2"' /tmp/health.json
           jq -e '.internet_available == true and .dns_ok == true and .https_ok == true' /tmp/network.json
           jq -e '.gateway == "PASS"' /tmp/ai.json
           jq -e '.online == true and .checks.NETWORK == "PASS" and .checks.AI_GATEWAY == "PASS" and .checks.MODEL == "PASS"' /tmp/diag.json
