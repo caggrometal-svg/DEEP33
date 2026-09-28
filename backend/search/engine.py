@@ -128,7 +128,11 @@ class SearchEngine:
     def plan(self, query: str) -> SearchPlan:
         cleaned = " ".join(query.split()).strip()
         lowered = cleaned.lower()
-        depth = "deep" if any(term in lowered for term in DEEP_TERMS) else "standard"
+        exact_deep = bool(re.search(r"\\bdeep\\b", lowered))
+        deep_signal = exact_deep or any(
+            term != "deep" and term in lowered for term in DEEP_TERMS
+        )
+        depth = "deep" if deep_signal else "standard"
         queries = [cleaned]
         if depth == "deep":
             for variant in QUERY_VARIANTS:
