@@ -795,7 +795,7 @@ Deno.serve(async (req) => {
         };
 
         const triggerPattern =
-          /\\b(internet|web|online|actual|actualmente|hoy|ayer|mañana|último|última|últimos|últimas|noticia|noticias|fuentes|verifica|verificar|comprueba|comprobar|precio|cotización)\\b/giu;
+          /\b(internet|web|online|actual|actualmente|hoy|ayer|mañana|último|última|últimos|últimas|noticia|noticias|fuentes|verifica|verificar|comprueba|comprobar|precio|cotización)\b/giu;
 
         // Keep the original request in system context while removing web-trigger
         // words from user messages so the upstream backend does not re-enter
