@@ -811,6 +811,54 @@ async def ready(response: Response) -> dict:
     }
 
 
+@app.get("/v1/connectivity/audit")
+async def connectivity_audit() -> dict:
+    network = await network_probe()
+    gateway_status = await gateway_probe()
+
+    search: dict[str, Any]
+    try:
+        search = await search_web(
+            "DEEP33",
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
+        )
+    except Exception as exc:
+        logger.warning(
+            "connectivity_audit_search_failed error=%s detail=%s",
+            type(exc).__name__,
+            str(exc)[:300],
+        )
+        search = {
+            "ok": False,
+            "results": [],
+            "error": "WEB_SEARCH_FAILED",
+        }
+
+    gateway_pass = gateway_status.get("gateway") == "PASS"
+    upstream_ready = (
+        gateway_pass
+        and bool(gateway_status.get("model"))
+        and bool(gateway.config.providers)
+    )
+    search_ok = bool(search.get("ok")) and isinstance(search.get("results"), list) and len(search["results"]) >= 1
+    internet_pass = bool(network.get("internet_available"))
+
+    return {
+        "status": "PASS" if internet_pass and upstream_ready and search_ok else "FAIL",
+        "edge": "PASS",
+        "internet": "PASS" if internet_pass else "FAIL",
+        "upstream": {
+            "ready": upstream_ready,
+            "gateway": gateway_status,
+        },
+        "search": search,
+        "git_sha": GIT_SHA,
+        "build_id": BUILD_ID,
+        "timestamp": utc_now(),
+    }
+
+
 @app.get("/v1/network/status")
 async def network_status(request: Request) -> dict:
     probe = await network_probe()
