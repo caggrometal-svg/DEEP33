@@ -637,7 +637,10 @@ class MainActivity : Activity() {
 
     private fun selectPersonality(personality: Personality) {
         personalitySelectionGeneration++
+        // Persist the selection first so every subsequent chat/voice request uses the
+        // exact mode chosen by the user, independent of older memory/preferences.
         store.personality = personality.key
+        Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
         currentPersonalityView.text = "Modo: " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
