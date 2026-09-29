@@ -642,21 +642,21 @@ async function publicWebSearch(query: string) {
       const results: Array<Record<string, string>> = [];
 
       if (provider.name === "bing_public") {
-        const items = [...html.matchAll(/<item>[\\s\\S]*?<title>([\\s\\S]*?)<\\/title>[\\s\\S]*?<link>([\\s\\S]*?)<\\/link>[\\s\\S]*?<description>([\\s\\S]*?)<\\/description>[\\s\\S]*?<\\/item>/gi)];
+        const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
         for (const item of items.slice(0, 8)) {
           const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
           const url = decodeHtml(String(item[2] ?? "").trim());
           const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
-          if (title && /^https?:\\/\\//i.test(url)) results.push({ title, url, snippet });
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
         }
       } else {
-        const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\\s\\S]*?)<\\/a>/gi)];
+        const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
         for (const item of items.slice(0, 8)) {
           const rawUrl = decodeHtml(String(item[1] ?? ""));
           const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
           const urlMatch = rawUrl.match(/uddg=([^&]+)/i);
           const url = urlMatch ? decodeURIComponent(urlMatch[1]) : rawUrl;
-          if (title && /^https?:\\/\\//i.test(url)) results.push({ title, url, snippet: "" });
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
         }
       }
 
