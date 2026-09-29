@@ -15,8 +15,8 @@ on:
 
 env:
   PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-  SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-  TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: ${{ secrets.DEEP33_SECONDARY_URL }}
+  TERTIARY_URL: ${{ secrets.DEEP33_TERTIARY_URL }}
 
 jobs:
   backend_unit:
@@ -64,6 +64,19 @@ jobs:
           jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
           echo "DEEP33_INTERNET_SEARCH_PASS"
 
+      - name: Require independent failover endpoints
+        env:
+          PRIMARY_URL: ${{ env.PRIMARY_URL }}
+          SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          TERTIARY_URL: ${{ env.TERTIARY_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$SECONDARY_URL" || { echo "SECONDARY_URL_SECRET_MISSING"; exit 1; }
+          test -n "$TERTIARY_URL" || { echo "TERTIARY_URL_SECRET_MISSING"; exit 1; }
+          test "$PRIMARY_URL" != "$SECONDARY_URL" || { echo "PRIMARY_SECONDARY_DUPLICATE"; exit 1; }
+          test "$PRIMARY_URL" != "$TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
+          test "$SECONDARY_URL" != "$TERTIARY_URL" || { echo "SECONDARY_TERTIARY_DUPLICATE"; exit 1; }
+          echo "FAILOVER_DIVERSITY_PASS"
       - name: Verify all production nodes readiness
         run: |
           set -euo pipefail
@@ -182,9 +195,10 @@ jobs:
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
+          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
@@ -212,9 +226,10 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
+          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
@@ -242,9 +257,10 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
+          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
