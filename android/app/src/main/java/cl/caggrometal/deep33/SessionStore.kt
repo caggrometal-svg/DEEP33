@@ -68,6 +68,22 @@ class SessionStore(
             prefs.edit().putString(KEY_PERSONALITY, value).apply()
         }
 
+    val hasUserSelectedPersonality: Boolean
+        get() = prefs.getBoolean(KEY_PERSONALITY_USER_SELECTED, false)
+
+    fun setPersonalityFromUser(value: String) {
+        prefs.edit()
+            .putString(KEY_PERSONALITY, value)
+            .putBoolean(KEY_PERSONALITY_USER_SELECTED, true)
+            .apply()
+    }
+
+    fun applyRemotePersonalityIfUnset(value: String): Boolean {
+        if (hasUserSelectedPersonality || value.isBlank()) return false
+        prefs.edit().putString(KEY_PERSONALITY, value).apply()
+        return true
+    }
+
     var voiceTone: String
         get() = prefs.getString(KEY_VOICE_TONE, "EMBER") ?: "EMBER"
         set(value) {
@@ -158,6 +174,7 @@ class SessionStore(
         private const val KEY_MESSAGES_LEGACY = "messages_json"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
         private const val KEY_PERSONALITY = "personality"
+        private const val KEY_PERSONALITY_USER_SELECTED = "personality_user_selected"
         private const val KEY_VOICE_TONE = "voice_tone"
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
         private const val MAX_MESSAGES = 50
