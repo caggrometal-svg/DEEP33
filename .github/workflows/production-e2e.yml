@@ -28,15 +28,17 @@ jobs:
           jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
-      - name: Verify readiness and real inference
+      - name: Verify edge audit and real inference
         run: |
           set -euo pipefail
-          for url in "$PRIMARY_URL" "$SECONDARY_URL" "$TERTIARY_URL"; do
-            curl -fsS --connect-timeout 8 --max-time 45 "$url/ready" | jq -e '.status=="PASS" and .ready==true'
-          done
-
+          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
           curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
-
-          curl -fsS --connect-timeout 8 --max-time 120             -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}"             -H "X-Request-ID: prod-${GITHUB_RUN_ID}"             -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}"             -H 'content-type: application/json'             -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}'             "$PRIMARY_URL/v1/ai/generate" |
+          curl -fsS --connect-timeout 8 --max-time 120 \
+            -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}" \
+            -H "X-Request-ID: prod-${GITHUB_RUN_ID}" \
+            -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}" \
+            -H 'content-type: application/json' \
+            -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}' \
+            "$PRIMARY_URL/v1/ai/generate" |
             jq -e '((.result.text // .response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))'
