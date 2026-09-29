@@ -20,6 +20,12 @@ enum class Personality(
         Color.rgb(0, 229, 255),
         "Analítico, formal, objetivo y basado en datos."
     ),
+    COMICO(
+        "COMICO",
+        "M",
+        Color.rgb(255, 193, 7),
+        "Irónico, ingenioso y ligero, sin perder precisión."
+    ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
         "C",
