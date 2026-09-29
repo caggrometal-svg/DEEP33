@@ -165,9 +165,11 @@ DEFAULT_PERSONALITY = "NEUTRO"
 
 _rate_state: dict[str, tuple[float, int]] = {}
 _idempotency_cache: dict[str, tuple[float, str, dict]] = {}
+_local_idempotency_inflight: dict[str, tuple[float, str, str]] = {}
 CACHE_TTL_SECONDS = 300.0
 IDEMPOTENCY_LEASE_SECONDS = 180
 IDEMPOTENCY_WAIT_SECONDS = 80
+LOCAL_IDEMPOTENCY_FALLBACK_SECONDS = 180.0
 
 class IdempotencyConflictError(RuntimeError):
     pass
@@ -316,6 +318,75 @@ def cache_put(
     )
 
 
+
+
+def local_idempotency_prune() -> None:
+    now = time.monotonic()
+    expired = [
+        key for key, value in _local_idempotency_inflight.items()
+        if value[0] <= now
+    ]
+    for key in expired[:200]:
+        _local_idempotency_inflight.pop(key, None)
+
+
+def local_idempotency_claim(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> tuple[str, dict]:
+    local_idempotency_prune()
+    key = cache_key(session_id, idempotency_key)
+    existing = _local_idempotency_inflight.get(key)
+    if existing is not None:
+        _expires_at, stored_hash, _lease_token = existing
+        if stored_hash != request_hash:
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        raise HTTPException(status_code=409, detail="IDEMPOTENCY_IN_PROGRESS")
+
+    lease_token = str(uuid.uuid4())
+    _local_idempotency_inflight[key] = (
+        time.monotonic() + LOCAL_IDEMPOTENCY_FALLBACK_SECONDS,
+        request_hash,
+        lease_token,
+    )
+    return "CLAIMED", {"lease_token": lease_token, "_storage": "local"}
+
+
+def local_idempotency_complete(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+    lease_token: str,
+    output: dict,
+) -> None:
+    local_idempotency_prune()
+    key = cache_key(session_id, idempotency_key)
+    existing = _local_idempotency_inflight.get(key)
+    if existing is None:
+        return
+    _expires_at, stored_hash, stored_token = existing
+    if stored_hash == request_hash and stored_token == lease_token:
+        _local_idempotency_inflight.pop(key, None)
+        cache_put(session_id, idempotency_key, request_hash, output)
+
+
+def local_idempotency_fail(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+    lease_token: str,
+) -> None:
+    local_idempotency_prune()
+    key = cache_key(session_id, idempotency_key)
+    existing = _local_idempotency_inflight.get(key)
+    if existing is None:
+        return
+    _expires_at, stored_hash, stored_token = existing
+    if stored_hash == request_hash and stored_token == lease_token:
+        _local_idempotency_inflight.pop(key, None)
+
+
 async def shared_idempotency_claim(
     session_id: str,
     idempotency_key: str,
@@ -354,7 +425,12 @@ async def shared_idempotency_claim(
                 raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
         raise HTTPException(status_code=504, detail="IDEMPOTENCY_IN_PROGRESS")
     except MemoryUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE") from exc
+        logger.warning(
+            "idempotency_store_unavailable_using_local_fallback session_id=%s error=%s",
+            session_id,
+            type(exc).__name__,
+        )
+        return local_idempotency_claim(session_id, idempotency_key, request_hash)
 
 
 def replay_idempotent(state: str, record: dict, *, default_status: int = 200) -> dict:
@@ -1161,7 +1237,15 @@ async def generate(
             "web_navigation": bool(sources),
         }
         cache_put(session_id, idempotency_key, request_hash, output)
-        if memory.enabled:
+        if record.get("_storage") == "local":
+            local_idempotency_complete(
+                session_id,
+                idempotency_key,
+                request_hash,
+                lease_token,
+                output,
+            )
+        elif memory.enabled:
             try:
                 await memory.idempotency_complete(
                     session_id,
@@ -1190,7 +1274,14 @@ async def generate(
     except Exception as exc:
         status_code, stored = error_record(exc)
         try:
-            if memory.enabled:
+            if record.get("_storage") == "local":
+                local_idempotency_fail(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                )
+            elif memory.enabled:
                 await memory.idempotency_fail(
                     session_id,
                     idempotency_key,
