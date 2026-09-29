@@ -874,6 +874,20 @@ async def ai_status() -> dict:
     return await gateway_probe()
 
 
+@app.get("/v1/ai/edge-status")
+async def ai_edge_status() -> dict:
+    gateway_status = await gateway_probe()
+    gateway_ok = gateway_status.get("gateway") == "PASS"
+    return {
+        "status": "PASS" if gateway_ok else "FAIL",
+        "engine": "DEEP33 AI Edge",
+        "gateway": gateway_status,
+        "provider": gateway_status.get("provider"),
+        "model": gateway_status.get("model"),
+        "timestamp": utc_now(),
+    }
+
+
 @app.get("/v1/search/hybrid/status")
 async def hybrid_search_status() -> dict:
     return hybrid_search.status()
