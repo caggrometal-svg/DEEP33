@@ -33,6 +33,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
+from backend.web_orchestrator import ServerWebOrchestrator
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -65,10 +66,12 @@ RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
 RATE_LIMIT_WINDOW = max(10.0, float(os.getenv("DEEP33_RATE_LIMIT_WINDOW_SECONDS", "60")))
 CLIENT_AUTH_TOKEN = os.getenv("DEEP33_CLIENT_AUTH_TOKEN", "").strip()
 DEEP33_WEB_TOOLS_ENABLED = os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip().lower() == "true"
+WEB_ORCHESTRATOR_MODES = {"legacy", "server"}
 
 gateway = AIGateway()
 memory = MemoryClient()
 hybrid_search = HybridSearchClient()
+server_web_orchestrator = ServerWebOrchestrator(search_web, fetch_page)
 AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
@@ -415,6 +418,16 @@ WEB_TRIGGER_TERMS = (
 
 MAX_WEB_TOOL_ROUNDS = max(1, min(4, int(os.getenv("DEEP33_WEB_MAX_TOOL_ROUNDS", "2"))))
 
+def web_orchestrator_mode() -> str:
+    mode = os.getenv("DEEP33_WEB_ORCHESTRATOR", "legacy").strip().lower()
+    return mode if mode in WEB_ORCHESTRATOR_MODES else "legacy"
+
+def web_query_from_messages(messages):
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return str(message.get("content") or "").strip()
+    return ""
+
 def should_force_web(messages):
     text_value=" ".join(m.get("content","") for m in messages if m.get("role")=="user").lower()
     return any(term in text_value for term in WEB_TRIGGER_TERMS)
@@ -738,6 +751,7 @@ async def hybrid_index_endpoint(
 async def web_status() -> dict:
     status = web_search_status()
     status["tool_loop_enabled"] = DEEP33_WEB_TOOLS_ENABLED
+    status["orchestrator"] = web_orchestrator_mode()
     status["fetch_limits"] = {
         "timeout_seconds": min(8.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8"))),
         "max_redirects": min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
@@ -1050,14 +1064,34 @@ async def generate(
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
         if DEEP33_WEB_TOOLS_ENABLED:
-            data, sources = await run_web_tool_loop(
-                messages,
-                model=payload["model"],
-                request_id=request_id,
-                idempotency_key=idempotency_key,
-                force_web=should_force_web(messages),
-                deadline=deadline,
-            )
+            if web_orchestrator_mode() == "server":
+                if should_force_web(messages):
+                    data, sources = await server_web_orchestrator.run(
+                        messages,
+                        query=web_query_from_messages(messages),
+                        model=payload["model"],
+                        request_id=request_id,
+                        idempotency_key=idempotency_key,
+                        deadline=deadline,
+                        call_gateway=call_gateway,
+                    )
+                else:
+                    data = await call_gateway(
+                        payload,
+                        request_id=request_id,
+                        idempotency_key=idempotency_key,
+                        deadline=deadline,
+                    )
+                    sources = []
+            else:
+                data, sources = await run_web_tool_loop(
+                    messages,
+                    model=payload["model"],
+                    request_id=request_id,
+                    idempotency_key=idempotency_key,
+                    force_web=should_force_web(messages),
+                    deadline=deadline,
+                )
         else:
             data = await call_gateway(
                 payload,
