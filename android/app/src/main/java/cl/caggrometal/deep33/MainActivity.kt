@@ -639,7 +639,7 @@ class MainActivity : Activity() {
         personalitySelectionGeneration++
         // Persist the selection first so every subsequent chat/voice request uses the
         // exact mode chosen by the user, independent of older memory/preferences.
-        store.personality = personality.key
+        store.setPersonalityFromUser(personality.key)
         Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
         currentPersonalityView.text = "Modo: " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
@@ -725,7 +725,7 @@ class MainActivity : Activity() {
                     personalitySelectionGeneration == selectionGeneration &&
                         store.personality == localPersonality
                 if (remotePersonality.isNotBlank() && shouldApplyRemotePersonality) {
-                    store.personality = remotePersonality
+                    store.applyRemotePersonalityIfUnset(remotePersonality)
                 }
 
                 val messages = remote.optJSONArray("messages") ?: return@submit
