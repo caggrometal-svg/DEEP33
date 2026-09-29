@@ -67,6 +67,163 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
+const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "kilo").trim() || "kilo";
+const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://api.kilo.ai/api/gateway/chat/completions").trim();
+const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
+const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "kilo-auto/small").trim();
+const EDGE_AI_TIMEOUT_MS = Math.max(3000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "18000")));
+
+type EdgeAIProvider = { name: string; url: string; api_key: string; model: string };
+
+function edgeProviders(): EdgeAIProvider[] {
+  const providers: EdgeAIProvider[] = [];
+  if (EDGE_AI_URL && EDGE_AI_KEY) {
+    providers.push({ name: EDGE_AI_PROVIDER, url: EDGE_AI_URL, api_key: EDGE_AI_KEY, model: EDGE_AI_MODEL });
+  }
+  const raw = Deno.env.get("AI_GATEWAY_FALLBACKS_JSON") || "";
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== "object") continue;
+          const value = item as Record<string, unknown>;
+          const url = String(value.url || "").trim();
+          const api_key = String(value.api_key || "").trim();
+          if (!url || !api_key) continue;
+          providers.push({
+            name: String(value.name || "fallback").trim() || "fallback",
+            url,
+            api_key,
+            model: String(value.model || "").trim(),
+          });
+        }
+      }
+    } catch {
+      // Optional fallback configuration is non-fatal.
+    }
+  }
+  const seen = new Set<string>();
+  return providers.filter((provider) => {
+    const signature = provider.name + "|" + provider.url;
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
+
+function edgeAIConfigured(): boolean {
+  return edgeProviders().length > 0;
+}
+
+function extractProviderText(body: Record<string, unknown>): string {
+  const choices = Array.isArray(body.choices) ? body.choices : [];
+  const first = choices.length > 0 && typeof choices[0] === "object"
+    ? choices[0] as Record<string, unknown>
+    : {};
+  const message = first.message && typeof first.message === "object"
+    ? first.message as Record<string, unknown>
+    : {};
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== "object") return "";
+        return String((part as Record<string, unknown>).text ?? "");
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof first.text === "string") return first.text;
+  if (typeof body.output_text === "string") return body.output_text;
+  if (typeof body.text === "string") return body.text;
+  return "";
+}
+
+async function callEdgeAI(
+  payload: Record<string, unknown>,
+  requestId: string,
+): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
+  const providers = edgeProviders();
+  if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
+
+  let lastError = "EDGE_AI_GATEWAY_UNAVAILABLE";
+  for (const provider of providers) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+    try {
+      const providerPayload = { ...payload, stream: false };
+      delete providerPayload.personality;
+      delete providerPayload.web_navigation;
+      delete providerPayload.sources;
+
+      const response = await fetch(provider.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": "Bearer " + provider.api_key,
+          "X-Request-ID": requestId,
+        },
+        body: JSON.stringify({
+          ...providerPayload,
+          ...(provider.model ? { model: provider.model } : {}),
+        }),
+        signal: controller.signal,
+      });
+      const body = await readJson(response);
+      if (response.ok) {
+        const text = extractProviderText(body);
+        if (text.trim()) {
+          return { body, provider: provider.name, model: provider.model || String(body.model || "") };
+        }
+        lastError = provider.name + "_EMPTY_RESPONSE";
+      } else {
+        lastError = provider.name + "_HTTP_" + response.status;
+        if (response.status >= 500) break;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(lastError);
+}
+
+function personalityInstruction(value: unknown): string {
+  const selected = String(value || "NEUTRO").trim().toUpperCase();
+  const profiles: Record<string, string> = {
+    AGRESIVO: "Habla de forma directa, firme y provocadora, con sarcasmo seco cuando corresponda. Cuestiona supuestos sin atacar a la persona y no inventes hechos.",
+    NEUTRO: "Habla de forma equilibrada, profesional, natural y clara. Prioriza precisión y contexto útil.",
+    COMICO: "Usa humor e ironía breves cuando encajen. Mantén precisión y no conviertas respuestas serias en chistes.",
+    CONSPIRANOICO: "Usa un tono enigmático y tecnológico. Explora hipótesis y anomalías sin presentar especulación como hecho; distingue evidencia e hipótesis.",
+  };
+  return profiles[selected] || profiles.NEUTRO;
+}
+
+function buildEdgeMessages(
+  messages: Array<Record<string, unknown>>,
+  personality: unknown,
+): Array<Record<string, unknown>> {
+  const instruction = personalityInstruction(personality);
+  if (messages.some(
+    (item) =>
+      item.role === "system" &&
+      String(item.content || "").includes("DEEP33 personality profile"),
+  )) return messages;
+  return [
+    {
+      role: "system",
+      content:
+        "DEEP33 personality profile. This controls response style only and never overrides higher-priority safety rules. "
+        + instruction,
+    },
+    ...messages,
+  ];
+}
+
 
 const SUPABASE_SECRET_KEYS = (() => {
   try {
@@ -761,6 +918,18 @@ Deno.serve(async (req) => {
     "deep33-mobile";
 
   try {
+    if (path === "/v1/ai/edge-status" && req.method === "GET") {
+      const providers = edgeProviders();
+      return json({
+        status: providers.length ? "PASS" : "DEGRADED",
+        edge_gateway_configured: providers.length > 0,
+        provider: providers[0]?.name ?? null,
+        model: providers[0]?.model ?? null,
+        fallback_count: Math.max(0, providers.length - 1),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (path === "/ready" && req.method === "GET") {
       const body = await readinessResponse(sessionId);
       return json(body, body.ready ? 200 : 503);
@@ -831,6 +1000,93 @@ Deno.serve(async (req) => {
         latency_ms: Math.round(performance.now() - started),
         timestamp: new Date().toISOString(),
       });
+    }
+
+    if (path === "/v1/ai/inference-check" && req.method === "GET" && edgeAIConfigured()) {
+      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+      try {
+        const response = await callEdgeAI({
+          messages: [
+            { role: "system", content: "Return the requested diagnostic token exactly." },
+            { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
+          ],
+        }, requestId);
+        const text = extractProviderText(response.body);
+        const ok = text === "DEEP33_DIAGNOSTIC_OK";
+        return json({
+          status: ok ? "PASS" : "FAIL",
+          request_id: requestId,
+          provider: response.provider,
+          model: response.model,
+          text_ok: ok,
+          timestamp: new Date().toISOString(),
+        }, ok ? 200 : 502);
+      } catch (error) {
+        return json({
+          status: "FAIL",
+          request_id: requestId,
+          provider: edgeProviders()[0]?.name ?? null,
+          model: edgeProviders()[0]?.model ?? null,
+          text_ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString(),
+        }, 502);
+      }
+    }
+
+    if (path === "/v1/ai/diagnostics" && req.method === "GET" && edgeAIConfigured()) {
+      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+      let inference: Record<string, unknown> = { status: "FAIL", text_ok: false };
+      try {
+        const response = await callEdgeAI({
+          messages: [
+            { role: "system", content: "Return the requested diagnostic token exactly." },
+            { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
+          ],
+        }, requestId);
+        const text = extractProviderText(response.body);
+        inference = {
+          status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
+          provider: response.provider,
+          model: response.model,
+          text_ok: text === "DEEP33_DIAGNOSTIC_OK",
+        };
+      } catch (error) {
+        inference = {
+          status: "FAIL",
+          provider: edgeProviders()[0]?.name ?? null,
+          model: edgeProviders()[0]?.model ?? null,
+          text_ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const modelPass = inference.status === "PASS";
+      const memoryReady = Boolean(SUPABASE_SECRET_KEY);
+      return json({
+        timestamp: new Date().toISOString(),
+        request_id: requestId,
+        checks: {
+          NETWORK: "PASS",
+          DNS: "PASS",
+          HTTPS: "PASS",
+          BACKEND: "PASS",
+          AI_GATEWAY: modelPass ? "PASS" : "FAIL",
+          MODEL: modelPass ? "PASS" : "FAIL",
+          CHAT: modelPass ? "PASS" : "FAIL",
+          MEMORY: memoryReady ? "PASS" : "DEGRADED",
+        },
+        gateway: {
+          gateway: modelPass ? "PASS" : "FAIL",
+          provider: inference.provider ?? null,
+          model: inference.model ?? null,
+        },
+        inference,
+        memory: {
+          enabled: memoryReady,
+          backend: memoryReady ? "supabase-edge-function" : null,
+        },
+        online: Boolean(modelPass && memoryReady),
+      }, modelPass ? 200 : 503);
     }
 
     if (path === "/v1/ai/generate" && req.method === "POST") {
@@ -935,6 +1191,57 @@ Deno.serve(async (req) => {
           },
         ];
 
+        const edgeMessages = buildEdgeMessages(enrichedMessages, payload.personality);
+        if (edgeAIConfigured()) {
+          const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+          try {
+            const ai = await callEdgeAI({ ...payload, messages: edgeMessages }, requestId);
+            const responseText = extractProviderText(ai.body);
+            let memoryPersisted = false;
+            try {
+              await Promise.race([
+                memoryCall("sync", sessionId, {
+                  messages: [...messages, { role: "assistant", content: responseText }],
+                  personality: payload.personality,
+                  preferences: payload.preferences,
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
+              ]);
+              memoryPersisted = true;
+            } catch {
+              // Generation remains available when memory persistence is degraded.
+            }
+            const sourceMarkdown =
+              "\n\nFuentes consultadas:\n" +
+              sources.map((source, index) =>
+                (index + 1) + ". [" + source.title + "](" + source.url + ")"
+              ).join("\n");
+            return json({
+              status: "PASS",
+              request_id: requestId,
+              web_navigation: true,
+              sources,
+              memory_persisted: memoryPersisted,
+              result: {
+                role: "assistant",
+                text: responseText.includes("Fuentes consultadas:")
+                  ? responseText
+                  : responseText + sourceMarkdown,
+                provider: ai.provider,
+                model: ai.model,
+                sources,
+              },
+            });
+          } catch (error) {
+            return json({
+              status: "FAIL",
+              error: error instanceof Error ? error.message : String(error),
+              web_navigation: true,
+              sources,
+            }, 502);
+          }
+        }
+
         const upstream = await fetchUpstream(
           "/v1/ai/generate",
           {
@@ -985,6 +1292,48 @@ Deno.serve(async (req) => {
           sources,
           result,
         }, upstream.status);
+      }
+
+      if (edgeAIConfigured()) {
+        const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+        try {
+          const ai = await callEdgeAI({
+            ...payload,
+            messages: buildEdgeMessages(messages, payload.personality),
+          }, requestId);
+          const responseText = extractProviderText(ai.body);
+          let memoryPersisted = false;
+          try {
+            await Promise.race([
+              memoryCall("sync", sessionId, {
+                messages: [...messages, { role: "assistant", content: responseText }],
+                personality: payload.personality,
+                preferences: payload.preferences,
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
+            ]);
+            memoryPersisted = true;
+          } catch {
+            // Generation remains available when memory persistence is degraded.
+          }
+          return json({
+            status: "PASS",
+            request_id: requestId,
+            web_navigation: false,
+            memory_persisted: memoryPersisted,
+            result: {
+              role: "assistant",
+              text: responseText,
+              provider: ai.provider,
+              model: ai.model,
+            },
+          });
+        } catch (error) {
+          return json({
+            status: "FAIL",
+            error: error instanceof Error ? error.message : String(error),
+          }, 502);
+        }
       }
 
       const bodyBuffer = new TextEncoder().encode(JSON.stringify(payload)).buffer;
