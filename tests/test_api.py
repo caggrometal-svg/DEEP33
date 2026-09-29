@@ -5,6 +5,11 @@ from backend import main
 client = TestClient(main.app)
 
 
+class UnavailableIdempotencyMemory(FakeMemory):
+    async def idempotency_claim(self, *args, **kwargs) -> dict:
+        raise main.MemoryUnavailableError("memory_http_503")
+
+
 class FakeMemory:
     enabled = True
 
@@ -183,6 +188,32 @@ def test_generate_contract(monkeypatch) -> None:
     assert body["result"]["provider"] == "kilo"
     assert body["result"]["text"] == "DEEP33 connectivity PASS"
 
+
+
+def test_generate_falls_back_to_local_idempotency_when_memory_store_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(main, "memory", UnavailableIdempotencyMemory())
+    calls = {"count": 0}
+
+    async def counting_gateway(payload: dict, **_kwargs) -> dict:
+        calls["count"] += 1
+        return await fake_call_gateway(payload)
+
+    monkeypatch.setattr(main, "call_gateway", counting_gateway)
+
+    headers = {
+        "X-DEEP33-Session-Id": "local-idempotency-fallback",
+        "X-Idempotency-Key": "local-idempotency-key",
+    }
+    payload = {"messages": [{"role": "user", "content": "Hola"}]}
+
+    first = client.post("/v1/ai/generate", json=payload, headers=headers)
+    second = client.post("/v1/ai/generate", json=payload, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["result"]["text"] == "DEEP33 connectivity PASS"
+    assert second.json()["result"]["text"] == "DEEP33 connectivity PASS"
+    assert calls["count"] == 1
 
 def test_personality_is_injected_into_model_context(monkeypatch) -> None:
     patch_memory(monkeypatch)
