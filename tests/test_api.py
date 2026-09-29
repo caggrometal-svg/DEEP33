@@ -223,3 +223,38 @@ def test_personality_catalog() -> None:
         "NEUTRO",
         "CONSPIRANOICO",
     ]
+
+
+def test_generate_server_web_orchestrator_preserves_contract(monkeypatch) -> None:
+    patch_memory(monkeypatch)
+    monkeypatch.setenv("DEEP33_WEB_ORCHESTRATOR", "server")
+    monkeypatch.setenv("DEEP33_WEB_TOOLS_ENABLED", "true")
+    captured = {}
+
+    async def fake_web_run(messages, **kwargs):
+        captured["messages"] = messages
+        captured["kwargs"] = kwargs
+        return await fake_call_gateway(kwargs["call_gateway_payload"] if "call_gateway_payload" in kwargs else {"model": kwargs["model"]}), [
+            {"title": "Example", "url": "https://example.com/", "snippet": "Example"}
+        ]
+
+    class FakeServerOrchestrator:
+        async def run(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            data = await fake_call_gateway({"model": kwargs["model"], "messages": messages})
+            return data, [{"title": "Example", "url": "https://example.com/", "snippet": "Example"}]
+
+    monkeypatch.setattr(main, "server_web_orchestrator", FakeServerOrchestrator())
+
+    response = client.post(
+        "/v1/ai/generate",
+        json={"messages": [{"role": "user", "content": "Busca en internet DEEP33"}]},
+        headers={"X-DEEP33-Session-Id": "server-web-test"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["web_navigation"] is True
+    assert len(body["sources"]) == 1
+    assert body["result"]["text"].endswith("https://example.com/)")
+    assert "tool_choice" not in captured["kwargs"]
