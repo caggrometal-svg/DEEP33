@@ -144,6 +144,14 @@ PERSONALITIES: dict[str, dict[str, str]] = {
             "Prioriza precisión, contexto útil y lenguaje fácil de entender, evitando emotividad y cortesías innecesarias."
         ),
     },
+    "COMICO": {
+        "name": "COMICO",
+        "description": "Irónico, ingenioso y ligero, sin perder precisión.",
+        "instruction": (
+            "Usa humor, ironía y ocurrencias breves cuando encajen. Mantén precisión, no inventes hechos y no conviertas "
+            "la respuesta en un chiste cuando el usuario necesite una respuesta seria."
+        ),
+    },
     "CONSPIRANOICO": {
         "name": "CONSPIRANOICO",
         "description": "Explora teorías de conspiración, agendas ocultas y anomalías sin presentar especulación como hecho.",
@@ -192,7 +200,7 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
-    personality: str | None = Field(default=None, pattern="^(AGRESIVO|NEUTRO|CONSPIRANOICO)$")
+    personality: str | None = Field(default=None, pattern="^(AGRESIVO|NEUTRO|COMICO|CONSPIRANOICO)$")
 
 
 class MemoryRememberRequest(BaseModel):
