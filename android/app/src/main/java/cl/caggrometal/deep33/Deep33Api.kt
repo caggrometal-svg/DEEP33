@@ -376,11 +376,21 @@ object Deep33Api {
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: SocketTimeoutException) {
                     lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
-                    if (!Deep33FailoverPolicy.canFailover(method, requestBodyStarted, Deep33ApiException.Kind.TIMEOUT)) throw lastError
+                    if (!Deep33FailoverPolicy.canFailover(
+                            method,
+                            requestBodyStarted,
+                            Deep33ApiException.Kind.TIMEOUT,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw lastError
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: IOException) {
                     lastError = Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
-                    if (!Deep33FailoverPolicy.canFailover(method, requestBodyStarted, Deep33ApiException.Kind.NETWORK)) throw lastError
+                    if (!Deep33FailoverPolicy.canFailover(
+                            method,
+                            requestBodyStarted,
+                            Deep33ApiException.Kind.NETWORK,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw lastError
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } finally {
                     connection.disconnect()
