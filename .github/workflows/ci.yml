@@ -344,49 +344,6 @@ jobs:
           echo "RECOVERY_INFERENCE_PASS"
 
 
-  rollback_on_failure:
-    needs: [backend_unit, production_gate, android_validation, android_e2e, recovery_gate]
-    if: ${{ always() && github.event_name == 'push' && (needs.backend_unit.result == 'failure' || needs.production_gate.result == 'failure' || needs.android_validation.result == 'failure' || needs.android_e2e.result == 'failure' || needs.recovery_gate.result == 'failure') }}
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
-      - name: Roll back main only to certified production-pass
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
-          if [ "$current" != "$GITHUB_SHA" ]; then
-            echo "ROLLBACK_SKIPPED_CONCURRENT_COMMIT current=$current failed=$GITHUB_SHA"
-            exit 0
-          fi
-
-          git fetch origin refs/tags/production-pass --force >/dev/null 2>&1 || true
-          pass="$(git rev-parse refs/tags/production-pass^{commit} 2>/dev/null || true)"
-          if ! printf '%s' "$pass" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "ROLLBACK_UNAVAILABLE no_certified_production_pass"
-            exit 0
-          fi
-
-          test "$pass" != "$GITHUB_SHA"
-          if rollback_error="$(gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f "sha=$pass" -F "force=true" 2>&1)"; then
-            echo "ROLLBACK_PASS target=$pass"
-          else
-            status_line="$(printf '%s' "$rollback_error" | grep -Eo '"status":[0-9]+' | head -n1 || true)"
-            if printf '%s' "$status_line" | grep -q '"status":403'; then
-              echo "ROLLBACK_DEFERRED github_token_cannot_update_main_ref"
-              echo "::warning::Automatic rollback was denied by the GitHub Actions token (HTTP 403). Production/release gates remain authoritative; no rollback is falsely reported."
-              exit 0
-            fi
-            echo "ROLLBACK_FAIL"
-            printf '%s\n' "$rollback_error"
-            exit 1
-          fi
-
   release_gate:
     needs: recovery_gate
     if: ${{ github.event_name == 'push' && success() }}
