@@ -6,9 +6,9 @@ enum class VoiceTone(
     val pitch: Float,
     val speechRate: Float
 ) {
-    DEEP("DEEP", "Grave y pausado", 0.82f, 0.86f),
-    EMBER("EMBER", "Cálido y natural", 1.00f, 0.98f),
-    INFERNO("INFERNO", "Intenso y acelerado", 1.12f, 1.10f);
+    DEEP("DEEP", "Grave, cálido y natural", 0.92f, 0.96f),
+    EMBER("EMBER", "Cálido y conversacional", 1.00f, 1.00f),
+    INFERNO("INFERNO", "Intenso, pero humano", 1.05f, 1.06f);
 
     companion object {
         fun fromKey(value: String?): VoiceTone =
