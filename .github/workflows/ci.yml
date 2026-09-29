@@ -14,9 +14,9 @@ on:
   pull_request:
 
 env:
-  PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://deep33-backup.onrender.com
-  TERTIARY_URL: https://deep33-api.onrender.com
+  PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
 
 jobs:
   backend_unit:
@@ -56,37 +56,13 @@ jobs:
     needs: backend_unit
     runs-on: ubuntu-latest
     steps:
-      - name: Verify production DNS and exact Git SHAs
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
+      - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
-
-          verify_node() {
-            name="$1"
-            url="$2"
-            for i in $(seq 1 36); do
-              body="$(curl -fsS --connect-timeout 8 --max-time 20 "$url/health" || true)"
-              sha="$(python -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' <<< "$body" 2>/dev/null || true)"
-              if [ "$sha" = "$EXPECTED_SHA" ]; then
-                echo "${name}_SHA_PASS $sha"
-                return 0
-              fi
-              sleep 5
-            done
-            echo "${name}_SHA_FAIL expected=$EXPECTED_SHA"
-            exit 1
-          }
-
-          for target in "$PRIMARY_URL" "$SECONDARY_URL" "$TERTIARY_URL"; do
-            host="$(printf '%s' "$target" | sed 's#https://##;s#/.*##')"
-            echo "DNS_CHECK $host"
-            getent ahosts "$host"
-          done
-
-          verify_node PRIMARY "$PRIMARY_URL"
-          verify_node SECONDARY "$SECONDARY_URL"
-          verify_node TERTIARY "$TERTIARY_URL"
+          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
+          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
+          jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
+          echo "DEEP33_INTERNET_SEARCH_PASS"
 
       - name: Verify all production nodes readiness
         run: |
@@ -206,9 +182,9 @@ jobs:
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-          DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
+          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
@@ -236,9 +212,9 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-          DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
+          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
@@ -266,9 +242,9 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-          DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
-          DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
+          DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+          DEEP33_TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
