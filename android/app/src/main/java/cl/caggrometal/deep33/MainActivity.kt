@@ -735,17 +735,23 @@ class MainActivity : Activity() {
         executor.submit {
             try {
                 val health = Deep33Api.get("/health", store.sessionId)
+                val audit = Deep33Api.get("/v1/connectivity/audit", store.sessionId)
                 val diagnostics = Deep33Api.get("/v1/ai/diagnostics", store.sessionId)
+                val upstream = audit.optJSONObject("upstream")
                 val online = health.optString("status") == "PASS" &&
+                    audit.optString("status") == "PASS" &&
+                    audit.optString("edge") == "PASS" &&
+                    audit.optString("internet") == "PASS" &&
+                    upstream?.optBoolean("ready", false) == true &&
                     diagnostics.optBoolean("online", false)
                 val gateway = diagnostics.optJSONObject("gateway")
                 val provider = gateway?.optString("provider", "") ?: ""
                 val model = gateway?.optString("model", "") ?: ""
                 val summary = if (online) {
-                    "ONLINE\\nBACKEND: PASS\\nAI GATEWAY: PASS\\nPROVIDER: " +
+                    "ONLINE\\nEDGE: PASS\\nINTERNET: PASS\\nBACKEND: PASS\\nAI GATEWAY: PASS\\nPROVIDER: " +
                         provider + "\\nMODEL: " + model
                 } else {
-                    "OFFLINE\\nRevisa conectividad y diagnóstico del backend."
+                    "OFFLINE\\nLa cadena real de DEEP33 no está completamente verificada."
                 }
                 runOnUiThread {
                     updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
@@ -913,8 +919,9 @@ class MainActivity : Activity() {
     private fun applyVoiceTone() {
         val tts = textToSpeech ?: return
         val tone = VoiceTone.fromKey(store.voiceTone)
-        tts.setPitch(tone.pitch)
-        tts.setSpeechRate(tone.speechRate)
+        val profile = PersonalityVoiceProfile.forPersonality(Personality.fromKey(store.personality))
+        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.65f, 1.35f))
+        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.60f, 1.45f))
     }
 
     private fun setVoiceModeUi(active: Boolean) {
