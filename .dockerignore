@@ -1,0 +1,12 @@
+.git
+.github
+android
+docs
+tests
+*.apk
+*.aab
+__pycache__
+.pytest_cache
+.venv
+.env
+.env.*
