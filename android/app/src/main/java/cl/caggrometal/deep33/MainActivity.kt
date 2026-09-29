@@ -838,6 +838,25 @@ class MainActivity : Activity() {
                 store.saveMessages(conversation)
                 saveCurrentSummary()
 
+                try {
+                    val memoryPayload = org.json.JSONArray()
+                    conversation.takeLast(50).forEach {
+                        memoryPayload.put(
+                            org.json.JSONObject()
+                                .put("role", it.role)
+                                .put("content", it.content)
+                        )
+                    }
+                    Deep33Api.syncMemory(
+                        store.sessionId,
+                        memoryPayload,
+                        store.personality,
+                        requestId = requestId,
+                    )
+                } catch (_: Exception) {
+                    // Local conversation remains available; remote memory retries on the next turn.
+                }
+
                 runOnUiThread {
                     speakAssistant(finalText)
                     cleanupGeneration(true)
