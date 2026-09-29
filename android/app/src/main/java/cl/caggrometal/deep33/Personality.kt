@@ -11,19 +11,19 @@ enum class Personality(
     AGRESIVO(
         "AGRESIVO",
         "A",
-        Color.rgb(255, 23, 68),
+        Color.rgb(255, 42, 68),
         "Directo, impaciente, sarcástico y confrontacional."
     ),
     NEUTRO(
         "NEUTRO",
         "N",
-        Color.rgb(0, 229, 255),
+        Color.rgb(0, 255, 140),
         "Analítico, formal, objetivo y basado en datos."
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
         "C",
-        Color.rgb(179, 136, 255),
+        Color.rgb(255, 92, 70),
         "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis."
     );
 

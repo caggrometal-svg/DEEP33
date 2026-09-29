@@ -2,6 +2,8 @@ package cl.caggrometal.deep33
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -22,6 +24,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
@@ -47,9 +50,13 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private lateinit var currentPersonalityView: TextView
     private lateinit var diagnosticsView: TextView
-    private lateinit var voicePanel: LinearLayout
+    private lateinit var voiceModeOverlay: LinearLayout
     private lateinit var voiceStateView: TextView
     private lateinit var avatarView: VoiceAvatarView
+    private var voiceModeActive = false
+    private var voiceVolume = 0.85f
+    private var voiceTone = VoiceTone.NEUTRO
+    private val voiceToneButtons = mutableMapOf<VoiceTone, Button>()
 
     private val executor = Executors.newFixedThreadPool(2)
     private lateinit var store: SessionStore
@@ -63,6 +70,9 @@ class MainActivity : Activity() {
     private var edgeSwipeTracking = false
     private var edgeDownX = 0f
     private var edgeDownY = 0f
+    private var drawerSwipeTracking = false
+    private var drawerDownX = 0f
+    private var drawerDownY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,6 +86,7 @@ class MainActivity : Activity() {
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     textToSpeech?.setLanguage(Locale("es"))
                 }
+                applyVoiceTone()
             }
         }
         textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -86,14 +97,14 @@ class MainActivity : Activity() {
             override fun onDone(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
+                    if (!voiceModeActive) voicePanelOrNull()?.visibility = View.GONE
                 }
             }
 
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
+                    if (!voiceModeActive) voicePanelOrNull()?.visibility = View.GONE
                 }
             }
         })
@@ -104,8 +115,9 @@ class MainActivity : Activity() {
             }
         }
 
-        window.statusBarColor = Color.rgb(8, 10, 15)
-        window.navigationBarColor = Color.rgb(8, 10, 15)
+        window.statusBarColor = Color.rgb(5, 6, 7)
+        window.navigationBarColor = Color.rgb(5, 6, 7)
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
             @Suppress("DEPRECATION")
             view.setPadding(
@@ -141,31 +153,58 @@ class MainActivity : Activity() {
 
     private enum class Tab { CHAT, STATUS, SETTINGS }
 
+    private enum class VoiceTone(val label: String, val rate: Float, val pitch: Float) {
+        CLARO("Claro", 1.04f, 1.08f),
+        NEUTRO("Neutro", 1.00f, 1.00f),
+        PROFUNDO("Profundo", 0.90f, 0.82f)
+    }
+
+    private fun addPressFeedback(view: View) {
+        view.setOnTouchListener { touched, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> touched.animate().scaleX(0.97f).scaleY(0.97f).setDuration(70L).start()
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> touched.animate().scaleX(1f).scaleY(1f).setDuration(110L).start()
+            }
+            false
+        }
+    }
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).roundToInt()
 
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
-                edgeSwipeTracking = event.x <= dp(28)
-                edgeDownX = event.x
-                edgeDownY = event.y
+                if (::sidebar.isInitialized && sidebar.visibility == View.VISIBLE) {
+                    drawerSwipeTracking = true
+                    drawerDownX = event.x
+                    drawerDownY = event.y
+                } else {
+                    edgeSwipeTracking = event.x <= dp(28)
+                    edgeDownX = event.x
+                    edgeDownY = event.y
+                }
             }
             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                if (edgeSwipeTracking && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
-                    val dx = event.x - edgeDownX
-                    val dy = kotlin.math.abs(event.y - edgeDownY)
-                    if (dx >= dp(72) && dy <= dp(96)) showSidebar()
+                if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                    val dx = event.x - drawerDownX
+                    val dy = kotlin.math.abs(event.y - drawerDownY)
+                    if (drawerSwipeTracking && dx <= -dp(72) && dy <= dp(96)) {
+                        hideSidebar()
+                    } else if (edgeSwipeTracking) {
+                        val edgeDx = event.x - edgeDownX
+                        val edgeDy = kotlin.math.abs(event.y - edgeDownY)
+                        if (edgeDx >= dp(72) && edgeDy <= dp(96)) showSidebar()
+                    }
                 }
+                drawerSwipeTracking = false
                 edgeSwipeTracking = false
             }
         }
         return super.dispatchTouchEvent(event)
     }
-
     private fun buildRoot(): View {
         rootFrame = FrameLayout(this).apply {
-            setBackgroundColor(Color.rgb(8, 10, 15))
+            setBackgroundColor(Color.rgb(5, 6, 7))
         }
 
         val main = LinearLayout(this).apply {
@@ -223,6 +262,10 @@ class MainActivity : Activity() {
         main.addView(buildNavigation(), ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
+        voiceModeOverlay = buildVoiceModeOverlay()
+        rootFrame.addView(voiceModeOverlay, FrameLayout.LayoutParams(-1, -1))
+        voiceModeOverlay.visibility = View.GONE
+
         drawerScrim = View(this).apply {
             setBackgroundColor(Color.argb(145, 0, 0, 0))
             visibility = View.GONE
@@ -262,6 +305,7 @@ class MainActivity : Activity() {
             minHeight = dp(50)
             isAllCaps = false
             setOnClickListener { action() }
+            addPressFeedback(this)
         }
 
     private fun buildSidebar(): LinearLayout {
@@ -356,6 +400,7 @@ class MainActivity : Activity() {
                 selectPersonality(option)
                 hideSidebar()
             }
+            addPressFeedback(this)
         }
 
     private fun refreshSidebarHistory() {
@@ -391,59 +436,52 @@ class MainActivity : Activity() {
 
     private fun showSidebar() {
         refreshSidebarHistory()
+        drawerScrim.animate().cancel()
+        sidebar.animate().cancel()
+        drawerScrim.alpha = 0f
         drawerScrim.visibility = View.VISIBLE
         sidebar.visibility = View.VISIBLE
+        sidebar.translationX = -dp(322).toFloat()
+        drawerScrim.animate().alpha(1f).setDuration(220L).start()
+        sidebar.animate()
+            .translationX(0f)
+            .setDuration(260L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
     }
 
     private fun hideSidebar() {
-        drawerScrim.visibility = View.GONE
-        sidebar.visibility = View.GONE
+        if (sidebar.visibility != View.VISIBLE) return
+        drawerScrim.animate().cancel()
+        sidebar.animate().cancel()
+        drawerScrim.animate().alpha(0f).setDuration(180L).start()
+        sidebar.animate()
+            .translationX(-dp(322).toFloat())
+            .setDuration(210L)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction {
+                sidebar.visibility = View.GONE
+                sidebar.translationX = 0f
+                drawerScrim.visibility = View.GONE
+                drawerScrim.alpha = 1f
+            }
+            .start()
     }
 
     private fun showTab(tab: Tab) {
+        contentFrame.animate().cancel()
+        contentFrame.alpha = 0f
+        contentFrame.translationY = dp(8).toFloat()
         contentFrame.removeAllViews()
         when (tab) {
             Tab.CHAT -> contentFrame.addView(buildChat())
             Tab.STATUS -> contentFrame.addView(buildStatus())
             Tab.SETTINGS -> contentFrame.addView(buildSettings())
         }
+        contentFrame.animate().alpha(1f).translationY(0f).setDuration(180L).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
     }
-
     private fun buildChat(): View {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        voicePanel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            visibility = View.GONE
-            setBackground(
-                GradientDrawable().apply {
-                    setColor(Color.rgb(15, 22, 31))
-                    cornerRadius = dp(22).toFloat()
-                    setStroke(dp(1), Personality.fromKey(store.personality).accent)
-                }
-            )
-            setOnClickListener { toggleVoiceInput() }
-        }
-
-        avatarView = VoiceAvatarView(this).apply {
-            setPersonality(Personality.fromKey(store.personality))
-            setVoiceState(AvatarState.IDLE)
-            contentDescription = "Avatar de voz de DEEP33"
-        }
-        voiceStateView = TextView(this).apply {
-            text = "Modo voz"
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            setPadding(dp(14), 0, 0, 0)
-        }
-        voicePanel.addView(avatarView, LinearLayout.LayoutParams(dp(86), dp(86)))
-        voicePanel.addView(
-            voiceStateView,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        box.addView(voicePanel, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -457,58 +495,73 @@ class MainActivity : Activity() {
 
         input = EditText(this).apply {
             hint = "Escribe un mensaje"
-            setHintTextColor(Color.rgb(130, 138, 150))
+            setHintTextColor(Color.rgb(122, 130, 142))
             setTextColor(Color.WHITE)
             textSize = 16f
+            minLines = 1
             maxLines = 5
-            gravity = Gravity.TOP
-            setBackground(
-                GradientDrawable().apply {
-                    setColor(Color.rgb(18, 22, 30))
-                    cornerRadius = dp(22).toFloat()
-                    setStroke(dp(1), Color.rgb(46, 54, 68))
-                }
-            )
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            gravity = Gravity.CENTER_VERTICAL
+            isSingleLine = false
+            setHorizontallyScrolling(false)
+            setPadding(dp(54), dp(13), dp(58), dp(13))
+            setBackground(GradientDrawable().apply {
+                setColor(Color.rgb(17, 21, 29))
+                cornerRadius = dp(28).toFloat()
+                setStroke(dp(1), Color.rgb(45, 52, 65))
+            })
         }
 
-        micButton = Button(this).apply {
-            text = "MIC"
-            minWidth = dp(58)
-            minHeight = dp(58)
-            setOnClickListener { toggleVoiceInput() }
-        }
-        sendButton = Button(this).apply {
-            text = "ENVIAR"
-            minHeight = dp(58)
-            setOnClickListener { sendMessage() }
-        }
-        cancelButton = Button(this).apply {
-            text = "CANCELAR"
-            minHeight = dp(58)
-            visibility = View.GONE
-            setOnClickListener { cancelGeneration() }
-        }
+        fun composerActionButton(symbol: String, tint: Int, description: String, action: () -> Unit): Button =
+            Button(this).apply {
+                text = symbol
+                textSize = 19f
+                minWidth = dp(48)
+                minHeight = dp(48)
+                contentDescription = description
+                gravity = Gravity.CENTER
+                setTextColor(tint)
+                setBackground(GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = dp(24).toFloat()
+                })
+                setOnClickListener { action() }
+            }
 
-        val composer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-            setPadding(0, dp(8), 0, 0)
-            addView(micButton, LinearLayout.LayoutParams(dp(62), dp(58)).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
-            addView(input, LinearLayout.LayoutParams(0, dp(58), 1f).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
-            addView(sendButton, LinearLayout.LayoutParams(dp(86), dp(58)).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(88), dp(58)))
+        val composerShell = FrameLayout(this).apply {
+            setPadding(0, dp(6), 0, dp(6))
         }
-        box.addView(composer)
+        composerShell.addView(input, FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        })
+
+        micButton = composerActionButton("MIC", Color.rgb(0, 255, 140), "Abrir modo voz") {
+            toggleVoiceInput()
+        }
+        composerShell.addView(micButton, FrameLayout.LayoutParams(dp(48), dp(48)).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            leftMargin = dp(4)
+        })
+
+        sendButton = composerActionButton("➤", Color.rgb(255, 42, 68), "Enviar mensaje") {
+            sendMessage()
+        }
+        composerShell.addView(sendButton, FrameLayout.LayoutParams(dp(48), dp(48)).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            rightMargin = dp(4)
+        })
+
+        cancelButton = composerActionButton("■", Color.rgb(255, 42, 68), "Cancelar generación") {
+            cancelGeneration()
+        }
+        cancelButton.visibility = View.GONE
+        composerShell.addView(cancelButton, FrameLayout.LayoutParams(dp(48), dp(48)).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            rightMargin = dp(4)
+        })
+
+        box.addView(composerShell, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         return box
     }
-
     private fun buildStatus(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -529,44 +582,91 @@ class MainActivity : Activity() {
     }
 
     private fun buildSettings(): View {
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(8), dp(10), dp(8), dp(24))
         }
 
         box.addView(TextView(this).apply {
-            text = "Sesión\\n" + store.sessionId
-            setTextColor(Color.LTGRAY)
-            textSize = 13f
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            text = "Configuración"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(10), dp(8), dp(10), dp(18))
         })
 
-        box.addView(Button(this).apply {
-            text = if (store.voiceEnabled) "VOZ DE RESPUESTA: ACTIVADA" else "VOZ DE RESPUESTA: DESACTIVADA"
+        fun card(title: String, subtitle: String, body: View): LinearLayout {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                setBackground(GradientDrawable().apply {
+                    setColor(Color.rgb(13, 16, 20))
+                    cornerRadius = dp(18).toFloat()
+                    setStroke(dp(1), Color.rgb(39, 45, 53))
+                })
+            }
+            card.addView(TextView(this).apply {
+                text = title
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            card.addView(TextView(this).apply {
+                text = subtitle
+                textSize = 12f
+                setTextColor(Color.rgb(126, 135, 147))
+                setPadding(0, dp(3), 0, dp(9))
+            }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            card.addView(body, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            return card
+        }
+
+        val appearance = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Negro profundo · rojo principal · verde neón como acento"
+                textSize = 13f
+                setTextColor(Color.rgb(190, 198, 208))
+            })
+        }
+        box.addView(card("Apariencia", "Identidad visual de DEEP33", appearance), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, dp(10))
+        })
+
+        val voiceBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        voiceBody.addView(Button(this@MainActivity).apply {
+            text = if (store.voiceEnabled) "Respuestas de voz: ACTIVADAS" else "Respuestas de voz: DESACTIVADAS"
             isAllCaps = false
             setOnClickListener {
                 store.voiceEnabled = !store.voiceEnabled
-                text = if (store.voiceEnabled) "VOZ DE RESPUESTA: ACTIVADA" else "VOZ DE RESPUESTA: DESACTIVADA"
-                if (!store.voiceEnabled) {
-                    textToSpeech?.stop()
-                    setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
-                }
+                text = if (store.voiceEnabled) "Respuestas de voz: ACTIVADAS" else "Respuestas de voz: DESACTIVADAS"
+                if (!store.voiceEnabled) textToSpeech?.stop()
             }
         })
-
-        val active = Personality.fromKey(store.personality)
-        box.addView(TextView(this).apply {
-            text = "PERSONALIDAD ACTIVA\\n" + active.key + " — " + active.description
-            setTextColor(active.accent)
-            textSize = 15f
-            setPadding(dp(16), dp(16), dp(16), dp(8))
+        voiceBody.addView(Button(this@MainActivity).apply {
+            text = "Abrir modo voz"
+            isAllCaps = false
+            setTextColor(Color.rgb(0, 255, 140))
+            setOnClickListener { startVoiceInput() }
+        })
+        box.addView(card("Voz", "Entrada, salida, tono y volumen se controlan en modo voz", voiceBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, dp(10))
         })
 
+        val personalityBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
         Personality.entries.forEach { option ->
-            box.addView(Button(this).apply {
-                text = "Usar " + option.key
+            personalityBody.addView(Button(this@MainActivity).apply {
+                text = option.key + " · " + option.description
                 isAllCaps = false
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                minHeight = dp(48)
                 setTextColor(option.accent)
                 setOnClickListener {
                     selectPersonality(option)
@@ -574,25 +674,62 @@ class MainActivity : Activity() {
                 }
             })
         }
+        box.addView(card("Personalidad", "Modo actual: " + Personality.fromKey(store.personality).key, personalityBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, dp(10))
+        })
 
-        box.addView(Button(this).apply {
-            text = "BORRAR CONVERSACIÓN"
+        val conversationBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        conversationBody.addView(Button(this@MainActivity).apply {
+            text = "Borrar conversación actual"
+            isAllCaps = false
             setOnClickListener {
                 conversation.clear()
                 store.clearConversation()
                 renderConversation()
             }
         })
-        box.addView(Button(this).apply {
-            text = "NUEVA SESIÓN"
+        conversationBody.addView(Button(this@MainActivity).apply {
+            text = "Nueva sesión"
+            isAllCaps = false
             setOnClickListener { startNewSession() }
         })
-        return box
+        box.addView(card("Conversación", "Control de sesión y contenido local", conversationBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, dp(10))
+        })
+
+        val memoryBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = "Sesión local: " + store.sessionId
+                textSize = 12f
+                setTextColor(Color.rgb(158, 167, 179))
+                setPadding(0, 0, 0, dp(8))
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Recargar contexto"
+                isAllCaps = false
+                setOnClickListener { loadRemoteContext() }
+            })
+        }
+        box.addView(card("Memoria", "Historial local y contexto de conversación", memoryBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, dp(10))
+        })
+
+        val info = TextView(this).apply {
+            text = "DEEP33\nVersión: " + BuildConfig.VERSION_NAME + "\nLa configuración modifica la experiencia de usuario; la arquitectura de conectividad permanece intacta."
+            textSize = 12f
+            setTextColor(Color.rgb(145, 153, 165))
+            setPadding(0, dp(2), 0, 0)
+        }
+        box.addView(card("Información de DEEP33", "Identidad y versión", info))
+
+        scroll.addView(box)
+        return scroll
     }
-
     private fun voicePanelOrNull(): LinearLayout? =
-        if (::voicePanel.isInitialized) voicePanel else null
-
+        if (::voiceModeOverlay.isInitialized) voiceModeOverlay else null
     private fun selectPersonality(personality: Personality) {
         store.personality = personality.key
         currentPersonalityView.text = "Modo: " + personality.key
@@ -601,8 +738,8 @@ class MainActivity : Activity() {
         if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
-        if (::voicePanel.isInitialized) {
-            (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
+        if (::voiceModeOverlay.isInitialized) {
+            updateVoiceToneButtons()
         }
         syncPreferences()
     }
@@ -614,9 +751,7 @@ class MainActivity : Activity() {
         if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
-        if (::voicePanel.isInitialized) {
-            (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
-        }
+        if (::voiceModeOverlay.isInitialized) updateVoiceToneButtons()
     }
 
     private fun syncPreferences() {
@@ -751,8 +886,10 @@ class MainActivity : Activity() {
         if (text.isEmpty() || activeTask?.isDone == false) return
 
         stopVoiceInput()
-        voicePanelOrNull()?.visibility = View.VISIBLE
-        setVoiceState(AvatarState.THINKING)
+        if (voiceModeActive) {
+            showVoiceMode()
+            setVoiceState(AvatarState.THINKING)
+        }
 
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
@@ -793,7 +930,7 @@ class MainActivity : Activity() {
                                 val next = current + chunk
                                 bubble.tag = next
                                 renderMarkdown(bubble, next)
-                                setVoiceState(AvatarState.SPEAKING)
+                                if (voiceModeActive) setVoiceState(AvatarState.SPEAKING)
                             }
                         }
                     )
@@ -860,9 +997,11 @@ class MainActivity : Activity() {
         micButton.isEnabled = true
         cancelButton.visibility = View.GONE
         updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
-        if (!success || !store.voiceEnabled || textToSpeech?.isSpeaking != true) {
+        if (voiceModeActive) {
             setVoiceState(AvatarState.IDLE)
-            voicePanelOrNull()?.visibility = View.GONE
+            voiceModeOverlay.visibility = View.VISIBLE
+        } else if (!success || !store.voiceEnabled || textToSpeech?.isSpeaking != true) {
+            if (::avatarView.isInitialized) setVoiceState(AvatarState.IDLE)
         }
     }
 
@@ -887,23 +1026,31 @@ class MainActivity : Activity() {
 
     private fun speakAssistant(text: String) {
         if (!store.voiceEnabled || text.isBlank()) return
-        voicePanelOrNull()?.visibility = View.VISIBLE
-        setVoiceState(AvatarState.SPEAKING)
+        if (voiceModeActive) setVoiceState(AvatarState.SPEAKING)
         val speech = text
-            .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1")
+            .replace(Regex("\\\\[([^]]+)]\\\\(([^)]+)\\\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
             .replace("\u0060", "")
+        applyVoiceTone()
+        val params = Bundle().apply {
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, voiceVolume.coerceIn(0.10f, 1f))
+        }
         textToSpeech?.speak(
             speech,
             TextToSpeech.QUEUE_FLUSH,
-            null,
+            params,
             "deep33-response-" + System.currentTimeMillis()
         )
     }
-
     private fun renderConversation() {
         if (!::chatContainer.isInitialized) return
         chatContainer.removeAllViews()
+
+        if (conversation.isEmpty()) {
+            showWelcomeState()
+            return
+        }
+
         conversation.takeLast(50).forEach { message ->
             appendBubble(
                 if (message.role == "user") "TÚ" else "DEEP33",
@@ -914,54 +1061,260 @@ class MainActivity : Activity() {
         chatContainer.post { scrollToBottom() }
     }
 
-    private fun appendBubble(label: String, content: String, background: Int): TextView {
+    private fun showWelcomeState() {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(24), dp(34), dp(24), dp(24))
+        }
+
+        wrap.addView(TextView(this).apply {
+            text = "DEEP33"
+            textSize = 30f
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        wrap.addView(TextView(this).apply {
+            text = "¿Qué quieres explorar?"
+            textSize = 19f
+            setTextColor(Color.rgb(190, 198, 208))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(5), 0, dp(22))
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val actions = listOf(
+            Triple("Explorar una idea", "Ayúdame a explorar esta idea: ", Color.rgb(0, 255, 140)),
+            Triple("Analizar algo", "Quiero analizar esto: ", Color.rgb(255, 60, 80)),
+            Triple("Buscar información", "Busca información sobre: ", Color.rgb(0, 255, 140)),
+            Triple("Conversar", "Quiero conversar sobre: ", Color.rgb(255, 60, 80))
+        )
+
+        actions.forEach { (label, prompt, accent) ->
+            val button = Button(this).apply {
+                text = label
+                isAllCaps = false
+                textSize = 15f
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setTextColor(Color.rgb(230, 234, 239))
+                minHeight = dp(58)
+                setPadding(dp(18), 0, dp(18), 0)
+                setBackground(
+                    GradientDrawable().apply {
+                        setColor(Color.rgb(15, 18, 23))
+                        cornerRadius = dp(17).toFloat()
+                        setStroke(dp(1), Color.argb(170, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                    }
+                )
+                setOnClickListener {
+                    if (::input.isInitialized) {
+                        input.setText(prompt)
+                        input.setSelection(input.text.length)
+                        input.requestFocus()
+                    }
+                }
+            }
+            wrap.addView(button, LinearLayout.LayoutParams(-1, dp(58)).apply {
+                setMargins(0, 0, 0, dp(10))
+            })
+        }
+
+        val hint = TextView(this).apply {
+            text = "Escribe tu pregunta abajo para comenzar."
+            textSize = 12f
+            setTextColor(Color.rgb(108, 116, 128))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(10), 0, 0)
+        }
+        wrap.addView(hint, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        chatContainer.addView(
+            wrap,
+            LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
+        chatContainer.post { scrollToBottom() }
+    }
+
+    private fun appendBubble(
+        label: String,
+        content: String,
+        background: Int,
+        rich: Boolean = true
+    ): TextView {
         val isAssistant = label == "DEEP33"
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setBackground(
-                GradientDrawable().apply {
-                    setColor(background)
-                    cornerRadius = dp(22).toFloat()
-                    val neon = if (isAssistant) Color.rgb(255, 45, 70) else Color.rgb(0, 255, 140)
-                    setStroke(dp(2), neon)
-                }
-            )
+            setPadding(dp(14), dp(12), dp(14), dp(10))
+            setBackground(GradientDrawable().apply {
+                setColor(background)
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), if (isAssistant) Color.rgb(150, 34, 50) else Color.rgb(0, 190, 105))
+            })
         }
 
-        bubble.addView(TextView(this).apply {
+        val labelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        labelRow.addView(TextView(this).apply {
             text = label
-            setTextColor(if (isAssistant) Personality.fromKey(store.personality).accent else Color.LTGRAY)
+            setTextColor(if (isAssistant) Personality.fromKey(store.personality).accent else Color.rgb(172, 181, 193))
             textSize = 11f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-        })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
+        val contentContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
         val contentView = TextView(this).apply {
             tag = content
             textSize = 16f
-            setTextColor(Color.WHITE)
+            setTextColor(Color.rgb(245, 247, 250))
             setPadding(0, dp(6), 0, 0)
+            includeFontPadding = false
             movementMethod = LinkMovementMethod.getInstance()
+            maxWidth = (resources.displayMetrics.widthPixels * if (isAssistant) 0.90f else 0.82f).roundToInt()
         }
-        bubble.addView(contentView)
-        renderMarkdown(contentView, content)
+        contentContainer.addView(contentView)
 
-        val params = LinearLayout.LayoutParams(
-            if (isAssistant) ViewGroup.LayoutParams.MATCH_PARENT else
-                dp(320).coerceAtMost(resources.displayMetrics.widthPixels - dp(70)),
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
+        if (isAssistant) {
+            val copyButton = TextView(this).apply {
+                text = "Copiar"
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(Color.rgb(178, 187, 198))
+                setPadding(dp(8), dp(4), dp(8), dp(4))
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Copiar respuesta"
+                setBackground(GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = dp(14).toFloat()
+                })
+                setOnClickListener {
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("DEEP33", contentView.tag?.toString().orEmpty()))
+                    text = "Copiado"
+                    postDelayed({ text = "Copiar" }, 1200L)
+                }
+            }
+            labelRow.addView(copyButton, LinearLayout.LayoutParams(dp(68), dp(34)))
+        }
+
+        bubble.addView(labelRow)
+        bubble.addView(contentContainer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        if (rich && isAssistant && content.contains("\u0060\u0060\u0060")) {
+            renderRichMarkdown(contentContainer, content)
+        } else {
+            renderMarkdown(contentView, content)
+        }
+
+        val maxBubbleWidth = (resources.displayMetrics.widthPixels * if (isAssistant) 0.92f else 0.84f).roundToInt().coerceAtLeast(dp(120))
+        contentView.maxWidth = maxBubbleWidth
+        val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = if (isAssistant) Gravity.START else Gravity.END
-            setMargins(
-                if (isAssistant) 0 else dp(34),
-                0,
-                if (isAssistant) dp(8) else 0,
-                dp(12)
-            )
+            setMargins(if (isAssistant) dp(2) else dp(46), 0, if (isAssistant) dp(10) else dp(2), dp(10))
         }
         chatContainer.addView(bubble, params)
+        bubble.alpha = 0f
+        bubble.translationY = dp(10).toFloat()
+        bubble.animate().alpha(1f).translationY(0f).setDuration(180L).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        addPressFeedback(bubble)
         bubble.post { scrollToBottom() }
         return contentView
+    }
+
+    private fun replaceActiveBubbleWithRich(content: String) {
+        val current = activeBubble ?: return
+        val bubble = current.parent?.parent as? ViewGroup
+        val parent = bubble?.parent as? ViewGroup
+        if (bubble != null && parent != null) parent.removeView(bubble)
+        appendBubble("DEEP33", content, Color.rgb(42, 12, 18), rich = true)
+    }
+
+    private fun renderRichMarkdown(container: LinearLayout, markdown: String) {
+        container.removeAllViews()
+        val normalized = markdown.replace("\r\n", "\n").replace("\r", "\n")
+        val fence = "\u0060\u0060\u0060"
+        val regex = Regex("(?s)" + Regex.escape(fence) + "([^\\n]*)\\n(.*?)" + Regex.escape(fence))
+        var cursor = 0
+
+        fun addTextSegment(segment: String) {
+            if (segment.isBlank()) return
+            val tv = TextView(this).apply {
+                textSize = 16f
+                setTextColor(Color.rgb(245, 247, 250))
+                includeFontPadding = false
+                movementMethod = LinkMovementMethod.getInstance()
+                maxWidth = (resources.displayMetrics.widthPixels * 0.90f).roundToInt()
+            }
+            renderMarkdown(tv, segment.trimEnd())
+            container.addView(tv, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+
+        regex.findAll(normalized).forEach { match ->
+            addTextSegment(normalized.substring(cursor, match.range.first))
+            addCodeBlock(container, match.groupValues[1].trim(), match.groupValues[2].trimEnd('\n'))
+            cursor = match.range.last + 1
+        }
+        addTextSegment(normalized.substring(cursor))
+    }
+
+    private fun addCodeBlock(container: LinearLayout, language: String, code: String) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setBackground(GradientDrawable().apply {
+                setColor(Color.rgb(9, 12, 16))
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), Color.rgb(48, 61, 66))
+            })
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = language.ifBlank { "código" }.lowercase(Locale.getDefault())
+            textSize = 11f
+            setTextColor(Color.rgb(0, 230, 150))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, dp(30), 1f))
+        val copy = TextView(this).apply {
+            text = "Copiar"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(178, 187, 198))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("DEEP33 código", code))
+                text = "Copiado"
+                postDelayed({ text = "Copiar" }, 1200L)
+            }
+        }
+        header.addView(copy, LinearLayout.LayoutParams(dp(68), dp(30)))
+        card.addView(header)
+
+        val horizontal = android.widget.HorizontalScrollView(this).apply {
+            setHorizontalScrollBarEnabled(false)
+        }
+        val codeText = TextView(this).apply {
+            text = code
+            textSize = 13f
+            setTextColor(Color.rgb(236, 240, 244))
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(dp(4), dp(6), dp(4), dp(8))
+            setHorizontallyScrolling(true)
+        }
+        horizontal.addView(codeText, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        card.addView(horizontal, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        container.addView(card, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, dp(8), 0, dp(8))
+        })
     }
 
     private fun renderMarkdown(view: TextView, markdown: String) {
@@ -970,18 +1323,189 @@ class MainActivity : Activity() {
     }
 
     private fun scrollToBottom() {
-        (chatContainer.parent as? ScrollView)?.fullScroll(View.FOCUS_DOWN)
+        val scroll = chatContainer.parent as? ScrollView ?: return
+        scroll.post { scroll.smoothScrollTo(0, chatContainer.height) }
     }
-
     private fun setVoiceState(state: AvatarState) {
         if (!::avatarView.isInitialized) return
         avatarView.setVoiceState(state)
         voiceStateView.text = when (state) {
-            AvatarState.IDLE -> "Modo voz"
+            AvatarState.IDLE -> "Listo"
             AvatarState.LISTENING -> "Escuchando"
-            AvatarState.THINKING -> "Procesando"
+            AvatarState.THINKING -> "Pensando"
             AvatarState.SPEAKING -> "Hablando"
         }
+    }
+
+    private fun showVoiceMode() {
+        if (!::voiceModeOverlay.isInitialized) return
+        voiceModeActive = true
+        voiceModeOverlay.animate().cancel()
+        voiceModeOverlay.visibility = View.VISIBLE
+        voiceModeOverlay.alpha = 0f
+        voiceModeOverlay.translationY = dp(18).toFloat()
+        voiceModeOverlay.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .start()
+        updateVoiceToneButtons()
+    }
+
+    private fun hideVoiceMode() {
+        if (!::voiceModeOverlay.isInitialized) return
+        stopVoiceInput()
+        textToSpeech?.stop()
+        if (activeTask?.isDone == false) cancelGeneration()
+        voiceModeActive = false
+        setVoiceState(AvatarState.IDLE)
+        voiceModeOverlay.animate().cancel()
+        voiceModeOverlay.animate()
+            .alpha(0f)
+            .translationY(dp(18).toFloat())
+            .setDuration(170L)
+            .withEndAction {
+                voiceModeOverlay.visibility = View.GONE
+                voiceModeOverlay.alpha = 1f
+                voiceModeOverlay.translationY = 0f
+            }
+            .start()
+    }
+
+    private fun buildVoiceModeOverlay(): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(22), dp(36), dp(22), dp(24))
+            setBackgroundColor(Color.rgb(5, 6, 7))
+            isClickable = true
+            isFocusable = true
+        }
+
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(TextView(this).apply {
+            text = "DEEP33 · VOZ"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(Button(this).apply {
+            text = "Cerrar"
+            isAllCaps = false
+            setOnClickListener { hideVoiceMode() }
+        }, LinearLayout.LayoutParams(dp(82), dp(44)))
+        root.addView(top)
+
+        voiceStateView = TextView(this).apply {
+            text = "Listo"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(0, 255, 140))
+            setPadding(0, dp(16), 0, dp(8))
+        }
+        root.addView(voiceStateView, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        avatarView = VoiceAvatarView(this).apply {
+            setPersonality(Personality.fromKey(store.personality))
+            setVoiceState(AvatarState.IDLE)
+            contentDescription = "Avatar de voz de DEEP33"
+        }
+        root.addView(avatarView, LinearLayout.LayoutParams(dp(270), dp(270)))
+
+        root.addView(TextView(this).apply {
+            text = "TONO DE VOZ"
+            textSize = 11f
+            setTextColor(Color.rgb(125, 133, 145))
+            setPadding(0, dp(2), 0, dp(7))
+        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val tones = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        VoiceTone.entries.forEach { tone ->
+            val button = Button(this).apply {
+                tag = tone
+                text = tone.label
+                isAllCaps = false
+                textSize = 12f
+                minHeight = dp(44)
+                setOnClickListener { selectVoiceTone(tone) }
+            }
+            voiceToneButtons[tone] = button
+            tones.addView(button, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                setMargins(dp(3), 0, dp(3), 0)
+            })
+        }
+        root.addView(tones, LinearLayout.LayoutParams(-1, dp(50)))
+
+        val volumeLabel = TextView(this).apply {
+            tag = "VOICE_VOLUME_LABEL"
+            text = "VOLUMEN · 85%"
+            textSize = 11f
+            setTextColor(Color.rgb(125, 133, 145))
+            setPadding(0, dp(12), 0, dp(3))
+        }
+        root.addView(volumeLabel, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        root.addView(SeekBar(this).apply {
+            max = 100
+            progress = (voiceVolume * 100f).roundToInt()
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    voiceVolume = (progress.coerceAtLeast(10) / 100f).coerceIn(0.10f, 1f)
+                    volumeLabel.text = "VOLUMEN · ${(voiceVolume * 100f).roundToInt()}%"
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+            })
+        }, LinearLayout.LayoutParams(-1, dp(42)))
+
+        root.addView(Button(this).apply {
+            text = "TOCAR PARA HABLAR"
+            isAllCaps = false
+            textSize = 15f
+            minHeight = dp(56)
+            setTextColor(Color.WHITE)
+            setBackground(GradientDrawable().apply {
+                setColor(Color.rgb(19, 24, 21))
+                cornerRadius = dp(28).toFloat()
+                setStroke(dp(1), Color.rgb(0, 255, 140))
+            })
+            setOnClickListener { toggleVoiceInput() }
+        }, LinearLayout.LayoutParams(-1, dp(56)).apply {
+            setMargins(0, dp(10), 0, 0)
+        })
+
+        updateVoiceToneButtons()
+        return root
+    }
+
+    private fun updateVoiceToneButtons() {
+        voiceToneButtons.forEach { (tone, button) ->
+            val selected = tone == voiceTone
+            button.setTextColor(if (selected) Color.WHITE else Color.rgb(185, 191, 200))
+            button.setBackground(GradientDrawable().apply {
+                setColor(if (selected) Color.rgb(40, 17, 22) else Color.rgb(15, 18, 22))
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), if (selected) Color.rgb(255, 42, 68) else Color.rgb(48, 55, 65))
+            })
+        }
+    }
+
+    private fun selectVoiceTone(tone: VoiceTone) {
+        voiceTone = tone
+        applyVoiceTone()
+        updateVoiceToneButtons()
+    }
+
+    private fun applyVoiceTone() {
+        textToSpeech?.setSpeechRate(voiceTone.rate)
+        textToSpeech?.setPitch(voiceTone.pitch)
     }
 
     private fun toggleVoiceInput() {
@@ -997,16 +1521,12 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), VOICE_PERMISSION_REQUEST)
             return
         }
-
-        voicePanelOrNull()?.visibility = View.VISIBLE
+        showVoiceMode()
         setVoiceState(AvatarState.LISTENING)
         speechListening = true
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-CL")
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
@@ -1015,40 +1535,39 @@ class MainActivity : Activity() {
     }
 
     private fun stopVoiceInput() {
-        if (!speechListening) return
+        if (!speechListening) {
+            if (voiceModeActive) setVoiceState(AvatarState.IDLE)
+            return
+        }
         speechListening = false
         speechRecognizer?.stopListening()
         setVoiceState(AvatarState.IDLE)
-        if (activeTask?.isDone != false) voicePanelOrNull()?.visibility = View.GONE
     }
 
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             speechListening = true
-            setVoiceState(AvatarState.LISTENING)
+            if (voiceModeActive) setVoiceState(AvatarState.LISTENING)
         }
 
         override fun onBeginningOfSpeech() {
-            setVoiceState(AvatarState.LISTENING)
+            if (voiceModeActive) setVoiceState(AvatarState.LISTENING)
         }
 
         override fun onRmsChanged(rmsdB: Float) {
-            if (::avatarView.isInitialized) {
-                avatarView.setAudioLevel((rmsdB / 10f).coerceIn(0f, 1f))
-            }
+            if (::avatarView.isInitialized) avatarView.setAudioLevel((rmsdB / 10f).coerceIn(0f, 1f))
         }
 
         override fun onBufferReceived(buffer: ByteArray?) = Unit
 
         override fun onEndOfSpeech() {
             speechListening = false
-            setVoiceState(AvatarState.THINKING)
+            if (voiceModeActive) setVoiceState(AvatarState.THINKING)
         }
 
         override fun onError(error: Int) {
             speechListening = false
-            setVoiceState(AvatarState.IDLE)
-            if (activeTask?.isDone != false) voicePanelOrNull()?.visibility = View.GONE
+            if (voiceModeActive) setVoiceState(AvatarState.IDLE)
         }
 
         override fun onResults(results: Bundle?) {
@@ -1059,30 +1578,15 @@ class MainActivity : Activity() {
                 .orEmpty()
                 .trim()
             if (recognized.isNotBlank()) {
-                input.setText(recognized)
-                input.setSelection(input.text.length)
                 sendMessage(recognized)
-            } else {
+            } else if (voiceModeActive) {
                 setVoiceState(AvatarState.IDLE)
-                voicePanelOrNull()?.visibility = View.GONE
             }
         }
 
-        override fun onPartialResults(partialResults: Bundle?) {
-            val partial = partialResults
-                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                ?.firstOrNull()
-                .orEmpty()
-                .trim()
-            if (partial.isNotBlank() && ::input.isInitialized && input.isEnabled) {
-                input.setText(partial)
-                input.setSelection(input.text.length)
-            }
-        }
-
+        override fun onPartialResults(partialResults: Bundle?) = Unit
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
-
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
