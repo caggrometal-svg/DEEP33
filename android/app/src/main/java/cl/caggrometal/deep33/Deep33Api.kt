@@ -33,11 +33,15 @@ object Deep33FailoverPolicy {
     fun canFailover(
         method: String,
         requestBodyStarted: Boolean,
-        error: Deep33ApiException.Kind
+        error: Deep33ApiException.Kind,
+        idempotentRequest: Boolean = false
     ): Boolean = when (error) {
         Deep33ApiException.Kind.SERVER,
         Deep33ApiException.Kind.NETWORK,
-        Deep33ApiException.Kind.TIMEOUT -> !(method.equals("POST", ignoreCase = true) && requestBodyStarted)
+        Deep33ApiException.Kind.TIMEOUT ->
+            !method.equals("POST", ignoreCase = true) ||
+                !requestBodyStarted ||
+                idempotentRequest
         Deep33ApiException.Kind.AUTH,
         Deep33ApiException.Kind.RATE_LIMIT,
         Deep33ApiException.Kind.BAD_RESPONSE,
@@ -223,7 +227,7 @@ object Deep33Api {
                     lastError = e
                     if (
                         e.kind == Deep33ApiException.Kind.CANCELLED ||
-                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, e.kind)
+                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, e.kind, idempotentRequest = true)
                     ) {
                         throw if (emitted && !e.partialOutput) {
                             Deep33ApiException(e.kind, e.statusCode, e.cause, partialOutput = true)
@@ -237,7 +241,8 @@ object Deep33Api {
                     if (!Deep33FailoverPolicy.canFailover(
                             "POST",
                             requestBodyStarted,
-                            Deep33ApiException.Kind.TIMEOUT
+                            Deep33ApiException.Kind.TIMEOUT,
+                            idempotentRequest = true
                         )
                     ) {
                         throw if (emitted) {
@@ -259,7 +264,7 @@ object Deep33Api {
                     }
                     if (
                         lastError.kind == Deep33ApiException.Kind.CANCELLED ||
-                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, lastError.kind)
+                        !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, lastError.kind, idempotentRequest = true)
                     ) {
                         throw if (emitted && !lastError.partialOutput) {
                             Deep33ApiException(
