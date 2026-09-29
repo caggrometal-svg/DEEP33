@@ -5,13 +5,15 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
+type ActionResult = { body: unknown; status: number };
+
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "access-control-allow-origin": "*",
       "access-control-allow-headers":
-        "authorization, x-client-info, apikey, content-type, x-idempotency-key",
+        "authorization, x-client-info, apikey, content-type, x-idempotency-key, x-deep33-internal-token",
       "access-control-allow-methods": "POST, OPTIONS",
       "content-type": "application/json; charset=utf-8",
     },
@@ -21,163 +23,313 @@ function response(body: unknown, status = 200) {
 async function sha256(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
   const hash = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-async function scopedKey(sessionId: string, key: string): Promise<string> {
+async function requireHybridInternalToken(req: Request): Promise<boolean> {
+  const supplied = req.headers.get("x-deep33-internal-token")?.trim();
+  if (!supplied || supplied.length < 24) return false;
+  const { data, error } = await supabase
+    .schema("private")
+    .from("deep33_runtime_secrets")
+    .select("secret_hash")
+    .eq("name", "hybrid_search")
+    .maybeSingle();
+  if (error || !data?.secret_hash) return false;
+  return (await sha256(supplied)) === data.secret_hash;
+}
+
+async function handleHybridAction(body: Record<string, unknown>, req: Request): Promise<Response> {
+  if (!(await requireHybridInternalToken(req))) {
+    return response({ error: "HYBRID_AUTH_REQUIRED" }, 401);
+  }
+  const action = String(body.action || "");
+  if (action === "hybrid_search") {
+    const query = String(body.query || "").trim().slice(0, 2000);
+    const embedding = Array.isArray(body.embedding)
+      ? "[" + body.embedding.map((value) => Number(value)).join(",") + "]"
+      : body.embedding ? String(body.embedding) : null;
+    const limit = Math.max(1, Math.min(20, Number(body.limit || 8)));
+    const metadataFilter = typeof body.metadata_filter === "object" && body.metadata_filter !== null
+      ? body.metadata_filter
+      : {};
+    const { data, error } = await supabase.rpc("search_deep33_chunks", {
+      p_query: query,
+      p_embedding: embedding,
+      p_limit: limit,
+      p_metadata_filter: metadataFilter,
+      p_rrf_k: 60,
+    });
+    if (error) throw error;
+    return response({ ok: Array.isArray(data) && data.length > 0, engine: "DEEP33 Hybrid Search", rows: Array.isArray(data) ? data : [] });
+  }
+  if (action === "hybrid_index") {
+    const documentId = String(body.document_id || "").trim().slice(0, 200);
+    const chunks = Array.isArray(body.chunks) ? body.chunks : [];
+    if (!documentId || !chunks.length || chunks.length > 200) return response({ error: "HYBRID_INDEX_INPUT_INVALID" }, 400);
+    const { data, error } = await supabase.rpc("index_deep33_chunks", { p_document_id: documentId, p_chunks: chunks });
+    if (error) throw error;
+    return response({ ok: true, engine: "DEEP33 Hybrid Search", indexed: data?.[0]?.indexed_chunks ?? 0 });
+  }
+  return response({ error: "UNKNOWN_HYBRID_ACTION" }, 400);
+}
+
+async function scopedIdempotencyKey(sessionId: string, key: string): Promise<string> {
   return sha256(`deep33|${sessionId}|${key}`);
 }
 
-async function readIdempotency(key: string) {
+async function fetchIdempotency(scopedKey: string) {
   const { data, error } = await supabase
     .from("ai_idempotency")
-    .select("idempotency_key, operation, status_code, response, request_hash, expires_at")
-    .eq("idempotency_key", key)
+    .select("idempotency_key, operation, status_code, response, request_hash, created_at, expires_at")
+    .eq("idempotency_key", scopedKey)
     .maybeSingle();
   if (error) throw error;
   return data;
 }
 
-async function claim(sessionId: string, key: string, operation: string, requestHash: string, leaseSeconds = 180) {
+async function claimIdempotency(
+  sessionId: string,
+  key: string,
+  operation: string,
+  requestHash: string,
+  leaseSeconds = 180,
+) {
   if (!key || !requestHash) throw new Error("IDEMPOTENCY_ARGUMENTS_REQUIRED");
-  const skey = await scopedKey(sessionId, key);
+  const scopedKey = await scopedIdempotencyKey(sessionId, key);
   const now = new Date();
-  await supabase.from("ai_idempotency").delete().eq("idempotency_key", skey).lt("expires_at", now.toISOString());
+  const expires = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
+
+  await supabase
+    .from("ai_idempotency")
+    .delete()
+    .eq("idempotency_key", scopedKey)
+    .lt("expires_at", now.toISOString());
 
   const leaseToken = crypto.randomUUID();
-  const { error } = await supabase.from("ai_idempotency").insert({
-    idempotency_key: skey,
-    operation,
-    status_code: 102,
-    response: { lease_token: leaseToken },
-    request_hash: requestHash,
-    expires_at: new Date(now.getTime() + leaseSeconds * 1000).toISOString(),
-  });
-  if (!error) return { state: "CLAIMED", lease_token: leaseToken };
+  const { error: insertError } = await supabase
+    .from("ai_idempotency")
+    .insert({
+      idempotency_key: scopedKey,
+      operation,
+      status_code: 102,
+      response: { lease_token: leaseToken },
+      request_hash: requestHash,
+      expires_at: expires,
+    });
 
-  if (String(error.code || "") !== "23505") throw error;
-  const existing = await readIdempotency(skey);
-  if (!existing) return { state: "CLAIMED", lease_token: leaseToken };
-  if (existing.request_hash && existing.request_hash !== requestHash) return { state: "CONFLICT" };
-  if (existing.status_code === 102) return { state: "IN_PROGRESS" };
-  if (existing.status_code >= 400) return { state: "FAILED", status_code: existing.status_code, response: existing.response };
-  return { state: "COMPLETED", status_code: existing.status_code, response: existing.response };
+  if (!insertError) {
+    return { state: "CLAIMED", lease_token: leaseToken };
+  }
+
+  if (String(insertError.code || "") !== "23505") {
+    throw insertError;
+  }
+
+  const existing = await fetchIdempotency(scopedKey);
+  if (!existing) {
+    return { state: "CLAIMED", lease_token: leaseToken };
+  }
+  if (existing.request_hash && existing.request_hash !== requestHash) {
+    return { state: "CONFLICT" };
+  }
+  if (existing.status_code === 102) {
+    return { state: "IN_PROGRESS" };
+  }
+  if (existing.status_code >= 400) {
+    return {
+      state: "FAILED",
+      status_code: existing.status_code,
+      response: existing.response,
+    };
+  }
+  return {
+    state: "COMPLETED",
+    status_code: existing.status_code,
+    response: existing.response,
+  };
 }
 
-async function complete(sessionId: string, key: string, requestHash: string, leaseToken: string, statusCode: number, result: unknown) {
-  const skey = await scopedKey(sessionId, key);
-  const existing = await readIdempotency(skey);
+async function completeIdempotency(
+  sessionId: string,
+  key: string,
+  requestHash: string,
+  leaseToken: string,
+  statusCode: number,
+  body: unknown,
+) {
+  const scopedKey = await scopedIdempotencyKey(sessionId, key);
+  const existing = await fetchIdempotency(scopedKey);
   if (!existing) throw new Error("IDEMPOTENCY_MISSING");
-  if (existing.request_hash && existing.request_hash !== requestHash) throw new Error("IDEMPOTENCY_KEY_REUSED");
-  if (existing.status_code !== 102 || existing.response?.lease_token !== leaseToken) {
-    throw new Error("IDEMPOTENCY_LEASE_MISMATCH");
+  if (existing.request_hash && existing.request_hash !== requestHash) {
+    throw new Error("IDEMPOTENCY_KEY_REUSED");
   }
-  const { error } = await supabase.from("ai_idempotency").update({
-    status_code: statusCode,
-    response: result,
-    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-  }).eq("idempotency_key", skey).eq("status_code", 102);
+  const token = existing.status_code === 102 && existing.response?.lease_token;
+  if (token !== leaseToken) throw new Error("IDEMPOTENCY_LEASE_MISMATCH");
+
+  const { error } = await supabase
+    .from("ai_idempotency")
+    .update({
+      status_code: statusCode,
+      response: body,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    })
+    .eq("idempotency_key", scopedKey)
+    .eq("status_code", 102);
   if (error) throw error;
 }
 
-async function status(sessionId: string, key: string, requestHash: string) {
-  const row = await readIdempotency(await scopedKey(sessionId, key));
-  if (!row) return { state: "MISSING" };
-  if (row.request_hash && row.request_hash !== requestHash) return { state: "CONFLICT" };
-  if (row.status_code === 102) return { state: "IN_PROGRESS" };
-  if (row.status_code >= 400) return { state: "FAILED", status_code: row.status_code, response: row.response };
-  return { state: "COMPLETED", status_code: row.status_code, response: row.response };
+async function statusIdempotency(
+  sessionId: string,
+  key: string,
+  requestHash: string,
+) {
+  const scopedKey = await scopedIdempotencyKey(sessionId, key);
+  const existing = await fetchIdempotency(scopedKey);
+  if (!existing) return { state: "MISSING" };
+  if (existing.request_hash && existing.request_hash !== requestHash) {
+    return { state: "CONFLICT" };
+  }
+  if (existing.status_code === 102) return { state: "IN_PROGRESS" };
+  if (existing.status_code >= 400) {
+    return { state: "FAILED", status_code: existing.status_code, response: existing.response };
+  }
+  return { state: "COMPLETED", status_code: existing.status_code, response: existing.response };
 }
 
-async function idempotentWrite(
+async function failIdempotency(
+  sessionId: string,
+  key: string,
+  requestHash: string,
+  leaseToken: string,
+  statusCode: number,
+  body: unknown,
+) {
+  await completeIdempotency(sessionId, key, requestHash, leaseToken, statusCode, body);
+}
+
+async function runIdempotentWrite(
   sessionId: string,
   body: Record<string, unknown>,
   operation: string,
-  handler: () => Promise<{ body: unknown; status: number }>,
+  handler: () => Promise<ActionResult>,
 ): Promise<Response> {
   const key = String(body.idempotency_key || "").trim();
   const requestHash = String(body.request_hash || "").trim();
-  if (!key || !requestHash) return response({ error: "IDEMPOTENCY_REQUIRED" }, 400);
 
-  const c = await claim(sessionId, key, operation, requestHash);
-  if (c.state === "CONFLICT") return response({ error: "IDEMPOTENCY_KEY_REUSED" }, 409);
-  if (c.state === "COMPLETED" || c.state === "FAILED") return response(c.response, c.status_code);
+  if (!key || !requestHash) {
+    return response({ error: "IDEMPOTENCY_REQUIRED" }, 400);
+  }
 
-  if (c.state === "IN_PROGRESS") {
-    const deadline = Date.now() + 10000;
+  const claim = await claimIdempotency(sessionId, key, operation, requestHash);
+  if (claim.state === "CONFLICT") return response({ error: "IDEMPOTENCY_KEY_REUSED" }, 409);
+  if (claim.state === "COMPLETED" || claim.state === "FAILED") {
+    return response(claim.response, claim.status_code);
+  }
+
+  if (claim.state === "IN_PROGRESS") {
+    const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      const s = await status(sessionId, key, requestHash);
-      if (s.state === "CONFLICT") return response({ error: "IDEMPOTENCY_KEY_REUSED" }, 409);
-      if (s.state === "COMPLETED" || s.state === "FAILED") return response(s.response, s.status_code);
+      const status = await statusIdempotency(sessionId, key, requestHash);
+      if (status.state === "CONFLICT") return response({ error: "IDEMPOTENCY_KEY_REUSED" }, 409);
+      if (status.state === "COMPLETED" || status.state === "FAILED") {
+        return response(status.response, status.status_code);
+      }
     }
     return response({ error: "IDEMPOTENCY_IN_PROGRESS" }, 409);
   }
 
-  const leaseToken = String(c.lease_token || "");
+  const leaseToken = String(claim.lease_token || "");
+  if (!leaseToken) return response({ error: "IDEMPOTENCY_LEASE_MISSING" }, 500);
+
   try {
     const result = await handler();
-    await complete(sessionId, key, requestHash, leaseToken, result.status, result.body);
+    await completeIdempotency(sessionId, key, requestHash, leaseToken, result.status, result.body);
     return response(result.body, result.status);
   } catch (error) {
+    const message = error instanceof Error ? error.message : "MEMORY_INTERNAL_ERROR";
     try {
-      await complete(
+      await failIdempotency(
         sessionId,
         key,
         requestHash,
         leaseToken,
         500,
-        { error: "MEMORY_INTERNAL_ERROR" },
+        { error: "MEMORY_INTERNAL_ERROR", detail: message },
       );
-    } catch (recordError) {
-      console.error("idempotency failure record", recordError);
+    } catch (storeError) {
+      console.error("idempotency-failure-record", storeError);
     }
-    console.error(error);
-    return response({ error: "MEMORY_INTERNAL_ERROR" }, 500);
+    throw error;
   }
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", {
-    headers: {
-      "access-control-allow-origin": "*",
-      "access-control-allow-headers":
-        "authorization, x-client-info, apikey, content-type, x-idempotency-key",
-      "access-control-allow-methods": "POST, OPTIONS",
-    },
-  });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: {
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers":
+          "authorization, x-client-info, apikey, content-type, x-idempotency-key, x-deep33-internal-token",
+        "access-control-allow-methods": "POST, OPTIONS",
+      },
+    });
+  }
 
   try {
     const body = await req.json();
     const action = String(body.action || "");
     const sessionId = String(body.session_id || "").trim();
 
-    if (action === "ping") return response({ ok: true, service: "deep33-memory", version: 3 });
-    if (!sessionId || sessionId.length > 128) return response({ error: "SESSION_ID_REQUIRED" }, 400);
+    if (action === "ping") {
+      return response({ ok: true, service: "deep33-memory", version: 5 });
+    }
+
+    if (action === "hybrid_search" || action === "hybrid_index") {
+      return await handleHybridAction(body, req);
+    }
+
+    if (action === "hybrid_search" || action === "hybrid_index") {
+      return await handleHybridAction(body, req);
+    }
+
+    if (!sessionId || sessionId.length > 128) {
+      return response({ error: "SESSION_ID_REQUIRED" }, 400);
+    }
 
     if (action === "idempotency_claim") {
-      return response(await claim(
-        sessionId,
-        String(body.idempotency_key || ""),
-        String(body.operation || "deep33.unknown"),
-        String(body.request_hash || ""),
-        Math.max(30, Math.min(300, Number(body.lease_seconds || 180))),
-      ));
+      return response(
+        await claimIdempotency(
+          sessionId,
+          String(body.idempotency_key || ""),
+          String(body.operation || "deep33.unknown"),
+          String(body.request_hash || ""),
+          Math.max(30, Math.min(300, Number(body.lease_seconds || 180))),
+        ),
+      );
     }
+
     if (action === "idempotency_status") {
-      return response(await status(
-        sessionId,
-        String(body.idempotency_key || ""),
-        String(body.request_hash || ""),
-      ));
+      return response(
+        await statusIdempotency(
+          sessionId,
+          String(body.idempotency_key || ""),
+          String(body.request_hash || ""),
+        ),
+      );
     }
+
     if (action === "idempotency_complete" || action === "idempotency_fail") {
-      await complete(
+      const statusCode = Number(body.status_code || 200);
+      await completeIdempotency(
         sessionId,
         String(body.idempotency_key || ""),
         String(body.request_hash || ""),
         String(body.lease_token || ""),
-        Number(body.status_code || 200),
+        statusCode,
         body.response ?? {},
       );
       return response({ ok: true });
@@ -190,7 +342,8 @@ Deno.serve(async (req) => {
         .eq("session_id", sessionId)
         .maybeSingle();
       if (sessionError) throw sessionError;
-      const { data: messages, error: messagesError } = await supabase
+
+      const { data: messages, error: messageError } = await supabase
         .from("deep33_messages")
         .select("role, content, model, provider, request_id, created_at")
         .eq("session_id", sessionId)
@@ -198,7 +351,8 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .limit(50);
-      if (messagesError) throw messagesError;
+      if (messageError) throw messageError;
+
       const { data: memories, error: memoryError } = await supabase
         .from("deep33_memories")
         .select("id, kind, content, created_at, updated_at")
@@ -207,23 +361,27 @@ Deno.serve(async (req) => {
         .order("id", { ascending: false })
         .limit(20);
       if (memoryError) throw memoryError;
-      return response({ session, messages: (messages || []).reverse(), memories: memories || [] });
+
+      return response({
+        session,
+        messages: (messages || []).reverse(),
+        memories: memories || [],
+      });
     }
 
     if (action === "sync") {
-      return await idempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
+      return await runIdempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
         const sessionPatch: Record<string, unknown> = {
           session_id: sessionId,
           updated_at: new Date().toISOString(),
         };
+
         if (typeof body.personality === "string" && body.personality.trim()) {
           sessionPatch.personality = body.personality.slice(0, 32);
         }
         if (typeof body.preferences === "object" && body.preferences !== null) {
           sessionPatch.preferences = body.preferences;
         }
-        const { error: sessionError } = await supabase.from("deep33_sessions").upsert(sessionPatch, { onConflict: "session_id" });
-        if (sessionError) throw sessionError;
 
         const incoming = Array.isArray(body.messages) ? body.messages : [];
         const rows = [];
@@ -231,6 +389,7 @@ Deno.serve(async (req) => {
           const role = String(message?.role || "");
           const content = String(message?.content || "");
           if (!["user", "assistant"].includes(role) || !content.trim()) continue;
+
           rows.push({
             session_id: sessionId,
             role,
@@ -241,57 +400,75 @@ Deno.serve(async (req) => {
             fingerprint: await sha256(role + "\n" + content),
           });
         }
+
         if (rows.length) {
-          const { error } = await supabase.from("deep33_messages").upsert(rows, {
-            onConflict: "session_id,fingerprint",
-            ignoreDuplicates: true,
-          });
+          const { error } = await supabase
+            .from("deep33_messages")
+            .upsert(rows, {
+              onConflict: "session_id,fingerprint",
+              ignoreDuplicates: true,
+            });
           if (error) throw error;
         }
+
         return { body: { ok: true, session_id: sessionId, saved: rows.length }, status: 200 };
       });
     }
 
     if (action === "remember") {
-      return await idempotentWrite(sessionId, body, "deep33.memory.remember", async () => {
+      return await runIdempotentWrite(sessionId, body, "deep33.memory.remember", async () => {
         const kind = String(body.kind || "explicit");
         const content = String(body.content || "").trim();
+
         if (!["preference", "explicit", "summary", "context"].includes(kind) || !content) {
           return { body: { error: "MEMORY_INVALID" }, status: 400 };
         }
+
         const fingerprint = await sha256(kind + "\n" + content);
-        const { error: sessionError } = await supabase.from("deep33_sessions").upsert(
-          { session_id: sessionId, updated_at: new Date().toISOString() },
-          { onConflict: "session_id" },
-        );
+
+        const { error: sessionError } = await supabase
+          .from("deep33_sessions")
+          .upsert(
+            { session_id: sessionId, updated_at: new Date().toISOString() },
+            { onConflict: "session_id" },
+          );
         if (sessionError) throw sessionError;
-        const { error } = await supabase.from("deep33_memories").upsert(
-          {
-            session_id: sessionId,
-            kind,
-            content,
-            fingerprint,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "session_id,fingerprint" },
-        );
+
+        const { error } = await supabase
+          .from("deep33_memories")
+          .upsert(
+            {
+              session_id: sessionId,
+              kind,
+              content,
+              fingerprint,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "session_id,fingerprint" },
+          );
         if (error) throw error;
+
         return { body: { ok: true, remembered: true }, status: 200 };
       });
     }
 
     if (action === "preferences") {
-      return await idempotentWrite(sessionId, body, "deep33.memory.preferences", async () => {
+      return await runIdempotentWrite(sessionId, body, "deep33.memory.preferences", async () => {
         const patch: Record<string, unknown> = {
           session_id: sessionId,
           updated_at: new Date().toISOString(),
         };
+
         if (body.personality) patch.personality = String(body.personality).slice(0, 32);
         if (typeof body.preferences === "object" && body.preferences !== null) {
           patch.preferences = body.preferences;
         }
-        const { error } = await supabase.from("deep33_sessions").upsert(patch, { onConflict: "session_id" });
+
+        const { error } = await supabase
+          .from("deep33_sessions")
+          .upsert(patch, { onConflict: "session_id" });
         if (error) throw error;
+
         return { body: { ok: true }, status: 200 };
       });
     }

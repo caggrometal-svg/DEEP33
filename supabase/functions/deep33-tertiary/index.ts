@@ -79,6 +79,9 @@ const SUPABASE_SECRET_KEY =
 const MEMORY_FUNCTION_URL =
   SUPABASE_URL.replace(/\/$/, "") + "/functions/v1/deep33-memory";
 
+const HYBRID_FUNCTION_URL =
+  SUPABASE_URL.replace(/\/$/, "") + "/functions/v1/deep33-hybrid-search";
+
 async function sha256(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
   const hash = await crypto.subtle.digest("SHA-256", bytes);
@@ -135,6 +138,379 @@ async function memoryCall(
     throw new Error("DEEP33_MEMORY_HTTP_" + response.status);
   }
   return { status: response.status, body };
+}
+
+function hybridStatus() {
+  return {
+    engine: "DEEP33 Hybrid Search",
+    engine_version: "1.1.0",
+    enabled: true,
+    configured: true,
+    dimensions: 1536,
+    transport: "supabase_edge_function",
+    vector_backend: "pgvector",
+    keyword_backend: "postgresql_tsvector",
+    fusion: "weighted_reciprocal_rank_fusion_plus_metadata_rerank",
+    schema: "deep33_knowledge_chunks",
+  };
+}
+
+async function hybridCall(
+  action: string,
+  payload: Record<string, unknown> = {},
+): Promise<unknown> {
+  if (!HYBRID_FUNCTION_URL || !SUPABASE_SECRET_KEY) {
+    throw new Error("DEEP33_HYBRID_EDGE_NOT_CONFIGURED");
+  }
+
+  const response = await fetch(HYBRID_FUNCTION_URL, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + SUPABASE_SECRET_KEY,
+      apikey: SUPABASE_SECRET_KEY,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ action, ...payload }),
+  });
+
+  const body = await readJson(response);
+  if (!response.ok) {
+    throw new Error("DEEP33_HYBRID_HTTP_" + response.status);
+  }
+  return body;
+}
+
+function hybridTokens(value: string): Set<string> {
+  const matches = value.match(/[\p{L}\p{N}]{2,}/gu) ?? [];
+  return new Set(matches.map((item) => item.toLowerCase()));
+}
+
+function hybridFreshness(metadata: Record<string, unknown>): number {
+  const raw = String(metadata.published_at ?? "").trim();
+  if (!raw) return 0;
+  const time = Date.parse(raw);
+  if (!Number.isFinite(time)) return 0;
+  const ageDays = Math.max(0, (Date.now() - time) / 86400000);
+  return Math.max(0, 1 - Math.min(ageDays / 365, 1));
+}
+
+function rerankHybridResults(
+  query: string,
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const queryTokens = hybridTokens(query);
+  const output = rows.map((row) => {
+    const metadata =
+      row.metadata && typeof row.metadata === "object"
+        ? row.metadata as Record<string, unknown>
+        : {};
+    const searchable = [
+      String(row.content ?? ""),
+      String(metadata.title ?? ""),
+      String(metadata.tags ?? ""),
+    ].join(" ");
+    const searchableTokens = hybridTokens(searchable);
+    let overlap = 0;
+    for (const token of queryTokens) {
+      if (searchableTokens.has(token)) overlap++;
+    }
+    const coverage = queryTokens.size ? overlap / queryTokens.size : 0;
+    const rrf = Number(row.rrf_score ?? 0);
+    const vectorScore = Number(row.vector_score ?? 0);
+    const keywordScore = Number(row.keyword_score ?? 0);
+    const score =
+      Math.min(1, rrf * 60) * 0.70 +
+      coverage * 0.20 +
+      hybridFreshness(metadata) * 0.05 +
+      (metadata.title ? 0.05 : 0);
+    return {
+      ...row,
+      rerank_score: Number(score.toFixed(6)),
+      keyword_coverage: Number(coverage.toFixed(6)),
+      vector_score: vectorScore,
+      keyword_score: keywordScore,
+      rrf_score: rrf,
+    };
+  });
+
+  output.sort((a, b) => {
+    const av = [
+      Number(a.rerank_score ?? 0),
+      Number(a.rrf_score ?? 0),
+      Number(a.vector_score ?? 0),
+      Number(a.keyword_score ?? 0),
+    ];
+    const bv = [
+      Number(b.rerank_score ?? 0),
+      Number(b.rrf_score ?? 0),
+      Number(b.vector_score ?? 0),
+      Number(b.keyword_score ?? 0),
+    ];
+    for (let i = 0; i < av.length; i++) {
+      if (av[i] !== bv[i]) return bv[i] - av[i];
+    }
+    return 0;
+  });
+  return output;
+}
+
+function normalizeHybridMode(
+  query: string,
+  embedding: unknown,
+): string {
+  if (Array.isArray(embedding) && embedding.length) {
+    return query.trim() ? "hybrid" : "vector";
+  }
+  return "keyword";
+}
+
+function buildHybridSources(rows: Array<Record<string, unknown>>) {
+  return rows.map((row) => ({
+    document_id: row.document_id,
+    chunk_index: row.chunk_index,
+    content: row.content,
+    metadata: row.metadata ?? {},
+    score: row.rerank_score,
+    rrf_score: row.rrf_score,
+    vector_score: row.vector_score,
+    keyword_score: row.keyword_score,
+  }));
+}
+
+function normalizeIndexText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function hardSplitText(text: string, targetChars: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const parts: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? current + " " + word : word;
+    if (current && candidate.length > targetChars) {
+      parts.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function unitSplitText(text: string, targetChars: number): string[] {
+  if (text.length <= targetChars) return [text];
+  const sentences = text.split(/(?<=[.!?。！？])\s+/).map((x) => x.trim()).filter(Boolean);
+  if (sentences.length <= 1) return hardSplitText(text, targetChars);
+
+  const parts: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const candidate = current ? current + " " + sentence : sentence;
+    if (current && candidate.length > targetChars) {
+      parts.push(current);
+      current = sentence;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function overlapTail(text: string, overlapChars: number): string {
+  if (overlapChars <= 0 || text.length <= overlapChars) return text;
+  const tail = text.slice(-overlapChars);
+  const cut = tail.indexOf(" ");
+  return (cut >= 0 ? tail.slice(cut + 1) : tail).trim();
+}
+
+async function prepareHybridChunks(
+  content: string,
+  metadata: Record<string, unknown>,
+  targetChars: number,
+  overlapChars: number,
+  embeddings: unknown,
+): Promise<Array<Record<string, unknown>>> {
+  const normalized = normalizeIndexText(content);
+  if (!normalized) return [];
+  const target = Math.max(400, Math.min(4000, Math.floor(targetChars)));
+  const overlap = Math.max(0, Math.min(Math.floor(target / 2), Math.floor(overlapChars)));
+
+  const units: string[] = [];
+  for (const paragraph of normalized.split("\n\n")) {
+    units.push(...unitSplitText(paragraph, target));
+  }
+
+  const chunks: Array<Record<string, unknown>> = [];
+  let current = "";
+  for (const unit of units) {
+    const candidate = current ? current + " " + unit : unit;
+    if (current && candidate.length > target) {
+      const idx = chunks.length;
+      const checksum = await sha256(current);
+      const chunkMetadata = {
+        ...metadata,
+        chunk_index: idx,
+        char_count: current.length,
+        token_count: current.split(/\s+/).filter(Boolean).length,
+        content_sha256: checksum,
+        chunking: {
+          strategy: "paragraph_sentence_word",
+          target_chars: target,
+          overlap_chars: overlap,
+        },
+      };
+      const row: Record<string, unknown> = {
+        chunk_index: idx,
+        content: current,
+        token_count: chunkMetadata.token_count,
+        checksum,
+        metadata: chunkMetadata,
+      };
+      if (Array.isArray(embeddings) && embeddings[idx] !== undefined) {
+        row.embedding = embeddings[idx];
+      }
+      chunks.push(row);
+      const tail = overlapTail(current, overlap);
+      current = tail ? tail + " " + unit : unit;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) {
+    const idx = chunks.length;
+    const checksum = await sha256(current);
+    const chunkMetadata = {
+      ...metadata,
+      chunk_index: idx,
+      char_count: current.length,
+      token_count: current.split(/\s+/).filter(Boolean).length,
+      content_sha256: checksum,
+      chunking: {
+        strategy: "paragraph_sentence_word",
+        target_chars: target,
+        overlap_chars: overlap,
+      },
+    };
+    const row: Record<string, unknown> = {
+      chunk_index: idx,
+      content: current,
+      token_count: chunkMetadata.token_count,
+      checksum,
+      metadata: chunkMetadata,
+    };
+    if (Array.isArray(embeddings) && embeddings[idx] !== undefined) {
+      row.embedding = embeddings[idx];
+    }
+    chunks.push(row);
+  }
+  return chunks;
+}
+
+async function handleHybridRequest(
+  req: Request,
+  path: string,
+): Promise<Response> {
+  if (path === "/v1/search/hybrid/status" && req.method === "GET") {
+    await hybridCall("ping");
+    return json(hybridStatus());
+  }
+
+  if (path === "/v1/search/hybrid" && req.method === "POST") {
+    const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const query = String(payload.query ?? "").trim();
+    const embedding = payload.embedding;
+    if (
+      Array.isArray(embedding) &&
+      embedding.length !== 1536
+    ) {
+      return json({ error: "EMBEDDING_DIMENSIONS_REQUIRED_1536" }, 400);
+    }
+    if (!query && !Array.isArray(embedding)) {
+      return json({ error: "HYBRID_QUERY_REQUIRED" }, 400);
+    }
+    const raw = await hybridCall("search", {
+      query,
+      embedding: Array.isArray(embedding) ? embedding : null,
+      limit: Math.max(1, Math.min(20, Number(payload.limit ?? 8))),
+      metadata_filter:
+        payload.metadata_filter && typeof payload.metadata_filter === "object"
+          ? payload.metadata_filter
+          : {},
+    });
+    const rows = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [];
+    const results = rerankHybridResults(query, rows);
+    return json({
+      ok: results.length > 0,
+      ...hybridStatus(),
+      mode: normalizeHybridMode(query, embedding),
+      query,
+      results,
+      sources: buildHybridSources(results),
+    });
+  }
+
+  if (path === "/v1/search/index" && req.method === "POST") {
+    const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const documentId = String(payload.document_id ?? "").trim();
+    const content = String(payload.content ?? "");
+    if (!documentId) return json({ error: "DOCUMENT_ID_REQUIRED" }, 400);
+    if (!content.trim()) return json({ error: "DOCUMENT_CONTENT_REQUIRED" }, 400);
+
+    const embeddings = payload.embeddings;
+    if (Array.isArray(embeddings)) {
+      if (embeddings.length === 0) return json({ error: "EMBEDDINGS_EMPTY" }, 400);
+      if (!embeddings.every((item) => Array.isArray(item) && item.length === 1536)) {
+        return json({ error: "EMBEDDING_DIMENSIONS_REQUIRED_1536" }, 400);
+      }
+    }
+
+    const chunks = await prepareHybridChunks(
+      content,
+      payload.metadata && typeof payload.metadata === "object"
+        ? payload.metadata as Record<string, unknown>
+        : {},
+      Number(payload.target_chars ?? 1400),
+      Number(payload.overlap_chars ?? 220),
+      embeddings,
+    );
+
+    if (Array.isArray(embeddings) && embeddings.length !== chunks.length) {
+      return json({ error: "EMBEDDING_CHUNK_COUNT_MISMATCH" }, 400);
+    }
+
+    const raw = await hybridCall("index", {
+      document_id: documentId.slice(0, 200),
+      chunks,
+    });
+    const saved =
+      Array.isArray(raw) && raw.length && typeof raw[0] === "object"
+        ? Number((raw[0] as Record<string, unknown>).indexed_chunks ?? chunks.length)
+        : Number((raw as Record<string, unknown>).indexed_chunks ?? chunks.length);
+
+    return json({
+      ok: true,
+      engine: "DEEP33 Hybrid Search",
+      engine_version: "1.1.0",
+      document_id: documentId.slice(0, 200),
+      indexed_chunks: saved,
+      chunking: {
+        strategy: "paragraph_sentence_word",
+        target_chars: Math.max(400, Math.min(4000, Math.floor(Number(payload.target_chars ?? 1400)))),
+        overlap_chars: Math.max(0, Math.min(Math.floor(Number(payload.target_chars ?? 1400) / 2), Math.floor(Number(payload.overlap_chars ?? 220)))),
+      },
+    });
+  }
+
+  return json({ error: "HYBRID_ROUTE_NOT_FOUND" }, 404);
 }
 
 async function handleMemoryRequest(
@@ -277,6 +653,14 @@ Deno.serve(async (req) => {
     if (path === "/ready" && req.method === "GET") {
       const body = await readinessResponse(sessionId);
       return json(body, body.ready ? 200 : 503);
+    }
+
+    if (
+      path === "/v1/search/hybrid/status" ||
+      path === "/v1/search/hybrid" ||
+      path === "/v1/search/index"
+    ) {
+      return await handleHybridRequest(req, path);
     }
 
     if (
