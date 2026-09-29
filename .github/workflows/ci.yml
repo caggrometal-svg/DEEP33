@@ -64,6 +64,26 @@ jobs:
     needs: backend_unit
     runs-on: ubuntu-latest
     steps:
+      - name: Wait for PRIMARY exact commit on Render
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 12); do
+            echo "PRIMARY_DEPLOY_ATTEMPT=$attempt expected=$GITHUB_SHA"
+            body="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/health" || true)"
+            echo "$body"
+            if printf "%s" "$body" | jq -e --arg sha "$GITHUB_SHA" '.status=="PASS" and .service=="DEEP33 Backend" and .git_sha==$sha' >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 10
+          done
+          test "$ready" = "1" || {
+            echo "PRIMARY_DEPLOY_SHA_NOT_READY"
+            exit 1
+          }
+          echo "PRIMARY_DEPLOY_SHA_PASS"
+
       - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
