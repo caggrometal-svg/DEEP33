@@ -47,6 +47,15 @@ class Deep33ConnectivityTest {
         assertTrue(checks.optString("MODEL") == "PASS")
     }
 
+
+    @Test
+    fun connectivityAuditConfirmsInternetAndSearch() {
+        val json = Deep33Api.get("/v1/connectivity/audit", sessionId)
+        assertTrue("connectivity audit: " + json, json.optString("edge") == "PASS")
+        assertTrue("internet audit: " + json, json.optString("internet") == "PASS")
+        assertTrue("search audit: " + json, json.optJSONObject("search")?.optBoolean("ok", false) == true)
+    }
+
     @Test
     fun realChatReturnsE2EToken() {
         val payload = JSONArray().put(
