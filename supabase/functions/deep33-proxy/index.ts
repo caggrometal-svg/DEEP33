@@ -11,7 +11,8 @@ if(path==="/v1/connectivity/audit"&&req.method==="GET"){
  const started=performance.now();let upstream={health:false,ready:false,web_status:0};
  try{const [h,r,s]=await Promise.all([fetchUpstream("/health"),fetchUpstream("/ready"),fetchUpstream("/v1/web/status")]);upstream.health=h.ok;upstream.ready=r.ok;upstream.web_status=s.status;}catch(e){return json({status:"FAIL",edge:"PASS",internet:"FAIL",error:e instanceof Error?e.message:String(e),timestamp:new Date().toISOString()},502);}
  let search;try{search=await edgeSearch("DEEP33 internet");}catch(e){search={ok:false,error:e instanceof Error?e.message:String(e),results:[]};}
- return json({status:upstream.health===true&&search.ok===true?"PASS":"FAIL",edge:"PASS",internet:search.ok===true?"PASS":"FAIL",search,upstream,latency_ms:Math.round(performance.now()-started),timestamp:new Date().toISOString()});
+ const upstreamReady=upstream.ready===true;
+ return json({status:upstream.health===true&&upstreamReady&&search.ok===true?"PASS":"FAIL",edge:"PASS",internet:search.ok===true?"PASS":"FAIL",ready:upstreamReady?"PASS":"FAIL",search,upstream,latency_ms:Math.round(performance.now()-started),timestamp:new Date().toISOString()});
 }
 if(path==="/v1/search"&&req.method==="GET"){try{return json(await edgeSearch(url.searchParams.get("q")||url.searchParams.get("query")||""));}catch(e){return json({ok:false,error:e instanceof Error?e.message:String(e),results:[]},502);}}
 if(path.startsWith("/v1/")||path==="/health"||path==="/ready"||path==="/metrics"){
