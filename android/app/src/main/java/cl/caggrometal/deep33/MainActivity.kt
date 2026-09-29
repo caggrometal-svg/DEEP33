@@ -50,6 +50,9 @@ class MainActivity : Activity() {
     private lateinit var voicePanel: LinearLayout
     private lateinit var voiceStateView: TextView
     private lateinit var avatarView: VoiceAvatarView
+    private lateinit var composer: LinearLayout
+    private lateinit var chatScroll: ScrollView
+    private var voiceModeActive = false
 
     private val executor = Executors.newFixedThreadPool(2)
     private lateinit var store: SessionStore
@@ -76,6 +79,7 @@ class MainActivity : Activity() {
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     textToSpeech?.setLanguage(Locale("es"))
                 }
+                applyVoiceTone()
             }
         }
         textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -86,14 +90,14 @@ class MainActivity : Activity() {
             override fun onDone(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
+                    setVoiceModeUi(false)
                 }
             }
 
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
+                    setVoiceModeUi(false)
                 }
             }
         })
@@ -449,11 +453,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(4), dp(12), dp(4), dp(12))
         }
-        val scroll = ScrollView(this).apply {
+        chatScroll = ScrollView(this).apply {
             isFillViewport = true
             addView(chatContainer)
         }
-        box.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        box.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         input = EditText(this).apply {
             hint = "Escribe un mensaje"
@@ -490,7 +494,7 @@ class MainActivity : Activity() {
             setOnClickListener { cancelGeneration() }
         }
 
-        val composer = LinearLayout(this).apply {
+        composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(0, dp(8), 0, 0)
@@ -550,10 +554,29 @@ class MainActivity : Activity() {
                 if (!store.voiceEnabled) {
                     textToSpeech?.stop()
                     setVoiceState(AvatarState.IDLE)
-                    voicePanelOrNull()?.visibility = View.GONE
+                    setVoiceModeUi(false)
                 }
             }
         })
+
+        box.addView(TextView(this).apply {
+            text = "TONO DE VOZ · " + VoiceTone.fromKey(store.voiceTone).key
+            setTextColor(Color.LTGRAY)
+            textSize = 14f
+            setPadding(dp(16), dp(16), dp(16), dp(6))
+        })
+
+        VoiceTone.entries.forEach { tone ->
+            box.addView(Button(this).apply {
+                text = "Usar " + tone.key + " — " + tone.description
+                isAllCaps = false
+                setOnClickListener {
+                    store.voiceTone = tone.key
+                    applyVoiceTone()
+                    showTab(Tab.SETTINGS)
+                }
+            })
+        }
 
         val active = Personality.fromKey(store.personality)
         box.addView(TextView(this).apply {
@@ -751,8 +774,10 @@ class MainActivity : Activity() {
         if (text.isEmpty() || activeTask?.isDone == false) return
 
         stopVoiceInput()
-        voicePanelOrNull()?.visibility = View.VISIBLE
-        setVoiceState(AvatarState.THINKING)
+        if (voiceModeActive) {
+            setVoiceModeUi(true)
+            setVoiceState(AvatarState.THINKING)
+        }
 
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
@@ -860,9 +885,9 @@ class MainActivity : Activity() {
         micButton.isEnabled = true
         cancelButton.visibility = View.GONE
         updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
-        if (!success || !store.voiceEnabled || textToSpeech?.isSpeaking != true) {
+        if (!success || textToSpeech?.isSpeaking != true) {
             setVoiceState(AvatarState.IDLE)
-            voicePanelOrNull()?.visibility = View.GONE
+            if (!voiceModeActive || !store.voiceEnabled) setVoiceModeUi(false)
         }
     }
 
@@ -885,10 +910,40 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun applyVoiceTone() {
+        val tts = textToSpeech ?: return
+        val tone = VoiceTone.fromKey(store.voiceTone)
+        tts.setPitch(tone.pitch)
+        tts.setSpeechRate(tone.speechRate)
+    }
+
+    private fun setVoiceModeUi(active: Boolean) {
+        if (!::voicePanel.isInitialized) return
+        voiceModeActive = active
+        if (active) {
+            voicePanel.visibility = View.VISIBLE
+            voicePanel.gravity = Gravity.CENTER
+            voicePanel.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+            chatScroll.visibility = View.GONE
+            composer.visibility = View.GONE
+            voiceStateView.visibility = View.GONE
+            avatarView.layoutParams = LinearLayout.LayoutParams(dp(220), dp(220))
+        } else {
+            voicePanel.visibility = View.GONE
+            voicePanel.gravity = Gravity.CENTER_VERTICAL
+            voicePanel.layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
+            chatScroll.visibility = View.VISIBLE
+            composer.visibility = View.VISIBLE
+            voiceStateView.visibility = View.GONE
+            avatarView.layoutParams = LinearLayout.LayoutParams(dp(86), dp(86))
+        }
+    }
+
     private fun speakAssistant(text: String) {
-        if (!store.voiceEnabled || text.isBlank()) return
-        voicePanelOrNull()?.visibility = View.VISIBLE
+        if ((!store.voiceEnabled && !voiceModeActive) || text.isBlank()) return
+        setVoiceModeUi(true)
         setVoiceState(AvatarState.SPEAKING)
+        applyVoiceTone()
         val speech = text
             .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
@@ -998,7 +1053,7 @@ class MainActivity : Activity() {
             return
         }
 
-        voicePanelOrNull()?.visibility = View.VISIBLE
+        setVoiceModeUi(true)
         setVoiceState(AvatarState.LISTENING)
         speechListening = true
 
@@ -1019,7 +1074,7 @@ class MainActivity : Activity() {
         speechListening = false
         speechRecognizer?.stopListening()
         setVoiceState(AvatarState.IDLE)
-        if (activeTask?.isDone != false) voicePanelOrNull()?.visibility = View.GONE
+        if (activeTask?.isDone != false && !voiceModeActive) setVoiceModeUi(false)
     }
 
     private val recognitionListener = object : RecognitionListener {
