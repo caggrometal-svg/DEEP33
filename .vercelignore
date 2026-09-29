@@ -1,0 +1,9 @@
+android/
+.github/
+docs/
+ops/
+tests/
+supabase/
+.git/
+*.apk
+*.aab
