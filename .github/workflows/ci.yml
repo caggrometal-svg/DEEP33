@@ -67,9 +67,31 @@ jobs:
       - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
-          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
-          jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
+          audit_ok=0
+          for attempt in $(seq 1 6); do
+            echo "EDGE_AUDIT_ATTEMPT=$attempt"
+            if curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" >/tmp/health.json &&
+              jq -e '.status=="PASS" and .service=="DEEP33 Backend"' /tmp/health.json >/dev/null &&
+              curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" >/tmp/audit.json &&
+              jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null; then
+              audit_ok=1
+              break
+            fi
+            echo "EDGE_AUDIT_NOT_READY"
+            sleep 10
+          done
+          if [ "$audit_ok" != "1" ]; then
+            echo "DEEP33_INTERNET_SEARCH_FAIL"
+            echo "HEALTH_BODY_BEGIN"
+            cat /tmp/health.json 2>/dev/null || true
+            echo
+            echo "HEALTH_BODY_END"
+            echo "AUDIT_BODY_BEGIN"
+            cat /tmp/audit.json 2>/dev/null || true
+            echo
+            echo "AUDIT_BODY_END"
+            exit 1
+          fi
           echo "DEEP33_INTERNET_SEARCH_PASS"
 
       - name: Require independent failover endpoints
