@@ -1099,6 +1099,72 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (path === "/v1/chat/stream" && req.method === "POST" && edgeAIConfigured()) {
+      const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const messages = Array.isArray(payload.messages)
+        ? payload.messages as Array<Record<string, unknown>>
+        : [];
+      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+      try {
+        const ai = await callEdgeAI({
+          ...payload,
+          messages: buildEdgeMessages(messages, payload.personality),
+        }, requestId);
+        const responseText = extractProviderText(ai.body);
+        try {
+          await Promise.race([
+            memoryCall("sync", sessionId, {
+              messages: [...messages, { role: "assistant", content: responseText }],
+              personality: payload.personality,
+              preferences: payload.preferences,
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
+          ]);
+        } catch {
+          // Streaming remains available when memory persistence is degraded.
+        }
+
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            const chunk = JSON.stringify({
+              choices: [{ delta: { content: responseText } }],
+              _deep33_gateway: { provider: ai.provider, model: ai.model },
+            });
+            controller.enqueue(encoder.encode("data: " + chunk + "\n\n"));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            ...cors,
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+            "X-Request-ID": requestId,
+          },
+        });
+      } catch (error) {
+        const body = {
+          status: "FAIL",
+          error: error instanceof Error ? error.message : String(error),
+        };
+        return new Response(
+          "event: error\ndata: " + JSON.stringify(body) + "\n\ndata: [DONE]\n\n",
+          {
+            status: 502,
+            headers: {
+              ...cors,
+              "Content-Type": "text/event-stream; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          },
+        );
+      }
+    }
+
     if (path === "/v1/ai/inference-check" && req.method === "GET" && edgeAIConfigured()) {
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       try {
