@@ -59,17 +59,17 @@ android {
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-backend.onrender.com"
+        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
 
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-backup.onrender.com"
+        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-api.onrender.com"
+        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
