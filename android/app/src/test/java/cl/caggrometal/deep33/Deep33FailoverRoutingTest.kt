@@ -9,7 +9,7 @@ class Deep33FailoverRoutingTest {
     @Test
     fun primaryEndpointIsConfigured() {
         assertEquals(
-            "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy",
+            "https://deep33-backend.onrender.com",
             BuildConfig.DEEP33_PRIMARY_URL
         )
         assertTrue(BuildConfig.DEEP33_PRIMARY_URL.isNotBlank())
