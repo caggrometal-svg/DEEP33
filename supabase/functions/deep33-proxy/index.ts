@@ -3,7 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
 // while the direct Edge gateway becomes the canonical runtime.
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
+const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "https://deep33-backup.onrender.com").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
