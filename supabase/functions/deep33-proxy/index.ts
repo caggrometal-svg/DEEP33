@@ -1,9 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-// Temporary compatibility fallback while the GitHub-connected replacement backend is provisioned.
-// Production target is controlled by DEEP33_UPSTREAM_URL and must not depend on Render/Railway.
-const DEFAULT_UPSTREAM = "https://deep33.c-33.blitz.cloud";
+const DEFAULT_UPSTREAM = SUPABASE_URL.includes("opocgzydeknuchtrqzfa")
+  ? "https://deep33-backup.onrender.com"
+  : "https://deep33-api.onrender.com";
 const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || DEFAULT_UPSTREAM).replace(/\/+$/, "");
 
 const cors = {
