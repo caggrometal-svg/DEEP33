@@ -26,3 +26,8 @@ Las pruebas instrumentadas ejercitan:
 Android → Internet → DEEP33 Backend → AI Gateway → Model
 
 La fase 3 se cierra únicamente con el job Android E2E en PASS.
+
+
+## Certification topology
+
+DEEP33 production validation uses the primary Supabase edge plus two distinct failover endpoints in the second active Supabase project.
