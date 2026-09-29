@@ -6,7 +6,7 @@ DEEP33 is a new AI product built independently from IAC33, C-33 and Andrew2.0.
 
 The current production chain is:
 
-Android → Internet → DEEP33 Backend (Render) → AI Gateway → Model → Android
+Android → Internet → DEEP33 Edge Gateway (Supabase) → DEEP33 Backend (Blitz Cloud) → AI Gateway → Model → Android
 
 The backend exposes observable checks instead of a single opaque ONLINE flag.
 
@@ -24,6 +24,8 @@ The backend exposes observable checks instead of a single opaque ONLINE flag.
 - Network diagnostics: implemented
 - AI status/diagnostics: implemented
 - Chat + streaming contracts: implemented
+- Public edge gateway: deployed at `https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy`
+- Real Internet + web-search audit: implemented
 - Android HTTP client: implemented
 - Android instrumented E2E: implemented
 - No provider credential is stored in the repository or APK.
