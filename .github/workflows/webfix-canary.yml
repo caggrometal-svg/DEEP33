@@ -26,11 +26,10 @@ jobs:
   real_web_canary:
     needs: isolated_web_regression
     runs-on: ubuntu-latest
-    if: ${{ secrets.AI_GATEWAY_API_KEY != '' }}
     env:
       DEEP33_WEB_ORCHESTRATOR: server
       DEEP33_WEB_TOOLS_ENABLED: true
-      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY || secrets.KILO_API_KEY }}
       AI_GATEWAY_PROVIDER: ${{ vars.AI_GATEWAY_PROVIDER || 'kilo' }}
       AI_GATEWAY_URL: ${{ vars.AI_GATEWAY_URL || 'https://api.kilo.ai/api/gateway/chat/completions' }}
       AI_GATEWAY_HEALTH_URL: ${{ vars.AI_GATEWAY_HEALTH_URL || 'https://api.kilo.ai/api/gateway/models' }}
@@ -48,9 +47,11 @@ jobs:
       - name: Real provider + real web canary
         run: |
           python - <<'PY'
-          import asyncio
           import os
           from backend import main
+
+          if not os.getenv("AI_GATEWAY_API_KEY", "").strip():
+              raise SystemExit("REAL_WEB_CANARY_BLOCKED: AI gateway secret is not configured in GitHub Actions")
 
           class LocalMemory:
               enabled = True
