@@ -197,6 +197,7 @@ def test_personality_is_injected_into_model_context(monkeypatch) -> None:
     for name, phrase in {
         "AGRESIVO": "directa, firme y provocadora",
         "NEUTRO": "equilibrada, profesional, natural y clara",
+        "COMICO": "humor, ironía y ocurrencias breves",
         "CONSPIRANOICO": "enigmático y tecnológico",
     }.items():
         response = client.post(
@@ -221,5 +222,6 @@ def test_personality_catalog() -> None:
     assert [p["name"] for p in response.json()["personalities"]] == [
         "AGRESIVO",
         "NEUTRO",
+        "COMICO",
         "CONSPIRANOICO",
     ]
