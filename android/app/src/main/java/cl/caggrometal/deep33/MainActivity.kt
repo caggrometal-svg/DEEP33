@@ -1129,7 +1129,7 @@ class MainActivity : Activity() {
         override fun onError(error: Int) {
             speechListening = false
             setVoiceState(AvatarState.IDLE)
-            if (activeTask?.isDone != false) voicePanelOrNull()?.visibility = View.GONE
+            if (activeTask?.isDone != false) setVoiceModeUi(false)
         }
 
         override fun onResults(results: Bundle?) {
