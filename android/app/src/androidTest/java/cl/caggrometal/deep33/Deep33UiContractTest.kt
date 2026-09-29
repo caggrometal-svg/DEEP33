@@ -7,7 +7,7 @@ class Deep33UiContractTest {
     @Test
     fun personalitiesHaveStableKeys() {
         assertEquals(
-            listOf("AGRESIVO", "NEUTRO", "CONSPIRANOICO"),
+            listOf("AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO"),
             Personality.entries.map { it.key }
         )
     }
@@ -20,8 +20,9 @@ class Deep33UiContractTest {
 
     @Test
     fun voiceProfilesAreBounded() {
-        assertEquals("0%", PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).rate)
-        assertEquals("-8%", PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).rate)
-        assertEquals("+18%", PersonalityVoiceProfile.forPersonality(Personality.AGRESIVO).rate)
+        assertEquals(1.00f, PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).pitchFactor)
+        assertEquals(0.92f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
+        assertEquals(1.18f, PersonalityVoiceProfile.forPersonality(Personality.AGRESIVO).speechRateFactor)
+        assertEquals(1.06f, PersonalityVoiceProfile.forPersonality(Personality.COMICO).speechRateFactor)
     }
 }
