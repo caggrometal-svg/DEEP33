@@ -594,24 +594,131 @@ async function probeMemory(sessionId: string) {
   };
 }
 
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\\d+);/g, (_match, digits) => {
+      const code = Number(digits);
+      return Number.isFinite(code) ? String.fromCharCode(code) : "";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : "";
+    });
+}
+
+async function publicWebSearch(query: string) {
+  const q = query.trim();
+  if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
+
+  const providers = [
+    {
+      name: "bing_public",
+      url: "https://www.bing.com/search?format=rss&q=" + encodeURIComponent(q),
+      userAgent: "DEEP33-EdgeSearch/1.0",
+    },
+    {
+      name: "ddg_public",
+      url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
+      userAgent: "DEEP33-EdgeSearch/1.0",
+    },
+  ];
+
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, {
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "User-Agent": provider.userAgent,
+        },
+        redirect: "follow",
+      });
+      if (!response.ok) continue;
+      const html = await response.text();
+      const results: Array<Record<string, string>> = [];
+
+      if (provider.name === "bing_public") {
+        const items = [...html.matchAll(/<item>[\\s\\S]*?<title>([\\s\\S]*?)<\\/title>[\\s\\S]*?<link>([\\s\\S]*?)<\\/link>[\\s\\S]*?<description>([\\s\\S]*?)<\\/description>[\\s\\S]*?<\\/item>/gi)];
+        for (const item of items.slice(0, 8)) {
+          const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
+          const url = decodeHtml(String(item[2] ?? "").trim());
+          const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+          if (title && /^https?:\\/\\//i.test(url)) results.push({ title, url, snippet });
+        }
+      } else {
+        const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\\s\\S]*?)<\\/a>/gi)];
+        for (const item of items.slice(0, 8)) {
+          const rawUrl = decodeHtml(String(item[1] ?? ""));
+          const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
+          const urlMatch = rawUrl.match(/uddg=([^&]+)/i);
+          const url = urlMatch ? decodeURIComponent(urlMatch[1]) : rawUrl;
+          if (title && /^https?:\\/\\//i.test(url)) results.push({ title, url, snippet: "" });
+        }
+      }
+
+      if (results.length) {
+        return {
+          ok: true,
+          engine: "DEEP33 Edge Public Search",
+          engine_version: "1.0.0",
+          provider_independent: true,
+          provider: provider.name,
+          results,
+          verification: {
+            level: "public-fallback",
+            distinct_domains: new Set(results.map((item) => new URL(item.url).hostname)).size,
+          },
+        };
+      }
+    } catch {
+      // Try the next public provider.
+    }
+  }
+
+  return {
+    ok: false,
+    error: "PUBLIC_WEB_SEARCH_UNAVAILABLE",
+    results: [],
+  };
+}
+
 async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
-  const res = await fetchUpstream(
-    "/v1/web/search?q=" + encodeURIComponent(q),
-    {},
-    sessionId,
-  );
-  const data = await readJson(res);
-  if (!res.ok) {
-    return {
+
+  try {
+    const res = await fetchUpstream(
+      "/v1/web/search?q=" + encodeURIComponent(q),
+      {},
+      sessionId,
+    );
+    const data = await readJson(res);
+    if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
+      return data;
+    }
+
+    const fallback = await publicWebSearch(q);
+    return fallback.ok ? fallback : {
+      ...data,
       ok: false,
       error: "SEARCH_HTTP_" + res.status,
       results: [],
       upstream: data,
     };
+  } catch (error) {
+    const fallback = await publicWebSearch(q);
+    return fallback.ok
+      ? fallback
+      : {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          results: [],
+        };
   }
-  return data;
 }
 
 async function readinessResponse(sessionId: string) {
@@ -893,6 +1000,12 @@ Deno.serve(async (req) => {
         upstream.body,
         { status: upstream.status, headers: copyResponseHeaders(upstream) },
       );
+    }
+
+    if (path === "/v1/web/search" && req.method === "GET") {
+      const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
+      const result = await edgeSearch(query, sessionId);
+      return json(result, result.ok ? 200 : 503);
     }
 
     if (path === "/v1/search" && req.method === "GET") {
