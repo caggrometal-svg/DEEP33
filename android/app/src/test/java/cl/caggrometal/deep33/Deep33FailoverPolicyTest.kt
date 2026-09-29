@@ -7,12 +7,24 @@ import org.junit.Test
 
 class Deep33FailoverPolicyTest {
     @Test
-    fun serverFailureCannotFailOverAfterPostBodyStarted() {
+    fun serverFailureCannotFailOverAfterNonIdempotentPostBodyStarted() {
         assertFalse(
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
                 error = Deep33ApiException.Kind.SERVER
+            )
+        )
+    }
+
+    @Test
+    fun serverFailureCanFailOverAfterIdempotentPostBodyStarted() {
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = Deep33ApiException.Kind.SERVER,
+                idempotentRequest = true
             )
         )
     }
@@ -34,7 +46,8 @@ class Deep33FailoverPolicyTest {
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
-                error = Deep33ApiException.Kind.TIMEOUT
+                error = Deep33ApiException.Kind.TIMEOUT,
+                idempotentRequest = false
             )
         )
     }
@@ -45,7 +58,8 @@ class Deep33FailoverPolicyTest {
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
-                error = Deep33ApiException.Kind.NETWORK
+                error = Deep33ApiException.Kind.NETWORK,
+                idempotentRequest = false
             )
         )
     }
@@ -80,7 +94,8 @@ class Deep33FailoverPolicyTest {
             Deep33FailoverPolicy.canFailover(
                 method = "POST",
                 requestBodyStarted = true,
-                error = error.kind
+                error = error.kind,
+                idempotentRequest = false
             )
         )
     }
