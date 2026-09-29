@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private var edgeSwipeTracking = false
     private var edgeDownX = 0f
     private var edgeDownY = 0f
+    private var personalitySelectionGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -247,10 +248,14 @@ class MainActivity : Activity() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(2))
+            setPadding(dp(4), dp(6), dp(4), dp(2))
         }
-        nav.addView(navButton("CHAT") { showTab(Tab.CHAT) }, weightParams())
-        nav.addView(navButton("ESTADO") { showTab(Tab.STATUS) }, weightParams())
+        nav.addView(
+            navButton("💬  Conversación") { showTab(Tab.CHAT) },
+            LinearLayout.LayoutParams(-1, dp(52)).apply {
+                setMargins(dp(2), 0, dp(2), 0)
+            }
+        )
         return nav
     }
 
@@ -262,9 +267,16 @@ class MainActivity : Activity() {
     private fun navButton(label: String, action: () -> Unit): Button =
         Button(this).apply {
             text = label
-            textSize = 10f
-            minHeight = dp(50)
+            textSize = 14f
+            minHeight = dp(52)
             isAllCaps = false
+            setTextColor(Personality.fromKey(store.personality).accent)
+            setBackground(
+                neonPanel(
+                    Color.rgb(18, 22, 30),
+                    Personality.fromKey(store.personality).accent
+                )
+            )
             setOnClickListener { action() }
         }
 
@@ -498,16 +510,16 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(0, dp(8), 0, 0)
-            addView(micButton, LinearLayout.LayoutParams(dp(62), dp(58)).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
             addView(input, LinearLayout.LayoutParams(0, dp(58), 1f).apply {
                 setMargins(0, 0, dp(6), 0)
             })
             addView(sendButton, LinearLayout.LayoutParams(dp(86), dp(58)).apply {
                 setMargins(0, 0, dp(6), 0)
             })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(88), dp(58)))
+            addView(cancelButton, LinearLayout.LayoutParams(dp(88), dp(58)).apply {
+                setMargins(0, 0, dp(6), 0)
+            })
+            addView(micButton, LinearLayout.LayoutParams(dp(62), dp(58)))
         }
         box.addView(composer)
         return box
@@ -544,6 +556,12 @@ class MainActivity : Activity() {
             textSize = 13f
             setPadding(dp(16), dp(12), dp(16), dp(12))
         })
+
+        box.addView(Button(this).apply {
+            text = "📡  Estado y conectividad"
+            isAllCaps = false
+            setOnClickListener { showTab(Tab.STATUS) }
+        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         box.addView(Button(this).apply {
             text = if (store.voiceEnabled) "VOZ DE RESPUESTA: ACTIVADA" else "VOZ DE RESPUESTA: DESACTIVADA"
@@ -617,6 +635,7 @@ class MainActivity : Activity() {
         if (::voicePanel.isInitialized) voicePanel else null
 
     private fun selectPersonality(personality: Personality) {
+        personalitySelectionGeneration++
         store.personality = personality.key
         currentPersonalityView.text = "Modo: " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
@@ -627,6 +646,7 @@ class MainActivity : Activity() {
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
         }
+        applyVoiceTone()
         syncPreferences()
     }
 
@@ -689,13 +709,20 @@ class MainActivity : Activity() {
     }
 
     private fun loadRemoteContext() {
+        val localPersonality = store.personality
+        val selectionGeneration = personalitySelectionGeneration
         executor.submit {
             try {
                 val sessionId = store.sessionId
                 val remote = Deep33Api.memoryContext(sessionId)
                 val session = remote.optJSONObject("session")
                 val remotePersonality = session?.optString("personality").orEmpty()
-                if (remotePersonality.isNotBlank()) store.personality = remotePersonality
+                val shouldApplyRemotePersonality =
+                    personalitySelectionGeneration == selectionGeneration &&
+                        store.personality == localPersonality
+                if (remotePersonality.isNotBlank() && shouldApplyRemotePersonality) {
+                    store.personality = remotePersonality
+                }
 
                 val messages = remote.optJSONArray("messages") ?: return@submit
                 val remoteMessages = buildList {
