@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  DEEP33_PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
   DEEP33_SECONDARY_URL: ${{ secrets.DEEP33_SECONDARY_URL }}
   DEEP33_TERTIARY_URL: ${{ secrets.DEEP33_TERTIARY_URL }}
   DEEP33_REQUIRE_REDUNDANCY: "true"
