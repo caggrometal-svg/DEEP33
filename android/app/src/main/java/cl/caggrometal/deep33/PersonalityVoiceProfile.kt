@@ -12,10 +12,10 @@ data class PersonalityVoiceProfile(
 ) {
     companion object {
         fun forPersonality(personality: Personality): PersonalityVoiceProfile = when (personality) {
-            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 1.08f, 1.18f)
+            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 1.03f, 1.04f)
             Personality.NEUTRO -> PersonalityVoiceProfile(personality, 1.00f, 1.00f)
-            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.03f, 1.06f)
-            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.97f, 0.92f)
+            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.05f, 1.02f)
+            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.96f, 0.96f)
         }
     }
 }
