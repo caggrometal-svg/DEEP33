@@ -68,6 +68,12 @@ class SessionStore(
             prefs.edit().putString(KEY_PERSONALITY, value).apply()
         }
 
+    var voiceTone: String
+        get() = prefs.getString(KEY_VOICE_TONE, "DEEP") ?: "DEEP"
+        set(value) {
+            prefs.edit().putString(KEY_VOICE_TONE, value).apply()
+        }
+
     fun loadMessages(): List<UiMessage> {
         val raw = prefs.getString(messagesKey(sessionId), null)
             ?: prefs.getString(KEY_MESSAGES_LEGACY, null)
@@ -146,6 +152,7 @@ class SessionStore(
         private const val KEY_MESSAGES_LEGACY = "messages_json"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
         private const val KEY_PERSONALITY = "personality"
+        private const val KEY_VOICE_TONE = "voice_tone"
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
