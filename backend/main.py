@@ -1122,7 +1122,11 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if DEEP33_WEB_TOOLS_ENABLED:
+        skip_web_tools = (
+            http_request.headers.get("x-deep33-skip-web-tools", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools:
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],

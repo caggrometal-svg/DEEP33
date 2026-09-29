@@ -831,6 +831,7 @@ Deno.serve(async (req) => {
             headers: {
               ...headerSubset(req),
               "Content-Type": "application/json",
+              "X-DEEP33-Skip-Web-Tools": "true",
             },
             body: JSON.stringify({
               ...payload,
