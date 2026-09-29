@@ -1,10 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const DEFAULT_UPSTREAM = SUPABASE_URL.includes("opocgzydeknuchtrqzfa")
-  ? "https://deep33-backup.onrender.com"
-  : "https://deep33-api.onrender.com";
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || DEFAULT_UPSTREAM).replace(/\/+$/, "");
+// No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
+// while the direct Edge gateway becomes the canonical runtime.
+const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -716,43 +715,122 @@ async function handleMemoryRequest(
 }
 
 async function probeHealth(sessionId: string) {
-  const response = await fetchUpstream("/health", {}, sessionId);
-  const body = await readJson(response);
-  return {
-    ok: response.ok && body.status === "PASS",
-    status: body.status ?? (response.ok ? "PASS" : "FAIL"),
-    body,
-  };
+  if (!UPSTREAM) {
+    return {
+      ok: true,
+      status: "PASS",
+      body: {
+        status: "PASS",
+        service: "DEEP33 Backend",
+        runtime: "supabase-edge",
+        timestamp: new Date().toISOString(),
+      },
+    };
+  }
+  try {
+    const response = await fetchUpstream("/health", {}, sessionId);
+    const body = await readJson(response);
+    return {
+      ok: response.ok && body.status === "PASS",
+      status: body.status ?? (response.ok ? "PASS" : "FAIL"),
+      body,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "FAIL",
+      body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
+    };
+  }
 }
 
 async function probeInference(sessionId: string) {
-  const response = await fetchUpstream(
-    "/v1/ai/inference-check",
-    {},
-    sessionId,
-  );
-  const body = await readJson(response);
-  return {
-    ok:
-      response.ok &&
-      body.status === "PASS" &&
-      body.text_ok === true,
-    status: body.status ?? (response.ok ? "PASS" : "FAIL"),
-    body,
-  };
+  if (edgeAIConfigured()) {
+    const requestId = crypto.randomUUID();
+    try {
+      const response = await callEdgeAI({
+        messages: [
+          { role: "system", content: "Return the requested diagnostic token exactly." },
+          { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
+        ],
+      }, requestId);
+      const text = extractProviderText(response.body);
+      return {
+        ok: text === "DEEP33_DIAGNOSTIC_OK",
+        status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
+        body: {
+          status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
+          provider: response.provider,
+          model: response.model,
+          text_ok: text === "DEEP33_DIAGNOSTIC_OK",
+        },
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: "FAIL",
+        body: {
+          status: "FAIL",
+          provider: edgeProviders()[0]?.name ?? null,
+          model: edgeProviders()[0]?.model ?? null,
+          text_ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  if (!UPSTREAM) {
+    return {
+      ok: false,
+      status: "FAIL",
+      body: { status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED" },
+    };
+  }
+
+  try {
+    const response = await fetchUpstream("/v1/ai/inference-check", {}, sessionId);
+    const body = await readJson(response);
+    return {
+      ok: response.ok && body.status === "PASS" && body.text_ok === true,
+      status: body.status ?? (response.ok ? "PASS" : "FAIL"),
+      body,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "FAIL",
+      body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
+    };
+  }
 }
 
 async function probeMemory(sessionId: string) {
-  const response = await fetchUpstream(
-    "/v1/memory/context",
-    {},
-    sessionId,
-  );
-  return {
-    ok: response.ok,
-    status: response.ok ? "PASS" : "FAIL",
-    http_status: response.status,
-  };
+  if (SUPABASE_SECRET_KEY) {
+    try {
+      const result = await memoryCall("context", sessionId);
+      return {
+        ok: result.status >= 200 && result.status < 300,
+        status: result.status >= 200 && result.status < 300 ? "PASS" : "FAIL",
+        http_status: result.status,
+      };
+    } catch {
+      // Fall through to legacy upstream only when configured.
+    }
+  }
+  if (!UPSTREAM) {
+    return { ok: false, status: "FAIL", http_status: 503 };
+  }
+  try {
+    const response = await fetchUpstream("/v1/memory/context", {}, sessionId);
+    return {
+      ok: response.ok,
+      status: response.ok ? "PASS" : "FAIL",
+      http_status: response.status,
+    };
+  } catch {
+    return { ok: false, status: "FAIL", http_status: 503 };
+  }
 }
 
 function decodeHtml(value: string): string {
@@ -926,6 +1004,15 @@ Deno.serve(async (req) => {
         provider: providers[0]?.name ?? null,
         model: providers[0]?.model ?? null,
         fallback_count: Math.max(0, providers.length - 1),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (path === "/health" && req.method === "GET") {
+      return json({
+        status: "PASS",
+        service: "DEEP33 Backend",
+        runtime: "supabase-edge",
         timestamp: new Date().toISOString(),
       });
     }
