@@ -1,6 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "https://deep33.c-33.blitz.cloud").replace(/\/+$/, "");
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const DEFAULT_UPSTREAM = SUPABASE_URL.includes("opocgzydeknuchtrqzfa")
+  ? "https://deep33-backup.onrender.com"
+  : "https://deep33-api.onrender.com";
+const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || DEFAULT_UPSTREAM).replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -63,7 +67,7 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+
 const SUPABASE_SECRET_KEYS = (() => {
   try {
     return JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
