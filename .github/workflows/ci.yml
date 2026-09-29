@@ -29,6 +29,14 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
+      - name: Reject legacy upstream dependencies
+        run: |
+          set -euo pipefail
+          if grep -Rni --exclude-dir=.git "c-33\\.blitz\\.cloud\|caggrometal-svg/.*IAC33\|deep33.c-33" supabase backend android README.md render.yaml Dockerfile 2>/dev/null; then
+            echo "LEGACY_UPSTREAM_REFERENCE_FOUND"
+            exit 1
+          fi
+          echo "NO_LEGACY_UPSTREAM_PASS"
       - name: Import and syntax gate
         run: |
           python -c "import backend.main, backend.gateway, backend.memory; print('DEEP33_IMPORT_OK')"
