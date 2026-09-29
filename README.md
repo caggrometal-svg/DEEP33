@@ -8,7 +8,9 @@ DEEP33 is a new AI product built independently from IAC33, C-33 and Andrew2.0.
 
 The current production chain is:
 
-Android → Internet → DEEP33 Edge Gateway (Supabase) → DEEP33 Backend (Render) → AI Gateway → Model → Android
+Normal: Android → Internet → DEEP33 Edge Gateway (Supabase, direct AI) → AI Gateway → Model → Android
+Failover 1: Android → Internet → DEEP33 Edge Gateway (Supabase) → Render FastAPI → AI Gateway → Model → Android
+Failover 2: Android → Internet → Render FastAPI → AI Gateway → Model → Android
 
 Current backend nodes:
 - Edge primary: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy`
@@ -43,7 +45,7 @@ DEEP33 is packaged so the FastAPI backend can move between providers without cha
 - Network diagnostics: implemented
 - AI status/diagnostics: implemented
 - Chat + streaming contracts: implemented
-- Public edge gateway: deployed at `https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy`
+- Public edge gateway: deployed at `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy`
 - Real Internet + web-search audit: implemented
 - Android HTTP client: implemented
 - Android instrumented E2E: implemented
