@@ -99,57 +99,15 @@ async function claimIdempotency(
 ) {
   if (!key || !requestHash) throw new Error("IDEMPOTENCY_ARGUMENTS_REQUIRED");
   const scopedKey = await scopedIdempotencyKey(sessionId, key);
-  const now = new Date();
-  const expires = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
-
-  await supabase
-    .from("ai_idempotency")
-    .delete()
-    .eq("idempotency_key", scopedKey)
-    .lt("expires_at", now.toISOString());
-
-  const leaseToken = crypto.randomUUID();
-  const { error: insertError } = await supabase
-    .from("ai_idempotency")
-    .insert({
-      idempotency_key: scopedKey,
-      operation,
-      status_code: 102,
-      response: { lease_token: leaseToken },
-      request_hash: requestHash,
-      expires_at: expires,
-    });
-
-  if (!insertError) {
-    return { state: "CLAIMED", lease_token: leaseToken };
-  }
-
-  if (String(insertError.code || "") !== "23505") {
-    throw insertError;
-  }
-
-  const existing = await fetchIdempotency(scopedKey);
-  if (!existing) {
-    return { state: "CLAIMED", lease_token: leaseToken };
-  }
-  if (existing.request_hash && existing.request_hash !== requestHash) {
-    return { state: "CONFLICT" };
-  }
-  if (existing.status_code === 102) {
-    return { state: "IN_PROGRESS" };
-  }
-  if (existing.status_code >= 400) {
-    return {
-      state: "FAILED",
-      status_code: existing.status_code,
-      response: existing.response,
-    };
-  }
-  return {
-    state: "COMPLETED",
-    status_code: existing.status_code,
-    response: existing.response,
-  };
+  const { data, error } = await supabase.rpc("deep33_idempotency_claim", {
+    p_idempotency_key: scopedKey,
+    p_operation: operation,
+    p_request_hash: requestHash,
+    p_lease_seconds: leaseSeconds,
+  });
+  if (error) throw error;
+  if (!data || typeof data !== "object") throw new Error("IDEMPOTENCY_RPC_INVALID_RESPONSE");
+  return data;
 }
 
 async function completeIdempotency(
@@ -161,23 +119,13 @@ async function completeIdempotency(
   body: unknown,
 ) {
   const scopedKey = await scopedIdempotencyKey(sessionId, key);
-  const existing = await fetchIdempotency(scopedKey);
-  if (!existing) throw new Error("IDEMPOTENCY_MISSING");
-  if (existing.request_hash && existing.request_hash !== requestHash) {
-    throw new Error("IDEMPOTENCY_KEY_REUSED");
-  }
-  const token = existing.status_code === 102 && existing.response?.lease_token;
-  if (token !== leaseToken) throw new Error("IDEMPOTENCY_LEASE_MISMATCH");
-
-  const { error } = await supabase
-    .from("ai_idempotency")
-    .update({
-      status_code: statusCode,
-      response: body,
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    })
-    .eq("idempotency_key", scopedKey)
-    .eq("status_code", 102);
+  const { error } = await supabase.rpc("deep33_idempotency_complete", {
+    p_idempotency_key: scopedKey,
+    p_request_hash: requestHash,
+    p_lease_token: leaseToken,
+    p_status_code: statusCode,
+    p_response: body ?? {},
+  });
   if (error) throw error;
 }
 
@@ -187,16 +135,13 @@ async function statusIdempotency(
   requestHash: string,
 ) {
   const scopedKey = await scopedIdempotencyKey(sessionId, key);
-  const existing = await fetchIdempotency(scopedKey);
-  if (!existing) return { state: "MISSING" };
-  if (existing.request_hash && existing.request_hash !== requestHash) {
-    return { state: "CONFLICT" };
-  }
-  if (existing.status_code === 102) return { state: "IN_PROGRESS" };
-  if (existing.status_code >= 400) {
-    return { state: "FAILED", status_code: existing.status_code, response: existing.response };
-  }
-  return { state: "COMPLETED", status_code: existing.status_code, response: existing.response };
+  const { data, error } = await supabase.rpc("deep33_idempotency_status", {
+    p_idempotency_key: scopedKey,
+    p_request_hash: requestHash,
+  });
+  if (error) throw error;
+  if (!data || typeof data !== "object") throw new Error("IDEMPOTENCY_RPC_INVALID_RESPONSE");
+  return data;
 }
 
 async function failIdempotency(
