@@ -14,10 +14,17 @@ def test_invalid_personality_falls_back_to_neutral() -> None:
 
 
 def test_personality_prompt_is_style_only() -> None:
-    prompt = personality_prompt("CONSPIRANOICO")
-    assert "CONSPIRANOICO" in prompt
-    assert "no override" not in prompt.lower()
-    assert "higher-priority safety or system rules" in prompt
+    conspiranoic = personality_prompt("CONSPIRANOICO")
+    assert "CONSPIRANOICO" in conspiranoic
+    assert "active personality contract" in conspiranoic.lower()
+    assert "must not silently fall back to NEUTRO" in conspiranoic
+    assert "higher-priority system rules" in conspiranoic
+
+    comic = personality_prompt("COMICO")
+    assert "COMICO" in comic
+    assert "humor oscuro" in comic
+    assert "humor atrevido" in comic
+    assert "categoría protegida" in comic
 
 
 def test_personality_prompt_rejects_unknown_to_neutral() -> None:
