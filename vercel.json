@@ -1,3 +1,10 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/ready", "destination": "/api/ready" },
+    { "source": "/liveness", "destination": "/api/liveness" },
+    { "source": "/metrics", "destination": "/api/metrics" },
+    { "source": "/v1/:path*", "destination": "/api/v1/:path*" }
+  ]
 }
