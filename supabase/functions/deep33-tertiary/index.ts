@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "https://deep33-backend.onrender.com").replace(/\/+$/, "");
+const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "https://deep33-api.onrender.com").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
