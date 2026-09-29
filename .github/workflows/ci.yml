@@ -334,11 +334,15 @@ jobs:
             echo "${name}_RECOVERY_PASS"
           done
 
-      - name: Verify PRIMARY inference after recovery
+      - name: Verify PRIMARY edge and inference after recovery
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" >/tmp/recovery-diag.json
-          jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/recovery-diag.json
+          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" |
+            jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
+          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" |
+            jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"'
+          echo "RECOVERY_INFERENCE_PASS"
+
 
   rollback_on_failure:
     needs: [backend_unit, production_gate, android_validation, android_e2e, recovery_gate]
