@@ -56,7 +56,7 @@ def test_server_orchestrator_search_fetch_then_normal_gateway() -> None:
         )
     )
     assert data["choices"][0]["message"]["content"] == "WEB PASS"
-    assert len(sources) == 2
+    assert len(sources) == 3
     assert [event[0] for event in events] == ["search", "fetch", "fetch", "gateway"]
 
 
