@@ -12,6 +12,6 @@ enum class VoiceTone(
 
     companion object {
         fun fromKey(value: String?): VoiceTone =
-            entries.firstOrNull { it.key == value?.uppercase() } ?: DEEP
+            entries.firstOrNull { it.key == value?.uppercase() } ?: EMBER
     }
 }
