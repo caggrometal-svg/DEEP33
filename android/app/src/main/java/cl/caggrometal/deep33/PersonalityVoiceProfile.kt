@@ -1,9 +1,8 @@
 package cl.caggrometal.deep33
 
 /**
- * Personality modifier applied on top of the selected VoiceTone.
- * The selected tone remains the primary voice style; personality only nudges
- * pitch and speaking speed so all three tones stay available in every mode.
+ * Personality-specific voice shaping layered over the user's chosen voice tone.
+ * Keep the differences audible but natural; avoid extreme pitch/rate that sounds synthetic.
  */
 data class PersonalityVoiceProfile(
     val personality: Personality,
@@ -12,10 +11,14 @@ data class PersonalityVoiceProfile(
 ) {
     companion object {
         fun forPersonality(personality: Personality): PersonalityVoiceProfile = when (personality) {
-            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 1.03f, 1.04f)
+            // Firmer, slightly lower and quicker delivery.
+            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 0.96f, 1.08f)
+            // Balanced baseline: calm and natural.
             Personality.NEUTRO -> PersonalityVoiceProfile(personality, 1.00f, 1.00f)
-            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.05f, 1.02f)
-            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.96f, 0.96f)
+            // Brighter and more animated, without cartoonish extremes.
+            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.08f, 1.04f)
+            // Lower, slower and more measured, with a restrained mysterious quality.
+            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.93f, 0.92f)
         }
     }
 }
