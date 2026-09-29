@@ -92,6 +92,23 @@ object Deep33Api {
     fun memoryContext(sessionId: String): JSONObject =
         request("GET", "/v1/memory/context", null, sessionId)
 
+    fun syncMemory(
+        sessionId: String,
+        messages: JSONArray,
+        personality: String = "NEUTRO",
+        requestId: String = UUID.randomUUID().toString(),
+    ): JSONObject =
+        request(
+            "POST",
+            "/v1/memory/sync",
+            JSONObject()
+                .put("messages", messages)
+                .put("personality", personality),
+            sessionId,
+            requestId,
+            "memory-sync-" + requestId,
+        )
+
     fun remember(sessionId: String, kind: String, content: String): JSONObject =
         request(
             "POST",

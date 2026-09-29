@@ -98,6 +98,20 @@ class Deep33ConnectivityTest {
         val generatedText = generated.optJSONObject("result")?.optString("text").orEmpty()
         assertTrue("memory generation response: " + generated, generatedText.contains("DEEP33_MEMORY_E2E_OK"))
 
+        val memoryConversation = JSONArray()
+            .put(
+                JSONObject()
+                    .put("role", "user")
+                    .put("content", "Return only this exact token: DEEP33_MEMORY_E2E_OK")
+            )
+            .put(
+                JSONObject()
+                    .put("role", "assistant")
+                    .put("content", generatedText)
+            )
+        val synced = Deep33Api.syncMemory(sessionId, memoryConversation, "NEUTRO")
+        assertTrue("memory sync failed: " + synced, synced.optBoolean("ok", true))
+
         val context = Deep33Api.memoryContext(sessionId)
         val messages = context.optJSONArray("messages") ?: JSONArray()
 
