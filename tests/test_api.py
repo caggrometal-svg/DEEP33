@@ -5,11 +5,6 @@ from backend import main
 client = TestClient(main.app)
 
 
-class UnavailableIdempotencyMemory(FakeMemory):
-    async def idempotency_claim(self, *args, **kwargs) -> dict:
-        raise main.MemoryUnavailableError("memory_http_503")
-
-
 class FakeMemory:
     enabled = True
 
@@ -39,6 +34,11 @@ class FakeMemory:
 
     async def idempotency_fail(self, *args, **kwargs) -> dict:
         return {"ok": True}
+
+
+class UnavailableIdempotencyMemory(FakeMemory):
+    async def idempotency_claim(self, *args, **kwargs) -> dict:
+        raise main.MemoryUnavailableError("memory_http_503")
 
 
 def patch_memory(monkeypatch) -> None:
