@@ -60,6 +60,9 @@ class MainActivity : Activity() {
     private var textToSpeech: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechListening = false
+    private var edgeSwipeTracking = false
+    private var edgeDownX = 0f
+    private var edgeDownY = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,6 +143,25 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).roundToInt()
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                edgeSwipeTracking = event.x <= dp(28)
+                edgeDownX = event.x
+                edgeDownY = event.y
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                if (edgeSwipeTracking && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                    val dx = event.x - edgeDownX
+                    val dy = kotlin.math.abs(event.y - edgeDownY)
+                    if (dx >= dp(72) && dy <= dp(96)) showSidebar()
+                }
+                edgeSwipeTracking = false
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
 
     private fun buildRoot(): View {
         rootFrame = FrameLayout(this).apply {
@@ -225,7 +247,6 @@ class MainActivity : Activity() {
         }
         nav.addView(navButton("CHAT") { showTab(Tab.CHAT) }, weightParams())
         nav.addView(navButton("ESTADO") { showTab(Tab.STATUS) }, weightParams())
-        nav.addView(navButton("CONFIGURACIÓN") { showTab(Tab.SETTINGS) }, weightParams())
         return nav
     }
 
@@ -247,7 +268,7 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(28), dp(14), dp(16))
-            setBackgroundColor(Color.rgb(14, 18, 26))
+            setBackgroundColor(Color.rgb(8, 10, 15))
             elevation = dp(12).toFloat()
         }
 
@@ -272,8 +293,22 @@ class MainActivity : Activity() {
 
         panel.addView(Button(this).apply {
             text = "＋  Nuevo chat"
+            isAllCaps = false
+            setTextColor(Color.rgb(0, 255, 140))
+            setBackground(neonPanel(Color.rgb(18, 28, 27), Color.rgb(0, 255, 140)))
             setOnClickListener {
                 startNewSession()
+                hideSidebar()
+            }
+        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        panel.addView(Button(this).apply {
+            text = "⚙  Configuración"
+            isAllCaps = false
+            setTextColor(Color.rgb(255, 70, 90))
+            setBackground(neonPanel(Color.rgb(30, 18, 22), Color.rgb(255, 70, 90)))
+            setOnClickListener {
+                showTab(Tab.SETTINGS)
                 hideSidebar()
             }
         }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -722,11 +757,11 @@ class MainActivity : Activity() {
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
         saveCurrentSummary()
-        appendBubble("TÚ", text, Color.rgb(30, 38, 50))
+        appendBubble("TÚ", text, Color.rgb(12, 34, 27))
         input.setText("")
         refreshSidebarHistory()
 
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(12, 35, 40))
+        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
         cancelRequested.set(false)
         sendButton.isEnabled = false
         input.isEnabled = false
@@ -831,6 +866,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun neonPanel(fill: Int, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(16).toFloat()
+            setStroke(dp(1), stroke)
+        }
+
     private fun updateConnection(state: ConnectionState) {
         val (text, color) = when (state) {
             ConnectionState.CONNECTING -> "PROCESANDO · DEEP33" to Color.rgb(255, 193, 7)
@@ -866,7 +908,7 @@ class MainActivity : Activity() {
             appendBubble(
                 if (message.role == "user") "TÚ" else "DEEP33",
                 message.content,
-                if (message.role == "user") Color.rgb(30, 38, 50) else Color.rgb(12, 35, 40)
+                if (message.role == "user") Color.rgb(12, 34, 27) else Color.rgb(42, 12, 18)
             )
         }
         chatContainer.post { scrollToBottom() }
@@ -881,7 +923,8 @@ class MainActivity : Activity() {
                 GradientDrawable().apply {
                     setColor(background)
                     cornerRadius = dp(22).toFloat()
-                    if (isAssistant) setStroke(dp(1), Personality.fromKey(store.personality).accent)
+                    val neon = if (isAssistant) Color.rgb(255, 45, 70) else Color.rgb(0, 255, 140)
+                    setStroke(dp(2), neon)
                 }
             )
         }
