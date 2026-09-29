@@ -22,9 +22,9 @@ adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
 echo "=== ENDPOINT PREFLIGHT ==="
-: "${DEEP33_PRIMARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy}"
-: "${DEEP33_SECONDARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary}"
-: "${DEEP33_TERTIARY_URL:=https://deep33-backend.onrender.com}"
+: "${DEEP33_PRIMARY_URL:=https://deep33-backend.onrender.com}"
+: "${DEEP33_SECONDARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy}"
+: "${DEEP33_TERTIARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary}"
 for url in "${DEEP33_PRIMARY_URL}" "${DEEP33_SECONDARY_URL}" "${DEEP33_TERTIARY_URL}"; do
   host="${url#https://}"
   host="${host%%/*}"
