@@ -1063,24 +1063,33 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if DEEP33_WEB_TOOLS_ENABLED and should_force_web(messages):
+        if DEEP33_WEB_TOOLS_ENABLED:
             if web_orchestrator_mode() == "server":
-                data, sources = await server_web_orchestrator.run(
-                    messages,
-                    query=web_query_from_messages(messages),
-                    model=payload["model"],
-                    request_id=request_id,
-                    idempotency_key=idempotency_key,
-                    deadline=deadline,
-                    call_gateway=call_gateway,
-                )
+                if should_force_web(messages):
+                    data, sources = await server_web_orchestrator.run(
+                        messages,
+                        query=web_query_from_messages(messages),
+                        model=payload["model"],
+                        request_id=request_id,
+                        idempotency_key=idempotency_key,
+                        deadline=deadline,
+                        call_gateway=call_gateway,
+                    )
+                else:
+                    data = await call_gateway(
+                        payload,
+                        request_id=request_id,
+                        idempotency_key=idempotency_key,
+                        deadline=deadline,
+                    )
+                    sources = []
             else:
                 data, sources = await run_web_tool_loop(
                     messages,
                     model=payload["model"],
                     request_id=request_id,
                     idempotency_key=idempotency_key,
-                    force_web=True,
+                    force_web=should_force_web(messages),
                     deadline=deadline,
                 )
         else:
