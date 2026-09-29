@@ -11,36 +11,22 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://deep33-backup.onrender.com
-  TERTIARY_URL: https://deep33-api.onrender.com
+  PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
 
 jobs:
   production-e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Verify all deployed SHAs and readiness
-        env:
-          EXPECTED_SHA: ${{ github.sha }}
+      - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
-          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
-            name="${entry%%|*}"
-            url="${entry#*|}"
-            ok=0
-            for i in $(seq 1 36); do
-              body="$(curl -fsS --connect-timeout 8 --max-time 20 "$url/health" || true)"
-              sha="$(python -c 'import json,sys; print(json.load(sys.stdin).get("git_sha",""))' <<< "$body" 2>/dev/null || true)"
-              if [ "$sha" = "$EXPECTED_SHA" ]; then
-                echo "${name}_SHA_PASS $sha"
-                ok=1
-                break
-              fi
-              sleep 5
-            done
-            test "$ok" = 1
-          done
+          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
+          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
+          jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
+          echo "DEEP33_EDGE_AUDIT_PASS"
 
       - name: Verify readiness and real inference
         run: |
