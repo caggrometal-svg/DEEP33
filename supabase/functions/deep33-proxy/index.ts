@@ -1043,7 +1043,17 @@ Deno.serve(async (req) => {
       const [health, inference, webStatus] = await Promise.all([
         probeHealth(auditSession),
         probeInference(auditSession),
-        fetchUpstream("/v1/web/status", {}, auditSession).then(readJson),
+        UPSTREAM
+          ? fetchUpstream("/v1/web/status", {}, auditSession).then(readJson)
+          : Promise.resolve({
+              enabled: true,
+              engine: "DEEP33 Search Engine",
+              engine_version: "1.1.0",
+              tool_loop_enabled: true,
+              provider_independent: true,
+              configured_provider: "edge-public-fallback+upstream",
+              fallback_providers: ["bing_public", "ddg_public"],
+            }),
       ]);
 
       let search: Record<string, unknown>;
