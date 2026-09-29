@@ -20,7 +20,7 @@ class Deep33FailoverTest {
 
         val simulatedPrimaryDown = "https://deep33-primary-down.invalid"
         val secondary = BuildConfig.DEEP33_SECONDARY_URL
-        if (secondary.isBlank()) return
+        assertTrue("Secondary endpoint missing", secondary.isNotBlank())
 
         val response = Deep33Api.generate(
             messages = messages,
@@ -43,7 +43,7 @@ class Deep33FailoverTest {
         val deadPrimary = "https://127.0.0.1:65531"
         val deadSecondary = "https://127.0.0.1:65532"
         val tertiary = BuildConfig.DEEP33_TERTIARY_URL
-        if (tertiary.isBlank()) return
+        assertTrue("Tertiary endpoint missing", tertiary.isNotBlank())
 
         val response = Deep33Api.generate(
             messages = messages,
