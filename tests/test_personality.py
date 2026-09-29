@@ -4,7 +4,7 @@ from backend.main import DEFAULT_PERSONALITY, PERSONALITIES, normalize_personali
 
 
 def test_personality_catalog_has_required_profiles() -> None:
-    assert set(PERSONALITIES) == {"AGRESIVO", "NEUTRO", "CONSPIRANOICO"}
+    assert set(PERSONALITIES) == {"AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO"}
     assert DEFAULT_PERSONALITY == "NEUTRO"
 
 
