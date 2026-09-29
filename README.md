@@ -11,11 +11,11 @@ The current production chain is:
 Android → Internet → DEEP33 Edge Gateway (Supabase) → DEEP33 Backend (Render) → AI Gateway → Model → Android
 
 Current backend nodes:
-- `https://deep33-api.onrender.com`
-- `https://deep33-backup.onrender.com`
-- `https://deep33-backend.onrender.com`
+- Edge primary: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy`
+- Edge secondary: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary`
+- Render fallback: `https://deep33-backend.onrender.com`
 
-The three Render services are configured from this GitHub repository.
+The Render fallback service is configured from this GitHub repository. The normal Android path uses the clean DEEP33 Secondary Supabase project; the historical IAC33-labelled Supabase project is not part of the normal client path.
 
 The backend exposes observable checks instead of a single opaque ONLINE flag.
 
