@@ -9,37 +9,20 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://deep33-backup.onrender.com
-  TERTIARY_URL: https://deep33-api.onrender.com
+  PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
 
 jobs:
   warmup:
     runs-on: ubuntu-latest
     steps:
-      - name: Keep all production nodes warm
+      - name: Keep DEEP33 edge warm
         run: |
           set -euo pipefail
-          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
-            name="${entry%%|*}"
-            url="${entry#*|}"
-            ok=0
-            for i in $(seq 1 18); do
-              if curl -fsS --connect-timeout 8 --max-time 20 "$url/health" >/dev/null &&
-                curl -fsS --connect-timeout 8 --max-time 30 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null &&
-                curl -fsS --connect-timeout 8 --max-time 30 "$url/v1/ai/status" | jq -e '.gateway=="PASS"' >/dev/null; then
-                echo "${name}_WARM_PASS attempt=$i"
-                ok=1
-                break
-              fi
-              sleep 5
-            done
-            if [ "$ok" != 1 ]; then
-              echo "${name}_WARM_FAIL"
-              exit 1
-            fi
-          done
-
+          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS"' >/dev/null
+          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
+          echo "DEEP33_WARM_PASS"
       - name: Warm primary diagnostics
         run: |
           set -euo pipefail
