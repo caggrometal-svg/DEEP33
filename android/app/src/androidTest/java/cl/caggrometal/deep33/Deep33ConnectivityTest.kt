@@ -110,6 +110,32 @@ class Deep33ConnectivityTest {
         }
 
         assertTrue("persisted memory token missing: " + context, found)
+
+        val appContext = androidx.test.platform.app.InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+        val recreatedStore = SessionStore(appContext)
+        recreatedStore.activateSession(sessionId)
+        assertTrue(
+            "session id was not restored after recreation",
+            recreatedStore.sessionId == sessionId
+        )
+
+        val afterRecreation = Deep33Api.memoryContext(recreatedStore.sessionId)
+        val restoredMessages = afterRecreation.optJSONArray("messages") ?: JSONArray()
+        var restored = false
+        for (i in 0 until restoredMessages.length()) {
+            if (restoredMessages.optJSONObject(i)?.optString("content").orEmpty()
+                    .contains("DEEP33_MEMORY_E2E_OK")
+            ) {
+                restored = true
+                break
+            }
+        }
+        assertTrue(
+            "memory was not recoverable after session recreation: " + afterRecreation,
+            restored
+        )
     }
 
 
