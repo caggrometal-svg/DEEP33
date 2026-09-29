@@ -413,7 +413,7 @@ WEB_TRIGGER_TERMS = (
     "comprueba","comprobar","precio","cotización",
 )
 
-MAX_WEB_TOOL_ROUNDS = max(1, min(4, int(os.getenv("DEEP33_WEB_MAX_TOOL_ROUNDS", "4"))))
+MAX_WEB_TOOL_ROUNDS = max(1, min(4, int(os.getenv("DEEP33_WEB_MAX_TOOL_ROUNDS", "2"))))
 
 def should_force_web(messages):
     text_value=" ".join(m.get("content","") for m in messages if m.get("role")=="user").lower()
@@ -487,7 +487,7 @@ def _append_web_system_context(messages):
         cloned.insert(0,{"role":"system","content":WEB_NAVIGATION_PROMPT})
     return cloned
 
-async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_web=False):
+async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_web=False,deadline=None):
     working=_append_web_system_context(messages)
     sources={}
     for round_index in range(MAX_WEB_TOOL_ROUNDS):
@@ -500,6 +500,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
             },
             request_id=request_id,
             idempotency_key=f"{idempotency_key}:web:{round_index}",
+            deadline=deadline,
         )
         message=_choice_message(data)
         tool_calls=_tool_calls_from_message(message)
@@ -512,7 +513,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
             "tool_calls":tool_calls,
         })
 
-        for call in tool_calls:
+        async def execute_call(call):
             call_id=str(call.get("id") or f"deep33-tool-{round_index}")
             function=call.get("function") or {}
             name=str(function.get("name") or "").strip()
@@ -521,7 +522,10 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
                 result=await execute_web_tool(name,args)
             except Exception:
                 result={"ok":False,"error":"WEB_TOOL_ARGUMENTS_INVALID"}
+            return call_id,name,result
 
+        tool_results=await asyncio.gather(*(execute_call(call) for call in tool_calls))
+        for call_id,name,result in tool_results:
             for source in _source_from_result(result):
                 url=str(source.get("url") or "").strip()
                 if url:
@@ -545,6 +549,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
         {"messages":working,"model":model,"tools":WEB_TOOL_DEFINITIONS,"tool_choice":"none"},
         request_id=request_id,
         idempotency_key=f"{idempotency_key}:web:final",
+        deadline=deadline,
     )
     return data,list(sources.values())
 
@@ -778,21 +783,53 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
 
 
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
+    # A provider read-timeout is ambiguous: the upstream may have accepted the
+    # diagnostic request while the HTTP response timed out. Diagnostics are
+    # side-effect free, so retry with a fresh diagnostic request id before
+    # declaring the production model unavailable.
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-    try:
-        data = await asyncio.wait_for(
-            gateway.diagnostic_inference(request_id=request_id, deadline=deadline),
-            timeout=GLOBAL_AI_TIMEOUT,
-        )
-        result = normalized_generation(data, DEFAULT_PERSONALITY)
-        return "PASS", data, result["text"]
-    except GatewayTimeoutError:
-        return "TIMEOUT", None, None
-    except (GatewayHTTPError, GatewayInvalidResponseError, HTTPException):
-        return "FAIL", None, None
-    except Exception as exc:
-        logger.warning("inference_check_failed request_id=%s error=%s", request_id, type(exc).__name__)
-        return "FAIL", None, None
+    last_timeout = False
+
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        diagnostic_id = f"{request_id}-diag-{attempt + 1}"
+        try:
+            data = await asyncio.wait_for(
+                gateway.diagnostic_inference(
+                    request_id=diagnostic_id,
+                    deadline=deadline,
+                ),
+                timeout=remaining,
+            )
+            result = normalized_generation(data, DEFAULT_PERSONALITY)
+            return "PASS", data, result["text"]
+        except GatewayTimeoutError:
+            last_timeout = True
+            logger.warning(
+                "inference_check_timeout request_id=%s diagnostic_id=%s attempt=%s",
+                request_id,
+                diagnostic_id,
+                attempt + 1,
+            )
+            if attempt == 0 and time.monotonic() + 1.0 < deadline:
+                await asyncio.sleep(1.0)
+                continue
+            break
+        except (GatewayHTTPError, GatewayInvalidResponseError, HTTPException):
+            return "FAIL", None, None
+        except Exception as exc:
+            logger.warning(
+                "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
+                request_id,
+                diagnostic_id,
+                type(exc).__name__,
+            )
+            return "FAIL", None, None
+
+    return ("TIMEOUT" if last_timeout else "FAIL"), None, None
 
 
 @app.get("/v1/ai/inference-check")
@@ -865,8 +902,9 @@ async def call_gateway(
     *,
     request_id: str,
     idempotency_key: str,
+    deadline: float | None = None,
 ) -> dict:
-    deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+    deadline = deadline or (time.monotonic() + GLOBAL_AI_TIMEOUT)
     try:
         return await asyncio.wait_for(
             gateway.complete(
@@ -1010,6 +1048,7 @@ async def generate(
         )
 
         started = time.perf_counter()
+        deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
         if DEEP33_WEB_TOOLS_ENABLED:
             data, sources = await run_web_tool_loop(
                 messages,
@@ -1017,12 +1056,14 @@ async def generate(
                 request_id=request_id,
                 idempotency_key=idempotency_key,
                 force_web=should_force_web(messages),
+                deadline=deadline,
             )
         else:
             data = await call_gateway(
                 payload,
                 request_id=request_id,
                 idempotency_key=idempotency_key,
+                deadline=deadline,
             )
             sources = []
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
