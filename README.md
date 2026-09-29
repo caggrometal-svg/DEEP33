@@ -8,14 +8,14 @@ DEEP33 is a new AI product built independently from IAC33, C-33 and Andrew2.0.
 
 The current production chain is:
 
-Normal: Android → Internet → DEEP33 Edge Gateway (Supabase, direct AI) → AI Gateway → Model → Android
-Failover 1: Android → Internet → DEEP33 Edge Gateway (Supabase) → Render FastAPI → AI Gateway → Model → Android
-Failover 2: Android → Internet → Render FastAPI → AI Gateway → Model → Android
+Android → Internet → Render FastAPI (primary) → AI Gateway → Model → Android
+Failover 1: Android → Internet → DEEP33 Edge Gateway (Supabase) → AI Gateway → Model → Android
+Failover 2: Android → Internet → DEEP33 Edge Gateway (Supabase) → Render FastAPI → AI Gateway → Model → Android
 
 Current backend nodes:
-- Edge primary: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy`
-- Edge secondary: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary`
-- Render fallback: `https://deep33-backend.onrender.com`
+- Render primary: `https://deep33-backend.onrender.com`
+- Edge failover 1: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy`
+- Edge failover 2: `https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary`
 
 The Render fallback service is configured from this GitHub repository. The normal Android path uses the clean DEEP33 Secondary Supabase project; the historical IAC33-labelled Supabase project is not part of the normal client path.
 
