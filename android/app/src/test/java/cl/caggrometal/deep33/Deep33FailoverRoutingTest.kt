@@ -16,15 +16,20 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun configuredSecondaryAndTertiaryMustBeDistinct() {
+    fun configuredFailoverEndpointsAreDistinctWhenUsed() {
         val primary = BuildConfig.DEEP33_PRIMARY_URL.trim()
         val secondary = BuildConfig.DEEP33_SECONDARY_URL.trim()
         val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
 
-        if (secondary.isNotBlank()) {
-            assertNotEquals(primary, secondary)
-            if (tertiary.isNotBlank()) assertNotEquals(secondary, tertiary)
+        if (BuildConfig.DEEP33_REQUIRE_REDUNDANCY) {
+            assertTrue("Secondary failover endpoint is required", secondary.isNotBlank())
+            assertTrue("Tertiary failover endpoint is required", tertiary.isNotBlank())
+        } else if (secondary.isBlank() && tertiary.isBlank()) {
+            return
         }
+
+        if (secondary.isNotBlank()) assertNotEquals(primary, secondary)
         if (tertiary.isNotBlank()) assertNotEquals(primary, tertiary)
+        if (secondary.isNotBlank() && tertiary.isNotBlank()) assertNotEquals(secondary, tertiary)
     }
 }
