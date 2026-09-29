@@ -69,10 +69,16 @@ class SessionStore(
         }
 
     var voiceTone: String
-        get() = prefs.getString(KEY_VOICE_TONE, "DEEP") ?: "DEEP"
+        get() = prefs.getString(KEY_VOICE_TONE, "EMBER") ?: "EMBER"
         set(value) {
             prefs.edit().putString(KEY_VOICE_TONE, value).apply()
         }
+
+    fun migrateNaturalVoiceDefault() {
+        if (!prefs.contains(KEY_VOICE_TONE)) {
+            prefs.edit().putString(KEY_VOICE_TONE, "EMBER").apply()
+        }
+    }
 
     fun loadMessages(): List<UiMessage> {
         val raw = prefs.getString(messagesKey(sessionId), null)
