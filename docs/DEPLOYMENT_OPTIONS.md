@@ -6,13 +6,14 @@ Updated: 2026-09-29
 
 The active DEEP33 path is:
 
-Android → Supabase Edge → Render FastAPI → AI Gateway → Model
+Android → Render FastAPI → AI Gateway → Model
+Failover → Supabase Edge → AI Gateway/Render → Model
 
 The Android client is wired to three Edge endpoints. The Edge functions route to three distinct Render backend URLs:
 
-- Primary: `deep33-api` → https://deep33-api.onrender.com
-- Secondary: `deep33-backup` → https://deep33-backup.onrender.com
-- Tertiary: `deep33-backend` → https://deep33-backend.onrender.com
+- Primary: `deep33-backend` → https://deep33-backend.onrender.com
+- Edge failover 1: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+- Edge failover 2: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
 
 All three Render services are connected to `caggrometal-svg/DEEP33` on GitHub, branch `main`, and are currently configured on Render's free plan.
 
