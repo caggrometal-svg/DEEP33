@@ -16,17 +16,19 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun configuredFailoverEndpointsAreDistinctWhenUsed() {
+    fun allFailoverEndpointsAreConfiguredAndDistinct() {
         val primary = BuildConfig.DEEP33_PRIMARY_URL.trim()
         val secondary = BuildConfig.DEEP33_SECONDARY_URL.trim()
         val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
 
-        if (secondary.isBlank() && tertiary.isBlank()) {
-            return
-        }
+        assertTrue("DEEP33 secondary endpoint missing", secondary.isNotBlank())
+        assertTrue("DEEP33 tertiary endpoint missing", tertiary.isNotBlank())
 
-        if (secondary.isNotBlank()) assertNotEquals(primary, secondary)
-        if (tertiary.isNotBlank()) assertNotEquals(primary, tertiary)
-        if (secondary.isNotBlank() && tertiary.isNotBlank()) assertNotEquals(secondary, tertiary)
+        assertNotEquals("Primary/secondary endpoint collision", primary, secondary)
+        assertNotEquals("Primary/tertiary endpoint collision", primary, tertiary)
+        assertNotEquals("Secondary/tertiary endpoint collision", secondary, tertiary)
+
+        assertTrue("Secondary endpoint must be HTTPS", secondary.startsWith("https://"))
+        assertTrue("Tertiary endpoint must be HTTPS", tertiary.startsWith("https://"))
     }
 }

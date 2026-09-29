@@ -15,8 +15,8 @@ on:
 
 env:
   PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
-  SECONDARY_URL: ${{ secrets.DEEP33_SECONDARY_URL }}
-  TERTIARY_URL: ${{ secrets.DEEP33_TERTIARY_URL }}
+  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  TERTIARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
 
 jobs:
   backend_unit:
@@ -77,6 +77,17 @@ jobs:
           test "$PRIMARY_URL" != "$TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
           test "$SECONDARY_URL" != "$TERTIARY_URL" || { echo "SECONDARY_TERTIARY_DUPLICATE"; exit 1; }
           echo "FAILOVER_DIVERSITY_PASS"
+      - name: Verify production endpoint diversity
+        run: |
+          set -euo pipefail
+          test -n "$PRIMARY_URL"
+          test -n "$SECONDARY_URL"
+          test -n "$TERTIARY_URL"
+          test "$PRIMARY_URL" != "$SECONDARY_URL"
+          test "$PRIMARY_URL" != "$TERTIARY_URL"
+          test "$SECONDARY_URL" != "$TERTIARY_URL"
+          echo "FAILOVER_ENDPOINT_DIVERSITY_PASS"
+
       - name: Verify all production nodes readiness
         run: |
           set -euo pipefail
@@ -109,6 +120,16 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Verify PRIMARY memory availability
+        run: |
+          set -euo pipefail
+          SESSION="ci-memory-${{ github.run_id }}"
+          curl -fsS --connect-timeout 8 --max-time 45 \
+            "$PRIMARY_URL/v1/memory/context" \
+            -H "X-DEEP33-Session-Id: $SESSION" |
+            jq -e 'has("messages") and has("memories")'
+          echo "PRIMARY_MEMORY_AVAILABLE_PASS"
 
       - name: Verify PRIMARY real inference
         run: |
