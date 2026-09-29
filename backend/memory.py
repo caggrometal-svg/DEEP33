@@ -31,6 +31,8 @@ class MemoryClient:
             supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
             if supabase_url:
                 configured_url = f"{supabase_url}/functions/v1/deep33-memory"
+        self._explicit_function_url = function_url is not None
+        self._explicit_api_key = api_key is not None
         self.function_url = configured_url
         self.api_key = (
             api_key
@@ -40,8 +42,24 @@ class MemoryClient:
         self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
         self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
 
+    def _refresh_config(self) -> None:
+        if not self._explicit_function_url:
+            configured_url = os.getenv("DEEP33_MEMORY_URL", "").strip().rstrip("/")
+            if not configured_url:
+                supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+                if supabase_url:
+                    configured_url = f"{supabase_url}/functions/v1/deep33-memory"
+            self.function_url = configured_url
+
+        if not self._explicit_api_key:
+            self.api_key = os.getenv(
+                "SUPABASE_SERVICE_ROLE_KEY",
+                os.getenv("SUPABASE_ANON_KEY", ""),
+            ).strip()
+
     @property
     def enabled(self) -> bool:
+        self._refresh_config()
         return bool(self.function_url and self.api_key)
 
     async def _call(
