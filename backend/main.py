@@ -1068,6 +1068,7 @@ async def generate(
     *,
     request_id: str,
     idempotency_key: str,
+    skip_web_tools: bool = False,
 ) -> dict:
     personality = normalize_personality(request.personality)
     client_payload = {
@@ -1122,10 +1123,6 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        skip_web_tools = (
-            http_request.headers.get("x-deep33-skip-web-tools", "").strip().lower()
-            in {"1", "true", "yes", "on"}
-        )
         if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools:
             data, sources = await run_web_tool_loop(
                 messages,
@@ -1222,6 +1219,10 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
         session_id,
         request_id=request_id,
         idempotency_key=idempotency_key,
+        skip_web_tools=(
+            http_request.headers.get("x-deep33-skip-web-tools", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        ),
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
