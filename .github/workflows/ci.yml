@@ -165,6 +165,9 @@ jobs:
           fi
           echo "PRIMARY_HYBRID_STATUS_PASS"
 
+          EDGE_STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/ai/edge-status")"
+          echo "PRIMARY_EDGE_AI_STATUS=$EDGE_STATUS"
+
           EMBEDDING="$(python -c 'import json; print(json.dumps([1.0]+[0.0]*1535))')"
           BODY="$(jq -n --arg q "DEEP33 hybrid verification" --argjson e "$EMBEDDING" '{query:$q,embedding:$e,limit:5,metadata_filter:{}}')"
           SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/search/hybrid" -H "Content-Type: application/json" -H "X-DEEP33-Session-Id: $SESSION" -d "$BODY")"
