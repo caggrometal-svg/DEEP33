@@ -23,7 +23,7 @@ class Deep33ConnectivityTest {
             BuildConfig.DEEP33_SECONDARY_URL,
             BuildConfig.DEEP33_TERTIARY_URL
         )
-        urls.forEach { endpoint ->
+        urls.filter { it.isNotBlank() }.forEach { endpoint ->
             val host = URL(endpoint).host
             val addresses = InetAddress.getAllByName(host)
             assertTrue("DNS resolution failed for " + host, addresses.isNotEmpty())

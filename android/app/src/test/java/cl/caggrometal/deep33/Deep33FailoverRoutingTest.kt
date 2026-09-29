@@ -21,10 +21,7 @@ class Deep33FailoverRoutingTest {
         val secondary = BuildConfig.DEEP33_SECONDARY_URL.trim()
         val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
 
-        if (BuildConfig.DEEP33_REQUIRE_REDUNDANCY) {
-            assertTrue("Secondary failover endpoint is required", secondary.isNotBlank())
-            assertTrue("Tertiary failover endpoint is required", tertiary.isNotBlank())
-        } else if (secondary.isBlank() && tertiary.isBlank()) {
+        if (secondary.isBlank() && tertiary.isBlank()) {
             return
         }
 

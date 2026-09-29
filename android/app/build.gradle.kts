@@ -64,19 +64,14 @@ android {
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
+        ?: ""
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
-
-    val requireRedundancy = System.getenv("DEEP33_REQUIRE_REDUNDANCY")
-        ?.trim()
-        ?.lowercase() == "true"
+        ?: ""
 
     buildTypes.all {
-        buildConfigField("boolean", "DEEP33_REQUIRE_REDUNDANCY", requireRedundancy.toString())
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
