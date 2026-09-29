@@ -22,7 +22,7 @@ adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
 echo "=== HOST DNS PREFLIGHT ==="
-for host in deep33-backend.onrender.com deep33-backup.onrender.com deep33-api.onrender.com; do
+for host in guqevsjbjyapqjjtutza.supabase.co; do
   getent ahosts "$host"
 done
 
