@@ -887,7 +887,7 @@ class MainActivity : Activity() {
         updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
         if (!success || textToSpeech?.isSpeaking != true) {
             setVoiceState(AvatarState.IDLE)
-            if (!voiceModeActive || !store.voiceEnabled) setVoiceModeUi(false)
+            if (!voiceModeActive) setVoiceModeUi(false)
         }
     }
 
