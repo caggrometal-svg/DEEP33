@@ -144,6 +144,9 @@ object Deep33Api {
         isCancelled: () -> Boolean = { false },
         onText: (String) -> Unit
     ): String {
+        val activePersonality = personality.trim().uppercase().let {
+            if (it in setOf("AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO")) it else "NEUTRO"
+        }
         val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
         var lastError: Deep33ApiException? = null
 
@@ -175,6 +178,7 @@ object Deep33Api {
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
+                    connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
 
                     connection.connect()
                     requestBodyStarted = true
@@ -182,7 +186,7 @@ object Deep33Api {
                         it.write(
                             JSONObject()
                                 .put("messages", messages)
-                                .put("personality", personality)
+                                .put("personality", activePersonality)
                                 .toString()
                                 .toByteArray(Charsets.UTF_8)
                         )
