@@ -858,25 +858,27 @@ async function publicWebSearch(query: string) {
     {
       name: "bing_public",
       url: "https://www.bing.com/search?format=rss&q=" + encodeURIComponent(q),
-      userAgent: "DEEP33-EdgeSearch/1.0",
     },
     {
       name: "ddg_public",
       url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
-      userAgent: "DEEP33-EdgeSearch/1.0",
     },
   ];
+
+  const merged = new Map<string, Record<string, string>>();
+  const providerNames: string[] = [];
 
   for (const provider of providers) {
     try {
       const response = await fetch(provider.url, {
         headers: {
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "User-Agent": provider.userAgent,
+          "User-Agent": "DEEP33-EdgeSearch/1.1",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
         redirect: "follow",
       });
       if (!response.ok) continue;
+
       const html = await response.text();
       const results: Array<Record<string, string>> = [];
 
@@ -900,28 +902,62 @@ async function publicWebSearch(query: string) {
       }
 
       if (results.length) {
-        return {
-          ok: true,
-          engine: "DEEP33 Edge Public Search",
-          engine_version: "1.0.0",
-          provider_independent: true,
-          provider: provider.name,
-          results,
-          verification: {
-            level: "public-fallback",
-            distinct_domains: new Set(results.map((item) => new URL(item.url).hostname)).size,
-          },
-        };
+        providerNames.push(provider.name);
+        for (const result of results) {
+          try {
+            const domain = new URL(result.url).hostname;
+            if (!merged.has(result.url)) {
+              merged.set(result.url, {
+                title: String(result.title || result.url).slice(0, 300),
+                url: String(result.url).slice(0, 2000),
+                snippet: String(result.snippet || "").slice(0, 1500),
+                provider: provider.name,
+                domain,
+              });
+            }
+          } catch {
+            // Ignore malformed URLs.
+          }
+        }
       }
     } catch {
-      // Try the next public provider.
+      // Try the next provider.
     }
+  }
+
+  const all = [...merged.values()];
+  const diversified: Array<Record<string, string>> = [];
+  const seenDomains = new Set<string>();
+  for (const result of all) {
+    const domain = result.domain;
+    if (seenDomains.has(domain)) continue;
+    seenDomains.add(domain);
+    diversified.push(result);
+  }
+
+  const fallbackFill = all.filter((result) => !diversified.some((item) => item.url === result.url));
+  const finalResults = [...diversified, ...fallbackFill].slice(0, 8);
+
+  if (finalResults.length) {
+    return {
+      ok: true,
+      engine: "DEEP33 Edge Public Search",
+      engine_version: "1.1.0",
+      provider_independent: providerNames.length > 1,
+      providers: providerNames,
+      results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result),
+      verification: {
+        level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
+        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+      },
+    };
   }
 
   return {
     ok: false,
     error: "PUBLIC_WEB_SEARCH_UNAVAILABLE",
     results: [],
+    providers: providerNames,
   };
 }
 
