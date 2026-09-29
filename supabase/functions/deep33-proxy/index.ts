@@ -1002,6 +1002,18 @@ Deno.serve(async (req) => {
       );
     }
 
+    if (path === "/v1/web/status" && req.method === "GET") {
+      return json({
+        enabled: true,
+        engine: "DEEP33 Search Engine",
+        engine_version: "1.1.0",
+        tool_loop_enabled: true,
+        provider_independent: true,
+        configured_provider: "edge-public-fallback+upstream",
+        fallback_providers: ["bing_public", "ddg_public"],
+      });
+    }
+
     if (path === "/v1/web/search" && req.method === "GET") {
       const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
       const result = await edgeSearch(query, sessionId);
