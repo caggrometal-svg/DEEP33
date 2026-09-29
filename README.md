@@ -8,10 +8,27 @@ DEEP33 is a new AI product built independently from IAC33, C-33 and Andrew2.0.
 
 The current production chain is:
 
-Android → Internet → DEEP33 Edge Gateway (Supabase) → DEEP33 Backend (Blitz Cloud) → AI Gateway → Model → Android
+Android → Internet → DEEP33 Edge Gateway (Supabase) → DEEP33 Backend (Render) → AI Gateway → Model → Android
+
+Current backend nodes:
+- `https://deep33-api.onrender.com`
+- `https://deep33-backup.onrender.com`
+- `https://deep33-backend.onrender.com`
+
+The three Render services are configured from this GitHub repository.
 
 The backend exposes observable checks instead of a single opaque ONLINE flag.
 
+## Free deployment options
+
+DEEP33 is packaged so the FastAPI backend can move between providers without changing the Android contract.
+
+- Render: free web services with automatic deploys from Git; free services have usage and sleep limitations.
+- Koyeb: GitHub-driven deployment and one-click deployment are available; the free instance is limited to one per organization.
+- Northflank: free Developer Sandbox supports two services and GitHub/GitLab/Bitbucket integrations.
+- Deno Deploy: free plan with GitHub deployment support; the current platform is the supported target after the July 20, 2026 retirement of Deno Deploy Classic.
+- Cloudflare Workers: free plan is available, but its 128 MB / 10 ms CPU limits make it better suited as an edge gateway than as a direct FastAPI replacement.
+- Vercel: GitHub auto-deploy is supported and this repository includes a FastAPI adapter.
 ## Initial structure
 
 - android/ — Android client
@@ -32,6 +49,8 @@ The backend exposes observable checks instead of a single opaque ONLINE flag.
 - Android instrumented E2E: implemented
 - No provider credential is stored in the repository or APK.
 
-Canonical generation contract: `POST /v1/ai/generate` (the legacy `/v1/chat` remains as a compatibility alias).\n\nFASE 3 is closed only after the Android E2E job proves:
+Canonical generation contract: `POST /v1/ai/generate` (the legacy `/v1/chat` remains as a compatibility alias).
+
+FASE 3 is closed only after the Android E2E job proves:
 
 Android → Internet → DEEP33 Backend → AI Gateway → Model → Android
