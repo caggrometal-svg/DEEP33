@@ -43,6 +43,32 @@ class SessionStorePersistenceTest {
     }
 
     @Test
+    fun memoryProfileAndPersonalitySurviveStoreRecreation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefsName = "deep33_profile_persistence_test"
+        context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
+
+        try {
+            val firstStore = SessionStore(context, prefsName)
+            val profileId = firstStore.memoryProfileId
+            firstStore.setPersonalityFromUser(Personality.COMICO.key)
+
+            val recreatedStore = SessionStore(context, prefsName)
+            assertEquals(profileId, recreatedStore.memoryProfileId)
+            assertEquals(Personality.COMICO.key, recreatedStore.personality)
+            assertTrue(recreatedStore.hasUserSelectedPersonality)
+        } finally {
+            context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
+    @Test
     fun finalGenerationBoundarySurvivesStoreRecreation() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val prefsName = "deep33_generation_boundary_test"
