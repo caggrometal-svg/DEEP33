@@ -104,6 +104,8 @@ object MarkdownRenderer {
             ""
         )
         value = value.replace(Regex("(?i)https?://[^\\s)\\]>]+"), "")
+        // URLs removed after source-label stripping can leave empty parentheses.
+        value = value.replace(Regex("\\(\\s*\\)"), "")
         value = value.replace(Regex("[ \\t]{2,}"), " ")
         value = value.replace(Regex(" *\\n *\\n *"), "\n\n")
         return value.trim()
