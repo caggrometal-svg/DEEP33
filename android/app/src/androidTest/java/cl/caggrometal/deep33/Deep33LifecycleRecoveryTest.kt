@@ -3,6 +3,8 @@ package cl.caggrometal.deep33
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.ComponentName
+import android.content.pm.ServiceInfo
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
@@ -93,6 +95,23 @@ class Deep33LifecycleRecoveryTest {
             store.clearPendingTurn(pending.requestId)
             scenario.close()
         }
+    }
+
+    @Test
+    fun generationServiceSurvivesTaskRemovalConfiguration() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val info = context.packageManager.getServiceInfo(
+            ComponentName(context, Deep33GenerationService::class.java),
+            0
+        )
+        assertTrue(
+            "Generation service must not stop when the app task is removed",
+            info.flags and ServiceInfo.FLAG_STOP_WITH_TASK == 0
+        )
+        assertTrue(
+            "Generation service must run as a foreground service",
+            info.foregroundServiceType != 0
+        )
     }
 
     @Test
