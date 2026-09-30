@@ -1,7 +1,5 @@
 package cl.caggrometal.deep33
 
-import android.graphics.Color
-
 enum class Personality(
     val key: String,
     val avatar: String,
@@ -11,25 +9,25 @@ enum class Personality(
     AGRESIVO(
         "AGRESIVO",
         "A",
-        Color.rgb(255, 23, 68),
+        0xFFFF1744.toInt(),
         "Directo, impaciente, sarcástico y confrontacional."
     ),
     NEUTRO(
         "NEUTRO",
         "N",
-        Color.rgb(0, 229, 255),
+        0xFF00E5FF.toInt(),
         "Analítico, formal, objetivo y basado en datos."
     ),
     COMICO(
         "COMICO",
         "M",
-        Color.rgb(255, 193, 7),
+        0xFFFFC107.toInt(),
         "Irónico, ingenioso y ligero, sin perder precisión."
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
         "C",
-        Color.rgb(179, 136, 255),
+        0xFFB388FF.toInt(),
         "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis."
     );
 
