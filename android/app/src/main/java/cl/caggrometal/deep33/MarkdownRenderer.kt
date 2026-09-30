@@ -40,6 +40,16 @@ object MarkdownRenderer {
         // is also sanitized immediately before rendering on the Android UI.
         value = value.replace(Regex("(?s)(?:cite|url).*?"), "")
         value = value.replace(Regex("(?is)<a\\b[^>]*>.*?</a>"), "")
+        // Source sections are metadata, not answer content. Remove the heading and
+        // everything after it so multiline source variants cannot leak into the UI.
+        value = value.replace(
+            Regex(
+                "(?is)(?:^|\\n)\\s*(?:#{0,6}\\s*)?" +
+                    "(?:fuentes?|sources?|referencias?|references?|cita|citations?)" +
+                    "\\s*(?:#?\\d+)?\\s*[:\\-–]?\\s*[\\s\\S]*\\z"
+            ),
+            ""
+        )
         // Hide search-provider citation IDs (for example, 【turn0search0】) in visible answers.
         value = value.replace(
             Regex("【\\s*turn\\d+(?:search|news|reddit|fetch|image|product|business)\\d+\\s*】", RegexOption.IGNORE_CASE),
@@ -87,6 +97,7 @@ object MarkdownRenderer {
         )
         // Remove empty URL parentheses left after a source markdown link is stripped.
         value = value.replace(Regex("\\(\\s*\\)"), "")
+        value = value.replace(Regex("(?m)^\\s*[-*]\\s*$"), "")
         // A source heading without a body is still metadata and must not reach the user.
         value = value.replace(
             Regex("(?im)^\\s*(?:fuentes?|sources?|referencias?|references?)\\s*:?\\s*$"),
