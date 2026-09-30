@@ -149,6 +149,7 @@ class MainActivity : Activity() {
     private var personalitySelectionGeneration = 0L
     private var currentTab = Tab.CHAT
     private var wasBackgrounded = false
+    private var lifecycleDestroying = false
     private var activeRequestId: String? = null
     private var activeIdempotencyKey: String? = null
 
@@ -260,6 +261,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        lifecycleDestroying = true
         cancelRequested.set(true)
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
@@ -987,16 +989,34 @@ class MainActivity : Activity() {
                 }
             } catch (e: Deep33ApiException) {
                 runOnUiThread {
-                    updateConnection(ConnectionState.OFFLINE)
-                    if (::diagnosticsView.isInitialized) {
-                        diagnosticsView.text = "OFFLINE\\n" + (e.message ?: "Error de conectividad.")
+                    val pendingGeneration = activeTask?.isDone == false || store.loadPendingTurn() != null
+                    if (pendingGeneration) {
+                        // A connectivity probe can fail while the real generation is still
+                        // recoverable. That is not evidence that the pending AI turn is lost.
+                        updateConnection(ConnectionState.CONNECTING)
+                        if (::diagnosticsView.isInitialized) {
+                            diagnosticsView.text = "PROCESANDO\\nLa solicitud pendiente se conserva mientras se recupera la conexión."
+                        }
+                    } else {
+                        updateConnection(ConnectionState.OFFLINE)
+                        if (::diagnosticsView.isInitialized) {
+                            diagnosticsView.text = "OFFLINE\\n" + (e.message ?: "Error de conectividad.")
+                        }
                     }
                 }
             } catch (_: Exception) {
                 runOnUiThread {
-                    updateConnection(ConnectionState.OFFLINE)
-                    if (::diagnosticsView.isInitialized) {
-                        diagnosticsView.text = "OFFLINE\\nError inesperado de conectividad."
+                    val pendingGeneration = activeTask?.isDone == false || store.loadPendingTurn() != null
+                    if (pendingGeneration) {
+                        updateConnection(ConnectionState.CONNECTING)
+                        if (::diagnosticsView.isInitialized) {
+                            diagnosticsView.text = "PROCESANDO\\nLa solicitud pendiente se conserva mientras se recupera la conexión."
+                        }
+                    } else {
+                        updateConnection(ConnectionState.OFFLINE)
+                        if (::diagnosticsView.isInitialized) {
+                            diagnosticsView.text = "OFFLINE\\nError inesperado de conectividad."
+                        }
                     }
                 }
             }
@@ -1154,6 +1174,11 @@ class MainActivity : Activity() {
                 // intact so a newly created Activity can resume the same turn.
                 if (e.kind != Deep33ApiException.Kind.CANCELLED) {
                     store.clearPendingTurn(requestId)
+                }
+                if (e.kind == Deep33ApiException.Kind.CANCELLED && lifecycleDestroying) {
+                    // Activity destruction is a lifecycle transition, not a user cancellation.
+                    // The durable pending marker remains available for the recreated Activity.
+                    return@submit
                 }
                 runOnUiThread {
                     val bubble = activeBubble
