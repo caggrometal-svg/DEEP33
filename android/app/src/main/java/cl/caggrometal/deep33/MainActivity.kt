@@ -33,6 +33,70 @@ import kotlin.math.roundToInt
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
+private object VoiceConversationPolicy {
+    const val MAX_SPOKEN_SENTENCES = 3
+    const val MAX_SPOKEN_CHARS = 420
+
+    fun compactForSpeech(text: String): String {
+        val cleaned = text
+            .replace(Regex("\\[([^]]+)\\]\\(([^)]+)\\)"), "$1")
+            .replace(Regex("[*_#>]"), "")
+            .replace("`", "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (cleaned.length <= MAX_SPOKEN_CHARS) return cleaned
+
+        val sentences = cleaned
+            .split(Regex("(?<=[.!?])\\s+"))
+            .filter { it.isNotBlank() }
+        val limited = sentences.take(MAX_SPOKEN_SENTENCES).joinToString(" ").trim()
+        val candidate = if (limited.isNotBlank()) limited else cleaned
+        if (candidate.length <= MAX_SPOKEN_CHARS) return candidate
+
+        val cut = candidate
+            .take(MAX_SPOKEN_CHARS)
+            .substringBeforeLast(' ')
+            .trimEnd()
+        return (if (cut.length >= 120) cut else candidate.take(MAX_SPOKEN_CHARS).trimEnd()) + "…"
+    }
+
+    fun normalizeForComparison(value: String): String =
+        java.text.Normalizer
+            .normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+            .replace(Regex("[^a-z0-9ñ\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    fun isStopCommand(value: String): Boolean {
+        val normalized = normalizeForComparison(value)
+        if (normalized.isBlank()) return false
+        val commands = listOf(
+            "para",
+            "detente",
+            "deten",
+            "corta",
+            "basta",
+            "callate",
+            "silencio",
+            "espera",
+            "un segundo",
+            "espera un segundo",
+            "ya basta"
+        )
+        return commands.any {
+            normalized == it || normalized.startsWith("$it ") || normalized.contains(" $it ")
+        }
+    }
+
+    fun looksLikeTtsEcho(partial: String, spoken: String): Boolean {
+        val p = normalizeForComparison(partial)
+        val s = normalizeForComparison(spoken)
+        if (p.length < 3 || s.isBlank()) return false
+        return s.startsWith(p)
+    }
+}
+
 class MainActivity : Activity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
@@ -65,6 +129,12 @@ class MainActivity : Activity() {
     private var textToSpeech: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechListening = false
+    private var bargeInMonitoring = false
+    private var bargeInCandidateSince = 0L
+    private var suppressRecognizerCallbacks = false
+    private var ttsTurnGeneration = 0L
+    private var activeSpeechUtteranceId: String? = null
+    private var activeSpeechText = ""
     private var edgeSwipeTracking = false
     private var edgeDownX = 0f
     private var edgeDownY = 0f
@@ -89,11 +159,19 @@ class MainActivity : Activity() {
         }
         textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                runOnUiThread { setVoiceState(AvatarState.SPEAKING) }
+                if (utteranceId != activeSpeechUtteranceId) return
+                runOnUiThread {
+                    setVoiceState(AvatarState.SPEAKING)
+                    armBargeInMonitoring()
+                }
             }
 
             override fun onDone(utteranceId: String?) {
+                if (utteranceId != activeSpeechUtteranceId) return
                 runOnUiThread {
+                    activeSpeechUtteranceId = null
+                    activeSpeechText = ""
+                    stopBargeInMonitoring()
                     setVoiceState(AvatarState.IDLE)
                     if (voiceModeActive) {
                         setVoiceModeUi(true)
@@ -107,7 +185,11 @@ class MainActivity : Activity() {
             }
 
             override fun onError(utteranceId: String?) {
+                if (utteranceId != activeSpeechUtteranceId) return
                 runOnUiThread {
+                    activeSpeechUtteranceId = null
+                    activeSpeechText = ""
+                    stopBargeInMonitoring()
                     setVoiceState(AvatarState.IDLE)
                     if (!voiceModeActive) {
                         setVoiceModeUi(false)
@@ -149,6 +231,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         cancelRequested.set(true)
         stopVoiceInput()
+        interruptAssistantSpeech(resumeListening = false)
         Deep33Api.cancelActiveStream()
         activeTask?.cancel(true)
         executor.shutdownNow()
@@ -167,7 +250,7 @@ class MainActivity : Activity() {
             return
         }
         if (voiceModeActive) {
-            textToSpeech?.stop()
+            interruptAssistantSpeech(resumeListening = false)
             stopVoiceInput()
             setVoiceState(AvatarState.IDLE)
             setVoiceModeUi(false)
@@ -461,7 +544,13 @@ class MainActivity : Activity() {
                     setStroke(dp(1), Personality.fromKey(store.personality).accent)
                 }
             )
-            setOnClickListener { toggleVoiceInput() }
+            setOnClickListener {
+                if (textToSpeech?.isSpeaking == true) {
+                    interruptAssistantSpeech(resumeListening = voiceModeActive)
+                } else {
+                    toggleVoiceInput()
+                }
+            }
         }
 
         avatarView = VoiceAvatarView(this).apply {
@@ -748,7 +837,7 @@ class MainActivity : Activity() {
         if (activeTask?.isDone == false) cancelGeneration()
         saveCurrentSummary()
         stopVoiceInput()
-        textToSpeech?.stop()
+        interruptAssistantSpeech(resumeListening = false)
         store.resetSession()
         conversation.clear()
         showTab(Tab.CHAT)
@@ -759,7 +848,7 @@ class MainActivity : Activity() {
     private fun openSession(sessionId: String) {
         if (activeTask?.isDone == false) cancelGeneration()
         stopVoiceInput()
-        textToSpeech?.stop()
+        interruptAssistantSpeech(resumeListening = false)
         store.activateSession(sessionId)
         conversation.clear()
         conversation.addAll(store.loadMessages())
@@ -1078,6 +1167,7 @@ class MainActivity : Activity() {
     private fun scheduleNextVoiceTurn(delayMs: Long = 250L) {
         if (!voiceModeActive ||
             speechListening ||
+            bargeInMonitoring ||
             textToSpeech?.isSpeaking == true ||
             activeTask?.isDone == false
         ) return
@@ -1087,12 +1177,89 @@ class MainActivity : Activity() {
             if (voiceModeActive &&
                 voiceModeGeneration == generation &&
                 !speechListening &&
+                !bargeInMonitoring &&
                 textToSpeech?.isSpeaking != true &&
                 activeTask?.isDone != false
             ) {
                 startVoiceInput()
             }
         }, delayMs)
+    }
+
+    private fun armBargeInMonitoring(delayMs: Long = 120L) {
+        if (speechRecognizer == null ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+            activeSpeechUtteranceId == null ||
+            textToSpeech?.isSpeaking != true
+        ) return
+
+        val generation = ttsTurnGeneration
+        window.decorView.postDelayed({
+            if (generation == ttsTurnGeneration &&
+                activeSpeechUtteranceId != null &&
+                textToSpeech?.isSpeaking == true &&
+                !speechListening
+            ) {
+                startBargeInMonitoring()
+            }
+        }, delayMs)
+    }
+
+    private fun startBargeInMonitoring() {
+        if (bargeInMonitoring ||
+            speechRecognizer == null ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+            activeSpeechUtteranceId == null ||
+            textToSpeech?.isSpeaking != true
+        ) return
+
+        bargeInMonitoring = true
+        bargeInCandidateSince = 0L
+        speechListening = true
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-CL")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        speechRecognizer?.startListening(intent)
+    }
+
+    private fun stopBargeInMonitoring() {
+        bargeInMonitoring = false
+        bargeInCandidateSince = 0L
+        speechListening = false
+        speechRecognizer?.cancel()
+    }
+
+    private fun interruptAssistantSpeech(resumeListening: Boolean) {
+        ttsTurnGeneration++
+        activeSpeechUtteranceId = null
+        activeSpeechText = ""
+        bargeInMonitoring = false
+        bargeInCandidateSince = 0L
+        suppressRecognizerCallbacks = true
+        speechListening = false
+        speechRecognizer?.cancel()
+        textToSpeech?.stop()
+
+        setVoiceState(AvatarState.IDLE)
+        if (resumeListening && voiceModeActive) {
+            setVoiceModeUi(true)
+            window.decorView.postDelayed({
+                suppressRecognizerCallbacks = false
+                if (voiceModeActive && activeTask?.isDone != false && textToSpeech?.isSpeaking != true) {
+                    startVoiceInput()
+                }
+            }, 300L)
+        } else {
+            window.decorView.postDelayed({ suppressRecognizerCallbacks = false }, 300L)
+            if (!voiceModeActive) setVoiceModeUi(false)
+        }
     }
 
     private fun speakAssistant(
@@ -1105,15 +1272,18 @@ class MainActivity : Activity() {
             setVoiceState(AvatarState.SPEAKING)
         }
         applyVoiceTone(personality)
-        val speech = text
-            .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1")
-            .replace(Regex("[*_#>]"), "")
-            .replace("\u0060", "")
+
+        val speech = VoiceConversationPolicy.compactForSpeech(text)
+        if (speech.isBlank()) return
+
+        val utteranceId = "deep33-response-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
+        activeSpeechUtteranceId = utteranceId
+        activeSpeechText = speech
         textToSpeech?.speak(
             speech,
             TextToSpeech.QUEUE_FLUSH,
             null,
-            "deep33-response-" + System.currentTimeMillis()
+            utteranceId
         )
     }
 
@@ -1201,12 +1371,13 @@ class MainActivity : Activity() {
     }
 
     private fun toggleVoiceInput() {
-        if (speechListening) {
+        if (speechListening && !bargeInMonitoring) {
             stopVoiceInput()
             return
         }
         if (textToSpeech?.isSpeaking == true) {
-            textToSpeech?.stop()
+            interruptAssistantSpeech(resumeListening = voiceModeActive)
+            return
         }
         startVoiceInput()
     }
@@ -1238,7 +1409,8 @@ class MainActivity : Activity() {
     }
 
     private fun stopVoiceInput() {
-        if (!speechListening) return
+        if (!speechListening && !bargeInMonitoring) return
+        bargeInMonitoring = false
         speechListening = false
         speechRecognizer?.stopListening()
         setVoiceState(AvatarState.IDLE)
@@ -1247,12 +1419,20 @@ class MainActivity : Activity() {
 
     private val recognitionListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            if (suppressRecognizerCallbacks) return
             speechListening = true
-            setVoiceState(AvatarState.LISTENING)
+            if (bargeInMonitoring) {
+                setVoiceState(AvatarState.SPEAKING)
+            } else {
+                setVoiceState(AvatarState.LISTENING)
+            }
         }
 
         override fun onBeginningOfSpeech() {
-            setVoiceState(AvatarState.LISTENING)
+            if (suppressRecognizerCallbacks) return
+            if (!bargeInMonitoring) {
+                setVoiceState(AvatarState.LISTENING)
+            }
         }
 
         override fun onRmsChanged(rmsdB: Float) {
@@ -1264,12 +1444,26 @@ class MainActivity : Activity() {
         override fun onBufferReceived(buffer: ByteArray?) = Unit
 
         override fun onEndOfSpeech() {
+            if (suppressRecognizerCallbacks) return
             speechListening = false
-            setVoiceState(AvatarState.THINKING)
+            if (!bargeInMonitoring) {
+                setVoiceState(AvatarState.THINKING)
+            }
         }
 
         override fun onError(error: Int) {
+            if (suppressRecognizerCallbacks) return
             speechListening = false
+            if (bargeInMonitoring) {
+                bargeInMonitoring = false
+                bargeInCandidateSince = 0L
+                if (textToSpeech?.isSpeaking == true && activeSpeechUtteranceId != null) {
+                    setVoiceState(AvatarState.SPEAKING)
+                    armBargeInMonitoring(250L)
+                }
+                return
+            }
+
             setVoiceState(AvatarState.IDLE)
             if (voiceModeActive) {
                 setVoiceModeUi(true)
@@ -1280,12 +1474,29 @@ class MainActivity : Activity() {
         }
 
         override fun onResults(results: Bundle?) {
+            if (suppressRecognizerCallbacks) return
+
             speechListening = false
             val recognized = results
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 .orEmpty()
                 .trim()
+
+            if (bargeInMonitoring) {
+                bargeInMonitoring = false
+                bargeInCandidateSince = 0L
+                if (recognized.isNotBlank() &&
+                    (VoiceConversationPolicy.isStopCommand(recognized) ||
+                        !VoiceConversationPolicy.looksLikeTtsEcho(recognized, activeSpeechText))
+                ) {
+                    interruptAssistantSpeech(resumeListening = voiceModeActive)
+                } else if (textToSpeech?.isSpeaking == true && activeSpeechUtteranceId != null) {
+                    armBargeInMonitoring(120L)
+                }
+                return
+            }
+
             if (recognized.isNotBlank()) {
                 input.setText(recognized)
                 input.setSelection(input.text.length)
@@ -1301,18 +1512,40 @@ class MainActivity : Activity() {
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
+            if (suppressRecognizerCallbacks) return
+
             val partial = partialResults
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 .orEmpty()
                 .trim()
+
+            if (bargeInMonitoring) {
+                if (partial.isBlank()) return
+
+                val isExplicitStop = VoiceConversationPolicy.isStopCommand(partial)
+                val isLikelyEcho = VoiceConversationPolicy.looksLikeTtsEcho(partial, activeSpeechText)
+                if (isExplicitStop || !isLikelyEcho) {
+                    if (bargeInCandidateSince == 0L) {
+                        bargeInCandidateSince = System.currentTimeMillis()
+                    }
+                    val elapsed = System.currentTimeMillis() - bargeInCandidateSince
+                    if (isExplicitStop || elapsed >= 250L) {
+                        interruptAssistantSpeech(resumeListening = voiceModeActive)
+                    }
+                } else {
+                    bargeInCandidateSince = 0L
+                }
+                return
+            }
+
             if (partial.isNotBlank() && ::input.isInitialized && input.isEnabled) {
                 input.setText(partial)
                 input.setSelection(input.text.length)
             }
         }
 
-        override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
     override fun onRequestPermissionsResult(
