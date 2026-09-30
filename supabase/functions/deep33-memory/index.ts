@@ -288,23 +288,27 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (sessionError) throw sessionError;
 
+      const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
+      const messageSessionIds = memoryProfileId && memoryProfileId !== sessionId
+        ? [sessionId, memoryProfileId]
+        : [sessionId];
       const { data: messages, error: messageError } = await supabase
         .from("deep33_messages")
-        .select("role, content, model, provider, request_id, created_at")
-        .eq("session_id", sessionId)
+        .select("role, content, model, provider, request_id, created_at, session_id")
+        .in("session_id", messageSessionIds)
         .in("role", ["user", "assistant"])
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
-        .limit(50);
+        .limit(100);
       if (messageError) throw messageError;
 
       const { data: memories, error: memoryError } = await supabase
         .from("deep33_memories")
-        .select("id, kind, content, created_at, updated_at")
-        .eq("session_id", sessionId)
+        .select("id, kind, content, created_at, updated_at, session_id")
+        .in("session_id", messageSessionIds)
         .order("updated_at", { ascending: false })
         .order("id", { ascending: false })
-        .limit(20);
+        .limit(40);
       if (memoryError) throw memoryError;
 
       return response({
@@ -316,6 +320,8 @@ Deno.serve(async (req) => {
 
     if (action === "sync") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
+        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
+        const profileSessionId = memoryProfileId || sessionId;
         const sessionPatch: Record<string, unknown> = {
           session_id: sessionId,
           updated_at: new Date().toISOString(),
@@ -337,6 +343,13 @@ Deno.serve(async (req) => {
           .upsert(sessionPatch, { onConflict: "session_id" });
         if (sessionError) throw sessionError;
 
+        if (profileSessionId !== sessionId) {
+          const { error: profileSessionError } = await supabase
+            .from("deep33_sessions")
+            .upsert({ session_id: profileSessionId, updated_at: new Date().toISOString() }, { onConflict: "session_id" });
+          if (profileSessionError) throw profileSessionError;
+        }
+
         const incoming = Array.isArray(body.messages) ? body.messages : [];
         const rows = [];
         for (const message of incoming.slice(-50)) {
@@ -356,16 +369,19 @@ Deno.serve(async (req) => {
         }
 
         if (rows.length) {
+          const profileRows = profileSessionId === sessionId
+            ? rows
+            : rows.map((row) => ({ ...row, session_id: profileSessionId }));
           const { error } = await supabase
             .from("deep33_messages")
-            .upsert(rows, {
+            .upsert([...rows, ...profileRows], {
               onConflict: "session_id,fingerprint",
               ignoreDuplicates: true,
             });
           if (error) throw error;
         }
 
-        return { body: { ok: true, session_id: sessionId, saved: rows.length }, status: 200 };
+        return { body: { ok: true, session_id: sessionId, memory_profile_id: profileSessionId, saved: rows.length }, status: 200 };
       });
     }
 
