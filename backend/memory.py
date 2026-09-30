@@ -159,7 +159,7 @@ class MemoryClient:
             **payload,
         )
 
-    async def remember(self, session_id: str, kind: str, content: str) -> dict:
+    async def remember(self, session_id: str, kind: str, content: str, memory_profile_id: str | None = None) -> dict:
         payload = {"kind": kind, "content": content}
         request_hash = self._request_hash("remember", session_id, payload)
         return await self._call(
@@ -167,6 +167,7 @@ class MemoryClient:
             session_id,
             idempotency_key=f"memory:remember:{request_hash}",
             request_hash=request_hash,
+            memory_profile_id=memory_profile_id,
             **payload,
         )
 
