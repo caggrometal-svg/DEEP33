@@ -69,6 +69,7 @@ class MainActivity : Activity() {
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var personalitySelectionGeneration = 0L
+    private var currentTab = Tab.CHAT
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -161,11 +162,19 @@ class MainActivity : Activity() {
 
     @Deprecated("Use AndroidX OnBackPressedDispatcher when migrating this screen.")
     override fun onBackPressed() {
+        if (sidebar.visibility == View.VISIBLE) {
+            hideSidebar()
+            return
+        }
         if (voiceModeActive) {
             textToSpeech?.stop()
             stopVoiceInput()
             setVoiceState(AvatarState.IDLE)
             setVoiceModeUi(false)
+            return
+        }
+        if (currentTab != Tab.CHAT) {
+            showTab(Tab.CHAT)
             return
         }
         super.onBackPressed()
@@ -428,6 +437,7 @@ class MainActivity : Activity() {
     }
 
     private fun showTab(tab: Tab) {
+        currentTab = tab
         contentFrame.removeAllViews()
         when (tab) {
             Tab.CHAT -> contentFrame.addView(buildChat())
@@ -595,6 +605,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
         }
+
+        box.addView(Button(this).apply {
+            text = "←  VOLVER AL CHAT"
+            isAllCaps = false
+            setTextColor(Color.rgb(255, 70, 90))
+            setBackground(neonPanel(Color.rgb(30, 18, 22), Color.rgb(255, 70, 90)))
+            setOnClickListener { showTab(Tab.CHAT) }
+        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         box.addView(TextView(this).apply {
             text = "Sesión\\n" + store.sessionId
