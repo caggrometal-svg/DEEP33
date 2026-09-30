@@ -1331,7 +1331,7 @@ class MainActivity : Activity() {
     private fun updateConnection(state: ConnectionState) {
         val (text, color) = when (state) {
             ConnectionState.CONNECTING -> "PROCESANDO · DEEP33" to Color.rgb(255, 193, 7)
-            ConnectionState.ONLINE -> "ONLINE · DEEP33" to Color.rgb(0, 255, 140)
+            ConnectionState.ONLINE -> "ONLINE · DEEP33" to Color.rgb(108, 196, 145)
             ConnectionState.OFFLINE -> "OFFLINE · DEEP33" to Color.rgb(255, 80, 80)
         }
         if (::statusView.isInitialized) {
