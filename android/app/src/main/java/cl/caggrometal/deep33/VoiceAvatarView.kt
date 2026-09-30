@@ -42,76 +42,67 @@ class VoiceAvatarView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        phase = (phase + 0.07f) % (2f * PI.toFloat())
 
-        val width = width.toFloat()
-        val height = height.toFloat()
+        phase = (phase + 0.035f) % (2f * PI.toFloat())
+
+        val size = min(width, height).toFloat()
         val centerX = width / 2f
         val centerY = height / 2f
-        val radius = min(width, height) * 0.30f
+        val radius = size * 0.29f
         val accent = personality.accent
 
-        fillPaint.color = 0xFF07070A.toInt()
-        canvas.drawCircle(centerX, centerY, radius, fillPaint)
+        // A synthetic core replaces the old cartoon face. The personality is now
+        // carried by the accent while the geometry stays mature and consistent.
+        fillPaint.color = 0xFF050505.toInt()
+        canvas.drawCircle(centerX, centerY, radius + dp(18f), fillPaint)
 
-        // Subtle dark halo keeps the avatar readable without turning the UI neon.
-        for (ring in 3 downTo 1) {
-            strokePaint.color = withAlpha(accent, 18 + ring * 12)
-            strokePaint.strokeWidth = dp((ring * 2).toFloat())
+        val activity = when (state) {
+            AvatarState.IDLE -> 0.08f
+            AvatarState.LISTENING -> 0.28f + audioLevel * 0.60f
+            AvatarState.THINKING -> 0.34f
+            AvatarState.SPEAKING -> 0.50f + (sin(phase * 2f) * 0.24f + 0.24f)
+        }
+
+        strokePaint.strokeCap = Paint.Cap.ROUND
+
+        for (ring in 1..3) {
+            strokePaint.color = withAlpha(accent, 22 + ring * 12)
+            strokePaint.strokeWidth = dp(1.2f)
             canvas.drawCircle(
                 centerX,
                 centerY,
-                radius + dp((10 + ring * 6).toFloat()),
+                radius + dp((ring * 7).toFloat()) + dp(10f) * activity,
                 strokePaint
             )
         }
 
-        val activity = when (state) {
-            AvatarState.IDLE -> 0.12f
-            AvatarState.LISTENING -> 0.35f + audioLevel * 0.55f
-            AvatarState.THINKING -> 0.30f
-            AvatarState.SPEAKING -> 0.50f + (sin(phase * 2f) * 0.25f + 0.25f)
-        }
-
-        strokePaint.color = accent
-        strokePaint.strokeWidth = 3.5f
-        canvas.drawCircle(
-            centerX,
-            centerY,
-            radius + dp(7f) + dp(5f) * activity,
-            strokePaint
+        val arcRect = RectF(
+            centerX - radius - dp(7f),
+            centerY - radius - dp(7f),
+            centerX + radius + dp(7f),
+            centerY + radius + dp(7f)
         )
+        strokePaint.color = withAlpha(accent, 210)
+        strokePaint.strokeWidth = dp(2.4f)
+        val sweep = 66f + 150f * activity
+        canvas.drawArc(arcRect, -90f + phase * 57f, sweep, false, strokePaint)
+        canvas.drawArc(arcRect, 90f + phase * 57f, sweep * 0.55f, false, strokePaint)
 
-        val eyeY = centerY - radius * 0.16f
-        val eyeOffset = radius * 0.36f
-        fillPaint.color = 0xFFFFFFFF.toInt()
-        canvas.drawCircle(centerX - eyeOffset, eyeY, radius * 0.05f, fillPaint)
-        canvas.drawCircle(centerX + eyeOffset, eyeY, radius * 0.05f, fillPaint)
+        val coreRadius = radius * (0.11f + 0.07f * activity)
+        fillPaint.color = withAlpha(accent, 235)
+        canvas.drawCircle(centerX, centerY, coreRadius, fillPaint)
 
-        val mouthTop = centerY + radius * 0.22f
-        val mouthWidth = radius * (0.46f + 0.22f * activity)
-        val mouthHeight = radius * (0.05f + 0.26f * activity)
-        strokePaint.color = accent
-        strokePaint.strokeWidth = 4f
-        canvas.drawRoundRect(
-            RectF(
-                centerX - mouthWidth,
-                mouthTop,
-                centerX + mouthWidth,
-                mouthTop + mouthHeight
-            ),
-            mouthHeight,
-            mouthHeight,
-            strokePaint
-        )
+        fillPaint.color = 0xFFF0F0F0.toInt()
+        canvas.drawCircle(centerX, centerY, radius * 0.022f, fillPaint)
 
-        if (state == AvatarState.THINKING) {
+        if (state != AvatarState.IDLE) {
             for (index in 0..2) {
-                val angle = phase + index * (2f * PI.toFloat() / 3f)
-                val dotX = centerX + cos(angle) * radius * 0.72f
-                val dotY = centerY + sin(angle) * radius * 0.72f
-                fillPaint.color = accent
-                canvas.drawCircle(dotX, dotY, radius * 0.035f, fillPaint)
+                val angle = phase * 1.5f + index * (2f * PI.toFloat() / 3f)
+                val dotRadius = radius + dp(24f) + dp(5f) * activity
+                val dotX = centerX + cos(angle) * dotRadius
+                val dotY = centerY + sin(angle) * dotRadius
+                fillPaint.color = withAlpha(accent, 100 + index * 35)
+                canvas.drawCircle(dotX, dotY, dp(1.6f + activity * 1.2f), fillPaint)
             }
         }
 
