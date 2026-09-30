@@ -1503,6 +1503,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
     enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     request = resolve_personality_request(request, http_request)
     output = await generate(
         request,
