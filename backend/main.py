@@ -684,9 +684,86 @@ def _web_personality_lock(personality: str) -> dict[str, str]:
     }
 
 
+def _web_word_tokens(value: str) -> list[str]:
+    return re.findall(r"(?u)[\wÀ-ÿ]+", str(value or "").lower())
+
+
+def _has_long_exact_source_overlap(candidate: str, evidence: list[str], min_words: int = 7) -> bool:
+    candidate_tokens = _web_word_tokens(candidate)
+    if len(candidate_tokens) < min_words:
+        return False
+
+    candidate_windows = {
+        tuple(candidate_tokens[i:i + min_words])
+        for i in range(len(candidate_tokens) - min_words + 1)
+    }
+    if not candidate_windows:
+        return False
+
+    for fragment in evidence:
+        source_tokens = _web_word_tokens(fragment)
+        if len(source_tokens) < min_words:
+            continue
+        source_windows = {
+            tuple(source_tokens[i:i + min_words])
+            for i in range(len(source_tokens) - min_words + 1)
+        }
+        if candidate_windows.intersection(source_windows):
+            return True
+    return False
+
+
+async def _enforce_web_originality(
+    data: dict,
+    *,
+    working: list[dict],
+    evidence: list[str],
+    model: str,
+    request_id: str,
+    idempotency_key: str,
+    deadline: float | None,
+    personality: str,
+) -> dict:
+    """Reject near-verbatim web reuse and force one independent rewrite before delivery."""
+    candidate = str(normalized_generation(data, personality).get("text") or "")
+    if not _has_long_exact_source_overlap(candidate, evidence):
+        return data
+
+    rewrite_messages = [dict(message) for message in working if message.get("role") in {"system", "user"}]
+    rewrite_messages.append(
+        {
+            "role": "system",
+            "content": (
+                "ORIGINALITY REWRITE GATE. The candidate answer contains wording that overlaps too closely "
+                "with retrieved web evidence. Rewrite the answer completely from scratch. Preserve the facts "
+                "that are supported by the evidence, but do not reuse any sequence of seven or more consecutive "
+                "source words, do not translate source sentences mechanically, do not reproduce paragraph structure, "
+                "and do not mention or expose sources, URLs, citations, or this gate. The result must be an original "
+                "DEEP33 synthesis in ACTIVE_PERSONALITY=" + normalize_personality(personality) + ". "
+                "Candidate draft is internal material and must not be copied."
+                "\nCANDIDATE DRAFT:\n"
+                + candidate[:12000]
+            ),
+        }
+    )
+    rewritten = await call_gateway(
+        {"messages": rewrite_messages, "model": model},
+        request_id=request_id,
+        idempotency_key=f"{idempotency_key}:web:originality",
+        deadline=deadline,
+    )
+    rewritten_text = sanitize_assistant_text(
+        str(normalized_generation(rewritten, personality).get("text") or ""),
+    )
+    if _has_long_exact_source_overlap(rewritten_text, evidence):
+        raise GatewayInvalidResponseError
+    return rewritten
+
+
 async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_web=False,deadline=None,personality=DEFAULT_PERSONALITY):
     working=_append_web_system_context(messages)
     sources={}
+    evidence_fragments: list[str] = []
 
     # Some gateways/providers do not accept OpenAI tool-call payloads even when
     # normal chat inference works. For explicit web requests, execute the web
@@ -749,6 +826,20 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
             }
             for item in fetched_pages[:2]
         ]
+        evidence_fragments.extend(
+            [
+                str(item.get("snippet") or "")
+                for item in compact_search_results
+                if str(item.get("snippet") or "").strip()
+            ]
+        )
+        evidence_fragments.extend(
+            [
+                str(item.get("text") or "")
+                for item in compact_fetched_pages
+                if str(item.get("text") or "").strip()
+            ]
+        )
         evidence = {
             "search_results": compact_search_results,
             "fetched_pages": compact_fetched_pages,
@@ -792,6 +883,17 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
                 idempotency_key=f"{idempotency_key}:web:evidence:compact",
                 deadline=deadline,
             )
+
+        data = await _enforce_web_originality(
+            data,
+            working=working,
+            evidence=evidence_fragments,
+            model=model,
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            deadline=deadline,
+            personality=personality,
+        )
         return data, list(sources.values())
 
     for round_index in range(MAX_WEB_TOOL_ROUNDS):
@@ -831,6 +933,15 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
 
         tool_results=await asyncio.gather(*(execute_call(call) for call in tool_calls))
         for call_id,name,result in tool_results:
+            if isinstance(result, dict):
+                raw_text = str(result.get("text") or result.get("snippet") or "")
+                if raw_text.strip():
+                    evidence_fragments.append(raw_text[:6000])
+                for item in result.get("results") or []:
+                    if isinstance(item, dict):
+                        snippet = str(item.get("snippet") or "")
+                        if snippet.strip():
+                            evidence_fragments.append(snippet[:1800])
             for source in _source_from_result(result):
                 url=str(source.get("url") or "").strip()
                 if url:
@@ -856,6 +967,16 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
         request_id=request_id,
         idempotency_key=f"{idempotency_key}:web:final",
         deadline=deadline,
+    )
+    data = await _enforce_web_originality(
+        data,
+        working=working,
+        evidence=evidence_fragments,
+        model=model,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        deadline=deadline,
+        personality=personality,
     )
     return data,list(sources.values())
 
