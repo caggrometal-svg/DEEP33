@@ -301,12 +301,22 @@ def extract_context_system_message(data: dict) -> str | None:
     ]
 
     if isinstance(session, dict):
-        personality = str(session.get("personality", "")).strip()
         preferences = session.get("preferences")
-        if personality:
-            parts.append(f"Personality preference: {personality}.")
         if isinstance(preferences, dict) and preferences:
-            parts.append(f"User preferences: {preferences!r}.")
+            # Personality is deliberately excluded here. The active personality is
+            # supplied by the current request and must be the sole style authority.
+            stable_preferences = {
+                key: value
+                for key, value in preferences.items()
+                if str(key).strip().lower() not in {
+                    "personality",
+                    "personality_mode",
+                    "persona",
+                    "mode",
+                }
+            }
+            if stable_preferences:
+                parts.append(f"User preferences: {stable_preferences!r}.")
 
     memory_items: list[str] = []
     if isinstance(memories, list):
