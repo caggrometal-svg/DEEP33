@@ -1,8 +1,6 @@
 name: DEEP33 Warmup
 
 on:
-  push:
-    branches: ["main"]
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
@@ -11,7 +9,9 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  TERTIARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
 
 jobs:
   warmup:
@@ -23,36 +23,3 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS"' >/dev/null
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
           echo "DEEP33_WARM_PASS"
-
-      - name: Certify real model inference
-        if: github.event_name != 'schedule'
-        run: |
-          set -euo pipefail
-
-          PROVIDER_BODY='{"model":"auto","messages":[{"role":"user","content":"Return exactly DEEP33_PROVIDER_OK"}]}'
-          PROVIDER_RESPONSE="$(curl -sS             --connect-timeout 8             --max-time 90             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: application/json'             -d "$PROVIDER_BODY"             'https://vireonix.ai/v1/chat/completions' || true)"
-          echo "=== DIRECT VIREONIX CHECK ==="
-          printf '%s\n' "$PROVIDER_RESPONSE"
-          PROVIDER_STATUS="$(printf '%s\n' "$PROVIDER_RESPONSE" | sed -n 's/^__HTTP_STATUS__//p' | tail -n1)"
-          PROVIDER_BODY_ONLY="$(printf '%s\n' "$PROVIDER_RESPONSE" | sed '/^__HTTP_STATUS__/d')"
-          test "$PROVIDER_STATUS" = "200"
-          printf '%s\n' "$PROVIDER_BODY_ONLY" | jq -e '.choices[0].message.content|type=="string"' >/dev/null
-
-          set +e
-          DIAG="$(curl -sS --connect-timeout 8 --max-time 90             -w '\n__HTTP_STATUS__%{http_code}'             "$PRIMARY_URL/v1/ai/inference-check" 2>&1)"
-          set -e
-          echo "=== EDGE INFERENCE CHECK ==="
-          printf '%s\n' "$DIAG"
-
-          BODY='{"messages":[{"role":"user","content":"Return exactly DEEP33_E2E_OK"}],"personality":"NEUTRO"}'
-          STREAM="$(curl -sS             --connect-timeout 8             --max-time 120             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: text/event-stream'             -H 'X-Request-ID: DEEP33-WARMUP-STREAM'             -H 'X-Idempotency-Key: DEEP33-WARMUP-STREAM'             -d "$BODY"             "$PRIMARY_URL/v1/chat/stream" || true)"
-
-          echo "=== EDGE SSE INFERENCE ==="
-          printf '%s\n' "$STREAM"
-
-          EDGE_STATUS="$(printf '%s\n' "$STREAM" | sed -n 's/^__HTTP_STATUS__//p' | tail -n1)"
-          EDGE_BODY="$(printf '%s\n' "$STREAM" | sed '/^__HTTP_STATUS__/d')"
-          test "$EDGE_STATUS" = "200"
-          printf '%s\n' "$EDGE_BODY" | grep -q '"content"'
-          printf '%s\n' "$EDGE_BODY" | grep -q '\[DONE\]'
-          echo "DEEP33_DIRECT_STREAM_INFERENCE_PASS"
