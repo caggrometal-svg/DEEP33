@@ -188,6 +188,7 @@ class MainActivity : Activity() {
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     textToSpeech?.setLanguage(Locale("es"))
                 }
+                selectNaturalSpanishVoice()
                 applyVoiceTone()
             }
         }
@@ -1357,6 +1358,24 @@ class MainActivity : Activity() {
         if (::statusView.isInitialized) {
             statusView.text = text
             statusView.setTextColor(color)
+        }
+    }
+
+    private fun selectNaturalSpanishVoice() {
+        val tts = textToSpeech ?: return
+        val spanishVoices = tts.voices.orEmpty()
+            .filter { it.locale.language.equals("es", ignoreCase = true) }
+
+        val preferred = spanishVoices
+            .filter { !it.isNetworkConnectionRequired }
+            .maxByOrNull { voice ->
+                val chileBonus = if (voice.locale.country.equals("CL", ignoreCase = true)) 10_000 else 0
+                chileBonus + voice.quality
+            }
+            ?: spanishVoices.maxByOrNull { it.quality }
+
+        if (preferred != null) {
+            runCatching { tts.voice = preferred }
         }
     }
 

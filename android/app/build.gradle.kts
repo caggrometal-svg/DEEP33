@@ -64,7 +64,7 @@ android {
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-tertiary"
+        ?: ""
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()

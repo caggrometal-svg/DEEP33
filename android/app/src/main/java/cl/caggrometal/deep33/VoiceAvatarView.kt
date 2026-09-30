@@ -43,7 +43,13 @@ class VoiceAvatarView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        phase = (phase + 0.035f) % (2f * PI.toFloat())
+        val phaseSpeed = when (personality) {
+            Personality.AGRESIVO -> 0.052f
+            Personality.NEUTRO -> 0.035f
+            Personality.COMICO -> 0.044f
+            Personality.CONSPIRANOICO -> 0.021f
+        }
+        phase = (phase + phaseSpeed) % (2f * PI.toFloat())
 
         val size = min(width, height).toFloat()
         val centerX = width / 2f
@@ -65,28 +71,12 @@ class VoiceAvatarView @JvmOverloads constructor(
 
         strokePaint.strokeCap = Paint.Cap.ROUND
 
-        for (ring in 1..3) {
-            strokePaint.color = withAlpha(accent, 22 + ring * 12)
-            strokePaint.strokeWidth = dp(1.2f)
-            canvas.drawCircle(
-                centerX,
-                centerY,
-                radius + dp((ring * 7).toFloat()) + dp(10f) * activity,
-                strokePaint
-            )
+        when (personality) {
+            Personality.AGRESIVO -> drawAggressive(canvas, centerX, centerY, radius, accent, activity)
+            Personality.NEUTRO -> drawNeutral(canvas, centerX, centerY, radius, accent, activity)
+            Personality.COMICO -> drawComic(canvas, centerX, centerY, radius, accent, activity)
+            Personality.CONSPIRANOICO -> drawConspiranoic(canvas, centerX, centerY, radius, accent, activity)
         }
-
-        val arcRect = RectF(
-            centerX - radius - dp(7f),
-            centerY - radius - dp(7f),
-            centerX + radius + dp(7f),
-            centerY + radius + dp(7f)
-        )
-        strokePaint.color = withAlpha(accent, 210)
-        strokePaint.strokeWidth = dp(2.4f)
-        val sweep = 66f + 150f * activity
-        canvas.drawArc(arcRect, -90f + phase * 57f, sweep, false, strokePaint)
-        canvas.drawArc(arcRect, 90f + phase * 57f, sweep * 0.55f, false, strokePaint)
 
         val coreRadius = radius * (0.11f + 0.07f * activity)
         fillPaint.color = withAlpha(accent, 235)
@@ -96,17 +86,80 @@ class VoiceAvatarView @JvmOverloads constructor(
         canvas.drawCircle(centerX, centerY, radius * 0.022f, fillPaint)
 
         if (state != AvatarState.IDLE) {
-            for (index in 0..2) {
-                val angle = phase * 1.5f + index * (2f * PI.toFloat() / 3f)
-                val dotRadius = radius + dp(24f) + dp(5f) * activity
+            val count = when (personality) {
+                Personality.AGRESIVO -> 2
+                Personality.CONSPIRANOICO -> 4
+                else -> 3
+            }
+            repeat(count) { index ->
+                val angle = phase * 1.5f + index * (2f * PI.toFloat() / count.toFloat())
+                val offset = if (personality == Personality.COMICO && index == 0) dp(6f) else 0f
+                val dotRadius = radius + dp(24f) + dp(5f) * activity + offset
                 val dotX = centerX + cos(angle) * dotRadius
                 val dotY = centerY + sin(angle) * dotRadius
-                fillPaint.color = withAlpha(accent, 100 + index * 35)
+                fillPaint.color = withAlpha(accent, (100 + index * 35).coerceAtMost(230))
                 canvas.drawCircle(dotX, dotY, dp(1.6f + activity * 1.2f), fillPaint)
             }
         }
 
         postInvalidateDelayed(33L)
+    }
+
+    private fun drawNeutral(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int, activity: Float) {
+        for (ring in 1..3) {
+            strokePaint.color = withAlpha(accent, 22 + ring * 12)
+            strokePaint.strokeWidth = dp(1.2f)
+            canvas.drawCircle(cx, cy, radius + dp(ring * 7f) + dp(10f) * activity, strokePaint)
+        }
+        drawArcs(canvas, cx, cy, radius, accent, activity, 66f, 150f)
+    }
+
+    private fun drawAggressive(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int, activity: Float) {
+        strokePaint.strokeWidth = dp(1.4f)
+        for (ring in 1..3) {
+            strokePaint.color = withAlpha(accent, 28 + ring * 14)
+            val inset = dp(ring * 7f) + dp(7f) * activity
+            val rect = RectF(cx - radius - inset, cy - radius * 0.82f, cx + radius + inset, cy + radius * 0.82f)
+            canvas.drawRoundRect(rect, dp(10f), dp(10f), strokePaint)
+        }
+        drawArcs(canvas, cx, cy, radius, accent, activity, 48f, 122f)
+        strokePaint.color = withAlpha(accent, 185)
+        strokePaint.strokeWidth = dp(2.1f)
+        canvas.drawLine(cx - radius * 0.58f, cy, cx + radius * 0.58f, cy, strokePaint)
+    }
+
+    private fun drawComic(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int, activity: Float) {
+        for (ring in 1..3) {
+            strokePaint.color = withAlpha(accent, 22 + ring * 12)
+            strokePaint.strokeWidth = dp(1.2f)
+            val wobble = sin(phase * 1.4f + ring) * dp(3f) * activity
+            val rect = RectF(cx - radius - dp(ring * 7f), cy - radius * 0.90f - wobble, cx + radius + dp(ring * 7f), cy + radius * 0.90f + wobble)
+            canvas.drawOval(rect, strokePaint)
+        }
+        drawArcs(canvas, cx, cy, radius, accent, activity, 78f, 175f)
+    }
+
+    private fun drawConspiranoic(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int, activity: Float) {
+        strokePaint.color = withAlpha(accent, 34)
+        strokePaint.strokeWidth = dp(1.1f)
+        for (ring in 1..3) {
+            val offset = dp(ring * 6f) + dp(8f) * activity
+            canvas.drawCircle(cx, cy, radius + offset, strokePaint)
+        }
+        drawArcs(canvas, cx, cy, radius, accent, activity, 34f, 210f)
+        strokePaint.color = withAlpha(accent, 145)
+        strokePaint.strokeWidth = dp(1.1f)
+        canvas.drawLine(cx - radius * 0.92f, cy, cx + radius * 0.92f, cy, strokePaint)
+        canvas.drawLine(cx, cy - radius * 0.92f, cx, cy + radius * 0.92f, strokePaint)
+    }
+
+    private fun drawArcs(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int, activity: Float, baseSweep: Float, multiplier: Float) {
+        val arcRect = RectF(cx - radius - dp(7f), cy - radius - dp(7f), cx + radius + dp(7f), cy + radius + dp(7f))
+        strokePaint.color = withAlpha(accent, 210)
+        strokePaint.strokeWidth = dp(2.4f)
+        val sweep = baseSweep + multiplier * activity
+        canvas.drawArc(arcRect, -90f + phase * 57f, sweep, false, strokePaint)
+        canvas.drawArc(arcRect, 90f + phase * 57f, sweep * 0.55f, false, strokePaint)
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int =
