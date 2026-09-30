@@ -368,12 +368,18 @@ object Deep33Api {
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
-                    connection.connect()
 
                     if (body != null) {
                         requestBodyStarted = true
                         connection.doOutput = true
                         connection.setRequestProperty("Content-Type", "application/json")
+                    }
+
+                    // Configure the request completely before connecting. Android's
+                    // HttpsURLConnection rejects doOutput changes after connect().
+                    connection.connect()
+
+                    if (body != null) {
                         connection.outputStream.use {
                             it.write(body.toString().toByteArray(Charsets.UTF_8))
                         }
