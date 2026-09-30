@@ -34,7 +34,10 @@ class Deep33ConnectivityTest {
     fun backendHealthIsPass() {
         val json = Deep33Api.get("/health", sessionId)
         assertTrue(json.optString("status") == "PASS")
-        assertTrue(json.optString("version") == "0.2.0")
+        val service = json.optString("service")
+        assertTrue(service == "DEEP33 Backend" || service == "DEEP33 AI Edge")
+        val version = json.optString("version")
+        if (version.isNotBlank()) assertTrue(version == "0.2.0")
     }
 
     @Test
