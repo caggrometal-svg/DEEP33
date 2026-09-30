@@ -1440,7 +1440,7 @@ class MainActivity : Activity() {
             appendBubble(
                 if (message.role == "user") "TÚ" else "DEEP33",
                 message.content,
-                if (message.role == "user") Color.rgb(12, 34, 27) else Color.rgb(42, 12, 18)
+                if (message.role == "user") Color.rgb(14, 14, 17) else Color.rgb(18, 7, 11)
             )
         }
         chatContainer.post { scrollToBottom() }
