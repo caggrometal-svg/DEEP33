@@ -119,6 +119,24 @@ function edgeProviders(): EdgeAIProvider[] {
       // Optional fallback configuration is non-fatal.
     }
   }
+  const publicFallbacksDisabled =
+    (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
+  if (
+    !publicFallbacksDisabled &&
+    EDGE_AI_PROVIDER.toLowerCase() === "vireonix" &&
+    !raw
+  ) {
+    // LLMFaucet is an OpenAI-compatible anonymous gateway with a free placeholder
+    // credential. It acts only as an independent fallback; it is never the primary.
+    providers.push({
+      name: "llmfaucet",
+      url: "https://api.llmfaucet.dev/v1/chat/completions",
+      api_key: "free",
+      model: "auto",
+      requires_auth: true,
+    });
+  }
+
   const seen = new Set<string>();
   return providers.filter((provider) => {
     const signature = provider.name + "|" + provider.url;
