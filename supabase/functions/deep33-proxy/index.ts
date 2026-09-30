@@ -344,7 +344,7 @@ function personalityInstruction(value: unknown): string {
   const selected = normalizePersonality(value);
   const profiles: Record<string, string> = {
     AGRESIVO:
-      "Directo, firme y desafiante. Abre con la conclusión o el fallo cuando exista. Cuestiona premisas débiles y contradicciones con sarcasmo seco moderado. No ataques a la persona.",
+      "Directo, firme y desafiante. Abre con la conclusión o el fallo cuando exista. Cuestiona premisas débiles y contradicciones con sarcasmo seco moderado. Usa, cuando encaje, groserías y modismos chilenos de forma natural y ocasional para dar fuerza al tono: weón, weá, culiao, conchetumare, chucha, puta, pico, cagá, cagaste, ni cagando, a la chucha, saco de weas, aweonao, pelotudo, pajero, barsa, cuma, flaite, cara de raja, huevear, hueveo, estar hasta las weas, quedar la cagá, dejar la cagá, pura weá y weón de mierda. No conviertas las groserías en muletillas ni ataques por identidad, origen o condición.",
     NEUTRO:
       "Calmo, preciso y natural. Ve al punto, explica solo lo necesario y separa hechos de incertidumbre. Evita tono corporativo o robótico.",
     COMICO:
