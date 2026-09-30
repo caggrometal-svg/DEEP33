@@ -3,7 +3,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
 // while the direct Edge gateway becomes the canonical runtime.
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
+const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
+// The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
+// an old environment variable still exists in the project.
+const UPSTREAM = /^https?:\/\//i.test(RAW_UPSTREAM) &&
+    !/(render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza)/i.test(RAW_UPSTREAM)
+  ? RAW_UPSTREAM
+  : "";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -148,49 +154,152 @@ async function callEdgeAI(
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
 
   let lastError = "EDGE_AI_GATEWAY_UNAVAILABLE";
-  for (const provider of providers) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-    try {
-      const providerPayload = { ...payload, stream: false };
-      delete providerPayload.personality;
-      delete providerPayload.web_navigation;
-      delete providerPayload.sources;
 
-      const response = await fetch(provider.url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "Authorization": "Bearer " + provider.api_key,
-          "X-Request-ID": requestId,
-        },
-        body: JSON.stringify({
-          ...providerPayload,
-          ...(provider.model ? { model: provider.model } : {}),
-        }),
-        signal: controller.signal,
-      });
-      const body = await readJson(response);
-      if (response.ok) {
-        const text = extractProviderText(body);
-        if (text.trim()) {
-          return { body, provider: provider.name, model: provider.model || String(body.model || "") };
+  for (const provider of providers) {
+    const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
+    if (Date.now() < circuit.openUntil) {
+      console.warn(JSON.stringify({
+        event: "edge_ai_provider_circuit_open",
+        provider: provider.name,
+        model: provider.model,
+        request_id: requestId,
+      }));
+      continue;
+    }
+
+    for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
+      const started = performance.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+
+      try {
+        const providerPayload = { ...payload, stream: false };
+        delete providerPayload.personality;
+        delete providerPayload.web_navigation;
+        delete providerPayload.sources;
+
+        const response = await fetch(provider.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": "Bearer " + provider.api_key,
+            "X-Request-ID": requestId,
+          },
+          body: JSON.stringify({
+            ...providerPayload,
+            ...(provider.model ? { model: provider.model } : {}),
+          }),
+          signal: controller.signal,
+        });
+
+        const bodyText = await response.text();
+        let body: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(bodyText);
+          if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+        } catch {
+          body = {};
         }
-        lastError = provider.name + "_EMPTY_RESPONSE";
-      } else {
-        lastError = provider.name + "_HTTP_" + response.status;
-        if (response.status >= 500) break;
+
+        const elapsedMs = Math.round(performance.now() - started);
+        console.log(JSON.stringify({
+          event: "edge_ai_provider_response",
+          provider: provider.name,
+          model: provider.model,
+          status: response.status,
+          elapsed_ms: elapsedMs,
+          attempt: attempt + 1,
+          request_id: requestId,
+        }));
+
+        if (response.ok) {
+          const text = extractProviderText(body);
+          if (text.trim()) {
+            edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+            return {
+              body,
+              provider: provider.name,
+              model: provider.model || String(body.model || ""),
+            };
+          }
+          lastError = provider.name + "_EMPTY_RESPONSE";
+        } else {
+          const providerError =
+            typeof body.error === "object" && body.error
+              ? String((body.error as Record<string, unknown>).message ?? (body.error as Record<string, unknown>).code ?? "")
+              : "";
+          lastError =
+            provider.name +
+            "_HTTP_" +
+            response.status +
+            (providerError ? "_" + providerError.slice(0, 80).replace(/\s+/g, "_") : "");
+        }
+
+        const retryable =
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status === 500 ||
+          response.status === 502 ||
+          response.status === 503 ||
+          response.status === 504;
+
+        if (retryable && attempt < EDGE_AI_RETRY_COUNT) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+          );
+          continue;
+        }
+
+        if (response.status >= 500 || response.status === 429) {
+          circuit.failures += 1;
+          if (circuit.failures >= EDGE_CIRCUIT_THRESHOLD) {
+            circuit.openUntil = Date.now() + EDGE_CIRCUIT_COOLDOWN_MS;
+          }
+          edgeCircuit.set(provider.name, circuit);
+          // Never let a failed provider block an independently configured fallback.
+          break;
+        }
+
+        edgeCircuit.set(provider.name, circuit);
+        break;
+      } catch (error) {
+        const elapsedMs = Math.round(performance.now() - started);
+        const message = error instanceof Error ? error.message : String(error);
+        lastError = provider.name + "_" + message;
+        console.error(JSON.stringify({
+          event: "edge_ai_provider_error",
+          provider: provider.name,
+          model: provider.model,
+          elapsed_ms: elapsedMs,
+          attempt: attempt + 1,
+          request_id: requestId,
+          error: message.slice(0, 200),
+        }));
+
+        if (attempt < EDGE_AI_RETRY_COUNT) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+          );
+          continue;
+        }
+
+        circuit.failures += 1;
+        if (circuit.failures >= EDGE_CIRCUIT_THRESHOLD) {
+          circuit.openUntil = Date.now() + EDGE_CIRCUIT_COOLDOWN_MS;
+        }
+        edgeCircuit.set(provider.name, circuit);
+        break;
+      } finally {
+        clearTimeout(timer);
       }
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    } finally {
-      clearTimeout(timer);
     }
   }
+
   throw new Error(lastError);
 }
 
+function normalizePersonality
 function normalizePersonality(value: unknown): string {
   const selected = String(value || "NEUTRO").trim().toUpperCase();
   return ["AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO"].includes(selected) ? selected : "NEUTRO";
@@ -761,8 +870,9 @@ async function probeHealth(sessionId: string) {
       status: "PASS",
       body: {
         status: "PASS",
-        service: "DEEP33 Backend",
+        service: "DEEP33 AI Edge",
         runtime: "supabase-edge",
+        canonical_runtime: "edge-direct",
         timestamp: new Date().toISOString(),
       },
     };
@@ -784,67 +894,58 @@ async function probeHealth(sessionId: string) {
   }
 }
 
+async function probeInference
 async function probeInference(sessionId: string) {
-  if (edgeAIConfigured()) {
-    const requestId = crypto.randomUUID();
-    try {
-      const response = await callEdgeAI({
-        messages: [
-          { role: "system", content: "Return the requested diagnostic token exactly." },
-          { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
-        ],
-      }, requestId);
-      const text = extractProviderText(response.body);
-      return {
-        ok: text === "DEEP33_DIAGNOSTIC_OK",
-        status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
-        body: {
-          status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
-          provider: response.provider,
-          model: response.model,
-          text_ok: text === "DEEP33_DIAGNOSTIC_OK",
-        },
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        status: "FAIL",
-        body: {
-          status: "FAIL",
-          provider: edgeProviders()[0]?.name ?? null,
-          model: edgeProviders()[0]?.model ?? null,
-          text_ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  }
-
-  if (!UPSTREAM) {
+  if (!edgeAIConfigured()) {
     return {
       ok: false,
       status: "FAIL",
-      body: { status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED" },
+      body: {
+        status: "FAIL",
+        error: "EDGE_AI_GATEWAY_NOT_CONFIGURED",
+        direct_edge: true,
+      },
     };
   }
 
+  const requestId = crypto.randomUUID();
   try {
-    const response = await fetchUpstream("/v1/ai/inference-check", {}, sessionId);
-    const body = await readJson(response);
+    const response = await callEdgeAI({
+      messages: [
+        { role: "system", content: "Return the requested diagnostic token exactly." },
+        { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
+      ],
+    }, requestId);
+    const text = extractProviderText(response.body);
+    const ok = text === "DEEP33_DIAGNOSTIC_OK";
     return {
-      ok: response.ok && body.status === "PASS" && body.text_ok === true,
-      status: body.status ?? (response.ok ? "PASS" : "FAIL"),
-      body,
+      ok,
+      status: ok ? "PASS" : "FAIL",
+      body: {
+        status: ok ? "PASS" : "FAIL",
+        provider: response.provider,
+        model: response.model,
+        text_ok: ok,
+        direct_edge: true,
+      },
     };
   } catch (error) {
     return {
       ok: false,
       status: "FAIL",
-      body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
+      body: {
+        status: "FAIL",
+        provider: edgeProviders()[0]?.name ?? null,
+        model: edgeProviders()[0]?.model ?? null,
+        text_ok: false,
+        direct_edge: true,
+        error: error instanceof Error ? error.message : String(error),
+      },
     };
   }
 }
 
+async function probeMemory
 async function probeMemory(sessionId: string) {
   if (SUPABASE_SECRET_KEY) {
     try {
@@ -1048,7 +1149,8 @@ async function readinessResponse(sessionId: string) {
     status: ready ? "PASS" : "FAIL",
     ready,
     service: "DEEP33 AI Edge",
-    upstream: UPSTREAM,
+    canonical_runtime: "edge-direct",
+    upstream: UPSTREAM || null,
     health: health.body,
     inference: inference.body,
     checks: {
@@ -1127,7 +1229,7 @@ Deno.serve(async (req) => {
               engine_version: "1.1.0",
               tool_loop_enabled: true,
               provider_independent: true,
-              configured_provider: "edge-public-fallback+upstream",
+              configured_provider: "edge-direct",
               fallback_providers: ["bing_public", "ddg_public"],
             }),
       ]);
@@ -1175,7 +1277,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (path === "/v1/chat/stream" && req.method === "POST" && edgeAIConfigured()) {
+    if (path === "/v1/chat/stream" && req.method === "POST") {
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const messages = Array.isArray(payload.messages)
         ? payload.messages as Array<Record<string, unknown>>
@@ -1183,69 +1285,128 @@ Deno.serve(async (req) => {
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const activePersonality = normalizePersonality(payload.personality);
-      try {
-        const ai = await callEdgeAI({
-          ...payload,
-          messages: buildEdgeMessages(messages, activePersonality),
-        }, requestId);
-        const responseText = sanitizeAssistantText(extractProviderText(ai.body));
-        try {
-          await Promise.race([
-            memoryCall("sync", sessionId, {
-              messages: [...messages, { role: "assistant", content: responseText }],
-              personality: payload.personality,
-              preferences: payload.preferences,
-            }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
-          ]);
-        } catch {
-          // Streaming remains available when memory persistence is degraded.
-        }
 
-        const encoder = new TextEncoder();
-        const stream = new ReadableStream({
-          start(controller) {
-            const chunk = JSON.stringify({
-              choices: [{ delta: { content: responseText } }],
-              _deep33_gateway: { provider: ai.provider, model: ai.model },
-            });
-            controller.enqueue(encoder.encode("data: " + chunk + "\n\n"));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          },
-        });
-        return new Response(stream, {
-          status: 200,
-          headers: {
-            ...cors,
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache, no-transform",
-            Connection: "keep-alive",
-            "X-Request-ID": requestId,
-            "X-Idempotency-Key": idempotencyKey,
-            "X-DEEP33-Personality": activePersonality,
-          },
-        });
-      } catch (error) {
-        const body = {
-          status: "FAIL",
-          error: error instanceof Error ? error.message : String(error),
-        };
+      if (!edgeAIConfigured()) {
         return new Response(
-          "event: error\ndata: " + JSON.stringify(body) + "\n\ndata: [DONE]\n\n",
+          "event: error\ndata: " +
+            JSON.stringify({
+              status: "FAIL",
+              error: "EDGE_AI_GATEWAY_NOT_CONFIGURED",
+            }) +
+            "\n\ndata: [DONE]\n\n",
           {
-            status: 502,
+            status: 503,
             headers: {
               ...cors,
               "Content-Type": "text/event-stream; charset=utf-8",
-              "Cache-Control": "no-cache",
+              "Cache-Control": "no-cache, no-transform",
+              Connection: "keep-alive",
             },
           },
         );
       }
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          // Flush headers immediately. This prevents a slow provider response from
+          // looking like an idle/dead connection to Android or an intermediate proxy.
+          controller.enqueue(encoder.encode(": DEEP33\n\n"));
+
+          (async () => {
+            try {
+              const ai = await callEdgeAI({
+                ...payload,
+                messages: buildEdgeMessages(messages, activePersonality),
+              }, requestId);
+
+              const responseText = sanitizeAssistantText(extractProviderText(ai.body));
+              if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
+
+              controller.enqueue(
+                encoder.encode(
+                  "data: " +
+                    JSON.stringify({
+                      choices: [{ delta: { content: responseText } }],
+                      _deep33_gateway: {
+                        provider: ai.provider,
+                        model: ai.model,
+                      },
+                    }) +
+                    "\n\n",
+                ),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+
+              try {
+                await Promise.race([
+                  memoryCall("sync", sessionId, {
+                    messages: [...messages, { role: "assistant", content: responseText }],
+                    personality: activePersonality,
+                    preferences: payload.preferences,
+                  }),
+                  new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)
+                  ),
+                ]);
+              } catch {
+                console.warn(JSON.stringify({
+                  event: "edge_memory_sync_degraded",
+                  request_id: requestId,
+                }));
+              }
+            } catch (error) {
+              const body = {
+                status: "FAIL",
+                error: error instanceof Error ? error.message : String(error),
+              };
+              try {
+                controller.enqueue(
+                  encoder.encode(
+                    "event: error\ndata: " + JSON.stringify(body) + "\n\n",
+                  ),
+                );
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              } catch {
+                // Client disconnected while the error was being delivered.
+              }
+            } finally {
+              try {
+                controller.close();
+              } catch {
+                // Client may have already closed the stream.
+              }
+            }
+          })();
+        },
+        cancel(reason) {
+          console.warn(JSON.stringify({
+            event: "edge_client_stream_cancelled",
+            request_id: requestId,
+            reason: String(reason ?? "client_cancel"),
+          }));
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          ...cors,
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Request-ID": requestId,
+          "X-Idempotency-Key": idempotencyKey,
+          "X-DEEP33-Personality": activePersonality,
+        },
+      });
     }
 
-    if (path === "/v1/ai/inference-check" && req.method === "GET" && edgeAIConfigured()) {
+    if (path === "/v1/ai/inference-check"
+    if (path === "/v1/ai/inference-check" && req.method === "GET") {
+      if (!edgeAIConfigured()) {
+        return json({ status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED", direct_edge: true }, 503);
+      }
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       try {
         const response = await callEdgeAI({
@@ -1277,7 +1438,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (path === "/v1/ai/diagnostics" && req.method === "GET" && edgeAIConfigured()) {
+    if (path === "/v1/ai/diagnostics" && req.method === "GET") {
+      if (!edgeAIConfigured()) {
+        return json({
+          timestamp: new Date().toISOString(),
+          checks: { NETWORK: "PASS", DNS: "PASS", HTTPS: "PASS", BACKEND: "PASS", AI_GATEWAY: "FAIL", MODEL: "FAIL", CHAT: "FAIL", MEMORY: SUPABASE_SECRET_KEY ? "PASS" : "DEGRADED" },
+          gateway: { gateway: "FAIL", provider: null, model: null, direct_edge: true },
+          inference: { status: "FAIL", text_ok: false, direct_edge: true, error: "EDGE_AI_GATEWAY_NOT_CONFIGURED" },
+          memory: { enabled: Boolean(SUPABASE_SECRET_KEY), backend: SUPABASE_SECRET_KEY ? "supabase-edge-function" : null },
+          online: false,
+        }, 503);
+      }
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       let inference: Record<string, unknown> = { status: "FAIL", text_ok: false };
       try {
@@ -1333,6 +1504,9 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/v1/ai/generate" && req.method === "POST") {
+      if (!edgeAIConfigured()) {
+        return json({ status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED", direct_edge: true }, 503);
+      }
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const messages = Array.isArray(payload.messages)
         ? payload.messages as Array<Record<string, unknown>>
