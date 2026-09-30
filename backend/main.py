@@ -1520,9 +1520,10 @@ async def memory_context(http_request: Request) -> dict:
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     enforce_client_controls(http_request, session_id)
     try:
-        return await memory.context(session_id)
+        return await memory.context(session_id, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -1535,6 +1536,7 @@ async def memory_sync(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     enforce_client_controls(http_request, session_id)
     messages = [
         message.model_dump()
@@ -1547,6 +1549,7 @@ async def memory_sync(
             messages,
             personality=payload.personality,
             preferences=payload.preferences,
+            memory_profile_id=memory_profile_id,
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
@@ -1560,9 +1563,10 @@ async def memory_remember(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     enforce_client_controls(http_request, session_id)
     try:
-        return await memory.remember(session_id, payload.kind, payload.content)
+        return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -1575,6 +1579,7 @@ async def memory_preferences(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     enforce_client_controls(http_request, session_id)
     try:
         return await memory.set_preferences(
