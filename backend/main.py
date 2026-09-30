@@ -1018,6 +1018,24 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
 
+def sanitize_generation_output(output: dict) -> dict:
+    """Sanitize every user-facing generation text, including cached/replayed responses."""
+    if not isinstance(output, dict):
+        return output
+    result = output.get("result")
+    if isinstance(result, dict) and isinstance(result.get("text"), str):
+        result["text"] = sanitize_assistant_text(result["text"])
+    response = output.get("response")
+    if isinstance(response, dict):
+        choices = response.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict) and isinstance(message.get("content"), str):
+                message["content"] = sanitize_assistant_text(message["content"])
+    output["sources"] = []
+    return output
+
+
 async def network_probe() -> dict:
     started = time.perf_counter()
     dns_ok = False
@@ -1544,7 +1562,7 @@ async def generate(
             request_id,
             session_id,
         )
-        return cached
+        return sanitize_generation_output cached
 
     local_cached = local_idempotency_get(session_id, idempotency_key, request_hash)
     if local_cached is not None:
@@ -1553,7 +1571,7 @@ async def generate(
             request_id,
             session_id,
         )
-        return local_cached
+        return sanitize_generation_output local_cached
 
     state, record = await shared_idempotency_claim(
         session_id,
@@ -1562,7 +1580,7 @@ async def generate(
         request_hash,
     )
     if state in {"COMPLETED", "FAILED"}:
-        output = replay_idempotent(state, record)
+        output = sanitize_generation_output(replay_idempotent(state, record))
         cache_put(session_id, idempotency_key, request_hash, output)
         return output
 
