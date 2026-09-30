@@ -1886,28 +1886,13 @@ class MainActivity : Activity() {
             setPadding(dp(28), dp(24), dp(28), dp(30))
         }
         panel.addView(TextView(this).apply {
-            text = "DEEP33"
-            textSize = 26f
-            letterSpacing = 0.16f
-            setTextColor(Deep33Theme.TEXT)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            gravity = Gravity.CENTER
-        })
-        panel.addView(View(this).apply {
-            setBackgroundColor(Deep33Theme.RED)
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(1)).apply {
-                topMargin = dp(10)
-                bottomMargin = dp(14)
-            }
-        })
-        panel.addView(TextView(this).apply {
             text = "Intercambia ideas. Explora. Cuestiona."
             textSize = 14f
             setTextColor(Deep33Theme.TEXT_MUTED)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         panel.addView(TextView(this).apply {
-            text = "Internet, memoria, personalidad y voz integradas en una sola conversación."
+            text = "Memoria, personalidad y voz integradas en una sola conversación."
             textSize = 12.5f
             setTextColor(Color.rgb(112, 118, 128))
             gravity = Gravity.CENTER
