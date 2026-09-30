@@ -22,7 +22,7 @@ enum class Personality(
         "COMICO",
         "M",
         0xFFFFC107.toInt(),
-        "Irónico, ingenioso y ligero, sin perder precisión."
+        "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión."
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
