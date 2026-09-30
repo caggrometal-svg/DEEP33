@@ -110,16 +110,34 @@ jobs:
           channel: stable
           working-directory: android
           script: |
-            bash -euo pipefail <<'DEEP33_FEATURE_TESTS'
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
-            gradle :app:connectedDebugAndroidTest \
-              -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest \
-              --no-daemon
-            DEEP33_FEATURE_TESTS
+            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest --no-daemon
+
+  change_scope:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_changed: ${{ steps.scope.outputs.backend_changed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - id: scope
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          backend_changed=true
+          if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+            changed="$(git diff --name-only "$before" "$GITHUB_SHA" || true)"
+            backend_changed=false
+            if printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$)'; then
+              backend_changed=true
+            fi
+          fi
+          echo "backend_changed=$backend_changed" >> "$GITHUB_OUTPUT"
 
   production_gate:
-    if: ${{ github.event_name != 'pull_request' }}
-    needs: backend_unit
+    if: ${{ github.event_name != 'pull_request' && needs.change_scope.outputs.backend_changed == 'true' }}
+    needs: [backend_unit, change_scope]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository for backend change detection
@@ -395,7 +413,8 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    needs: [production_gate, android_validation]
+    if: ${{ needs.change_scope.outputs.backend_changed == 'true' }}
+    needs: [production_gate, android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
