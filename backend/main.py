@@ -1366,6 +1366,7 @@ async def generate(
             session_id,
             [message for message in messages if message.get("role") != "system"],
             personality=personality,
+            memory_profile_id=memory_profile_id,
         )
 
         started = time.perf_counter()
@@ -1397,6 +1398,7 @@ async def generate(
             session_id,
             [message for message in messages if message.get("role") != "system"] + [assistant_message],
             personality=personality,
+            memory_profile_id=memory_profile_id,
         )
 
         output = {
