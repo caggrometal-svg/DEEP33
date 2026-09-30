@@ -1127,6 +1127,7 @@ class MainActivity : Activity() {
                     requestPersonality.key,
                     requestId = requestId,
                     idempotencyKey = idempotencyKey,
+                    memoryProfileId = store.memoryProfileId,
                     isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
                     onText = { chunk ->
                         runOnUiThread {
