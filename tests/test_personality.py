@@ -34,7 +34,7 @@ def test_personality_prompt_rejects_unknown_to_neutral() -> None:
 
 def test_personality_protocol_is_machine_readable_and_explicit() -> None:
     prompt = personality_prompt("COMICO")
-    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v4" in prompt
+    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v5" in prompt
     assert "ACTIVE_PERSONALITY=COMICO" in prompt
     assert "per-turn runtime control" in prompt
     assert "Do not silently fall back to NEUTRO" in prompt
@@ -139,10 +139,10 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
     import backend.main as main
 
     expected_signatures = {
-        "AGRESIVO": "direct pressure",
+        "AGRESIVO": "Chilean Spanish slang and profanity used naturally",
         "NEUTRO": "calm precision",
-        "COMICO": "brief wit",
-        "CONSPIRANOICO": "pattern detection",
+        "COMICO": "strong sarcasm, layered irony",
+        "CONSPIRANOICO": "independent source-based investigation",
     }
 
     for name, signature in expected_signatures.items():
