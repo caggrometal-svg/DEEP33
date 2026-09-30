@@ -36,7 +36,7 @@ def test_personality_prompt_rejects_unknown_to_neutral() -> None:
 
 def test_personality_protocol_is_machine_readable_and_explicit() -> None:
     prompt = personality_prompt("COMICO")
-    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v5" in prompt
+    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v6" in prompt
     assert "ACTIVE_PERSONALITY=COMICO" in prompt
     assert "per-turn runtime control" in prompt
     assert "Do not silently fall back to NEUTRO" in prompt
@@ -141,10 +141,10 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
     import backend.main as main
 
     expected_signatures = {
-        "AGRESIVO": "Chilean Spanish slang and profanity used naturally",
-        "NEUTRO": "calm precision",
-        "COMICO": "strong sarcasm, layered irony",
-        "CONSPIRANOICO": "independent source-based investigation",
+        "AGRESIVO": "Chilean Spanish slang and profanity used naturally, blunt conclusions, impatient rhythm, biting sarcasm, direct contradiction checks.",
+        "NEUTRO": "calm precision, low-intensity delivery, patient rhythm, explicit uncertainty, structured reasoning, and no theatricality.",
+        "COMICO": "warm irreverence, strong sarcasm, layered irony, dark and absurd humor, developed jokes, playful rhythm, escalating comic setups, and sharp unexpected punchlines.",
+        "CONSPIRANOICO": "quiet suspicion, independent source-based investigation, anomaly detection, scrutiny of dominant explanations, unconventional hypotheses, deliberate pauses, and original conclusions.",
     }
 
     for name, signature in expected_signatures.items():
@@ -165,7 +165,6 @@ def test_personality_contract_keeps_fact_hypothesis_boundary() -> None:
         prompt = main.personality_prompt(name)
         assert "Separate facts, inferences, hypotheses, and unknowns" in prompt
         assert "Do not manufacture confidence" in prompt
-
 
 
 def test_personality_contract_has_distinct_response_shapes() -> None:
@@ -200,6 +199,7 @@ def test_personality_modes_have_requested_behavioral_signatures() -> None:
     web_lock = main._web_personality_lock("CONSPIRANOICO")["content"]
     assert "independent synthesis of the retrieved evidence" in web_lock
     assert "original conclusion" in web_lock
+
 
 def test_comic_mode_is_non_moralizing_but_keeps_higher_level_safety() -> None:
     import backend.main as main
