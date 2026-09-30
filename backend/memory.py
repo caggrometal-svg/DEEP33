@@ -142,6 +142,7 @@ class MemoryClient:
         messages: list[dict[str, str]],
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
+        memory_profile_id: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"messages": messages[-50:]}
         if personality:
@@ -154,6 +155,7 @@ class MemoryClient:
             session_id,
             idempotency_key=f"memory:sync:{request_hash}",
             request_hash=request_hash,
+            memory_profile_id=memory_profile_id,
             **payload,
         )
 
