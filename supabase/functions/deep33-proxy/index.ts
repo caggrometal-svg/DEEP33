@@ -1,9 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-// No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
-// while the direct Edge gateway becomes the canonical runtime.
-const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "https://deep33-backup.onrender.com").replace(/\/+$/, "");
+// The Edge function is the canonical runtime. An upstream is used only when explicitly
+// configured, preventing a blocked/retired legacy host from becoming a hidden dependency.
+const UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +34,7 @@ function headerSubset(req: Request) {
     "content-type",
     "accept",
     "x-deep33-session-id",
+    "x-deep33-memory-profile-id",
     "x-request-id",
     "x-idempotency-key",
   ]) {
@@ -194,10 +195,14 @@ async function callEdgeAI(
 function personalityInstruction(value: unknown): string {
   const selected = String(value || "NEUTRO").trim().toUpperCase();
   const profiles: Record<string, string> = {
-    AGRESIVO: "Habla de forma directa, firme y provocadora, con sarcasmo seco cuando corresponda. Cuestiona supuestos sin atacar a la persona y no inventes hechos.",
-    NEUTRO: "Habla de forma equilibrada, profesional, natural y clara. Prioriza precisión y contexto útil.",
-    COMICO: "Usa humor e ironía breves cuando encajen. Mantén precisión y no conviertas respuestas serias en chistes.",
-    CONSPIRANOICO: "Usa un tono enigmático y tecnológico. Explora hipótesis y anomalías sin presentar especulación como hecho; distingue evidencia e hipótesis.",
+    AGRESIVO:
+      "DEEP33 mode: direct pressure. Open with the conclusion or the flaw. Use short decisive sentences, challenge weak assumptions, identify contradictions and close with a concrete next step. Dry sarcasm is allowed when useful; never insult the user.",
+    NEUTRO:
+      "DEEP33 mode: calm precision. Lead with the answer, then the necessary evidence or logic. Use deliberate natural language, explicit uncertainty and compact structure. No theatricality, sarcasm or forced humor.",
+    COMICO:
+      "DEEP33 mode: brief wit. Give the clean answer first, then use one controlled ironic turn, analogy or unexpected phrase when it improves comprehension. Humor is seasoning, never a substitute for substance.",
+    CONSPIRANOICO:
+      "DEEP33 mode: pattern detection. Lead with the observable anomaly, then examine evidence, missing information and competing explanations. Clearly separate EVIDENCE, HYPOTHESIS and SPECULATION; never treat a pattern as proof.",
   };
   return profiles[selected] || profiles.NEUTRO;
 }
@@ -673,13 +678,20 @@ async function handleHybridRequest(
   return json({ error: "HYBRID_ROUTE_NOT_FOUND" }, 404);
 }
 
+function memoryProfileIdFromRequest(req: Request): string | null {
+  const value = req.headers.get("x-deep33-memory-profile-id")?.trim().slice(0, 128) || "";
+  return value || null;
+}
+
 async function handleMemoryRequest(
   req: Request,
   path: string,
   sessionId: string,
 ): Promise<Response> {
   if (path === "/v1/memory/context" && req.method === "GET") {
-    const result = await memoryCall("context", sessionId);
+    const result = await memoryCall("context", sessionId, {
+      memory_profile_id: memoryProfileIdFromRequest(req),
+    });
     return json(result.body, result.status);
   }
 
@@ -688,6 +700,7 @@ async function handleMemoryRequest(
     const result = await memoryCall("remember", sessionId, {
       kind: payload.kind,
       content: payload.content,
+      memory_profile_id: memoryProfileIdFromRequest(req),
     });
     return json(result.body, result.status);
   }
@@ -697,6 +710,7 @@ async function handleMemoryRequest(
     const result = await memoryCall("preferences", sessionId, {
       personality: payload.personality,
       preferences: payload.preferences,
+      memory_profile_id: memoryProfileIdFromRequest(req),
     });
     return json(result.body, result.status);
   }
@@ -707,6 +721,7 @@ async function handleMemoryRequest(
       messages: Array.isArray(payload.messages) ? payload.messages : [],
       personality: payload.personality,
       preferences: payload.preferences,
+      memory_profile_id: memoryProfileIdFromRequest(req),
     });
     return json(result.body, result.status);
   }
