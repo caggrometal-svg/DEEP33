@@ -102,7 +102,7 @@ class Deep33UiContractV2Test {
                 val chatScroll = privateView(activity, "chatScroll")
                 val composer = privateView(activity, "composer")
                 val setVoiceModeUi = activity.javaClass
-                    .getDeclaredMethod("setVoiceModeUi", Boolean::class.javaPrimitiveType)
+                    .getDeclaredMethod("setVoiceModeUi", Boolean::class.javaPrimitiveType!!)
                     .apply { isAccessible = true }
 
                 setVoiceModeUi.invoke(activity, true)
