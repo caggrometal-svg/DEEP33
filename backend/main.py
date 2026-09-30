@@ -793,13 +793,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
         message=_choice_message(data)
         tool_calls=_tool_calls_from_message(message)
         if not tool_calls:
-            working.append(_web_personality_lock(personality))
-            data = await call_gateway(
-                {"messages": working, "model": model, "tool_choice": "none"},
-                request_id=request_id,
-                idempotency_key=f"{idempotency_key}:web:styled:{round_index}",
-                deadline=deadline,
-            )
+            # No web evidence was used. Do not incur a second inference pass for ordinary chat.
             return data,list(sources.values())
 
         working.append({
