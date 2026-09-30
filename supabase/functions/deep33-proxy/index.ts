@@ -252,18 +252,17 @@ function buildEdgeMessages(
 function sanitizeAssistantText(value: string): string {
   let text = String(value || "").trim();
   text = text.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
-  text = text.replace(/(?:^|\\n)\\s*(?:#{0,6}\\s*)?(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|referencias|references|citations?|enlaces|links|bibliografia|bibliography)\\s*:?\\s*(?:\\n|$)[\\s\\S]*$/im, "");
-  text = text.replace(/\\[[^\\]]+\\]\\(https?:\\/\\/[^)\\s]+\\)/gi, "");
-  text = text.replace(/https?:\\/\\/[^\\s)\\]>]+/gi, "");
+  text = text.replace(/(?:^|\n)\s*(?:#{0,6}\s*)?(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$)[\s\S]*$/im, "");
+  text = text.replace(/\[[^\]]+\]\(https?:\/\/[^)\s]+\)/gi, "");
+  text = text.replace(/https?:\/\/[^\s)\]>]+/gi, "");
   text = text.replace(/(?:cite|url).*?/gs, "");
-  text = text.replace(/<a\\b[^>]*>.*?<\\/a>/gis, "");
-  text = text.replace(/^\\s*(?:[-*]|\\d+[.)])?\\s*(?:fuente|sources?|referencias?|references?|cita|citations?)\\s*(?:#?\\d+)?\\s*[:\\-–].*$/gim, "");
-  text = text.replace(/(?<!\\w)【\\d{1,3}】(?!\\w)/g, "");
-  text = text.replace(/(?<!\\w)\\[\\^?\\d{1,3}(?:\\s*[,;]\\s*\\^?\\d{1,3})*\\](?!\\()/g, "");
-  text = text.replace(/\\s{2,}/g, " ").replace(/ *\\n *\\n */g, "\n\n").replace(/\\n{3,}/g, "\n\n");
+  text = text.replace(/<a\b[^>]*>.*?<\/a>/gis, "");
+  text = text.replace(/^\s*(?:[-*]|\d+[.)])?\s*(?:fuente|sources?|referencias?|references?|cita|citations?)\s*(?:#?\d+)?\s*[:\-–].*$/gim, "");
+  text = text.replace(/(?<!\w)【\d{1,3}】(?!\w)/g, "");
+  text = text.replace(/(?<!\w)\[\^?\d{1,3}(?:\s*[,;]\s*\^?\d{1,3})*\](?!\()/g, "");
+  text = text.replace(/\s{2,}/g, " ").replace(/ *\n *\n */g, "\n\n").replace(/\n{3,}/g, "\n\n");
   return text.trim();
 }
-
 
 const SUPABASE_SECRET_KEYS = (() => {
   try {
