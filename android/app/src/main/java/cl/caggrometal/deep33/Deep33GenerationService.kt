@@ -27,10 +27,35 @@ class Deep33GenerationService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CANCEL -> {
-                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
-                if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
+                val store = SessionStore(this)
+
+                if (requestId.isBlank()) {
+                    stopSelfResult(startId)
+                    return START_REDELIVER_INTENT
+                }
+
+                // Persist the user's intent before touching the active transport. This
+                // prevents Activity/process death from resurrecting a request that the
+                // user already cancelled.
+                store.requestCancellation(requestId)
+                if (requestId == runningRequestId) {
                     userCancelled.set(true)
                     Deep33Api.cancelActiveStream()
+                } else {
+                    val pending = store.loadPendingTurn()
+                    if (pending?.requestId == requestId) {
+                        store.saveGenerationState(
+                            status = GenerationStatus.CANCELLED,
+                            requestId = requestId,
+                            sessionId = pending.sessionId,
+                            personality = pending.personality,
+                            error = "Generación cancelada.",
+                            durable = true
+                        )
+                        store.clearPendingTurn(requestId)
+                    }
+                    stopSelfResult(startId)
                 }
                 return START_REDELIVER_INTENT
             }
@@ -44,6 +69,27 @@ class Deep33GenerationService : Service() {
 
                 if (runningRequestId != null) {
                     if (runningRequestId == requestedId) return START_REDELIVER_INTENT
+                    // Never cancel or steal an active generation because a stale
+                    // Activity sent another START intent.
+                    return START_REDELIVER_INTENT
+                }
+
+                val store = SessionStore(this)
+                if (store.isCancellationRequested(requestedId)) {
+                    val pending = store.loadPendingTurn()
+                    if (pending?.requestId == requestedId) {
+                        store.saveGenerationState(
+                            status = GenerationStatus.CANCELLED,
+                            requestId = requestedId,
+                            sessionId = pending.sessionId,
+                            personality = pending.personality,
+                            error = "Generación cancelada.",
+                            durable = true
+                        )
+                        store.clearPendingTurn(requestedId)
+                    } else {
+                        store.clearCancellationRequest(requestedId)
+                    }
                     stopSelfResult(startId)
                     return START_REDELIVER_INTENT
                 }
@@ -66,6 +112,21 @@ class Deep33GenerationService : Service() {
         val store = SessionStore(this)
         val pending = store.loadPendingTurn()
         if (pending == null || pending.requestId != requestId) {
+            runningRequestId = null
+            stopSelf()
+            return
+        }
+
+        if (store.isCancellationRequested(requestId)) {
+            store.saveGenerationState(
+                status = GenerationStatus.CANCELLED,
+                requestId = requestId,
+                sessionId = pending.sessionId,
+                personality = pending.personality,
+                error = "Generación cancelada.",
+                durable = true
+            )
+            store.clearPendingTurn(requestId)
             runningRequestId = null
             stopSelf()
             return
@@ -147,6 +208,7 @@ class Deep33GenerationService : Service() {
                 durable = true
             )
             store.clearPendingTurn(requestId)
+            store.clearCancellationRequest(requestId)
 
             try {
                 val memoryPayload = JSONArray()
