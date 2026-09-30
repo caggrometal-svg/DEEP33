@@ -2,10 +2,10 @@
 <resources>
     <style name="Theme.DEep33" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:navigationBarColor">#080A0F</item>
+        <item name="android:navigationBarColor">#030303</item>
         <item name="android:statusBarColor">#080A0F</item>
-        <item name="android:windowBackground">#080A0F</item>
-        <item name="android:colorAccent">#00E5FF</item>
+        <item name="android:windowBackground">#030303</item>
+        <item name="android:colorAccent">#FF1744</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
