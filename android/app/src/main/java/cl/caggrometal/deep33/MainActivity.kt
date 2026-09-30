@@ -821,37 +821,32 @@ class MainActivity : Activity() {
         input.setOnFocusChangeListener { _, focused -> setComposerBackground(input, focused) }
 
         micButton = Button(this).apply {
-            text = "◉"
+            text = "MIC"
             contentDescription = "Abrir modo voz"
-            textSize = 20f
+            textSize = 11f
             isAllCaps = false
             minWidth = 0
             minHeight = 0
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 0)
             setTextColor(Personality.fromKey(store.personality).accent)
-            setBackground(
-                chatActionPanel(
-                    Deep33Theme.SURFACE_2,
-                    Personality.fromKey(store.personality).accent
-                )
-            )
-            elevation = dp(2).toFloat()
+            setBackground(chatActionPanel(Deep33Theme.SURFACE_2, Personality.fromKey(store.personality).accent))
+            elevation = 0f
             stateListAnimator = null
             setOnClickListener { toggleVoiceInput() }
             addPressFeedback(this)
         }
         inputShell.addView(
             micButton,
-            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(57)
+            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(56)
             }
         )
 
         sendButton = Button(this).apply {
-            text = "↑"
+            text = "→"
             contentDescription = "Enviar mensaje"
-            textSize = 27f
+            textSize = 22f
             isAllCaps = false
             minWidth = 0
             minHeight = 0
@@ -859,16 +854,16 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 0)
             val accent = Personality.fromKey(store.personality).accent
             setTextColor(Deep33Theme.BG)
-            setBackground(chatActionPanel(accent, accent))
-            elevation = dp(3).toFloat()
+            setBackground(chatActionPanel(Deep33Theme.SURFACE_2, accent))
+            elevation = 0f
             stateListAnimator = null
             setOnClickListener { sendMessage() }
             addPressFeedback(this)
         }
         inputShell.addView(
             sendButton,
-            FrameLayout.LayoutParams(dp(50), dp(50), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(5)
+            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(6)
             }
         )
 
@@ -1666,7 +1661,7 @@ class MainActivity : Activity() {
     private fun chatActionPanel(fill: Int, stroke: Int): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
-            cornerRadius = dp(16).toFloat()
+            cornerRadius = dp(14).toFloat()
             setStroke(dp(1), stroke)
         }
 
