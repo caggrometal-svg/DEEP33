@@ -1188,7 +1188,9 @@ class MainActivity : Activity() {
                 if (output.isNotBlank()) {
                     activeBubble?.let {
                         it.tag = output
-                        renderMarkdown(it, output)
+                        // Streaming text is assistant content too: apply the same
+                        // source/citation sanitizer used by the final answer.
+                        renderMarkdown(it, output, isAssistant = true)
                     }
                     setVoiceState(AvatarState.SPEAKING)
                 }
