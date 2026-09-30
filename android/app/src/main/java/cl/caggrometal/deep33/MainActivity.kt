@@ -147,6 +147,7 @@ class MainActivity : Activity() {
     private var edgeDownX = 0f
     private var edgeDownY = 0f
     private var personalitySelectionGeneration = 0L
+    private val personalitySyncLock = Any()
     private var currentTab = Tab.CHAT
     private var wasBackgrounded = false
     private var lifecycleDestroying = false
@@ -856,12 +857,17 @@ class MainActivity : Activity() {
     }
 
     private fun syncPreferences() {
-        val personality = store.personality
         executor.submit {
-            try {
-                Deep33Api.setPreferences(store.sessionId, personality)
-            } catch (e: Exception) {
-                Log.w("DEEP33", "Remote preference sync failed: ${e.javaClass.simpleName}")
+            // Preference writes are serialized so an older selection can never finish
+            // after a newer selection and overwrite the remote session state.
+            synchronized(personalitySyncLock) {
+                val personality = Personality.fromKey(store.personality).key
+                try {
+                    Deep33Api.setPreferences(store.sessionId, personality)
+                    Log.i("DEEP33", "PERSONALITY SYNCED: " + personality)
+                } catch (e: Exception) {
+                    Log.w("DEEP33", "Remote preference sync failed: ${e.javaClass.simpleName}")
+                }
             }
         }
     }
