@@ -15,19 +15,19 @@ enum class Personality(
     NEUTRO(
         "NEUTRO",
         "N",
-        0xFF00E5FF.toInt(),
+        0xFFB8C0CC.toInt(),
         "Analítico, formal, objetivo y basado en datos."
     ),
     COMICO(
         "COMICO",
         "M",
-        0xFFFFC107.toInt(),
+        0xFFD2A264.toInt(),
         "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión."
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
         "C",
-        0xFFB388FF.toInt(),
+        0xFF9278C1.toInt(),
         "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis."
     );
 
