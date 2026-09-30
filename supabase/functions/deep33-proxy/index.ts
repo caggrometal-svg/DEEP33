@@ -72,18 +72,27 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "kilo").trim() || "kilo";
-const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://api.kilo.ai/api/gateway/chat/completions").trim();
+const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").trim() || "vireonix";
+const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
-const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "kilo-auto/small").trim();
+const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
+const EDGE_AI_REQUIRES_AUTH =
+  (Deno.env.get("AI_GATEWAY_REQUIRES_AUTH") || "").trim().toLowerCase() === "true" ||
+  EDGE_AI_PROVIDER.toLowerCase() === "kilo";
 const EDGE_AI_TIMEOUT_MS = Math.max(3000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "18000")));
 
-type EdgeAIProvider = { name: string; url: string; api_key: string; model: string };
+type EdgeAIProvider = { name: string; url: string; api_key: string; model: string; requires_auth: boolean };
 
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
-  if (EDGE_AI_URL && EDGE_AI_KEY) {
-    providers.push({ name: EDGE_AI_PROVIDER, url: EDGE_AI_URL, api_key: EDGE_AI_KEY, model: EDGE_AI_MODEL });
+  if (EDGE_AI_URL && (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY)) {
+    providers.push({
+      name: EDGE_AI_PROVIDER,
+      url: EDGE_AI_URL,
+      api_key: EDGE_AI_KEY,
+      model: EDGE_AI_MODEL,
+      requires_auth: EDGE_AI_REQUIRES_AUTH,
+    });
   }
   const raw = Deno.env.get("AI_GATEWAY_FALLBACKS_JSON") || "";
   if (raw) {
@@ -95,12 +104,14 @@ function edgeProviders(): EdgeAIProvider[] {
           const value = item as Record<string, unknown>;
           const url = String(value.url || "").trim();
           const api_key = String(value.api_key || "").trim();
-          if (!url || !api_key) continue;
+          const requires_auth = Boolean(value.requires_auth ?? api_key);
+          if (!url || (requires_auth && !api_key)) continue;
           providers.push({
             name: String(value.name || "fallback").trim() || "fallback",
             url,
             api_key,
             model: String(value.model || "").trim(),
+            requires_auth,
           });
         }
       }
@@ -183,7 +194,9 @@ async function callEdgeAI(
           headers: {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Authorization": "Bearer " + provider.api_key,
+            ...(provider.requires_auth && provider.api_key
+              ? { "Authorization": "Bearer " + provider.api_key }
+              : {}),
             "X-Request-ID": requestId,
           },
           body: JSON.stringify({
