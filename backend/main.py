@@ -175,6 +175,7 @@ PERSONALITY_PROTOCOL_VERSION = "2"
 _rate_state: dict[str, tuple[float, int]] = {}
 _idempotency_cache: dict[str, tuple[float, str, dict]] = {}
 _local_idempotency_inflight: dict[str, tuple[float, str, str]] = {}
+_local_idempotency_completed: dict[str, tuple[float, str, dict]] = {}
 CACHE_TTL_SECONDS = 300.0
 IDEMPOTENCY_LEASE_SECONDS = 180
 IDEMPOTENCY_WAIT_SECONDS = 80
@@ -394,6 +395,13 @@ def local_idempotency_prune() -> None:
     for key in expired[:200]:
         _local_idempotency_inflight.pop(key, None)
 
+    completed_expired = [
+        key for key, value in _local_idempotency_completed.items()
+        if value[0] <= now
+    ]
+    for key in completed_expired[:200]:
+        _local_idempotency_completed.pop(key, None)
+
 
 def local_idempotency_claim(
     session_id: str,
@@ -402,6 +410,13 @@ def local_idempotency_claim(
 ) -> tuple[str, dict]:
     local_idempotency_prune()
     key = cache_key(session_id, idempotency_key)
+    completed = _local_idempotency_completed.get(key)
+    if completed is not None:
+        _expires_at, stored_hash, output = completed
+        if stored_hash != request_hash:
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        return "COMPLETED", {"response": output, "status_code": 200, "_storage": "local"}
+
     existing = _local_idempotency_inflight.get(key)
     if existing is not None:
         _expires_at, stored_hash, _lease_token = existing
@@ -433,6 +448,8 @@ def local_idempotency_complete(
     _expires_at, stored_hash, stored_token = existing
     if stored_hash == request_hash and stored_token == lease_token:
         _local_idempotency_inflight.pop(key, None)
+        expires_at = time.monotonic() + CACHE_TTL_SECONDS
+        _local_idempotency_completed[key] = (expires_at, request_hash, output)
         cache_put(session_id, idempotency_key, request_hash, output)
 
 
