@@ -1152,7 +1152,7 @@ async function publicWebSearch(query: string) {
   if (finalResults.length) {
     return {
       ok: true,
-      engine: "DEEP33 Edge Public Search",
+      engine: "DEEP33 Search Engine",
       engine_version: "1.1.0",
       provider_independent: providerNames.length > 1,
       providers: providerNames,
