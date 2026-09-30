@@ -1026,7 +1026,7 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     value = re.sub(
         r"(?ims)(?:^|\n)\s*(?:#{0,6}\s*)?"
         r"(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|"
-        r"referencias|references|citations?)\s*:?\s*(?:\n|$).*\Z",
+        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$).*\Z",
         "",
         value,
     )
@@ -1057,6 +1057,9 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     value = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s*\[[^\]]{1,120}\]\s*$", "", value)
     value = re.sub(r"(?i)\s*\((?:fuente|source|ref(?:erencia)?|citation|cita)\s*:?\s*[^)]{0,180}\)", "", value)
     value = re.sub(r"(?i)\s*\[(?:fuente|source|ref(?:erencia)?|citation|cita)\s*:?\s*[^\]]{0,180}\]", "", value)
+    value = re.sub(r"(?i)\s*【(?:fuente|source|ref(?:erencia)?|citation|cita)?\s*\d{1,3}】", "", value)
+    value = re.sub(r"(?<!\w)【\d{1,3}】(?!\w)", "", value)
+    value = re.sub(r"(?im)^\s*(?:[-*]|\d+[.)])?\s*(?:enlace|link|url)\s*:?\s*https?://\S+\s*$", "", value)
     # Numeric/footnote citation markers are removed only when they are isolated
     # markers, not when they are part of ordinary prose or markdown links.
     value = re.sub(r"(?<!\w)\[\^?\d{1,3}(?:\s*[,;]\s*\^?\d{1,3})*\](?!\()", "", value)
