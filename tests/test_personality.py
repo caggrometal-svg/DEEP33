@@ -30,3 +30,70 @@ def test_personality_prompt_is_style_only() -> None:
 def test_personality_prompt_rejects_unknown_to_neutral() -> None:
     prompt = personality_prompt("unknown")
     assert "NEUTRO" in prompt
+
+
+def test_personality_protocol_is_machine_readable_and_explicit() -> None:
+    prompt = personality_prompt("COMICO")
+    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v2" in prompt
+    assert "ACTIVE_PERSONALITY=COMICO" in prompt
+    assert "per-turn runtime control" in prompt
+    assert "Do not silently fall back to NEUTRO" in prompt
+    assert "not as a generic assistant" in prompt
+
+
+def test_prepare_messages_keeps_current_personality_as_final_system_instruction(monkeypatch) -> None:
+    import asyncio
+    import backend.main as main
+
+    class FakeMemory:
+        enabled = True
+
+        async def context(self, session_id: str) -> dict:
+            return {
+                "session": {"session_id": session_id, "personality": "NEUTRO", "preferences": {}},
+                "messages": [],
+                "memories": [],
+            }
+
+    monkeypatch.setattr(main, "memory", FakeMemory())
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "test"}],
+        personality="COMICO",
+    )
+
+    messages, selected = asyncio.run(main.prepare_messages(request, "test-session"))
+
+    assert selected == "COMICO"
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "system"
+    assert "Personality preference: NEUTRO." in messages[0]["content"]
+    assert "ACTIVE_PERSONALITY=COMICO" in messages[1]["content"]
+    assert messages[1]["content"].rfind("MODE CHECK:") > messages[1]["content"].find("ACTIVE_PERSONALITY=COMICO")
+
+
+def test_personality_header_and_body_must_agree() -> None:
+    from starlette.requests import Request
+    from fastapi import HTTPException
+    import backend.main as main
+
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "test"}],
+        personality="COMICO",
+    )
+    http_request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/stream",
+        "headers": [
+            (b"x-deep33-session-id", b"test-session"),
+            (b"x-deep33-personality", b"AGRESIVO"),
+        ],
+    })
+
+    try:
+        main.resolve_personality_request(request, http_request)
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert exc.detail == "DEEP33_PERSONALITY_TRANSPORT_MISMATCH"
+    else:
+        raise AssertionError("expected transport mismatch")
