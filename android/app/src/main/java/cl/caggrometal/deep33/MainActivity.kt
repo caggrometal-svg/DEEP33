@@ -863,7 +863,7 @@ class MainActivity : Activity() {
             synchronized(personalitySyncLock) {
                 val personality = Personality.fromKey(store.personality).key
                 try {
-                    Deep33Api.setPreferences(store.sessionId, personality)
+                    Deep33Api.setPreferences(store.sessionId, personality, memoryProfileId = store.memoryProfileId)
                     Log.i("DEEP33", "PERSONALITY SYNCED: " + personality)
                 } catch (e: Exception) {
                     Log.w("DEEP33", "Remote preference sync failed: ${e.javaClass.simpleName}")
@@ -913,7 +913,7 @@ class MainActivity : Activity() {
         executor.submit {
             try {
                 val sessionId = store.sessionId
-                val remote = Deep33Api.memoryContext(sessionId)
+                val remote = Deep33Api.memoryContext(sessionId, store.memoryProfileId)
                 val session = remote.optJSONObject("session")
                 val remotePersonality = session?.optString("personality").orEmpty()
                 val shouldApplyRemotePersonality =
@@ -1162,6 +1162,7 @@ class MainActivity : Activity() {
                         memoryPayload,
                         requestPersonality.key,
                         requestId = requestId,
+                        memoryProfileId = store.memoryProfileId,
                     )
                 } catch (_: Exception) {
                     // Local conversation remains available; remote memory retries on the next turn.
