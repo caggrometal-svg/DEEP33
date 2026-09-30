@@ -827,16 +827,24 @@ class MainActivity : Activity() {
             isAllCaps = false
             minWidth = 0
             minHeight = 0
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
             setTextColor(Personality.fromKey(store.personality).accent)
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackground(
+                chatActionPanel(
+                    Deep33Theme.SURFACE_2,
+                    Personality.fromKey(store.personality).accent
+                )
+            )
+            elevation = dp(2).toFloat()
             stateListAnimator = null
             setOnClickListener { toggleVoiceInput() }
             addPressFeedback(this)
         }
         inputShell.addView(
             micButton,
-            FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(55)
+            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(57)
             }
         )
 
@@ -847,16 +855,20 @@ class MainActivity : Activity() {
             isAllCaps = false
             minWidth = 0
             minHeight = 0
-            setTextColor(Personality.fromKey(store.personality).accent)
-            setBackgroundColor(Color.TRANSPARENT)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
+            val accent = Personality.fromKey(store.personality).accent
+            setTextColor(Deep33Theme.BG)
+            setBackground(chatActionPanel(accent, accent))
+            elevation = dp(3).toFloat()
             stateListAnimator = null
             setOnClickListener { sendMessage() }
             addPressFeedback(this)
         }
         inputShell.addView(
             sendButton,
-            FrameLayout.LayoutParams(dp(48), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(4)
+            FrameLayout.LayoutParams(dp(50), dp(50), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(5)
             }
         )
 
@@ -1128,9 +1140,8 @@ class MainActivity : Activity() {
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         currentPersonalityView.animate().alpha(1f).setDuration(180L).start()
         refreshPersonalityButtons()
-        if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        applyChatActionButtonTheme(personality)
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
-        if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
@@ -1164,9 +1175,8 @@ class MainActivity : Activity() {
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
-        if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        applyChatActionButtonTheme(personality)
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
-        if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
@@ -1652,6 +1662,28 @@ class MainActivity : Activity() {
             cornerRadius = dp(13).toFloat()
             setStroke(dp(1), stroke)
         }
+
+    private fun chatActionPanel(fill: Int, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(16).toFloat()
+            setStroke(dp(1), stroke)
+        }
+
+    private fun applyChatActionButtonTheme(personality: Personality) {
+        if (::micButton.isInitialized) {
+            micButton.setTextColor(personality.accent)
+            micButton.setBackground(
+                chatActionPanel(Deep33Theme.SURFACE_2, personality.accent)
+            )
+        }
+        if (::sendButton.isInitialized) {
+            sendButton.setTextColor(Deep33Theme.BG)
+            sendButton.setBackground(
+                chatActionPanel(personality.accent, personality.accent)
+            )
+        }
+    }
 
     private fun updateConnection(state: ConnectionState) {
         val text = when (state) {
