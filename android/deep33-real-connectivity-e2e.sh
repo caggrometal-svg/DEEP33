@@ -43,8 +43,16 @@ test -n "$TEST_APK"
 adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
+INSTRUMENTATION_ARGS=(-w -r)
+if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
+  INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
+  echo "INSTRUMENTATION_CLASS_FILTER=${DEEP33_INSTRUMENTATION_CLASS}"
+else
+  echo "INSTRUMENTATION_CLASS_FILTER=ALL"
+fi
+
 set +e
-timeout --foreground 15m adb shell am instrument -w -r \
+timeout --foreground 15m adb shell am instrument "${INSTRUMENTATION_ARGS[@]}" \
   cl.caggrometal.deep33.test/androidx.test.runner.AndroidJUnitRunner \
   > /tmp/deep33-e2e/instrumentation.log 2>&1
 instrument_status=$?
@@ -54,9 +62,8 @@ set -e
 cp -R app/build/outputs/androidTest-results /tmp/deep33-e2e/connected-results 2>/dev/null || true
 
 # Android's am instrument can return a non-zero process code even after the
-# runner reports a clean test suite (e.g. INSTRUMENTATION_CODE: -1).
-# Certification is based on the test runner result itself: all tests must end
-# with an OK summary and no explicit failure marker.
+# runner reports a clean test suite. Certification is based on the runner
+# result itself: all selected tests must end with an OK summary and no failure.
 if grep -q "FAILURES!!!" /tmp/deep33-e2e/instrumentation.log ||
    ! grep -Eq "OK \([0-9]+ tests\)" /tmp/deep33-e2e/instrumentation.log; then
   echo "ANDROID_INSTRUMENTATION_FAIL"
