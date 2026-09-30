@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -130,8 +132,16 @@ class MainActivity : Activity() {
     private lateinit var store: SessionStore
     private val conversation = mutableListOf<UiMessage>()
     private var activeTask: Future<*>? = null
+    private var generationActive = false
     private var activeBubble: TextView? = null
     private val cancelRequested = AtomicBoolean(false)
+    private val generationHandler = Handler(Looper.getMainLooper())
+    private var activityVisible = false
+    private val generationMonitor = object : Runnable {
+        override fun run() {
+            monitorGeneration()
+        }
+    }
     private var textToSpeech: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
     private var speechListening = false
@@ -246,28 +256,27 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        activityVisible = true
         if (wasBackgrounded) {
-            // Foreground recovery is lifecycle work, not a new connection configuration.
-            // Restore any durable in-flight turn first, then revalidate without allowing
-            // the probe to overwrite a live generation state.
+            // Reattach to the durable generation after returning from another app.
             restorePendingTurnIfNeeded()
             checkConnectivity()
         }
+        startGenerationMonitor()
         wasBackgrounded = false
     }
 
     override fun onStop() {
+        activityVisible = false
         wasBackgrounded = true
         super.onStop()
     }
 
     override fun onDestroy() {
         lifecycleDestroying = true
-        cancelRequested.set(true)
+        generationHandler.removeCallbacks(generationMonitor)
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
-        Deep33Api.cancelActiveStream()
-        activeTask?.cancel(true)
         executor.shutdownNow()
         speechRecognizer?.destroy()
         speechRecognizer = null
@@ -886,7 +895,7 @@ class MainActivity : Activity() {
     }
 
     private fun startNewSession() {
-        if (activeTask?.isDone == false) cancelGeneration()
+        if (generationActive) cancelGeneration()
         saveCurrentSummary()
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
@@ -898,7 +907,7 @@ class MainActivity : Activity() {
     }
 
     private fun openSession(sessionId: String) {
-        if (activeTask?.isDone == false) cancelGeneration()
+        if (generationActive) cancelGeneration()
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
         store.activateSession(sessionId)
@@ -962,7 +971,7 @@ class MainActivity : Activity() {
                     // Remote memory refresh must not rebuild the chat while a pending
                     // generation is active, otherwise the "Pensando..." bubble can be
                     // detached from the active request after foreground recovery.
-                    if (activeTask?.isDone == false) return@runOnUiThread
+                    if (generationActive) return@runOnUiThread
                     applyPersonalityTheme(Personality.fromKey(store.personality))
                     renderConversation()
                     refreshSidebarHistory()
@@ -999,7 +1008,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     // Connectivity probes must not overwrite a live generation state
                     // while the user has temporarily left and returned to the Activity.
-                    if (activeTask?.isDone == false) {
+                    if (generationActive) {
                         updateConnection(ConnectionState.CONNECTING)
                     } else {
                         updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
@@ -1008,7 +1017,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Deep33ApiException) {
                 runOnUiThread {
-                    val pendingGeneration = activeTask?.isDone == false || store.loadPendingTurn() != null
+                    val pendingGeneration = generationActive || store.loadPendingTurn() != null
                     if (pendingGeneration) {
                         // A connectivity probe can fail while the real generation is still
                         // recoverable. That is not evidence that the pending AI turn is lost.
@@ -1025,7 +1034,7 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) {
                 runOnUiThread {
-                    val pendingGeneration = activeTask?.isDone == false || store.loadPendingTurn() != null
+                    val pendingGeneration = generationActive || store.loadPendingTurn() != null
                     if (pendingGeneration) {
                         updateConnection(ConnectionState.CONNECTING)
                         if (::diagnosticsView.isInitialized) {
@@ -1044,7 +1053,7 @@ class MainActivity : Activity() {
 
     private fun sendMessage(textOverride: String? = null) {
         val text = (textOverride ?: input.text.toString()).trim()
-        if (text.isEmpty() || activeTask?.isDone == false) return
+        if (text.isEmpty() || generationActive) return
 
         // Snapshot the active personality for this turn. The user's next selection must
         // affect the next turn, while this request/voice output remains internally consistent.
@@ -1095,9 +1104,22 @@ class MainActivity : Activity() {
     }
 
     private fun restorePendingTurnIfNeeded() {
-        if (activeTask?.isDone == false) return
+        val state = store.loadGenerationState()
+        if (state?.status == GenerationStatus.DONE && state.sessionId == store.sessionId) {
+            conversation.clear()
+            conversation.addAll(store.loadMessages())
+            store.clearGenerationState(state.requestId)
+            generationActive = false
+            activeRequestId = null
+            activeIdempotencyKey = null
+            activeBubble = null
+            renderConversation()
+            refreshSidebarHistory()
+            return
+        }
+
         val pending = store.loadPendingTurn() ?: return
-        if (pending.sessionId != store.sessionId) return
+        if (generationActive) return
 
         val payload = try {
             org.json.JSONArray(pending.payloadJson)
@@ -1107,12 +1129,27 @@ class MainActivity : Activity() {
         }
 
         val requestPersonality = Personality.fromKey(pending.personality)
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        generationActive = true
+        activeRequestId = pending.requestId
+        activeIdempotencyKey = pending.idempotencyKey
+
+        val partial = state
+            ?.takeIf { it.requestId == pending.requestId }
+            ?.partialOutput
+            .orEmpty()
+        activeBubble = appendBubble(
+            "DEEP33",
+            partial.ifBlank { "Pensando..." },
+            Color.rgb(42, 12, 18)
+        )
+        activeBubble?.tag = partial.ifBlank { "Pensando..." }
+
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
         cancelButton.visibility = View.VISIBLE
         updateConnection(ConnectionState.CONNECTING)
+
         launchGeneration(
             payload,
             pending.sessionId,
@@ -1122,6 +1159,80 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun startGenerationMonitor() {
+        generationHandler.removeCallbacks(generationMonitor)
+        if (generationActive || store.loadPendingTurn() != null) {
+            generationHandler.post(generationMonitor)
+        }
+    }
+
+    private fun monitorGeneration() {
+        if (!generationActive) return
+
+        val state = store.loadGenerationState()
+        if (state == null || state.requestId != activeRequestId) {
+            if (store.loadPendingTurn() == null) {
+                generationActive = false
+                activeRequestId = null
+                activeIdempotencyKey = null
+                cleanupGeneration(false)
+                return
+            }
+            generationHandler.postDelayed(generationMonitor, 250L)
+            return
+        }
+
+        when (state.status) {
+            GenerationStatus.RUNNING -> {
+                val output = state.partialOutput.trim()
+                if (output.isNotBlank()) {
+                    activeBubble?.let {
+                        it.tag = output
+                        renderMarkdown(it, output)
+                    }
+                    setVoiceState(AvatarState.SPEAKING)
+                }
+            }
+            GenerationStatus.DONE -> {
+                val finalText = state.finalText.trim()
+                conversation.clear()
+                conversation.addAll(store.loadMessages())
+                renderConversation()
+                store.clearGenerationState(state.requestId)
+                generationActive = false
+                activeRequestId = null
+                activeIdempotencyKey = null
+                activeBubble = null
+                cleanupGeneration(true)
+                refreshSidebarHistory()
+                if (activityVisible && finalText.isNotBlank()) {
+                    speakAssistant(finalText, Personality.fromKey(state.personality))
+                }
+                return
+            }
+            GenerationStatus.FAILED, GenerationStatus.CANCELLED -> {
+                val message = state.error.ifBlank {
+                    if (state.status == GenerationStatus.CANCELLED) {
+                        "Generación cancelada."
+                    } else {
+                        "Error de comunicación con DEEP33."
+                    }
+                }
+                activeBubble?.let {
+                    it.tag = message
+                    renderMarkdown(it, message)
+                }
+                store.clearGenerationState(state.requestId)
+                generationActive = false
+                activeRequestId = null
+                activeIdempotencyKey = null
+                cleanupGeneration(false)
+                return
+            }
+        }
+        generationHandler.postDelayed(generationMonitor, 250L)
+    }
+
     private fun launchGeneration(
         payload: org.json.JSONArray,
         sessionId: String,
@@ -1129,117 +1240,22 @@ class MainActivity : Activity() {
         requestId: String,
         idempotencyKey: String
     ) {
-        cancelRequested.set(false)
+        generationActive = true
         activeRequestId = requestId
         activeIdempotencyKey = idempotencyKey
-        activeTask = executor.submit {
-            try {
-                val finalText = Deep33Api.stream(
-                    payload,
-                    sessionId,
-                    requestPersonality.key,
-                    requestId = requestId,
-                    idempotencyKey = idempotencyKey,
-                    memoryProfileId = store.memoryProfileId,
-                    isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
-                    onText = { chunk ->
-                        runOnUiThread {
-                            val bubble = activeBubble ?: return@runOnUiThread
-                            val current = (bubble.tag as? String ?: "").let { currentText ->
-                                if (currentText == "Pensando...") "" else currentText
-                            }
-                            val next = current + chunk
-                            bubble.tag = next
-                            renderMarkdown(bubble, next)
-                            setVoiceState(AvatarState.SPEAKING)
-                        }
-                    }
-                )
-
-                if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
-
-                conversation.add(UiMessage("assistant", finalText))
-                store.saveMessages(conversation)
-                saveCurrentSummary()
-
-                try {
-                    val memoryPayload = org.json.JSONArray()
-                    conversation.takeLast(50).forEach {
-                        memoryPayload.put(
-                            org.json.JSONObject()
-                                .put("role", it.role)
-                                .put("content", it.content)
-                        )
-                    }
-                    Deep33Api.syncMemory(
-                        sessionId,
-                        memoryPayload,
-                        requestPersonality.key,
-                        requestId = requestId,
-                        memoryProfileId = store.memoryProfileId,
-                    )
-                } catch (_: Exception) {
-                    // Local conversation remains available; remote memory retries on the next turn.
-                }
-
-                // The response is durable locally before clearing the pending marker.
-                store.clearPendingTurn(requestId)
-
-                runOnUiThread {
-                    speakAssistant(finalText, requestPersonality)
-                    cleanupGeneration(true)
-                    refreshSidebarHistory()
-                }
-            } catch (e: Deep33ApiException) {
-                // A lifecycle/process interruption intentionally leaves the pending marker
-                // intact so a newly created Activity can resume the same turn.
-                if (e.kind != Deep33ApiException.Kind.CANCELLED) {
-                    store.clearPendingTurn(requestId)
-                }
-                if (e.kind == Deep33ApiException.Kind.CANCELLED && lifecycleDestroying) {
-                    // Activity destruction is a lifecycle transition, not a user cancellation.
-                    // The durable pending marker remains available for the recreated Activity.
-                    return@submit
-                }
-                runOnUiThread {
-                    val bubble = activeBubble
-                    if (e.kind == Deep33ApiException.Kind.CANCELLED || cancelRequested.get()) {
-                        bubble?.let {
-                            it.tag = "Generación cancelada."
-                            renderMarkdown(it, "Generación cancelada.")
-                        }
-                    } else {
-                        bubble?.let {
-                            it.tag = e.message ?: "Error de comunicación."
-                            it.text = e.message ?: "Error de comunicación."
-                        }
-                    }
-                    cleanupGeneration(false)
-                }
-            } catch (_: Exception) {
-                if (lifecycleDestroying) {
-                    // Preserve the durable turn during Activity destruction so a recreated
-                    // Activity can recover it even if teardown surfaces a non-API exception.
-                    return@submit
-                }
-                store.clearPendingTurn(requestId)
-                runOnUiThread {
-                    activeBubble?.let {
-                        it.tag = "Error inesperado de comunicación."
-                        it.text = "Error inesperado de comunicación."
-                    }
-                    cleanupGeneration(false)
-                }
-            }
-        }
+        Deep33GenerationService.start(this, requestId)
+        startGenerationMonitor()
     }
 
     private fun cancelGeneration() {
-        if (activeTask?.isDone != false) return
-        cancelRequested.set(true)
-        store.clearPendingTurn(activeRequestId)
-        Deep33Api.cancelActiveStream()
-        activeTask?.cancel(true)
+        if (!generationActive) return
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        Deep33GenerationService.cancel(this, requestId)
+        store.clearPendingTurn(requestId)
+        store.clearGenerationState(requestId)
+        generationActive = false
+        activeRequestId = null
+        activeIdempotencyKey = null
         activeBubble?.let {
             it.tag = "Generación cancelada."
             renderMarkdown(it, "Generación cancelada.")
@@ -1322,7 +1338,7 @@ class MainActivity : Activity() {
             speechListening ||
             bargeInMonitoring ||
             textToSpeech?.isSpeaking == true ||
-            activeTask?.isDone == false
+            generationActive
         ) return
 
         val generation = voiceModeGeneration
@@ -1332,7 +1348,7 @@ class MainActivity : Activity() {
                 !speechListening &&
                 !bargeInMonitoring &&
                 textToSpeech?.isSpeaking != true &&
-                activeTask?.isDone != false
+                !generationActive
             ) {
                 startVoiceInput()
             }
@@ -1405,7 +1421,7 @@ class MainActivity : Activity() {
             setVoiceModeUi(true)
             window.decorView.postDelayed({
                 suppressRecognizerCallbacks = false
-                if (voiceModeActive && activeTask?.isDone != false && textToSpeech?.isSpeaking != true) {
+                if (voiceModeActive && !generationActive && textToSpeech?.isSpeaking != true) {
                     startVoiceInput()
                 }
             }, 300L)
@@ -1568,7 +1584,7 @@ class MainActivity : Activity() {
         speechListening = false
         speechRecognizer?.stopListening()
         setVoiceState(AvatarState.IDLE)
-        if (activeTask?.isDone != false && !voiceModeActive) setVoiceModeUi(false)
+        if (!generationActive && !voiceModeActive) setVoiceModeUi(false)
     }
 
     private val recognitionListener = object : RecognitionListener {
