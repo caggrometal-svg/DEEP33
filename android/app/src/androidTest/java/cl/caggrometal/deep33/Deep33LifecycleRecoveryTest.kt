@@ -1,5 +1,8 @@
 package cl.caggrometal.deep33
 
+import android.widget.TextView
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertNull
@@ -9,6 +12,64 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class Deep33LifecycleRecoveryTest {
+    @Test
+    fun pendingTurnSurvivesBackgroundForegroundAndGetsResponse() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = SessionStore(context)
+        store.resetSession()
+        val pending = PendingTurn(
+            sessionId = store.sessionId,
+            requestId = "lifecycle-e2e-request",
+            idempotencyKey = "chat-lifecycle-e2e-request",
+            personality = "NEUTRO",
+            payloadJson = """[{"role":"user","content":"Responde exactamente: OK"}]"""
+        )
+        store.savePendingTurn(pending)
+
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity ->
+                val status = activity.readPrivateTextView("statusView")
+                assertTrue("Initial state lost the pending turn", !status.contains("OFFLINE"))
+            }
+
+            // Simulate the user leaving the app for several seconds while the turn is pending.
+            scenario.moveToState(Lifecycle.State.CREATED)
+            Thread.sleep(7_000L)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+
+            val deadline = System.currentTimeMillis() + 60_000L
+            var responseReceived = false
+            var offlineSeen = false
+            while (System.currentTimeMillis() < deadline) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val status = activity.readPrivateTextView("statusView")
+                    if (status.contains("OFFLINE")) offlineSeen = true
+
+                    @Suppress("UNCHECKED_CAST")
+                    val messages = activity.readPrivateConversation() as List<UiMessage>
+                    responseReceived = messages.any { it.role == "assistant" && it.content.isNotBlank() }
+                }
+                if (responseReceived && SessionStore(context).loadPendingTurn() == null) break
+                Thread.sleep(250L)
+            }
+
+            assertTrue("Lifecycle recovery exposed OFFLINE while recovering the pending turn", !offlineSeen)
+            assertTrue(
+                "The original pending turn did not produce an assistant response",
+                responseReceived
+            )
+            assertNull(
+                "Pending marker was not cleared after the recovered response",
+                SessionStore(context).loadPendingTurn()
+            )
+        } finally {
+            store.clearPendingTurn(pending.requestId)
+            scenario.close()
+        }
+    }
+
     @Test
     fun pendingTurnSurvivesActivityProcessState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -34,4 +95,15 @@ class Deep33LifecycleRecoveryTest {
         recreatedStore.clearPendingTurn(pending.requestId)
         assertNull(recreatedStore.loadPendingTurn())
     }
+    private fun Any.readPrivateTextView(fieldName: String): String {
+        val field = javaClass.getDeclaredField(fieldName).apply { isAccessible = true }
+        return (field.get(this) as TextView).text?.toString().orEmpty()
+    }
+
+    private fun Any.readPrivateConversation(): Any {
+        val field = javaClass.getDeclaredField("conversation").apply { isAccessible = true }
+        return field.get(this)
+    }
+
+
 }
