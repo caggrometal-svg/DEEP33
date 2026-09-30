@@ -59,12 +59,12 @@ android {
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
+        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy"
 
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+        ?: "https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-tertiary"
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
