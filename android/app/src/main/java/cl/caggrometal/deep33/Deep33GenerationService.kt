@@ -151,15 +151,27 @@ class Deep33GenerationService : Service() {
             )
             store.clearPendingTurn(requestId)
 
+            val memoryPayload = JSONArray()
+            messages.takeLast(50).forEach {
+                memoryPayload.put(
+                    org.json.JSONObject()
+                        .put("role", it.role)
+                        .put("content", it.content)
+                )
+            }
+            // Queue remote memory durably before attempting the network write. The local
+            // conversation is already safe; this marker guarantees that memory sync can
+            // be retried after process death, network loss, or a temporary backend outage.
+            store.savePendingMemorySync(
+                PendingMemorySync(
+                    sessionId = pending.sessionId,
+                    requestId = pending.requestId,
+                    personality = personality.key,
+                    memoryProfileId = store.memoryProfileId,
+                    messagesJson = memoryPayload.toString()
+                )
+            )
             try {
-                val memoryPayload = JSONArray()
-                messages.takeLast(50).forEach {
-                    memoryPayload.put(
-                        org.json.JSONObject()
-                            .put("role", it.role)
-                            .put("content", it.content)
-                    )
-                }
                 Deep33Api.syncMemory(
                     pending.sessionId,
                     memoryPayload,
@@ -167,8 +179,9 @@ class Deep33GenerationService : Service() {
                     requestId = pending.requestId,
                     memoryProfileId = store.memoryProfileId
                 )
+                store.clearPendingMemorySync(pending.requestId)
             } catch (_: Exception) {
-                // The local recovery boundary is already complete; remote memory is best effort.
+                // The durable memory-sync marker remains for MainActivity startup recovery.
             }
         } catch (e: Deep33ApiException) {
             if (userCancelled.get()) {
