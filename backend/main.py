@@ -403,6 +403,22 @@ def local_idempotency_prune() -> None:
         _local_idempotency_completed.pop(key, None)
 
 
+def local_idempotency_get(
+    session_id: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> dict | None:
+    local_idempotency_prune()
+    key = cache_key(session_id, idempotency_key)
+    completed = _local_idempotency_completed.get(key)
+    if completed is None:
+        return None
+    _expires_at, stored_hash, output = completed
+    if stored_hash != request_hash:
+        raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+    return output
+
+
 def local_idempotency_claim(
     session_id: str,
     idempotency_key: str,
@@ -1389,6 +1405,15 @@ async def generate(
             session_id,
         )
         return cached
+
+    local_cached = local_idempotency_get(session_id, idempotency_key, request_hash)
+    if local_cached is not None:
+        logger.info(
+            "ai_idempotency_local_fallback_hit request_id=%s session_id=%s",
+            request_id,
+            session_id,
+        )
+        return local_cached
 
     state, record = await shared_idempotency_claim(
         session_id,
