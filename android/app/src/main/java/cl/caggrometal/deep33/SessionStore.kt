@@ -66,9 +66,14 @@ class SessionStore(
 
     fun resetSession() {
         val created = UUID.randomUUID().toString()
+        // Starting a fresh conversation must also invalidate any generation recovery
+        // markers belonging to the previous conversation. Otherwise Activity startup
+        // can consume an old DONE/RUNNING state before seeing the new pending turn.
         prefs.edit()
             .putString(KEY_SESSION_ID, created)
             .putString(messagesKey(created), "[]")
+            .remove(KEY_PENDING_TURN)
+            .remove(KEY_GENERATION_STATE)
             .apply()
     }
 
