@@ -354,7 +354,8 @@ object Deep33Api {
         sessionId: String,
         requestId: String = UUID.randomUUID().toString(),
         idempotencyKey: String = requestId,
-        endpointOverride: List<String>? = null
+        endpointOverride: List<String>? = null,
+        acceptResponse: ((JSONObject) -> Boolean)? = null
     ): JSONObject {
         val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
         var lastError: Deep33ApiException? = null
