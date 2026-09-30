@@ -1685,6 +1685,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     request = resolve_personality_request(request, http_request)
     personality = normalize_personality(request.personality)
     request_hash = payload_hash({
@@ -1724,13 +1725,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     if not lease_token:
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
-    messages, personality = await prepare_messages(request, session_id)
+    messages, personality = await prepare_messages(request, session_id, memory_profile_id)
     payload={"messages":messages,"model":request.model or AI_GATEWAY_MODEL}
     if request.temperature is not None:
         payload["temperature"]=request.temperature
 
     try:
-        await persist_messages(session_id,[m for m in messages if m.get("role")!="system"],personality=personality)
+        await persist_messages(session_id,[m for m in messages if m.get("role")!="system"],personality=personality, memory_profile_id=memory_profile_id)
 
         if DEEP33_WEB_TOOLS_ENABLED:
             data, sources = await run_web_tool_loop(
@@ -1753,6 +1754,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             session_id,
             [m for m in messages if m.get("role")!="system"]+[{"role":"assistant","content":result["text"]}],
             personality=personality,
+            memory_profile_id=memory_profile_id,
         )
         cache_put(session_id,idempotency_key,request_hash,output)
         if memory.enabled:
