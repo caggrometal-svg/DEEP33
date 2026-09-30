@@ -29,7 +29,11 @@ class Deep33LifecycleRecoveryTest {
         )
         assertTrue(
             "Generation service must not stop with the Activity task",
-            !info.isolatedProcess && info.stopWithTask.not()
+            info.flags and ServiceInfo.FLAG_STOP_WITH_TASK == 0
+        )
+        assertTrue(
+            "Generation service must remain in the application process",
+            info.flags and ServiceInfo.FLAG_ISOLATED_PROCESS == 0
         )
     }
 
