@@ -92,14 +92,35 @@ class MainActivity : Activity() {
             override fun onDone(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    setVoiceModeUi(false)
+                    if (voiceModeActive) {
+                        setVoiceModeUi(true)
+                        // Voice chat remains audio-only and immediately returns to listening
+                        // after DEEP33 finishes speaking. A guard prevents a stale callback
+                        // from reopening voice mode after the user explicitly exited it.
+                        window.decorView.postDelayed({
+                            if (voiceModeActive &&
+                                textToSpeech?.isSpeaking != true &&
+                                !speechListening
+                            ) {
+                                startVoiceInput()
+                            }
+                        }, 200L)
+                    } else {
+                        // Voice responses enabled from text chat must not force the UI into
+                        // persistent voice mode.
+                        setVoiceModeUi(false)
+                    }
                 }
             }
 
             override fun onError(utteranceId: String?) {
                 runOnUiThread {
                     setVoiceState(AvatarState.IDLE)
-                    setVoiceModeUi(false)
+                    if (!voiceModeActive) {
+                        setVoiceModeUi(false)
+                    } else {
+                        setVoiceModeUi(true)
+                    }
                 }
             }
         })
@@ -143,6 +164,18 @@ class MainActivity : Activity() {
         textToSpeech?.shutdown()
         textToSpeech = null
         super.onDestroy()
+    }
+
+    @Deprecated("Use AndroidX OnBackPressedDispatcher when migrating this screen.")
+    override fun onBackPressed() {
+        if (voiceModeActive) {
+            textToSpeech?.stop()
+            stopVoiceInput()
+            setVoiceState(AvatarState.IDLE)
+            setVoiceModeUi(false)
+            return
+        }
+        super.onBackPressed()
     }
 
     private enum class Tab { CHAT, STATUS, SETTINGS }
@@ -650,7 +683,7 @@ class MainActivity : Activity() {
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
         }
-        applyVoiceTone()
+        applyVoiceTone(personality)
         syncPreferences()
     }
 
@@ -810,6 +843,11 @@ class MainActivity : Activity() {
         val text = (textOverride ?: input.text.toString()).trim()
         if (text.isEmpty() || activeTask?.isDone == false) return
 
+        // Snapshot the active personality for this turn. The user's next selection must
+        // affect the next turn, while this request/voice output remains internally consistent.
+        val requestPersonality = Personality.fromKey(store.personality)
+        Log.i("DEEP33", "TURN PERSONALITY: " + requestPersonality.key)
+
         stopVoiceInput()
         if (voiceModeActive) {
             setVoiceModeUi(true)
@@ -844,7 +882,7 @@ class MainActivity : Activity() {
                     Deep33Api.stream(
                         payload,
                         store.sessionId,
-                        store.personality,
+                        requestPersonality.key,
                         requestId = requestId,
                         idempotencyKey = idempotencyKey,
                         isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
@@ -881,7 +919,7 @@ class MainActivity : Activity() {
                     Deep33Api.syncMemory(
                         store.sessionId,
                         memoryPayload,
-                        store.personality,
+                        requestPersonality.key,
                         requestId = requestId,
                     )
                 } catch (_: Exception) {
@@ -889,7 +927,7 @@ class MainActivity : Activity() {
                 }
 
                 runOnUiThread {
-                    speakAssistant(finalText)
+                    speakAssistant(finalText, requestPersonality)
                     cleanupGeneration(true)
                     refreshSidebarHistory()
                 }
@@ -966,10 +1004,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyVoiceTone() {
+    private fun applyVoiceTone(
+        personality: Personality = Personality.fromKey(store.personality)
+    ) {
         val tts = textToSpeech ?: return
         val tone = VoiceTone.fromKey(store.voiceTone)
-        val profile = PersonalityVoiceProfile.forPersonality(Personality.fromKey(store.personality))
+        val profile = PersonalityVoiceProfile.forPersonality(personality)
         tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.65f, 1.35f))
         tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.60f, 1.45f))
     }
@@ -996,11 +1036,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun speakAssistant(text: String) {
+    private fun speakAssistant(
+        text: String,
+        personality: Personality = Personality.fromKey(store.personality)
+    ) {
         if ((!store.voiceEnabled && !voiceModeActive) || text.isBlank()) return
-        setVoiceModeUi(true)
-        setVoiceState(AvatarState.SPEAKING)
-        applyVoiceTone()
+        if (voiceModeActive) {
+            setVoiceModeUi(true)
+            setVoiceState(AvatarState.SPEAKING)
+        }
+        applyVoiceTone(personality)
         val speech = text
             .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
@@ -1097,7 +1142,14 @@ class MainActivity : Activity() {
     }
 
     private fun toggleVoiceInput() {
-        if (speechListening) stopVoiceInput() else startVoiceInput()
+        if (speechListening) {
+            stopVoiceInput()
+            return
+        }
+        if (textToSpeech?.isSpeaking == true) {
+            textToSpeech?.stop()
+        }
+        startVoiceInput()
     }
 
     private fun startVoiceInput() {
@@ -1160,7 +1212,11 @@ class MainActivity : Activity() {
         override fun onError(error: Int) {
             speechListening = false
             setVoiceState(AvatarState.IDLE)
-            if (activeTask?.isDone != false) setVoiceModeUi(false)
+            if (voiceModeActive) {
+                setVoiceModeUi(true)
+            } else {
+                setVoiceModeUi(false)
+            }
         }
 
         override fun onResults(results: Bundle?) {
@@ -1176,7 +1232,11 @@ class MainActivity : Activity() {
                 sendMessage(recognized)
             } else {
                 setVoiceState(AvatarState.IDLE)
-                voicePanelOrNull()?.visibility = View.GONE
+                if (voiceModeActive) {
+                    setVoiceModeUi(true)
+                } else {
+                    setVoiceModeUi(false)
+                }
             }
         }
 
