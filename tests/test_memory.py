@@ -129,3 +129,49 @@ def test_memory_edge_sync_persists_session_before_messages():
     assert session_upsert < incoming
     assert session_patch < incoming
 
+
+
+def test_memory_sync_endpoint_bridges_android_to_memory_client():
+    from backend import main
+
+    class StubMemory:
+        enabled = True
+
+        async def sync(self, session_id, messages, personality=None, preferences=None):
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "saved": len(messages),
+                "personality": personality,
+                "preferences": preferences,
+            }
+
+    async def exercise():
+        original = main.memory
+        main.memory = StubMemory()
+        try:
+            transport = httpx.ASGITransport(app=main.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post(
+                    "/v1/memory/sync",
+                    headers={"X-DEEP33-Session-Id": "memory-test-session"},
+                    json={
+                        "messages": [
+                            {"role": "user", "content": "hola"},
+                            {"role": "assistant", "content": "respuesta"},
+                        ],
+                        "personality": "NEUTRO",
+                    },
+                )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["ok"] is True
+            assert body["session_id"] == "memory-test-session"
+            assert body["saved"] == 2
+        finally:
+            main.memory = original
+
+    asyncio.run(exercise())
