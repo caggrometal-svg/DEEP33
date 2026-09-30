@@ -194,6 +194,20 @@ object Deep33Api {
 
                     val code = connection.responseCode
                     if (code !in 200..299) throw mapError(code)
+                    val acknowledgedPersonality =
+                        connection.getHeaderField("X-DEEP33-Personality").orEmpty().trim().uppercase()
+                    if (
+                        acknowledgedPersonality.isNotBlank() &&
+                        acknowledgedPersonality != activePersonality
+                    ) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
+                    }
+                    if (acknowledgedPersonality.isNotBlank()) {
+                        android.util.Log.i(
+                            "DEEP33",
+                            "PERSONALITY ACK: " + acknowledgedPersonality
+                        )
+                    }
                     if (!connection.contentType.orEmpty().contains("text/event-stream", ignoreCase = true)) {
                         throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
                     }
