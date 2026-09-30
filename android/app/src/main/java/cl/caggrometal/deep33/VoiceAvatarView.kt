@@ -58,12 +58,31 @@ class VoiceAvatarView @JvmOverloads constructor(
 
         val activity = when (state) {
             AvatarState.IDLE -> 0.08f
-            AvatarState.LISTENING -> 0.28f + audioLevel * 0.60f
-            AvatarState.THINKING -> 0.34f
-            AvatarState.SPEAKING -> 0.50f + (sin(phase * 2f) * 0.24f + 0.24f)
+            AvatarState.LISTENING -> 0.24f + audioLevel * 0.64f
+            AvatarState.THINKING -> 0.30f
+            AvatarState.SPEAKING -> 0.48f + (sin(phase * 2f) * 0.24f + 0.24f)
         }
 
+        // Ambient shell: keeps the avatar visually anchored to DEEP33's dark/red system
+        // without turning it into a cartoon face.
         strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeWidth = dp(1.1f)
+        strokePaint.color = withAlpha(accent, 18 + (activity * 24).toInt())
+        canvas.drawCircle(centerX, centerY, radius + dp(31f) + dp(8f) * activity, strokePaint)
+        strokePaint.color = withAlpha(accent, 10 + (activity * 18).toInt())
+        canvas.drawCircle(centerX, centerY, radius + dp(42f) + dp(10f) * activity, strokePaint)
+
+        if (state == AvatarState.LISTENING || state == AvatarState.SPEAKING) {
+            strokePaint.color = withAlpha(accent, 42 + (activity * 55).toInt())
+            strokePaint.strokeWidth = dp(2.0f)
+            val activeRect = RectF(
+                centerX - radius - dp(19f),
+                centerY - radius - dp(19f),
+                centerX + radius + dp(19f),
+                centerY + radius + dp(19f)
+            )
+            canvas.drawArc(activeRect, -90f + phase * 24f, 110f + 90f * activity, false, strokePaint)
+        }
 
         when (personality.avatarGeometry) {
             "ANGULAR" -> drawAggressive(canvas, centerX, centerY, radius, accent, activity)
