@@ -781,6 +781,8 @@ class MainActivity : Activity() {
             box.addView(Button(this).apply {
                 text = "Usar " + tone.key + " — " + tone.description
                 isAllCaps = false
+                setTextColor(Color.LTGRAY)
+                setBackground(neonPanel(Color.rgb(10, 10, 13), Color.rgb(54, 54, 62)))
                 setOnClickListener {
                     store.voiceTone = tone.key
                     applyVoiceTone()
@@ -802,6 +804,7 @@ class MainActivity : Activity() {
                 text = "Usar " + option.key
                 isAllCaps = false
                 setTextColor(option.accent)
+                setBackground(neonPanel(Color.rgb(10, 10, 13), option.accent))
                 setOnClickListener {
                     selectPersonality(option)
                     showTab(Tab.SETTINGS)
@@ -811,6 +814,8 @@ class MainActivity : Activity() {
 
         box.addView(Button(this).apply {
             text = "BORRAR CONVERSACIÓN"
+            setTextColor(Color.rgb(220, 120, 130))
+            setBackground(neonPanel(Color.rgb(15, 7, 10), Color.rgb(120, 24, 38)))
             setOnClickListener {
                 conversation.clear()
                 store.clearConversation()
@@ -819,6 +824,8 @@ class MainActivity : Activity() {
         })
         box.addView(Button(this).apply {
             text = "NUEVA SESIÓN"
+            setTextColor(Color.LTGRAY)
+            setBackground(neonPanel(Color.rgb(10, 10, 13), Color.rgb(58, 58, 66)))
             setOnClickListener { startNewSession() }
         })
         return box
