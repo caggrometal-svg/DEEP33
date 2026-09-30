@@ -137,7 +137,7 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
     class StubMemory:
         enabled = True
 
-        async def sync(self, session_id, messages, personality=None, preferences=None):
+        async def sync(self, session_id, messages, personality=None, preferences=None, memory_profile_id=None):
             return {
                 "ok": True,
                 "session_id": session_id,
