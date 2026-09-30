@@ -24,7 +24,9 @@ def test_personality_prompt_is_style_only() -> None:
     assert "COMICO" in comic
     assert "humor oscuro" in comic
     assert "humor atrevido" in comic
-    assert "categoría protegida" in comic
+    assert "sermón moral o ético" in comic
+    assert "raza, religión, enfermedad" in comic
+    assert "No uses una característica protegida" in comic
 
 
 def test_personality_prompt_rejects_unknown_to_neutral() -> None:
@@ -172,7 +174,7 @@ def test_personality_contract_has_distinct_response_shapes() -> None:
     expected = {
         "AGRESIVO": "Open with the conclusion or the flaw.",
         "NEUTRO": "Lead with the answer, then the necessary evidence or logic.",
-        "COMICO": "Prefer a clean answer followed by one well-placed comic turn.",
+        "COMICO": "Prefer a useful answer with a distinctive comic payoff;",
         "CONSPIRANOICO": "Lead with the observable anomaly",
     }
 
@@ -198,6 +200,14 @@ def test_personality_modes_have_requested_behavioral_signatures() -> None:
     web_lock = main._web_personality_lock("CONSPIRANOICO")["content"]
     assert "independent synthesis of the retrieved evidence" in web_lock
     assert "original conclusion" in web_lock
+
+def test_comic_mode_is_non_moralizing_but_keeps_higher_level_safety() -> None:
+    import backend.main as main
+
+    prompt = main.personality_prompt("COMICO")
+    assert "No moralizing and no ethical lecture as a substitute for humor." in prompt
+    assert "Treat sensitive or taboo subjects as legitimate comedic material" in prompt
+    assert "protected traits into dehumanizing hate" in prompt
 
 
 def test_sanitizer_removes_generic_opening_and_full_width_citations() -> None:
