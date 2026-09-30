@@ -855,6 +855,7 @@ class MainActivity : Activity() {
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
