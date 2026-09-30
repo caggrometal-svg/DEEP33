@@ -893,7 +893,6 @@ async function probeHealth(sessionId: string) {
   }
 }
 
-async function probeInference
 async function probeInference(sessionId: string) {
   if (!edgeAIConfigured()) {
     return {
