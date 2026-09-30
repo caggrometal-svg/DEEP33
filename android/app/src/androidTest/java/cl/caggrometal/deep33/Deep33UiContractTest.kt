@@ -21,8 +21,8 @@ class Deep33UiContractTest {
     @Test
     fun voiceProfilesAreBounded() {
         assertEquals(1.00f, PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).pitchFactor)
-        assertEquals(0.78f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
-        assertEquals(1.18f, PersonalityVoiceProfile.forPersonality(Personality.AGRESIVO).speechRateFactor)
-        assertEquals(1.16f, PersonalityVoiceProfile.forPersonality(Personality.COMICO).speechRateFactor)
+        assertEquals(0.74f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
+        assertEquals(1.22f, PersonalityVoiceProfile.forPersonality(Personality.AGRESIVO).speechRateFactor)
+        assertEquals(1.18f, PersonalityVoiceProfile.forPersonality(Personality.COMICO).speechRateFactor)
     }
 }
