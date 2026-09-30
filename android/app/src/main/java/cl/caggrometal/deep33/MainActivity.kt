@@ -102,6 +102,7 @@ private object VoiceConversationPolicy {
     }
 }
 
+// Build trigger: package the current voice-command reliability fixes.
 class MainActivity : Activity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
