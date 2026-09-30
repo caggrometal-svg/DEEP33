@@ -1,6 +1,7 @@
 package cl.caggrometal.deep33
 
 import android.Manifest
+import android.media.AudioAttributes
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -185,6 +186,12 @@ class MainActivity : Activity() {
 
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
+                textToSpeech?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
                 val locale = Locale("es", "CL")
                 val result = textToSpeech?.setLanguage(locale)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
@@ -1439,9 +1446,9 @@ class MainActivity : Activity() {
     ) {
         val tts = textToSpeech ?: return
         val tone = VoiceTone.fromKey(store.voiceTone)
-        val profile = PersonalityVoiceProfile.forPersonality(personality)
-        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.65f, 1.35f))
-        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.60f, 1.45f))
+        val profile = VoiceProfileCalculator.calculate(tone, personality)
+        tts.setPitch(profile.pitch)
+        tts.setSpeechRate(profile.speechRate)
     }
 
     private fun setVoiceModeUi(active: Boolean) {
