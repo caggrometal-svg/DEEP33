@@ -722,25 +722,16 @@ class MainActivity : Activity() {
             )
         }
 
-        val voiceHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        voiceHeader.addView(TextView(this).apply {
-            text = "DEEP33 · VOZ"
-            textSize = 18f
-            letterSpacing = 0.08f
-            setTextColor(Deep33Theme.TEXT)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        voiceHeader.addView(Button(this).apply {
+        // Voice mode is intentionally audio-first: no title, status text, or transcript.
+        // The face carries only personality eyebrows/expression; the close control is icon-only.
+        voicePanel.addView(Button(this).apply {
             text = "×"
             contentDescription = "Cerrar modo voz"
             textSize = 24f
             isAllCaps = false
             minWidth = dp(46)
             minHeight = dp(46)
+            gravity = Gravity.CENTER
             setTextColor(Deep33Theme.TEXT_MUTED)
             setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
             setOnClickListener {
@@ -749,17 +740,9 @@ class MainActivity : Activity() {
                 setVoiceModeUi(false)
             }
             addPressFeedback(this)
-        }, LinearLayout.LayoutParams(dp(46), dp(46)))
-        voicePanel.addView(voiceHeader)
-
-        voiceStateView = TextView(this).apply {
-            text = "Modo voz"
-            setTextColor(Personality.fromKey(store.personality).accent)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-        }
-        voicePanel.addView(voiceStateView, LinearLayout.LayoutParams(-1, dp(24)))
+        }, LinearLayout.LayoutParams(dp(46), dp(46)).apply {
+            gravity = Gravity.END
+        })
 
         avatarView = VoiceAvatarView(this).apply {
             setPersonality(Personality.fromKey(store.personality))
@@ -772,14 +755,6 @@ class MainActivity : Activity() {
             topMargin = dp(28)
             bottomMargin = dp(24)
         })
-
-        voicePanel.addView(TextView(this).apply {
-            text = "PERSONALIDAD · " + Personality.fromKey(store.personality).key
-            textSize = 10.5f
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER
-            setTextColor(Personality.fromKey(store.personality).accent)
-        }, LinearLayout.LayoutParams(-1, dp(24)))
 
         box.addView(voicePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
