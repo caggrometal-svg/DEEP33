@@ -24,6 +24,14 @@ data class PendingTurn(
     val payloadJson: String
 )
 
+data class PendingMemorySync(
+    val sessionId: String,
+    val requestId: String,
+    val personality: String,
+    val memoryProfileId: String,
+    val messagesJson: String
+)
+
 enum class GenerationStatus { RUNNING, DONE, FAILED, CANCELLED }
 
 data class GenerationState(
@@ -192,6 +200,45 @@ class SessionStore(
         }
     }
 
+    fun savePendingMemorySync(sync: PendingMemorySync) {
+        val json = JSONObject()
+            .put("session_id", sync.sessionId)
+            .put("request_id", sync.requestId)
+            .put("personality", sync.personality)
+            .put("memory_profile_id", sync.memoryProfileId)
+            .put("messages", sync.messagesJson)
+        // Remote-memory retry state is durable so a process death cannot erase the
+        // only remaining path to cross-session memory synchronization.
+        prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
+    }
+
+    fun loadPendingMemorySync(): PendingMemorySync? {
+        val raw = prefs.getString(KEY_PENDING_MEMORY_SYNC, null) ?: return null
+        return try {
+            val json = JSONObject(raw)
+            val sessionId = json.optString("session_id")
+            val requestId = json.optString("request_id")
+            val personality = json.optString("personality", "NEUTRO")
+            val memoryProfileId = json.optString("memory_profile_id")
+            val messagesJson = json.optString("messages")
+            if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) {
+                null
+            } else {
+                JSONArray(messagesJson)
+                PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun clearPendingMemorySync(requestId: String? = null) {
+        val current = loadPendingMemorySync()
+        if (requestId == null || current?.requestId == requestId) {
+            prefs.edit().remove(KEY_PENDING_MEMORY_SYNC).commit()
+        }
+    }
+
     fun saveGenerationState(
         status: GenerationStatus,
         requestId: String,
@@ -317,6 +364,7 @@ class SessionStore(
         private const val KEY_VOICE_TONE = "voice_tone"
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
         private const val KEY_PENDING_TURN = "pending_turn_json"
+        private const val KEY_PENDING_MEMORY_SYNC = "pending_memory_sync_json"
         private const val KEY_GENERATION_STATE = "generation_state_json"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
