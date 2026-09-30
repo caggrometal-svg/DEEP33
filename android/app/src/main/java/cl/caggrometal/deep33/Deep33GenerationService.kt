@@ -31,20 +31,20 @@ class Deep33GenerationService : Service() {
                     userCancelled.set(true)
                     Deep33Api.cancelActiveStream()
                 }
-                return START_NOT_STICKY
+                return START_REDELIVER_INTENT
             }
 
             ACTION_START -> {
                 val requestedId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
                 if (requestedId.isBlank()) {
                     stopSelfResult(startId)
-                    return START_NOT_STICKY
+                    return START_REDELIVER_INTENT
                 }
 
                 if (runningRequestId != null) {
-                    if (runningRequestId == requestedId) return START_NOT_STICKY
+                    if (runningRequestId == requestedId) return START_REDELIVER_INTENT
                     stopSelfResult(startId)
-                    return START_NOT_STICKY
+                    return START_REDELIVER_INTENT
                 }
 
                 startForeground(
@@ -54,12 +54,12 @@ class Deep33GenerationService : Service() {
 
                 runningRequestId = requestedId
                 executor.execute { runGeneration(requestedId) }
-                return START_NOT_STICKY
+                return START_REDELIVER_INTENT
             }
         }
 
         stopSelfResult(startId)
-        return START_NOT_STICKY
+        return START_REDELIVER_INTENT
     }
 
     private fun runGeneration(requestId: String) {
