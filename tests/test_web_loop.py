@@ -90,3 +90,72 @@ def test_source_metadata_never_leaks_into_final_text() -> None:
     assert "Fuentes consultadas" not in final
     assert "example.com" not in final
     assert "example.org" not in final
+
+
+def test_sanitize_assistant_text_never_exposes_retrieved_sources() -> None:
+    from backend.main import sanitize_assistant_text
+
+    source = {"title": "Example", "url": "https://example.com/source"}
+    text = (
+        "La conclusión de DEEP33 está aquí.\n\n"
+        "Fuentes consultadas:\n"
+        "1. [Example](https://example.com/source)"
+    )
+    assert sanitize_assistant_text(text, [source]) == "La conclusión de DEEP33 está aquí."
+
+def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: pytest.MonkeyPatch):
+    async def fake_gateway(payload, **kwargs):
+        system_text = "\n".join(
+            str(m.get("content", "")) for m in payload["messages"] if m.get("role") == "system"
+        )
+        assert "FINAL DEEP33 STYLE LOCK" in system_text
+        assert "ACTIVE_PERSONALITY=AGRESIVO" in system_text
+        assert "never copy" in system_text.lower()
+        return {
+            "model": "test",
+            "choices": [
+                {"message": {"role": "assistant", "content": "Respuesta sintetizada."}}
+            ],
+        }
+
+    async def fake_search(query, **kwargs):
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Example",
+                    "url": "https://example.com/",
+                    "snippet": "Raw source wording.",
+                }
+            ],
+        }
+
+    async def fake_fetch(url, **kwargs):
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Example",
+            "text": "Long source paragraph that must remain evidence only.",
+        }
+
+    monkeypatch.setattr(main, "call_gateway", fake_gateway)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+
+    result, sources = asyncio.run(
+        main.run_web_tool_loop(
+            [
+                {"role": "system", "content": "web"},
+                {"role": "user", "content": "busca en internet DEEP33"},
+            ],
+            model="test",
+            request_id="r-personality",
+            idempotency_key="i-personality",
+            force_web=True,
+            personality="AGRESIVO",
+        )
+    )
+
+    assert result["choices"][0]["message"]["content"] == "Respuesta sintetizada."
+    assert sources
