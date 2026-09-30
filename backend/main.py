@@ -1069,6 +1069,14 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     # Numeric/footnote citation markers are removed only when they are isolated
     # markers, not when they are part of ordinary prose or markdown links.
     value = re.sub(r"(?<!\w)\[\^?\d{1,3}(?:\s*[,;]\s*\^?\d{1,3})*\](?!\()", "", value)
+    value = re.sub(r"[【〖]\s*\^?\d{1,3}(?:\s*[,;]\s*\^?\d{1,3})*\s*[】〗]", "", value)
+
+    # DEEP33 should not expose generic assistant boilerplate at the opening.
+    value = re.sub(
+        r"(?i)^(?:claro|por supuesto|con gusto|por supuesto que sí|estoy aquí para ayudarte|como ia|puedo ayudarte con)\s*[,.:;-]\s*",
+        "",
+        value,
+    )
 
     # Remove exact retrieved URLs even when embedded in otherwise valid text.
     for source in sources or []:
@@ -1543,7 +1551,7 @@ def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) ->
     gateway_meta = data.get("_deep33_gateway", {})
     return {
         "role": "assistant",
-        "text": content,
+        "text": sanitize_assistant_text(content),
         "model": data.get("model") or gateway_meta.get("model"),
         "provider": gateway_meta.get("provider"),
         "personality": normalize_personality(personality),
@@ -1940,7 +1948,7 @@ async def stream_gateway(
     if not saw_done or not assistant_parts:
         raise GatewayInvalidResponseError
 
-    assistant_text = "".join(assistant_parts)
+    assistant_text = sanitize_assistant_text("".join(assistant_parts))
     output = {
         "request_id": request_id,
         "latency_ms": None,
