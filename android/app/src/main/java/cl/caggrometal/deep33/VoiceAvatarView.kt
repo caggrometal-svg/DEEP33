@@ -65,13 +65,29 @@ class VoiceAvatarView @JvmOverloads constructor(
         val eyeH = radius * 0.12f
         val irisR = radius * 0.035f
 
-        drawBrow(canvas, cx - eyeGap, eyeY - radius * 0.14f, eyeW, 0f, accent)
-        drawBrow(canvas, cx + eyeGap, eyeY - radius * 0.14f, eyeW, 0f, accent)
+        val browY = eyeY - radius * 0.14f
+        when (personality) {
+            Personality.AGRESIVO -> {
+                drawBrow(canvas, cx - eyeGap, browY, eyeW, -radius * 0.07f, radius * 0.07f, accent)
+                drawBrow(canvas, cx + eyeGap, browY, eyeW, radius * 0.07f, -radius * 0.07f, accent)
+            }
+            Personality.NEUTRO -> {
+                drawBrow(canvas, cx - eyeGap, browY, eyeW, 0f, 0f, accent)
+                drawBrow(canvas, cx + eyeGap, browY, eyeW, 0f, 0f, accent)
+            }
+            Personality.COMICO -> {
+                drawBrow(canvas, cx - eyeGap, browY, eyeW, radius * 0.05f, -radius * 0.02f, accent)
+                drawBrow(canvas, cx + eyeGap, browY, eyeW, -radius * 0.02f, radius * 0.05f, accent)
+            }
+            Personality.CONSPIRANOICO -> {
+                drawBrow(canvas, cx - eyeGap, browY, eyeW, radius * 0.08f, -radius * 0.01f, accent)
+                drawBrow(canvas, cx + eyeGap, browY, eyeW, -radius * 0.04f, radius * 0.02f, accent)
+            }
+        }
         drawEye(canvas, cx - eyeGap, eyeY, eyeW, eyeH, irisR, accent)
         drawEye(canvas, cx + eyeGap, eyeY, eyeW, eyeH, irisR, accent)
 
-        val mouthHeight = if (state == AvatarState.SPEAKING) radius * 0.065f else radius * 0.030f
-        drawMouth(canvas, cx, cy + radius * 0.30f, radius * 0.23f, mouthHeight, accent)
+        drawExpressionMouth(canvas, cx, cy + radius * 0.30f, radius * 0.23f, accent)
     }
 
     private fun drawEye(
@@ -90,26 +106,57 @@ class VoiceAvatarView @JvmOverloads constructor(
         canvas.drawCircle(x, y, irisRadius, fillPaint)
     }
 
-    private fun drawBrow(canvas: Canvas, x: Float, y: Float, width: Float, tilt: Float, accent: Int) {
-        strokePaint.color = withAlpha(accent, 185)
-        strokePaint.strokeWidth = dp(2.0f)
+    private fun drawBrow(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        width: Float,
+        startTilt: Float,
+        endTilt: Float,
+        accent: Int
+    ) {
+        strokePaint.color = withAlpha(accent, 205)
+        strokePaint.strokeWidth = dp(2.2f)
         val path = Path()
-        path.moveTo(x - width, y + tilt)
-        path.quadTo(x, y - dp(1.5f), x + width, y - tilt)
+        path.moveTo(x - width, y + startTilt)
+        path.quadTo(x, y - dp(1.5f), x + width, y + endTilt)
         canvas.drawPath(path, strokePaint)
     }
 
-    private fun drawMouth(
+    private fun drawExpressionMouth(
         canvas: Canvas,
         cx: Float,
         cy: Float,
         width: Float,
-        height: Float,
         accent: Int
     ) {
         strokePaint.color = withAlpha(accent, 225)
-        strokePaint.strokeWidth = dp(1.7f)
-        canvas.drawOval(RectF(cx - width, cy - height, cx + width, cy + height), strokePaint)
+        strokePaint.strokeWidth = dp(1.8f)
+        val path = Path()
+        val speaking = state == AvatarState.SPEAKING
+        when (personality) {
+            Personality.AGRESIVO -> {
+                path.moveTo(cx - width, cy - if (speaking) dp(1f) else 0f)
+                path.quadTo(cx, cy + width * 0.20f, cx + width, cy - if (speaking) dp(1f) else 0f)
+            }
+            Personality.NEUTRO -> {
+                if (speaking) {
+                    canvas.drawOval(RectF(cx - width * 0.72f, cy - dp(2.2f), cx + width * 0.72f, cy + dp(2.2f)), strokePaint)
+                    return
+                }
+                path.moveTo(cx - width, cy)
+                path.lineTo(cx + width, cy)
+            }
+            Personality.COMICO -> {
+                path.moveTo(cx - width, cy - dp(1f))
+                path.quadTo(cx, cy + width * 0.24f, cx + width, cy - dp(1f))
+            }
+            Personality.CONSPIRANOICO -> {
+                path.moveTo(cx - width, cy + dp(1.5f))
+                path.quadTo(cx, cy - width * 0.08f, cx + width, cy - dp(1.5f))
+            }
+        }
+        canvas.drawPath(path, strokePaint)
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int =
