@@ -41,6 +41,11 @@ class UnavailableIdempotencyMemory(FakeMemory):
         raise main.MemoryUnavailableError("memory_http_503")
 
 
+class CompletionUnavailableIdempotencyMemory(FakeMemory):
+    async def idempotency_complete(self, *args, **kwargs) -> dict:
+        raise main.MemoryUnavailableError("memory_http_503")
+
+
 def patch_memory(monkeypatch) -> None:
     monkeypatch.setattr(main, "memory", FakeMemory())
 
@@ -220,6 +225,49 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
     assert "example.com" not in body
     assert "turn1search1" not in body
     assert "Fuentes:" not in body
+
+
+def test_stream_survives_idempotency_completion_outage(monkeypatch) -> None:
+    monkeypatch.setattr(main, "memory", CompletionUnavailableIdempotencyMemory())
+
+    async def fake_web_loop(*_args, **_kwargs):
+        return (
+            {
+                "id": "stream-memory-outage",
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "DEEP33 sigue operativo.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "_deep33_gateway": {"provider": "test", "model": "test-model"},
+            },
+            [],
+        )
+
+    monkeypatch.setattr(main, "run_web_tool_loop", fake_web_loop)
+    with client.stream(
+        "POST",
+        "/v1/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "Prueba de recuperación"}],
+            "personality": "NEUTRO",
+        },
+        headers={
+            "X-DEEP33-Session-Id": "stream-memory-outage",
+            "X-Idempotency-Key": "stream-memory-outage-key",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "DEEP33 sigue operativo." in body
+    assert "data: [DONE]" in body
 
 
 def test_generate_contract(monkeypatch) -> None:
