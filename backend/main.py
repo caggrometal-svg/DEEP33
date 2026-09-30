@@ -1048,6 +1048,26 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     # Bare HTTP(S) URLs are never part of the final synthesized prose.
     value = re.sub(r"(?i)https?://[^\s)\]>]+", "", value)
 
+    # Strip search result identifiers server-side as well as in Android.
+    value = re.sub(
+        r"\\N{LEFT BLACK LENTICULAR BRACKET}\\s*turn\\d+(?:search|news|reddit|fetch|image|product|business)\\d+\\s*\\N{RIGHT BLACK LENTICULAR BRACKET}",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"\\(turn\\d+(?:search|news|reddit|fetch|image|product|business)\\d+\\)",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(
+        r"(?<!\\w)turn\\d+(?:search|news|reddit|fetch|image|product|business)\\d+(?!\\w)",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+
     # Remove explicit citation/source markup that can be emitted by web/RAG providers.
     value = re.sub(r"(?s)(?:cite|url).*?", "", value)
     value = re.sub(r"(?is)<a\b[^>]*>.*?</a>", "", value)
