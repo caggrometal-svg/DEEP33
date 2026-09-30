@@ -66,7 +66,7 @@ def test_prepare_messages_keeps_current_personality_as_final_system_instruction(
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "system"
-    assert "Personality preference: NEUTRO." in messages[0]["content"]
+    assert "Personality preference: NEUTRO." not in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[1]["content"]
     assert messages[1]["content"].rfind("MODE CHECK:") > messages[1]["content"].find("ACTIVE_PERSONALITY=COMICO")
 
