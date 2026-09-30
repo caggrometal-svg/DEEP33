@@ -237,10 +237,6 @@ Deno.serve(async (req) => {
       return await handleHybridAction(body, req);
     }
 
-    if (action === "hybrid_search" || action === "hybrid_index") {
-      return await handleHybridAction(body, req);
-    }
-
     if (!sessionId || sessionId.length > 128) {
       return response({ error: "SESSION_ID_REQUIRED" }, 400);
     }
@@ -429,7 +425,6 @@ Deno.serve(async (req) => {
         const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
         const memorySessionId = memoryProfileId || sessionId;
         const patch: Record<string, unknown> = {
-          session_id: memorySessionId,
           updated_at: new Date().toISOString(),
         };
 
@@ -438,9 +433,17 @@ Deno.serve(async (req) => {
           patch.preferences = body.preferences;
         }
 
+        // Personality and durable preferences must follow the stable memory profile,
+        // but the active chat session must also retain the same selection. Writing both
+        // records prevents a later context read from reviving an older personality.
+        const sessionRows = [{ session_id: sessionId, ...patch }];
+        if (memorySessionId !== sessionId) {
+          sessionRows.push({ session_id: memorySessionId, ...patch });
+        }
+
         const { error } = await supabase
           .from("deep33_sessions")
-          .upsert(patch, { onConflict: "session_id" });
+          .upsert(sessionRows, { onConflict: "session_id" });
         if (error) throw error;
 
         return { body: { ok: true }, status: 200 };
