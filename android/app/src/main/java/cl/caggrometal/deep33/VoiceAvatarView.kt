@@ -43,7 +43,13 @@ class VoiceAvatarView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        phase = (phase + 0.035f) % (2f * PI.toFloat())
+        val phaseSpeed = when (personality) {
+            Personality.AGRESIVO -> 0.060f
+            Personality.NEUTRO -> 0.030f
+            Personality.COMICO -> 0.045f
+            Personality.CONSPIRANOICO -> 0.022f
+        }
+        phase = (phase + phaseSpeed) % (2f * PI.toFloat())
 
         val size = min(width, height).toFloat()
         val centerX = width / 2f
@@ -84,9 +90,26 @@ class VoiceAvatarView @JvmOverloads constructor(
         )
         strokePaint.color = withAlpha(accent, 210)
         strokePaint.strokeWidth = dp(2.4f)
-        val sweep = 66f + 150f * activity
-        canvas.drawArc(arcRect, -90f + phase * 57f, sweep, false, strokePaint)
-        canvas.drawArc(arcRect, 90f + phase * 57f, sweep * 0.55f, false, strokePaint)
+        val sweep = when (personality) {
+            Personality.AGRESIVO -> 48f + 118f * activity
+            Personality.NEUTRO -> 66f + 150f * activity
+            Personality.COMICO -> 78f + 136f * activity
+            Personality.CONSPIRANOICO -> 54f + 128f * activity
+        }
+        val phaseDegrees = phase * when (personality) {
+            Personality.AGRESIVO -> 82f
+            Personality.NEUTRO -> 57f
+            Personality.COMICO -> 67f
+            Personality.CONSPIRANOICO -> 41f
+        }
+        canvas.drawArc(arcRect, -90f + phaseDegrees, sweep, false, strokePaint)
+        canvas.drawArc(
+            arcRect,
+            90f + phaseDegrees + if (personality == Personality.CONSPIRANOICO) 37f else 0f,
+            sweep * if (personality == Personality.AGRESIVO) 0.42f else 0.55f,
+            false,
+            strokePaint
+        )
 
         val coreRadius = radius * (0.11f + 0.07f * activity)
         fillPaint.color = withAlpha(accent, 235)
@@ -97,13 +120,30 @@ class VoiceAvatarView @JvmOverloads constructor(
 
         if (state != AvatarState.IDLE) {
             for (index in 0..2) {
-                val angle = phase * 1.5f + index * (2f * PI.toFloat() / 3f)
-                val dotRadius = radius + dp(24f) + dp(5f) * activity
-                val dotX = centerX + cos(angle) * dotRadius
-                val dotY = centerY + sin(angle) * dotRadius
+                val orbit = when (personality) {
+                    Personality.AGRESIVO -> radius + dp(27f)
+                    Personality.NEUTRO -> radius + dp(24f)
+                    Personality.COMICO -> radius + dp(22f + index * 3f)
+                    Personality.CONSPIRANOICO -> radius + dp(30f - index * 2f)
+                }
+                val angle = phase * when (personality) {
+                    Personality.AGRESIVO -> 1.9f
+                    Personality.NEUTRO -> 1.5f
+                    Personality.COMICO -> 1.15f
+                    Personality.CONSPIRANOICO -> 0.85f
+                } + index * (2f * PI.toFloat() / 3f)
+                val dotX = centerX + cos(angle) * (orbit + dp(5f) * activity)
+                val dotY = centerY + sin(angle) * (orbit + dp(5f) * activity)
                 fillPaint.color = withAlpha(accent, 100 + index * 35)
                 canvas.drawCircle(dotX, dotY, dp(1.6f + activity * 1.2f), fillPaint)
             }
+        }
+
+        if (personality == Personality.CONSPIRANOICO && state != AvatarState.IDLE) {
+            strokePaint.color = withAlpha(accent, 150)
+            strokePaint.strokeWidth = dp(1f)
+            canvas.drawLine(centerX - dp(34f), centerY, centerX + dp(34f), centerY, strokePaint)
+            canvas.drawLine(centerX, centerY - dp(34f), centerX, centerY + dp(34f), strokePaint)
         }
 
         postInvalidateDelayed(33L)

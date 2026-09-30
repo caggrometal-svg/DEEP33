@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -50,10 +51,10 @@ private object Deep33Theme {
 }
 
 private object VoiceConversationPolicy {
-    const val MAX_SPOKEN_SENTENCES = 3
-    const val MAX_SPOKEN_CHARS = 420
+    const val MAX_SPOKEN_SENTENCES = 4
+    const val MAX_SPOKEN_CHARS = 560
 
-    fun compactForSpeech(text: String): String {
+    fun compactForSpeech(text: String, personality: Personality = Personality.NEUTRO): String {
         val cleaned = text
             .replace(Regex("\\[([^]]+)\\]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
@@ -523,9 +524,9 @@ class MainActivity : Activity() {
         Button(this).apply {
             val active = Personality.fromKey(store.personality) == option
             text = if (active) {
-                "✓ " + option.key + " · ACTIVA"
+                "✓ " + option.key + " · " + option.uiTag + " · ACTIVA"
             } else {
-                "○ " + option.key
+                "○ " + option.key + " · " + option.uiTag
             }
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -1372,8 +1373,36 @@ class MainActivity : Activity() {
         val tts = textToSpeech ?: return
         val tone = VoiceTone.fromKey(store.voiceTone)
         val profile = PersonalityVoiceProfile.forPersonality(personality)
-        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.65f, 1.35f))
-        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.60f, 1.45f))
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val localSpanish = tts.voices.orEmpty()
+                .filter { it.locale.language.equals("es", ignoreCase = true) }
+                .filterNot { it.isNetworkConnectionRequired }
+
+            val selectedVoice = profile.preferredLocales.asSequence()
+                .mapNotNull { preferred ->
+                    localSpanish
+                        .filter { it.locale == preferred }
+                        .sortedWith(
+                            compareByDescending<android.speech.tts.Voice> { it.quality }
+                                .thenBy { it.latency }
+                        )
+                        .firstOrNull()
+                }
+                .firstOrNull()
+                ?: localSpanish
+                    .sortedWith(
+                        compareByDescending<android.speech.tts.Voice> { it.quality }
+                            .thenBy { it.latency }
+                    )
+                    .firstOrNull()
+
+            if (selectedVoice != null) tts.voice = selectedVoice
+        }
+
+        // Keep personality differences audible without pushing pitch/rate into caricature.
+        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.70f, 1.30f))
+        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.72f, 1.28f))
     }
 
     private fun setVoiceModeUi(active: Boolean) {
@@ -1510,7 +1539,7 @@ class MainActivity : Activity() {
         }
         applyVoiceTone(personality)
 
-        val speech = VoiceConversationPolicy.compactForSpeech(text)
+        val speech = VoiceConversationPolicy.compactForSpeech(text, personality)
         if (speech.isBlank()) return
 
         val utteranceId = "deep33-response-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
