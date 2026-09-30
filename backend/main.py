@@ -1494,6 +1494,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
+    response.headers["X-DEEP33-Personality"] = output["result"]["personality"]
     return output
 
 
@@ -1656,7 +1657,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 yield _sse_delta(piece)
             yield b"data: [DONE]\n\n"
         return StreamingResponse(cached_stream(), media_type="text/event-stream",
-                                 headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id})
+                                 headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id,"X-DEEP33-Personality":personality})
 
     state, record = await shared_idempotency_claim(
         session_id, idempotency_key, "deep33.chat.stream", request_hash
@@ -1669,7 +1670,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 yield _sse_delta(piece)
             yield b"data: [DONE]\n\n"
         return StreamingResponse(replay_stream(), media_type="text/event-stream",
-                                 headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id})
+                                 headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id,"X-DEEP33-Personality":personality})
 
     lease_token = str(record.get("lease_token","")).strip()
     if not lease_token:
