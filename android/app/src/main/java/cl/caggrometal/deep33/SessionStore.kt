@@ -74,6 +74,7 @@ class SessionStore(
             .putString(messagesKey(created), "[]")
             .remove(KEY_PENDING_TURN)
             .remove(KEY_GENERATION_STATE)
+            .remove(KEY_CANCEL_REQUEST_ID)
             .apply()
     }
 
@@ -185,6 +186,26 @@ class SessionStore(
         }
     }
 
+    /**
+     * Durably records a user cancellation request before the foreground service acts.
+     * This closes the race where Activity destruction occurs between the UI cancel tap
+     * and the service processing ACTION_CANCEL.
+     */
+    fun requestCancellation(requestId: String) {
+        if (requestId.isBlank()) return
+        prefs.edit().putString(KEY_CANCEL_REQUEST_ID, requestId).commit()
+    }
+
+    fun isCancellationRequested(requestId: String): Boolean =
+        requestId.isNotBlank() && prefs.getString(KEY_CANCEL_REQUEST_ID, null) == requestId
+
+    fun clearCancellationRequest(requestId: String? = null) {
+        val current = prefs.getString(KEY_CANCEL_REQUEST_ID, null)
+        if (requestId == null || current == requestId) {
+            prefs.edit().remove(KEY_CANCEL_REQUEST_ID).commit()
+        }
+    }
+
     fun clearPendingTurn(requestId: String? = null) {
         val current = loadPendingTurn()
         if (requestId == null || current?.requestId == requestId) {
@@ -211,6 +232,9 @@ class SessionStore(
             .put("final_text", finalText)
             .put("error", error)
         val edit = prefs.edit().putString(KEY_GENERATION_STATE, json.toString())
+        if (status != GenerationStatus.RUNNING) {
+            edit.remove(KEY_CANCEL_REQUEST_ID)
+        }
         if (durable) {
             // DONE/FAILED/CANCELLED are recovery boundaries; commit them synchronously.
             edit.commit()
@@ -318,6 +342,7 @@ class SessionStore(
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
         private const val KEY_PENDING_TURN = "pending_turn_json"
         private const val KEY_GENERATION_STATE = "generation_state_json"
+        private const val KEY_CANCEL_REQUEST_ID = "cancel_request_id"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
     }
