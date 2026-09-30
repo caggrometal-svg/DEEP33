@@ -70,3 +70,16 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
     assert result["choices"][0]["message"]["content"] == "Respuesta verificada."
     assert sources[0]["url"] == "https://example.com/"
     assert calls == {"gateway": 1, "search": 1, "fetch": 1}
+
+def test_source_metadata_never_leaks_into_final_text() -> None:
+    final = main.sanitize_assistant_text(
+        "Respuesta sintetizada.\n\nFuentes consultadas:\n1. [Example](https://example.com/)\n2. https://example.org/",
+        [
+            {"title": "Example", "url": "https://example.com/"},
+            {"title": "Example 2", "url": "https://example.org/"},
+        ],
+    )
+    assert final == "Respuesta sintetizada."
+    assert "Fuentes consultadas" not in final
+    assert "example.com" not in final
+    assert "example.org" not in final
