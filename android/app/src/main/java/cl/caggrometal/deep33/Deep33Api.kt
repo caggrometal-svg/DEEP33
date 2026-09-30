@@ -160,6 +160,7 @@ object Deep33Api {
         personality: String = "NEUTRO",
         requestId: String = UUID.randomUUID().toString(),
         idempotencyKey: String = requestId,
+        memoryProfileId: String? = null,
         isCancelled: () -> Boolean = { false },
         onText: (String) -> Unit
     ): String {
