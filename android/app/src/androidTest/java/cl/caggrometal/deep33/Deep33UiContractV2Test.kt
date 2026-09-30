@@ -46,6 +46,12 @@ class Deep33UiContractV2Test {
         ).toString()
 
         assertEquals("Respuesta propia.", rendered)
+
+        val escapedRendered = MarkdownRenderer.render(
+            "Respuesta propia.\\nFuentes:\\n- Example https://example.com\\n【1】",
+            suppressAssistantSources = true
+        ).toString()
+        assertEquals("Respuesta propia.", escapedRendered)
     }
 
     @Test
