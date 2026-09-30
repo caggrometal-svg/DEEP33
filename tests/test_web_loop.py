@@ -17,6 +17,12 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
             m.get("role") == "system" and "Server-side web evidence" in m.get("content", "")
             for m in payload["messages"]
         )
+        assert any(
+            m.get("role") == "system"
+            and "FINAL DEEP33 STYLE LOCK. ACTIVE_PERSONALITY=COMICO" in m.get("content", "")
+            and "never copy, paste" in m.get("content", "")
+            for m in payload["messages"]
+        )
         return {
             "model": "test",
             "choices": [
@@ -64,6 +70,7 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
             request_id="r1",
             idempotency_key="i1",
             force_web=True,
+            personality="COMICO",
         )
     )
 
