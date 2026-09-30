@@ -1423,14 +1423,16 @@ return json({
               status: "PASS",
               request_id: requestId,
               web_navigation: true,
-              sources,
+              // Web evidence remains server-internal. Never expose the retrieved
+              // source objects through the client-facing generation contract.
+              sources: [],
               memory_persisted: memoryPersisted,
               result: {
                 role: "assistant",
                 text: responseText,
                 provider: ai.provider,
                 model: ai.model,
-                sources,
+                sources: [],
               },
             });
           } catch (error) {
@@ -1438,7 +1440,7 @@ return json({
               status: "FAIL",
               error: error instanceof Error ? error.message : String(error),
               web_navigation: true,
-              sources,
+              sources: [],
             }, 502);
           }
         }
@@ -1469,17 +1471,17 @@ return json({
           responseBody.result && typeof responseBody.result === "object"
             ? {
                 ...(responseBody.result as Record<string, unknown>),
-                sources,
+                sources: [],
               }
             : {
                 role: "assistant",
                 text: String(responseBody.text ?? ""),
-                sources,
+                sources: [],
               };
 return json({
           ...responseBody,
           web_navigation: true,
-          sources,
+          sources: [],
           result,
         }, upstream.status);
       }
