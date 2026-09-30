@@ -63,7 +63,7 @@ jobs:
           script: |
             set -eu
             gradle :app:installDebug :app:installDebugAndroidTest --no-daemon
-            instrumentation="$(adb shell pm list instrumentation | tr -d '\r' | awk '/cl\\.caggrometal\\.deep33/ {print \$2; exit}')"
+            instrumentation="$(adb shell pm list instrumentation | tr -d '\r' | awk -F'[: ]' '/^instrumentation:cl\\.caggrometal\\.deep33\\.test\\// {print \$2; exit}')"
             test -n "$instrumentation"
             adb shell am instrument -w -r -e class cl.caggrometal.deep33.Deep33LifecycleRecoveryTest "$instrumentation"
       - name: Publish DEEP33 debug APK
