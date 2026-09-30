@@ -6,6 +6,7 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
