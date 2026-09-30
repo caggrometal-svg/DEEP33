@@ -50,7 +50,7 @@ object MarkdownRenderer {
             ""
         )
         value = value.replace(
-            Regex("(?i)\\[(?:fuente|source|ref(?:erencia)?|citation|cita)\\s*:?[^^\\]]{0,180}\\]"),
+            Regex("(?i)\\[(?:fuente|source|ref(?:erencia)?|citation|cita)\\s*:?[^\\]]{0,180}\\]"),
             ""
         )
         value = value.replace(
