@@ -1196,6 +1196,11 @@ class MainActivity : Activity() {
                     cleanupGeneration(false)
                 }
             } catch (_: Exception) {
+                if (lifecycleDestroying) {
+                    // Preserve the durable turn during Activity destruction so a recreated
+                    // Activity can recover it even if teardown surfaces a non-API exception.
+                    return@submit
+                }
                 store.clearPendingTurn(requestId)
                 runOnUiThread {
                     activeBubble?.let {
