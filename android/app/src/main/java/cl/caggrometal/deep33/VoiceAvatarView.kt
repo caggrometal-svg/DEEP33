@@ -121,7 +121,13 @@ class VoiceAvatarView @JvmOverloads constructor(
         }
         val gazeY = if (state == AvatarState.THINKING) -radius * 0.018f else 0f
 
-        val browY = eyeY - radius * 0.14f
+        val microExpression = when (state) {
+            AvatarState.SPEAKING -> sin(now / 1700.0).toFloat() * radius * 0.012f
+            AvatarState.LISTENING -> sin(now / 2100.0).toFloat() * radius * 0.018f
+            AvatarState.THINKING -> radius * 0.025f
+            AvatarState.IDLE -> 0f
+        }
+        val browY = eyeY - radius * 0.14f + microExpression
         when (personality) {
             Personality.AGRESIVO -> {
                 drawBrow(canvas, cx - eyeGap, browY, eyeW, -radius * 0.07f, radius * 0.07f, accent)
