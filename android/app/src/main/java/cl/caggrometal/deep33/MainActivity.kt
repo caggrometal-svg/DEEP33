@@ -917,6 +917,9 @@ class MainActivity : Activity() {
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
         }
+        // Re-apply the voice profile whenever the active personality is restored from
+        // storage/remote memory, not only when the settings button is pressed.
+        applyVoiceTone(personality)
     }
 
     private fun syncPreferences() {
@@ -1095,6 +1098,14 @@ class MainActivity : Activity() {
     private fun sendMessage(textOverride: String? = null) {
         val text = (textOverride ?: input.text.toString()).trim()
         if (text.isEmpty() || generationActive) return
+
+        // Never overwrite a durable request that is waiting for recovery. The pending
+        // turn is the single source of truth when the Activity/process disappears.
+        val pendingRecovery = store.loadPendingTurn()
+        if (pendingRecovery != null) {
+            restorePendingTurnIfNeeded()
+            return
+        }
 
         // Snapshot the active personality for this turn. The user's next selection must
         // affect the next turn, while this request/voice output remains internally consistent.
@@ -1314,7 +1325,16 @@ class MainActivity : Activity() {
         input.isEnabled = true
         micButton.isEnabled = true
         cancelButton.visibility = View.GONE
-        updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+
+        // A failed generation is not proof that the network is offline. Re-probe the
+        // transport instead of presenting a false OFFLINE state to the user.
+        if (success) {
+            updateConnection(ConnectionState.ONLINE)
+        } else {
+            updateConnection(ConnectionState.CONNECTING)
+            checkConnectivity()
+        }
+
         if (!success || textToSpeech?.isSpeaking != true) {
             setVoiceState(AvatarState.IDLE)
             if (!voiceModeActive) setVoiceModeUi(false)
