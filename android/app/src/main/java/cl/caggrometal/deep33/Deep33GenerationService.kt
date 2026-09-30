@@ -97,28 +97,15 @@ class Deep33GenerationService : Service() {
             personality = personality.key,
             partialOutput = ""
         )
+        updateForegroundNotification("Generando respuesta…")
 
         try {
-            val finalText = Deep33Api.stream(
-                payload,
-                pending.sessionId,
-                personality.key,
-                requestId = pending.requestId,
-                idempotencyKey = pending.idempotencyKey,
-                memoryProfileId = store.memoryProfileId,
-                isCancelled = {
-                    userCancelled.get() || Thread.currentThread().isInterrupted
-                },
-                onText = { chunk ->
-                    val current = store.loadGenerationState()?.partialOutput.orEmpty()
-                    store.saveGenerationState(
-                        status = GenerationStatus.RUNNING,
-                        requestId = requestId,
-                        sessionId = pending.sessionId,
-                        personality = personality.key,
-                        partialOutput = current + chunk
-                    )
-                }
+            val finalText = streamWithBackgroundRecovery(
+                store = store,
+                pending = pending,
+                personality = personality,
+                requestId = requestId,
+                payload = payload
             )
 
             if (finalText.isBlank()) {
@@ -137,7 +124,11 @@ class Deep33GenerationService : Service() {
                 add(UiMessage("assistant", finalText))
             }
             store.activateSession(pending.sessionId)
-            store.saveMessages(messages)
+            // Establish the recovery boundary before touching any non-critical remote
+            // services. If the process dies immediately after this point, the exact
+            // conversation and DONE marker are already durable and the pending marker
+            // can be safely removed.
+            store.saveMessages(messages, durable = true)
 
             val title = messages.firstOrNull { it.role == "user" }
                 ?.content
@@ -147,6 +138,17 @@ class Deep33GenerationService : Service() {
             if (!title.isNullOrBlank()) {
                 store.saveChatSummary(title)
             }
+
+            store.saveGenerationState(
+                status = GenerationStatus.DONE,
+                requestId = requestId,
+                sessionId = pending.sessionId,
+                personality = personality.key,
+                partialOutput = finalText,
+                finalText = finalText,
+                durable = true
+            )
+            store.clearPendingTurn(requestId)
 
             try {
                 val memoryPayload = JSONArray()
@@ -165,18 +167,8 @@ class Deep33GenerationService : Service() {
                     memoryProfileId = store.memoryProfileId
                 )
             } catch (_: Exception) {
-                // Local response is already durable; remote memory retries on the next turn.
+                // The local recovery boundary is already complete; remote memory is best effort.
             }
-
-            store.clearPendingTurn(requestId)
-            store.saveGenerationState(
-                status = GenerationStatus.DONE,
-                requestId = requestId,
-                sessionId = pending.sessionId,
-                personality = personality.key,
-                partialOutput = finalText,
-                finalText = finalText
-            )
         } catch (e: Deep33ApiException) {
             if (userCancelled.get()) {
                 store.clearPendingTurn(requestId)
@@ -185,16 +177,28 @@ class Deep33GenerationService : Service() {
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = personality.key,
-                    error = "Generación cancelada."
+                    error = "Generación cancelada.",
+                    durable = true
                 )
             } else if (!stoppingBySystem) {
-                store.clearPendingTurn(requestId)
+                // Keep transient transport failures recoverable across Activity/process
+                // recreation. The same idempotency key lets the backend replay a completed
+                // answer instead of creating a second generation.
+                val recoverable = isRecoverableTransportError(e.kind)
+                if (!recoverable) {
+                    store.clearPendingTurn(requestId)
+                }
                 store.saveGenerationState(
                     status = GenerationStatus.FAILED,
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = personality.key,
-                    error = e.message ?: "Error de comunicación con DEEP33."
+                    error = if (recoverable) {
+                        "Conexión interrumpida. La solicitud quedó guardada para recuperación."
+                    } else {
+                        e.message ?: "Error de comunicación con DEEP33."
+                    },
+                    durable = true
                 )
             }
         } catch (e: Exception) {
@@ -205,13 +209,89 @@ class Deep33GenerationService : Service() {
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = personality.key,
-                    error = e.message ?: "Error inesperado de comunicación."
+                    error = e.message ?: "Error inesperado de comunicación.",
+                    durable = true
                 )
             }
         } finally {
             runningRequestId = null
             stopSelf()
         }
+    }
+
+    private fun streamWithBackgroundRecovery(
+        store: SessionStore,
+        pending: PendingTurn,
+        personality: Personality,
+        requestId: String,
+        payload: JSONArray
+    ): String {
+        var lastError: Deep33ApiException? = null
+
+        for (attempt in 0..MAX_STREAM_RECOVERY_RETRIES) {
+            if (userCancelled.get() || Thread.currentThread().isInterrupted) {
+                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+            }
+
+            try {
+                return Deep33Api.stream(
+                    payload,
+                    pending.sessionId,
+                    personality.key,
+                    requestId = pending.requestId,
+                    idempotencyKey = pending.idempotencyKey,
+                    memoryProfileId = store.memoryProfileId,
+                    isCancelled = {
+                        userCancelled.get() || Thread.currentThread().isInterrupted
+                    },
+                    onText = { chunk ->
+                        val current = store.loadGenerationState()?.partialOutput.orEmpty()
+                        store.saveGenerationState(
+                            status = GenerationStatus.RUNNING,
+                            requestId = requestId,
+                            sessionId = pending.sessionId,
+                            personality = personality.key,
+                            partialOutput = current + chunk
+                        )
+                    }
+                )
+            } catch (e: Deep33ApiException) {
+                lastError = e
+                if (!isRecoverableTransportError(e.kind) || attempt == MAX_STREAM_RECOVERY_RETRIES) {
+                    throw e
+                }
+
+                // A retry starts from the durable request, not from a partial stream.
+                // The backend receives the same idempotency key and can replay the exact
+                // completed answer if the first transport died after inference completed.
+                store.saveGenerationState(
+                    status = GenerationStatus.RUNNING,
+                    requestId = requestId,
+                    sessionId = pending.sessionId,
+                    personality = personality.key,
+                    partialOutput = ""
+                )
+                updateForegroundNotification("Reconectando…")
+                try {
+                    Thread.sleep(RETRY_DELAYS_MS[attempt])
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                }
+            }
+        }
+
+        throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
+    }
+
+    private fun isRecoverableTransportError(kind: Deep33ApiException.Kind): Boolean =
+        kind == Deep33ApiException.Kind.NETWORK ||
+            kind == Deep33ApiException.Kind.TIMEOUT ||
+            kind == Deep33ApiException.Kind.SERVER
+
+    private fun updateForegroundNotification(text: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun buildNotification(text: String): Notification =
@@ -268,6 +348,8 @@ class Deep33GenerationService : Service() {
     companion object {
         private const val CHANNEL_ID = "deep33_generation"
         private const val NOTIFICATION_ID = 3301
+        private const val MAX_STREAM_RECOVERY_RETRIES = 3
+        private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
         private const val EXTRA_REQUEST_ID = "request_id"
