@@ -278,6 +278,7 @@ class MainActivity : Activity() {
             retryPendingMemorySync()
             checkConnectivity()
         }
+        retryPendingMemorySync()
         startGenerationMonitor()
         wasBackgrounded = false
     }
@@ -1014,12 +1015,16 @@ class MainActivity : Activity() {
     }
 
     private fun loadRemoteContext() {
+        // Capture the session/profile at scheduling time. A previous asynchronous
+        // context load must never write old-session data into a newly opened chat.
+        val targetSessionId = store.sessionId
+        val targetMemoryProfileId = store.memoryProfileId
         val localPersonality = store.personality
         val selectionGeneration = personalitySelectionGeneration
+        val localConversation = conversation.takeLast(50)
         executor.submit {
             try {
-                val sessionId = store.sessionId
-                val remote = Deep33Api.memoryContext(sessionId, store.memoryProfileId)
+                val remote = Deep33Api.memoryContext(targetSessionId, targetMemoryProfileId)
                 val session = remote.optJSONObject("session")
                 val remotePersonality = session?.optString("personality").orEmpty()
                 val shouldApplyRemotePersonality =
@@ -1041,9 +1046,13 @@ class MainActivity : Activity() {
                     }
                 }
 
+                // The user may have opened another chat while this request was in flight.
+                // Discard stale results instead of contaminating the active conversation.
+                if (store.sessionId != targetSessionId) return@submit
+
                 val merged = mutableListOf<UiMessage>()
                 val seen = mutableSetOf<Pair<String, String>>()
-                (remoteMessages + conversation.takeLast(50)).forEach {
+                (remoteMessages + localConversation).forEach {
                     if (seen.add(it.role to it.content)) merged.add(it)
                 }
 
