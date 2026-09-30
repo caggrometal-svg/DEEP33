@@ -1160,6 +1160,23 @@ class MainActivity : Activity() {
         }
 
         val pending = store.loadPendingTurn() ?: return
+        if (store.isCancellationRequested(pending.requestId)) {
+            store.saveGenerationState(
+                status = GenerationStatus.CANCELLED,
+                requestId = pending.requestId,
+                sessionId = pending.sessionId,
+                personality = pending.personality,
+                error = "Generación cancelada.",
+                durable = true
+            )
+            store.clearPendingTurn(pending.requestId)
+            store.clearCancellationRequest(pending.requestId)
+            generationActive = false
+            activeRequestId = null
+            activeIdempotencyKey = null
+            activeBubble = null
+            return
+        }
         if (generationActive) return
 
         val payload = try {
@@ -1292,10 +1309,12 @@ class MainActivity : Activity() {
 
     private fun cancelGeneration() {
         if (!generationActive) return
-        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId ?: return
+
+        // Persist cancellation first so Activity/process recreation cannot resurrect it.
+        store.requestCancellation(requestId)
         Deep33GenerationService.cancel(this, requestId)
-        store.clearPendingTurn(requestId)
-        store.clearGenerationState(requestId)
+
         generationActive = false
         activeRequestId = null
         activeIdempotencyKey = null
@@ -1314,7 +1333,14 @@ class MainActivity : Activity() {
         input.isEnabled = true
         micButton.isEnabled = true
         cancelButton.visibility = View.GONE
-        updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+        val hasRecoverableTurn = store.loadPendingTurn() != null
+        updateConnection(
+            when {
+                success -> ConnectionState.ONLINE
+                hasRecoverableTurn -> ConnectionState.CONNECTING
+                else -> ConnectionState.OFFLINE
+            }
+        )
         if (!success || textToSpeech?.isSpeaking != true) {
             setVoiceState(AvatarState.IDLE)
             if (!voiceModeActive) setVoiceModeUi(false)
