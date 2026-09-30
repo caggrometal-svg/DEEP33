@@ -170,6 +170,8 @@ class MainActivity : Activity() {
     private var edgeDownY = 0f
     private var personalitySelectionGeneration = 0L
     private val personalitySyncLock = Any()
+    private val memorySyncLock = Any()
+    private var memorySyncRunning = false
     private var currentTab = Tab.CHAT
     private var wasBackgrounded = false
     private var activeRequestId: String? = null
@@ -263,6 +265,7 @@ class MainActivity : Activity() {
         applyPersonalityTheme(Personality.fromKey(store.personality))
         checkConnectivity()
         loadRemoteContext()
+        retryPendingMemorySync()
         restorePendingTurnIfNeeded()
     }
 
@@ -272,6 +275,7 @@ class MainActivity : Activity() {
         if (wasBackgrounded) {
             // Reattach to the durable generation after returning from another app.
             restorePendingTurnIfNeeded()
+            retryPendingMemorySync()
             checkConnectivity()
         }
         startGenerationMonitor()
@@ -972,6 +976,41 @@ class MainActivity : Activity() {
             ?.ifBlank { null }
             ?: return
         store.saveChatSummary(title)
+    }
+
+    private fun retryPendingMemorySync() {
+        if (memorySyncRunning) return
+        val pending = store.loadPendingMemorySync() ?: return
+
+        memorySyncRunning = true
+        executor.submit {
+            try {
+                synchronized(memorySyncLock) {
+                    val current = store.loadPendingMemorySync()
+                    if (current == null || current.requestId != pending.requestId) return@synchronized
+
+                    val payload = org.json.JSONArray(current.messagesJson)
+                    Deep33Api.syncMemory(
+                        current.sessionId,
+                        payload,
+                        current.personality,
+                        requestId = current.requestId,
+                        memoryProfileId = current.memoryProfileId
+                    )
+                    store.clearPendingMemorySync(current.requestId)
+                    Log.i("DEEP33", "REMOTE MEMORY SYNCED: " + current.requestId)
+                }
+            } catch (e: Exception) {
+                Log.w("DEEP33", "Pending memory sync deferred: ${e.javaClass.simpleName}")
+            } finally {
+                runOnUiThread {
+                    memorySyncRunning = false
+                    if (store.loadPendingMemorySync() != null && activityVisible) {
+                        window.decorView.postDelayed({ retryPendingMemorySync() }, 5_000L)
+                    }
+                }
+            }
+        }
     }
 
     private fun loadRemoteContext() {
