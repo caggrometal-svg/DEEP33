@@ -549,3 +549,4 @@ jobs:
           git tag -fa production-pass "$GITHUB_SHA" -m "DEEP33 certified production release $GITHUB_SHA"
           git push origin refs/tags/production-pass --force
           echo "DEEP33_CRITICAL_GATES_PASS $GITHUB_SHA"
+# Full certification trigger
