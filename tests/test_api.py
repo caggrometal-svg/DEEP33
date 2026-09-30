@@ -189,7 +189,6 @@ def test_generate_contract(monkeypatch) -> None:
     assert body["result"]["text"] == "DEEP33 connectivity PASS"
 
 
-
 def test_generate_falls_back_to_local_idempotency_when_memory_store_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr(main, "memory", UnavailableIdempotencyMemory())
     calls = {"count": 0}
@@ -215,6 +214,7 @@ def test_generate_falls_back_to_local_idempotency_when_memory_store_is_unavailab
     assert second.json()["result"]["text"] == "DEEP33 connectivity PASS"
     assert calls["count"] == 1
 
+
 def test_personality_is_injected_into_model_context(monkeypatch) -> None:
     patch_memory(monkeypatch)
     captured: dict = {}
@@ -225,12 +225,7 @@ def test_personality_is_injected_into_model_context(monkeypatch) -> None:
 
     monkeypatch.setattr(main, "call_gateway", capture_gateway)
 
-    for name, phrase in {
-        "AGRESIVO": "directa, firme y provocadora",
-        "NEUTRO": "equilibrada, profesional, natural y clara",
-        "COMICO": "humor, ironía y ocurrencias breves",
-        "CONSPIRANOICO": "enigmático y tecnológico",
-    }.items():
+    for name in main.PERSONALITIES:
         response = client.post(
             "/v1/ai/generate",
             json={
@@ -244,7 +239,7 @@ def test_personality_is_injected_into_model_context(monkeypatch) -> None:
         system = captured["messages"][0]
         assert system["role"] == "system"
         assert name in system["content"]
-        assert phrase in system["content"]
+        assert main.PERSONALITIES[name]["instruction"] in system["content"]
 
 
 def test_personality_catalog() -> None:
