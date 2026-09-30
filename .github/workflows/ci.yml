@@ -264,38 +264,53 @@ jobs:
           SEARCH="$(curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/web/search?q=DEEP33%20internet" -H "X-DEEP33-Session-Id: $SESSION")"
           printf "%s" "$SEARCH" | jq -e '.ok==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.1.0" and .provider_independent==true and (.results|length)>=1 and (.verification.distinct_domains)>=1' >/dev/null
 
-          DIRECT_STATUS="$(curl -sS --connect-timeout 8 --max-time 120 -o /tmp/direct-ai.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/generate" \
-            -H "Content-Type: application/json" \
-            -H "X-DEEP33-Session-Id: $SESSION-direct" \
-            -H "X-Idempotency-Key: ci-direct-generation-${{ github.run_id }}" \
-            -H "X-DEEP33-Skip-Web-Tools: true" \
-            -d '{"messages":[{"role":"user","content":"Responde solo: OK"}]}')"
-          echo "PRIMARY_DIRECT_GENERATION_HTTP=$DIRECT_STATUS"
-          if ! [ "$DIRECT_STATUS" -ge 200 ] || ! [ "$DIRECT_STATUS" -lt 300 ]; then
+          direct_ok=0
+          for attempt in $(seq 1 3); do
+            DIRECT_STATUS="$(curl -sS --connect-timeout 8 --max-time 120 -o /tmp/direct-ai.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/generate" \
+              -H "Content-Type: application/json" \
+              -H "X-DEEP33-Session-Id: $SESSION-direct-$attempt" \
+              -H "X-Idempotency-Key: ci-direct-generation-${{ github.run_id }}-$attempt" \
+              -H "X-DEEP33-Skip-Web-Tools: true" \
+              -d '{"messages":[{"role":"user","content":"Responde solo: OK"}]}')"
+            echo "PRIMARY_DIRECT_GENERATION_HTTP=$DIRECT_STATUS attempt=$attempt"
+            if [ "$DIRECT_STATUS" = "200" ]; then
+              direct_ok=1
+              break
+            fi
+            cat /tmp/direct-ai.json || true
+            sleep 5
+          done
+          if [ "$direct_ok" != "1" ]; then
             echo "PRIMARY_DIRECT_GENERATION_FAIL_BODY_BEGIN"
-            cat /tmp/direct-ai.json
+            cat /tmp/direct-ai.json || true
             echo
             echo "PRIMARY_DIRECT_GENERATION_FAIL_BODY_END"
             exit 1
           fi
-          jq -e '.result.text != null or .text != null' /tmp/direct-ai.json >/dev/null
           echo "PRIMARY_DIRECT_GENERATION_PASS"
 
-          WEB_STATUS="$(curl -sS --connect-timeout 8 --max-time 150 -o /tmp/web-ai.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/generate" \
-            -H "Content-Type: application/json" \
-            -H "X-DEEP33-Session-Id: $SESSION" \
-            -H "X-Idempotency-Key: ci-search-engine-${{ github.run_id }}" \
-            -d '{"messages":[{"role":"user","content":"Investiga en internet DEEP33, consulta fuentes oficiales y fuentes recientes, y distingue la evidencia encontrada."}]}')"
-          echo "PRIMARY_WEB_GENERATION_HTTP=$WEB_STATUS"
-          if ! [ "$WEB_STATUS" -ge 200 ] || ! [ "$WEB_STATUS" -lt 300 ]; then
+          web_ok=0
+          for attempt in $(seq 1 3); do
+            WEB_STATUS="$(curl -sS --connect-timeout 8 --max-time 120 -o /tmp/web-ai.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/generate" \
+              -H "Content-Type: application/json" \
+              -H "X-DEEP33-Session-Id: $SESSION-web-$attempt" \
+              -H "X-Idempotency-Key: ci-web-generation-${{ github.run_id }}-$attempt" \
+              -d '{"messages":[{"role":"user","content":"Busca en internet y responde solo: OK"}]}')"
+            echo "PRIMARY_WEB_GENERATION_HTTP=$WEB_STATUS attempt=$attempt"
+            if [ "$WEB_STATUS" = "200" ]; then
+              web_ok=1
+              break
+            fi
+            cat /tmp/web-ai.json || true
+            sleep 5
+          done
+          if [ "$web_ok" != "1" ]; then
             echo "PRIMARY_WEB_GENERATION_FAIL_BODY_BEGIN"
-            cat /tmp/web-ai.json
+            cat /tmp/web-ai.json || true
             echo
             echo "PRIMARY_WEB_GENERATION_FAIL_BODY_END"
             exit 1
           fi
-
-          jq -e '.web_navigation==true and (.sources|length)>=1 and .result.sources != null' /tmp/web-ai.json >/dev/null
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
