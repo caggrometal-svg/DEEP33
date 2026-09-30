@@ -477,14 +477,9 @@ class MainActivity : Activity() {
             textSize = 16f
             maxLines = 5
             gravity = Gravity.TOP
-            setBackground(
-                GradientDrawable().apply {
-                    setColor(Color.rgb(18, 22, 30))
-                    cornerRadius = dp(22).toFloat()
-                    setStroke(dp(1), Color.rgb(46, 54, 68))
-                }
-            )
-            // Reserve space inside the same bubble for the speaker and send controls.
+            setBackgroundColor(Color.TRANSPARENT)
+            // The outer FrameLayout owns the single chat-input bubble.
+            // Reserve space inside that bubble for the speaker and send controls.
             setPadding(dp(16), dp(12), dp(112), dp(12))
         }
 
