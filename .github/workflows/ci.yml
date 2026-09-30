@@ -65,9 +65,26 @@ jobs:
     needs: backend_unit
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for PRIMARY exact commit on Render
+      - name: Validate PRIMARY deployment when backend changed
         run: |
           set -euo pipefail
+          BEFORE_SHA="${{ github.event.before }}"
+          backend_changed=1
+          if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            changed="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" || true)"
+            echo "CHANGED_FILES_BEGIN"
+            printf "%s\n" "$changed"
+            echo "CHANGED_FILES_END"
+            if ! printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$)'; then
+              backend_changed=0
+            fi
+          fi
+
+          if [ "$backend_changed" = "0" ]; then
+            echo "PRIMARY_DEPLOY_SHA_CHECK_SKIPPED_BACKEND_UNCHANGED"
+            exit 0
+          fi
+
           ready=0
           for attempt in $(seq 1 12); do
             echo "PRIMARY_DEPLOY_ATTEMPT=$attempt expected=$GITHUB_SHA"
