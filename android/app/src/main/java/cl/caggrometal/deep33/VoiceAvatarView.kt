@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.min
+import kotlin.math.sin
 
 enum class AvatarState { IDLE, LISTENING, THINKING, SPEAKING }
 
@@ -24,6 +25,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     private var personality = Personality.NEUTRO
     private var state = AvatarState.IDLE
     private var audioLevel = 0f
+    private var animationRunning = false
 
     fun setPersonality(value: Personality) {
         personality = value
@@ -33,6 +35,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     fun setVoiceState(value: AvatarState) {
         state = value
         if (value == AvatarState.IDLE) audioLevel = 0f
+        startAnimationIfNeeded()
         invalidate()
     }
 
@@ -41,9 +44,37 @@ class VoiceAvatarView @JvmOverloads constructor(
         invalidate()
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        startAnimationIfNeeded()
+    }
+
+    override fun onDetachedFromWindow() {
+        animationRunning = false
+        super.onDetachedFromWindow()
+    }
+
+    private fun startAnimationIfNeeded() {
+        if (animationRunning || !isAttachedToWindow) return
+        animationRunning = true
+        post(animationTick)
+    }
+
+    private val animationTick = object : Runnable {
+        override fun run() {
+            if (!isAttachedToWindow) {
+                animationRunning = false
+                return
+            }
+            invalidate()
+            postDelayed(this, if (state == AvatarState.IDLE) 180L else 70L)
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
+        val now = System.currentTimeMillis()
         val size = min(width, height).toFloat()
         val cx = width / 2f
         val cy = height / 2f
@@ -59,11 +90,36 @@ class VoiceAvatarView @JvmOverloads constructor(
         strokePaint.color = withAlpha(accent, 160)
         canvas.drawCircle(cx, cy, radius, strokePaint)
 
+        val headMotion = when (state) {
+            AvatarState.SPEAKING -> sin(now / 520.0).toFloat() * 0.035f
+            AvatarState.LISTENING -> sin(now / 900.0).toFloat() * 0.018f
+            AvatarState.THINKING -> sin(now / 1250.0).toFloat() * 0.012f
+            AvatarState.IDLE -> 0f
+        }
+        canvas.save()
+        canvas.rotate(headMotion * 180f / Math.PI.toFloat(), cx, cy)
+
         val eyeY = cy - radius * 0.10f
         val eyeGap = radius * 0.37f
         val eyeW = radius * 0.17f
         val eyeH = radius * 0.12f
         val irisR = radius * 0.035f
+
+        val blinkPhase = (now % 4200L).toFloat()
+        val blink = when {
+            blinkPhase < 120f -> 0.08f
+            blinkPhase < 180f -> 0.45f
+            blinkPhase < 240f -> 1f
+            else -> 0f
+        }
+        val eyeOpen = 1f - blink
+        val gazeX = when (state) {
+            AvatarState.THINKING -> sin(now / 650.0).toFloat() * radius * 0.035f
+            AvatarState.LISTENING -> sin(now / 1100.0).toFloat() * radius * 0.02f
+            AvatarState.SPEAKING -> sin(now / 780.0).toFloat() * radius * 0.015f
+            AvatarState.IDLE -> 0f
+        }
+        val gazeY = if (state == AvatarState.THINKING) -radius * 0.018f else 0f
 
         val browY = eyeY - radius * 0.14f
         when (personality) {
@@ -84,10 +140,17 @@ class VoiceAvatarView @JvmOverloads constructor(
                 drawBrow(canvas, cx + eyeGap, browY, eyeW, -radius * 0.04f, radius * 0.02f, accent)
             }
         }
-        drawEye(canvas, cx - eyeGap, eyeY, eyeW, eyeH, irisR, accent)
-        drawEye(canvas, cx + eyeGap, eyeY, eyeW, eyeH, irisR, accent)
+        drawEye(canvas, cx - eyeGap + gazeX, eyeY + gazeY, eyeW, eyeH * eyeOpen, irisR, accent)
+        drawEye(canvas, cx + eyeGap + gazeX, eyeY + gazeY, eyeW, eyeH * eyeOpen, irisR, accent)
 
-        drawExpressionMouth(canvas, cx, cy + radius * 0.30f, radius * 0.23f, accent)
+        drawExpressionMouth(
+            canvas,
+            cx,
+            cy + radius * 0.30f,
+            radius * (0.23f + audioLevel * 0.06f),
+            accent
+        )
+        canvas.restore()
     }
 
     private fun drawEye(
