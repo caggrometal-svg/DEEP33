@@ -2070,7 +2070,25 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         )
         cache_put(session_id,idempotency_key,request_hash,output)
         if memory.enabled:
-            await memory.idempotency_complete(session_id,idempotency_key,request_hash,lease_token,200,output)
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    200,
+                    output,
+                )
+            except MemoryUnavailableError as exc:
+                # The response is already durable in the local cache and remote
+                # conversation persistence is best-effort. Do not turn a successful
+                # generation into a transport failure just because the idempotency
+                # bookkeeping backend is temporarily unavailable.
+                logger.warning(
+                    "stream_idempotency_complete_unavailable request_id=%s error=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
     except Exception as exc:
         status_code,stored=error_record(exc)
         try:
