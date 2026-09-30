@@ -1,6 +1,8 @@
 name: DEEP33 Warmup
 
 on:
+  push:
+    branches: ["main"]
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
@@ -21,3 +23,17 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS"' >/dev/null
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
           echo "DEEP33_WARM_PASS"
+
+      - name: Certify real model inference
+        if: github.event_name != 'schedule'
+        run: |
+          set -euo pipefail
+
+          DIAG="$(curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/ai/inference-check")"
+          echo "$DIAG" | jq -e '.status=="PASS" and .direct_edge==true and .text_ok==true' >/dev/null
+
+          BODY='{"messages":[{"role":"user","content":"Return exactly DEEP33_E2E_OK"}],"personality":"NEUTRO"}'
+          RESPONSE="$(curl -fsS             --connect-timeout 8             --max-time 90             -H 'Content-Type: application/json'             -H 'X-Request-ID: DEEP33-WARMUP-E2E'             -H 'X-Idempotency-Key: DEEP33-WARMUP-E2E'             -d "$BODY"             "$PRIMARY_URL/v1/ai/generate")"
+
+          echo "$RESPONSE" | jq -e '.status=="PASS" and (.result.text|type=="string") and (.result.text|length)>0 and .direct_edge != false' >/dev/null
+          echo "DEEP33_DIRECT_INFERENCE_PASS"
