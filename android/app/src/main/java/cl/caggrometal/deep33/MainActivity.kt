@@ -364,7 +364,7 @@ class MainActivity : Activity() {
         }
 
         header.addView(Button(this).apply {
-            text = "☰"
+            text = "≡"
             textSize = 22f
             minWidth = 0
             minHeight = 0
@@ -387,6 +387,7 @@ class MainActivity : Activity() {
         }
         titleGroup.addView(TextView(this).apply {
             text = "DEEP33"
+            contentDescription = "DEEP33"
             setTextColor(Deep33Theme.TEXT)
             textSize = 29f
             letterSpacing = 0.16f
@@ -529,14 +530,20 @@ class MainActivity : Activity() {
         Button(this).apply {
             val active = Personality.fromKey(store.personality) == option
             text = if (active) {
-                "✓ " + option.key + " · ACTIVA"
+                "●  " + option.key + " · ACTIVA"
             } else {
-                "○ " + option.key
+                "○  " + option.key
             }
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             minHeight = dp(54)
             setTextColor(option.accent)
+            setTypeface(typeface, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            contentDescription = if (active) {
+                option.description + ". Personalidad activa."
+            } else {
+                option.description + ". Activar personalidad."
+            }
             setBackground(
                 neonPanel(
                     if (active) Deep33Theme.RED_SURFACE else Deep33Theme.SURFACE,
@@ -682,7 +689,7 @@ class MainActivity : Activity() {
         )
 
         micButton = Button(this).apply {
-            text = "🔊"
+            text = "◉"
             contentDescription = "Voz · conversación por voz"
             textSize = 20f
             isAllCaps = false
@@ -791,7 +798,7 @@ class MainActivity : Activity() {
         })
 
         box.addView(Button(this).apply {
-            text = "📡  Estado y conectividad"
+            text = "ESTADO Y CONECTIVIDAD"
             isAllCaps = false
             setTextColor(Color.LTGRAY)
             setBackground(neonPanel(Color.rgb(11, 11, 15), Color.rgb(58, 58, 66)))
