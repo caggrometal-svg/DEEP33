@@ -133,12 +133,19 @@ class SessionStore(
         return parseMessages(raw)
     }
 
-    fun saveMessages(messages: List<UiMessage>) {
+    fun saveMessages(messages: List<UiMessage>, durable: Boolean = false) {
         val json = JSONArray()
         messages.takeLast(MAX_MESSAGES).forEach {
             json.put(JSONObject().put("role", it.role).put("content", it.content))
         }
-        prefs.edit().putString(messagesKey(sessionId), json.toString()).apply()
+        val edit = prefs.edit().putString(messagesKey(sessionId), json.toString())
+        if (durable) {
+            // Final conversation data must reach persistent storage before a recoverable
+            // generation marker is cleared after Activity/process destruction.
+            edit.commit()
+        } else {
+            edit.apply()
+        }
     }
 
     fun savePendingTurn(turn: PendingTurn) {
@@ -187,7 +194,8 @@ class SessionStore(
         personality: String,
         partialOutput: String = "",
         finalText: String = "",
-        error: String = ""
+        error: String = "",
+        durable: Boolean = false
     ) {
         val json = JSONObject()
             .put("status", status.name)
@@ -197,7 +205,13 @@ class SessionStore(
             .put("partial_output", partialOutput)
             .put("final_text", finalText)
             .put("error", error)
-        prefs.edit().putString(KEY_GENERATION_STATE, json.toString()).apply()
+        val edit = prefs.edit().putString(KEY_GENERATION_STATE, json.toString())
+        if (durable) {
+            // DONE/FAILED/CANCELLED are recovery boundaries; commit them synchronously.
+            edit.commit()
+        } else {
+            edit.apply()
+        }
     }
 
     fun loadGenerationState(): GenerationState? {
