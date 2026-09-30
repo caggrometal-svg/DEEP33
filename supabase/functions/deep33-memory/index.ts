@@ -237,10 +237,6 @@ Deno.serve(async (req) => {
       return await handleHybridAction(body, req);
     }
 
-    if (action === "hybrid_search" || action === "hybrid_index") {
-      return await handleHybridAction(body, req);
-    }
-
     if (!sessionId || sessionId.length > 128) {
       return response({ error: "SESSION_ID_REQUIRED" }, 400);
     }
