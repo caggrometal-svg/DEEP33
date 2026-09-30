@@ -1055,6 +1055,10 @@ async function publicWebSearch(query: string) {
       name: "mojeek_public",
       url: "https://www.mojeek.com/search?q=" + encodeURIComponent(q) + "&fmt=html",
     },
+    {
+      name: "google_news_public",
+      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + "&hl=en-US&gl=US&ceid=US:en",
+    },
   ];
 
   const merged = new Map<string, Record<string, string>>();
@@ -1075,6 +1079,14 @@ async function publicWebSearch(query: string) {
       const results: Array<Record<string, string>> = [];
 
       if (provider.name === "bing_public") {
+        const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
+        for (const item of items.slice(0, 8)) {
+          const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
+          const url = decodeHtml(String(item[2] ?? "").trim());
+          const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+        }
+      } else if (provider.name === "google_news_public") {
         const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
         for (const item of items.slice(0, 8)) {
           const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
