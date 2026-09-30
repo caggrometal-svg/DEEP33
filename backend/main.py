@@ -1586,6 +1586,7 @@ async def memory_preferences(
             session_id,
             personality=payload.personality,
             preferences=payload.preferences,
+            memory_profile_id=memory_profile_id,
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
