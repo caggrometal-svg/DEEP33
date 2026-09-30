@@ -52,4 +52,13 @@ cat /tmp/deep33-e2e/instrumentation.log
 set -e
 
 cp -R app/build/outputs/androidTest-results /tmp/deep33-e2e/connected-results 2>/dev/null || true
-exit "$instrument_status"
+
+if [ "$instrument_status" -ne 0 ] ||
+   grep -q "FAILURES!!!" /tmp/deep33-e2e/instrumentation.log ||
+   grep -q "INSTRUMENTATION_CODE: -1" /tmp/deep33-e2e/instrumentation.log; then
+  echo "ANDROID_INSTRUMENTATION_FAIL"
+  exit 1
+fi
+
+grep -q "INSTRUMENTATION_CODE: 0" /tmp/deep33-e2e/instrumentation.log
+echo "ANDROID_INSTRUMENTATION_PASS"
