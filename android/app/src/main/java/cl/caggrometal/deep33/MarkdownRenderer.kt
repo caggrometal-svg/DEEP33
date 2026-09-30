@@ -57,6 +57,11 @@ object MarkdownRenderer {
             Regex("(?<!\\w)\\[\\^?\\d{1,3}(?:\\s*[,;]\\s*\\^?\\d{1,3})*\\](?!\\()"),
             ""
         )
+        // Some providers use full-width citation markers.
+        value = value.replace(
+            Regex("[【〖]\\s*\\^?\\d{1,3}(?:\\s*[,;]\\s*\\^?\\d{1,3})*\\s*[】〗]"),
+            ""
+        )
         value = value.replace(
             Regex("\\[[^\\]]+\\]\\(https?://[^)]+\\)"),
             ""
