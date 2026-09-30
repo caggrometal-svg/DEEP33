@@ -30,18 +30,36 @@ jobs:
           set -euo pipefail
           cd android
           gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: Enable KVM for Android Emulator
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm
+          ls -l /dev/kvm
       - name: Android lifecycle instrumentation
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
-          target: default
+          target: google_apis
           arch: x86_64
-          profile: pixel_2
-          emulator-options: -no-window -no-audio -no-boot-anim
+          profile: pixel_5
+          cores: 4
+          ram-size: 4096M
+          heap-size: 1024M
+          avd-name: deep33-debug
+          force-avd-creation: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-snapshot-save -noaudio -no-boot-anim -camera-back none -camera-front none -dns-server 1.1.1.1,8.8.8.8
           disable-animations: true
+          disable-spellchecker: true
+          disable-linux-hw-accel: false
+          enable-hw-keyboard: false
+          channel: stable
+          working-directory: android
           script: |
-            cd android
-            gradle :app:connectedDebugAndroidTest --no-daemon
+            bash deep33-real-connectivity-e2e.sh
       - name: Publish DEEP33 debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
