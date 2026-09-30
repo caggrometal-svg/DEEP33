@@ -756,6 +756,15 @@ class MainActivity : Activity() {
             bottomMargin = dp(24)
         })
 
+        // Internal voice-state holder: audio-only mode keeps this view hidden.
+        // It must still be initialized because voice callbacks update the state label.
+        voiceStateView = TextView(this).apply {
+            text = "Modo voz"
+            visibility = View.GONE
+            contentDescription = null
+        }
+        voicePanel.addView(voiceStateView, LinearLayout.LayoutParams(1, 1))
+
         box.addView(voicePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
         chatContainer = LinearLayout(this).apply {
