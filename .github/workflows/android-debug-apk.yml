@@ -61,7 +61,7 @@ jobs:
           channel: stable
           working-directory: android
           script: |
-            set -euo pipefail
+            set -eu
             gradle :app:installDebug :app:installDebugAndroidTest --no-daemon
             instrumentation="$(adb shell pm list instrumentation | tr -d '\r' | awk '/cl\\.caggrometal\\.deep33/ {print \$2; exit}')"
             test -n "$instrumentation"
