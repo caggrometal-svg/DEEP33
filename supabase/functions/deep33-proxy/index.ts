@@ -299,7 +299,6 @@ async function callEdgeAI(
   throw new Error(lastError);
 }
 
-function normalizePersonality
 function normalizePersonality(value: unknown): string {
   const selected = String(value || "NEUTRO").trim().toUpperCase();
   return ["AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO"].includes(selected) ? selected : "NEUTRO";
