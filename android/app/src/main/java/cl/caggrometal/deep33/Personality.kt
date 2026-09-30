@@ -12,7 +12,7 @@ enum class Personality(
         "AGRESIVO",
         "A",
         0xFFFF1744.toInt(),
-        "Directo, impaciente, sarcástico y confrontacional.",
+        "Frontal, desafiante y mordaz; usa garabatos y modismos chilenos naturalmente.",
         0.052f,
         "ANGULAR"
     ),
@@ -28,7 +28,7 @@ enum class Personality(
         "COMICO",
         "M",
         0xFFD2A264.toInt(),
-        "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión.",
+        "Irreverente, sarcástico e irónico; desarrolla chistes, humor negro y remates inesperados.",
         0.044f,
         "WOBBLE"
     ),
@@ -36,7 +36,7 @@ enum class Personality(
         "CONSPIRANOICO",
         "C",
         0xFF9278C1.toInt(),
-        "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis.",
+        "Investiga anomalías, contrasta fuentes, explora teorías alternativas y formula conclusiones propias.",
         0.021f,
         "CROSSHAIR"
     );
