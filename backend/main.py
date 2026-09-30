@@ -213,22 +213,25 @@ def personality_prompt(personality: str) -> str:
     profile = PERSONALITIES[selected]
     mode_identity = {
         "AGRESIVO": (
-            "SIGNATURE=direct pressure, short decisive sentences, sharp contradiction checks, dry sarcasm when useful. "
-            "Open with the conclusion or the flaw. Challenge assumptions explicitly. Prefer active verbs and concrete claims. "
+            "SIGNATURE=compressed force, short decisive sentences, contradiction checks, dry sarcasm, and explicit challenge. "
+            "Lead with the conclusion, the flaw, or the missing assumption. Use hard stops more than long connective clauses. "
+            "Call out weak logic directly, distinguish error from ignorance, and demand concrete evidence. "
             "Never replace intellectual pressure with insults, threats, or humiliation."
         ),
         "NEUTRO": (
-            "SIGNATURE=calm precision, compact explanations, explicit uncertainty, structured reasoning, no theatricality. "
-            "Lead with the answer, then the necessary evidence or logic. Sound human and deliberate rather than corporate or robotic."
+            "SIGNATURE=calm precision, natural human cadence, compact explanations, explicit uncertainty, and controlled structure. "
+            "Lead with the answer, then the minimum evidence needed. Use balanced sentence lengths, measured transitions, and no theatrics. "
+            "Sound like a thoughtful human expert rather than a corporate script or a generic chatbot."
         ),
         "COMICO": (
-            "SIGNATURE=brief wit embedded in the reasoning, unexpected but controlled turns of phrase, irony when it helps. "
-            "Prefer a clean answer followed by one well-placed comic turn. Humor is seasoning, not filler: keep the information clear "
-            "and do not force a joke into every answer."
+            "SIGNATURE=sharp wit, dry irony, compact misdirection, and occasional unexpected phrasing. "
+            "Answer cleanly first, then use one deliberate comic turn when it improves the point. "
+            "Vary sentence rhythm and use understated absurdity rather than a stream of jokes. Humor must never obscure the factual answer."
         ),
         "CONSPIRANOICO": (
-            "SIGNATURE=pattern detection, anomaly spotting, suspicious questions, and alternative explanations. "
-            "Lead with the observable anomaly, then separate EVIDENCE, HYPOTHESIS, and SPECULATION when appropriate. "
+            "SIGNATURE=anomaly detection, pattern recognition, suspicious questions, and disciplined alternative hypotheses. "
+            "Start from the observable irregularity. Use deliberate pauses through sentence rhythm, then separate EVIDENCE, HYPOTHESIS, "
+            "and SPECULATION when appropriate. Ask what would have to be true for the pattern to make sense. "
             "Never convert a compelling pattern into proof."
         ),
     }[selected]
@@ -2070,7 +2073,25 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         )
         cache_put(session_id,idempotency_key,request_hash,output)
         if memory.enabled:
-            await memory.idempotency_complete(session_id,idempotency_key,request_hash,lease_token,200,output)
+            try:
+                await memory.idempotency_complete(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    200,
+                    output,
+                )
+            except MemoryUnavailableError as exc:
+                # The response is already durable in the local cache and remote
+                # conversation persistence is best-effort. Do not turn a successful
+                # generation into a transport failure just because the idempotency
+                # bookkeeping backend is temporarily unavailable.
+                logger.warning(
+                    "stream_idempotency_complete_unavailable request_id=%s error=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
     except Exception as exc:
         status_code,stored=error_record(exc)
         try:

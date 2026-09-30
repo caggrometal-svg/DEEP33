@@ -48,7 +48,12 @@ class SessionStore(
             val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
             if (!existing.isNullOrBlank()) return existing
             val created = "profile-" + UUID.randomUUID().toString()
-            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).apply()
+            // The profile identity is the cross-session memory anchor. Commit it
+            // before returning so an immediate process death cannot create a new
+            // profile and break long-term memory continuity.
+            if (!prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).commit()) {
+                throw IllegalStateException("No se pudo persistir la identidad de memoria de DEEP33.")
+            }
             return created
         }
 
@@ -107,10 +112,13 @@ class SessionStore(
         get() = prefs.getBoolean(KEY_PERSONALITY_USER_SELECTED, false)
 
     fun setPersonalityFromUser(value: String) {
-        prefs.edit()
-            .putString(KEY_PERSONALITY, value)
-            .putBoolean(KEY_PERSONALITY_USER_SELECTED, true)
-            .apply()
+        if (!prefs.edit()
+                .putString(KEY_PERSONALITY, value)
+                .putBoolean(KEY_PERSONALITY_USER_SELECTED, true)
+                .commit()
+        ) {
+            throw IllegalStateException("No se pudo persistir la personalidad activa de DEEP33.")
+        }
     }
 
     fun applyRemotePersonalityIfUnset(value: String): Boolean {
@@ -127,7 +135,7 @@ class SessionStore(
 
     fun migrateNaturalVoiceDefault() {
         if (!prefs.contains(KEY_VOICE_TONE)) {
-            prefs.edit().putString(KEY_VOICE_TONE, "EMBER").apply()
+            prefs.edit().putString(KEY_VOICE_TONE, "EMBER").commit()
         }
     }
 

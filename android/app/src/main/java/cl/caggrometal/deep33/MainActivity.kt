@@ -53,7 +53,10 @@ private object VoiceConversationPolicy {
     const val MAX_SPOKEN_SENTENCES = 3
     const val MAX_SPOKEN_CHARS = 420
 
-    fun compactForSpeech(text: String): String {
+    fun compactForSpeech(
+        text: String,
+        personality: Personality = Personality.NEUTRO
+    ): String {
         val cleaned = text
             .replace(Regex("\\[([^]]+)\\]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
@@ -73,7 +76,21 @@ private object VoiceConversationPolicy {
             .take(MAX_SPOKEN_CHARS)
             .substringBeforeLast(' ')
             .trimEnd()
-        return (if (cut.length >= 120) cut else candidate.take(MAX_SPOKEN_CHARS).trimEnd()) + "…"
+        val limitedText =
+            (if (cut.length >= 120) cut else candidate.take(MAX_SPOKEN_CHARS).trimEnd()) + "…"
+
+        // Keep the same content while giving each personality a distinct spoken cadence.
+        // Android TTS does not expose timbre control uniformly, so punctuation and rhythm
+        // provide an additional device-independent layer on top of pitch/rate.
+        return when (personality) {
+            Personality.AGRESIVO ->
+                limitedText.replace(Regex(";\\s*"), ". ").replace(Regex(":\\s+"), ". ")
+            Personality.NEUTRO -> limitedText
+            Personality.COMICO ->
+                limitedText.replace(Regex("\\s+—\\s+"), "… ")
+            Personality.CONSPIRANOICO ->
+                limitedText.replace(Regex("\\s+—\\s+"), " … ")
+        }
     }
 
     fun normalizeForComparison(value: String): String =
@@ -987,12 +1004,21 @@ class MainActivity : Activity() {
                 }
 
                 val messages = remote.optJSONArray("messages") ?: return@submit
+
+                // The memory profile is deliberately broader than one chat session.
+                // Its messages are model context, not UI history. Only restore messages
+                // belonging to the active session into the visible conversation; otherwise
+                // opening "Nuevo chat" could repopulate it with older conversations.
                 val remoteMessages = buildList {
                     for (i in 0 until messages.length()) {
                         val item = messages.optJSONObject(i) ?: continue
+                        val messageSessionId = item.optString("session_id")
                         val role = item.optString("role")
                         val content = item.optString("content")
-                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                        if (messageSessionId == sessionId &&
+                            role in setOf("user", "assistant") &&
+                            content.isNotBlank()
+                        ) {
                             add(UiMessage(role, content))
                         }
                     }
@@ -1484,7 +1510,7 @@ class MainActivity : Activity() {
         }
         applyVoiceTone(personality)
 
-        val speech = VoiceConversationPolicy.compactForSpeech(text)
+        val speech = VoiceConversationPolicy.compactForSpeech(text, personality)
         if (speech.isBlank()) return
 
         val utteranceId = "deep33-response-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
