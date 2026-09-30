@@ -245,14 +245,11 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         if (wasBackgrounded) {
-            if (activeTask?.isDone == false) {
-                // A pending generation is not a connectivity failure. Keep it in a
-                // recoverable state while the Activity returns to the foreground.
-                updateConnection(ConnectionState.CONNECTING)
-            } else {
-                restorePendingTurnIfNeeded()
-                if (activeTask?.isDone != false) checkConnectivity()
-            }
+            // Foreground recovery is lifecycle work, not a new connection configuration.
+            // Restore any durable in-flight turn first, then revalidate without allowing
+            // the probe to overwrite a live generation state.
+            restorePendingTurnIfNeeded()
+            checkConnectivity()
         }
         wasBackgrounded = false
     }
@@ -941,6 +938,10 @@ class MainActivity : Activity() {
                 store.saveMessages(conversation)
 
                 runOnUiThread {
+                    // Remote memory refresh must not rebuild the chat while a pending
+                    // generation is active, otherwise the "Pensando..." bubble can be
+                    // detached from the active request after foreground recovery.
+                    if (activeTask?.isDone == false) return@runOnUiThread
                     applyPersonalityTheme(Personality.fromKey(store.personality))
                     renderConversation()
                     refreshSidebarHistory()
