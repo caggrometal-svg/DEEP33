@@ -251,8 +251,8 @@ function buildEdgeMessages(
 
 function sanitizeAssistantText(value: string): string {
   let text = String(value || "").trim();
-  text = text.replace(/\\\\n/g, "\n").replace(/\\\\r/g, "\r");
-  text = text.replace(/(?ims)(?:^|\\n)\\s*(?:#{0,6}\\s*)?(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|referencias|references|citations?|enlaces|links|bibliografia|bibliography)\\s*:?\\s*(?:\\n|$).*$/s, "");
+  text = text.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+  text = text.replace(/(?:^|\\n)\\s*(?:#{0,6}\\s*)?(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|referencias|references|citations?|enlaces|links|bibliografia|bibliography)\\s*:?\\s*(?:\\n|$)[\\s\\S]*$/im, "");
   text = text.replace(/\\[[^\\]]+\\]\\(https?:\\/\\/[^)\\s]+\\)/gi, "");
   text = text.replace(/https?:\\/\\/[^\\s)\\]>]+/gi, "");
   text = text.replace(/(?:cite|url).*?/gs, "");
