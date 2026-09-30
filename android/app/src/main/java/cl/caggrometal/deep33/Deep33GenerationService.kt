@@ -290,8 +290,10 @@ class Deep33GenerationService : Service() {
             kind == Deep33ApiException.Kind.SERVER
 
     private fun updateForegroundNotification(text: String) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(text))
+        // Re-submit the existing foreground notification instead of calling
+        // NotificationManager.notify(), which would require POST_NOTIFICATIONS on
+        // Android 13+ and is not necessary for an active foreground service.
+        startForeground(NOTIFICATION_ID, buildNotification(text))
     }
 
     private fun buildNotification(text: String): Notification =
