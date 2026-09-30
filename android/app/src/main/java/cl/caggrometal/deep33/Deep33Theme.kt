@@ -14,10 +14,11 @@ fun Deep33Theme(
     val accent = Color(personality.accent)
     val scheme = darkColorScheme(
         primary = accent,
-        secondary = accent,
-        background = Color(0xFF080A0F),
-        surface = Color(0xFF11151D),
-        surfaceVariant = Color(0xFF1A202A),
+        secondary = Color(0xFFFF2A44),
+        tertiary = Color(0xFF00D88A),
+        background = Color(0xFF050607),
+        surface = Color(0xFF101317),
+        surfaceVariant = Color(0xFF181C21),
         onBackground = Color(0xFFF2F4F8),
         onSurface = Color(0xFFF2F4F8)
     )
