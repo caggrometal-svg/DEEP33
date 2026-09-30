@@ -1399,7 +1399,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (path === "/v1/ai/inference-check"
     if (path === "/v1/ai/inference-check" && req.method === "GET") {
       if (!edgeAIConfigured()) {
         return json({ status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED", direct_edge: true }, 503);
