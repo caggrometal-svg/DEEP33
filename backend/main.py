@@ -860,21 +860,40 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
     return data,list(sources.values())
 
 def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str:
-    """Keep retrieved sources internal; never expose a source list or retrieved URL in final prose."""
+    """Keep web retrieval internal; final assistant prose must not present citations or source material."""
     value = str(text or "").strip()
+
+    # Remove an explicit source/citation section even when it contains titles only,
+    # because source metadata is an internal retrieval concern, not user-facing prose.
     value = re.sub(
-        r"(?is)\n{0,3}\s*(?:fuentes consultadas|sources consulted)\s*:\s*"
-        r"(?:\n\s*(?:[-*]|\d+[.)])\s*(?:\[[^\]]+\]\()?https?://\S+\)?)+\s*$",
+        r"(?ims)(?:^|\n)\s*(?:#{0,6}\s*)?"
+        r"(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|"
+        r"referencias|references|citations?)\s*:?\s*(?:\n|$).*\Z",
         "",
         value,
     )
+
+    # Remove markdown links, including links whose destination is not one of the
+    # retrieved URLs. This prevents a provider from smuggling a citation through
+    # alternate link text or a rewritten source URL.
+    value = re.sub(r"\[([^\]]+)\]\(https?://[^)\s]+\)", r"\1", value)
+
+    # Bare HTTP(S) URLs are never part of the final synthesized prose.
+    value = re.sub(r"(?i)https?://[^\s)\]>]+", "", value)
+
+    # Remove explicit citation markers commonly emitted by search/RAG providers.
+    value = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s*\[[^\]]{1,120}\]\s*$", "", value)
+    value = re.sub(r"(?i)\s*\((?:fuente|source|ref(?:erencia)?)\s*:?\s*[^)]{0,180}\)", "", value)
+    value = re.sub(r"(?i)\s*\[(?:fuente|source|ref(?:erencia)?)\s*:?\s*[^\]]{0,180}\]", "", value)
+
+    # Remove exact retrieved URLs even when embedded in otherwise valid text.
     for source in sources or []:
         url = str(source.get("url") or "").strip()
-        if not url:
-            continue
-        value = re.sub(r"\[[^\]]+\]\(" + re.escape(url) + r"\)", "", value)
-        value = value.replace(url, "")
-    value = re.sub(r"[ \t]+", " ", value)
+        if url:
+            value = value.replace(url, "")
+
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    value = re.sub(r" *\n *\n *", "\n\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
 
@@ -1780,7 +1799,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     except IdempotencyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
-        text_value = cached.get("result", {}).get("text", "")
+        text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
         async def cached_stream():
             for piece in _sse_text_chunks(text_value):
                 yield _sse_delta(piece)
@@ -1793,7 +1812,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     )
     if state in {"COMPLETED", "FAILED"}:
         cached = replay_idempotent(state, record)
-        text_value = cached.get("result", {}).get("text", "")
+        text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
         async def replay_stream():
             for piece in _sse_text_chunks(text_value):
                 yield _sse_delta(piece)
