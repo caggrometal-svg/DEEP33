@@ -94,7 +94,7 @@ object Deep33Api {
             endpointOverride
         )
 
-    fun memoryContext(sessionId: String): JSONObject =
+    fun memoryContext(sessionId: String, memoryProfileId: String? = null): JSONObject =
         request(
             "GET",
             "/v1/memory/context",
@@ -104,7 +104,8 @@ object Deep33Api {
                 payload.optJSONObject("session") != null ||
                     payload.optJSONArray("messages")?.length().orZero() > 0 ||
                     payload.optJSONArray("memories")?.length().orZero() > 0
-            }
+            },
+            memoryProfileId = memoryProfileId
         )
 
     private fun Int?.orZero(): Int = this ?: 0
@@ -114,6 +115,7 @@ object Deep33Api {
         messages: JSONArray,
         personality: String = "NEUTRO",
         requestId: String = UUID.randomUUID().toString(),
+        memoryProfileId: String? = null,
     ): JSONObject =
         request(
             "POST",
@@ -124,20 +126,23 @@ object Deep33Api {
             sessionId,
             requestId,
             "memory-sync-" + requestId,
+            memoryProfileId = memoryProfileId,
         )
 
-    fun remember(sessionId: String, kind: String, content: String): JSONObject =
+    fun remember(sessionId: String, kind: String, content: String, memoryProfileId: String? = null): JSONObject =
         request(
             "POST",
             "/v1/memory/remember",
             JSONObject().put("kind", kind).put("content", content),
-            sessionId
+            sessionId,
+            memoryProfileId = memoryProfileId
         )
 
     fun setPreferences(
         sessionId: String,
         personality: String,
-        preferences: JSONObject = JSONObject()
+        preferences: JSONObject = JSONObject(),
+        memoryProfileId: String? = null
     ): JSONObject =
         request(
             "PUT",
@@ -145,7 +150,8 @@ object Deep33Api {
             JSONObject()
                 .put("personality", personality)
                 .put("preferences", preferences),
-            sessionId
+            sessionId,
+            memoryProfileId = memoryProfileId
         )
 
     fun stream(
@@ -189,6 +195,7 @@ object Deep33Api {
                     connection.setRequestProperty("Accept", "text/event-stream")
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
+                    if (!memoryProfileId.isNullOrBlank()) connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
@@ -355,7 +362,8 @@ object Deep33Api {
         requestId: String = UUID.randomUUID().toString(),
         idempotencyKey: String = requestId,
         endpointOverride: List<String>? = null,
-        acceptResponse: ((JSONObject) -> Boolean)? = null
+        acceptResponse: ((JSONObject) -> Boolean)? = null,
+        memoryProfileId: String? = null
     ): JSONObject {
         val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
         var lastError: Deep33ApiException? = null
