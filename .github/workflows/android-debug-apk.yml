@@ -61,7 +61,8 @@ jobs:
           channel: stable
           working-directory: android
           script: |
-            bash deep33-real-connectivity-e2e.sh
+            set -euo pipefail
+            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33LifecycleRecoveryTest --no-daemon
       - name: Publish DEEP33 debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
