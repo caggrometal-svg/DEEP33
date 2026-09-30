@@ -33,6 +33,9 @@ object MarkdownRenderer {
     private fun sanitizeAssistantSources(markdown: String): String {
         var value = markdown
 
+        // Normalize provider/proxy escaped line breaks before source-section matching.
+        value = value.replace("\\n", "\n").replace("\\r", "\r")
+
         // Defense in depth: the backend removes source metadata, but assistant text
         // is also sanitized immediately before rendering on the Android UI.
         value = value.replace(Regex("(?s)(?:cite|url).*?"), "")
