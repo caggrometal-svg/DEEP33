@@ -1,9 +1,27 @@
 package cl.caggrometal.deep33
 
+import android.app.Activity
+import android.widget.Button
+import androidx.test.core.app.ActivityScenario
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class Deep33UiContractV2Test {
+    @Test
+    fun stopControlUsesDeep33SquareGlyph() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val field = activity.javaClass.getDeclaredField("cancelButton").apply { isAccessible = true }
+                val button = field.get(activity) as Button
+                assertEquals("▪", button.text.toString())
+                assertEquals("Detener generación", button.contentDescription.toString())
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
     @Test
     fun personalitiesHaveStableKeys() {
         assertEquals(
