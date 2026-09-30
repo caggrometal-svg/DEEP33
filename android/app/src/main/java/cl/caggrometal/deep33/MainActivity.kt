@@ -688,18 +688,18 @@ class MainActivity : Activity() {
         )
 
         cancelButton = Button(this).apply {
-            text = "▪"
+            text = STOP_BUTTON_GLYPH
             contentDescription = "Detener generación"
-            textSize = 26f
+            textSize = 18f
             isAllCaps = false
             minWidth = 0
-            minHeight = dp(58)
-            setPadding(0, 0, 0, dp(2))
-            setTextColor(Color.rgb(255, 70, 90))
-            setBackground(neonPanel(Color.rgb(24, 8, 12), Color.rgb(150, 28, 46)))
+            minHeight = 0
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 0)
             visibility = View.GONE
             setOnClickListener { cancelGeneration() }
         }
+        applyStopButtonTheme(Personality.fromKey(store.personality))
 
         composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -708,7 +708,7 @@ class MainActivity : Activity() {
             addView(inputBubble, LinearLayout.LayoutParams(0, dp(58), 1f).apply {
                 setMargins(0, 0, dp(6), 0)
             })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(88), dp(58)).apply {
+            addView(cancelButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                 setMargins(0, 0, dp(6), 0)
             })
         }
@@ -864,13 +864,25 @@ class MainActivity : Activity() {
         syncPreferences()
     }
 
+    private fun applyStopButtonTheme(personality: Personality) {
+        if (!::cancelButton.isInitialized) return
+        cancelButton.text = STOP_BUTTON_GLYPH
+        cancelButton.setTextColor(personality.accent)
+        cancelButton.setBackground(
+            neonPanel(
+                Color.argb(210, 24, 8, 12),
+                personality.accent
+            )
+        )
+    }
+
     private fun applyPersonalityTheme(personality: Personality) {
         currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
-        if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
+        if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
@@ -1738,6 +1750,8 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        internal const val STOP_BUTTON_GLYPH = "▪️"
+
         private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
