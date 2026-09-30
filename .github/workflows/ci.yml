@@ -3,6 +3,7 @@ concurrency:
   cancel-in-progress: true
 
 name: DEEP33 CI
+# CI trigger: validate the latest Android UI fix.
 
 permissions:
   contents: read
