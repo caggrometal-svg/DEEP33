@@ -32,7 +32,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - name: Reject legacy upstream dependencies
         run: |
-          set -eu
+          set -euo pipefail
           if grep -Rni --exclude-dir=.git "c-33\\.blitz\\.cloud\|caggrometal-svg/.*IAC33\|deep33.c-33" supabase backend android README.md render.yaml Dockerfile 2>/dev/null; then
             echo "LEGACY_UPSTREAM_REFERENCE_FOUND"
             exit 1
@@ -88,7 +88,7 @@ jobs:
 
       - name: Enable KVM for Android Emulator
         run: |
-          set -eu
+          set -euo pipefail
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
@@ -113,13 +113,13 @@ jobs:
           disable-spellchecker: true
           channel: stable
           working-directory: android
-          shell: bash
           script: |
-            set -euo pipefail
+            bash -euo pipefail <<'DEEP33_FEATURE_TESTS'
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
             gradle :app:connectedDebugAndroidTest \
               -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest \
               --no-daemon
+            DEEP33_FEATURE_TESTS
 
   production_gate:
     if: ${{ github.event_name != 'pull_request' }}
@@ -133,7 +133,7 @@ jobs:
 
       - name: Validate PRIMARY deployment when backend changed
         run: |
-          set -eu
+          set -euo pipefail
           BEFORE_SHA="${{ github.event.before }}"
           backend_changed=1
           if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
@@ -170,7 +170,7 @@ jobs:
 
       - name: Verify DEEP33 edge connectivity and search
         run: |
-          set -eu
+          set -euo pipefail
           audit_ok=0
           for attempt in $(seq 1 6); do
             echo "EDGE_AUDIT_ATTEMPT=$attempt"
@@ -204,7 +204,7 @@ jobs:
           SECONDARY_URL: ${{ env.SECONDARY_URL }}
           TERTIARY_URL: ${{ env.TERTIARY_URL }}
         run: |
-          set -eu
+          set -euo pipefail
           if [ -n "$SECONDARY_URL" ] && [ -n "$TERTIARY_URL" ]; then
             test "$PRIMARY_URL" != "$SECONDARY_URL" || { echo "PRIMARY_SECONDARY_DUPLICATE"; exit 1; }
             test "$PRIMARY_URL" != "$TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
@@ -215,7 +215,7 @@ jobs:
           fi
       - name: Verify production endpoint diversity
         run: |
-          set -eu
+          set -euo pipefail
           test -n "$PRIMARY_URL"
           if [ -n "$SECONDARY_URL" ] && [ -n "$TERTIARY_URL" ]; then
             test "$PRIMARY_URL" != "$SECONDARY_URL"
@@ -228,7 +228,7 @@ jobs:
 
       - name: Verify all production nodes readiness
         run: |
-          set -eu
+          set -euo pipefail
           entries=("PRIMARY|$PRIMARY_URL")
           [ -n "$SECONDARY_URL" ] && entries+=("SECONDARY|$SECONDARY_URL")
           [ -n "$TERTIARY_URL" ] && entries+=("TERTIARY|$TERTIARY_URL")
@@ -261,7 +261,7 @@ jobs:
 
       - name: Verify PRIMARY memory availability
         run: |
-          set -eu
+          set -euo pipefail
           SESSION="ci-memory-${{ github.run_id }}"
           curl -fsS --connect-timeout 8 --max-time 45 \
             "$PRIMARY_URL/v1/memory/context" \
@@ -271,7 +271,7 @@ jobs:
 
       - name: Verify PRIMARY real inference
         run: |
-          set -eu
+          set -euo pipefail
           curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" >/tmp/diag.json
           python - <<'PY'
           import json
@@ -285,7 +285,7 @@ jobs:
 
       - name: Verify PRIMARY Hybrid Search + pgvector
         run: |
-          set -eu
+          set -euo pipefail
           SESSION="ci-hybrid-${{ github.run_id }}"
           STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/search/hybrid/status" -H "X-DEEP33-Session-Id: $SESSION")"
           if ! printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function" and .vector_backend=="pgvector" and .keyword_backend=="postgresql_tsvector"' >/dev/null; then
@@ -321,7 +321,7 @@ jobs:
           echo "PRIMARY_HYBRID_SEARCH_PASS"
       - name: Verify PRIMARY DEEP33 Search Engine
         run: |
-          set -eu
+          set -euo pipefail
           SESSION="${{ github.run_id }}"
           status_ok=0
           for attempt in $(seq 1 3); do
@@ -418,7 +418,7 @@ jobs:
 
       - name: Enable KVM for Android Emulator
         run: |
-          set -eu
+          set -euo pipefail
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
@@ -520,7 +520,7 @@ jobs:
       - name: Assert Android E2E success
         if: ${{ always() }}
         run: |
-          set -eu
+          set -euo pipefail
           if [ "${{ steps.android_e2e_attempt_1.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_2.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_3.outcome }}" = "success" ]; then
             echo "ANDROID_E2E_PASS"
             exit 0
@@ -573,7 +573,7 @@ jobs:
     steps:
       - name: Verify all production nodes after Android E2E
         run: |
-          set -eu
+          set -euo pipefail
           entries=("PRIMARY|$PRIMARY_URL")
           [ -n "$SECONDARY_URL" ] && entries+=("SECONDARY|$SECONDARY_URL")
           [ -n "$TERTIARY_URL" ] && entries+=("TERTIARY|$TERTIARY_URL")
@@ -589,7 +589,7 @@ jobs:
 
       - name: Verify PRIMARY edge and inference after recovery
         run: |
-          set -eu
+          set -euo pipefail
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" |
             jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
           curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" |
@@ -611,7 +611,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa production-pass "$GITHUB_SHA" -m "DEEP33 certified production release $GITHUB_SHA"
