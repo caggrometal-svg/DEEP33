@@ -1,6 +1,6 @@
 concurrency:
-  group: deep33-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: deep33-ci-${{ github.run_id }}
+  cancel-in-progress: false
 
 name: DEEP33 CI
 # CI trigger: validate the latest Android UI fix.
