@@ -113,8 +113,9 @@ jobs:
           disable-spellchecker: true
           channel: stable
           working-directory: android
+          shell: bash
           script: |
-            set -eu
+            set -euo pipefail
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
             gradle :app:connectedDebugAndroidTest \
               -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest \
