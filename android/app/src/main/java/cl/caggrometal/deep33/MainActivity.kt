@@ -222,8 +222,8 @@ class MainActivity : Activity() {
             }
         }
 
-        window.statusBarColor = Color.rgb(8, 10, 15)
-        window.navigationBarColor = Color.rgb(8, 10, 15)
+        window.statusBarColor = Color.rgb(3, 3, 6)
+        window.navigationBarColor = Color.rgb(3, 3, 6)
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
             @Suppress("DEPRECATION")
             view.setPadding(
@@ -323,12 +323,12 @@ class MainActivity : Activity() {
 
     private fun buildRoot(): View {
         rootFrame = FrameLayout(this).apply {
-            setBackgroundColor(Color.rgb(8, 10, 15))
+            setBackgroundColor(Color.rgb(5, 5, 8))
         }
 
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(8, 10, 15))
+            setBackgroundColor(Color.rgb(5, 5, 8))
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
 
@@ -359,7 +359,8 @@ class MainActivity : Activity() {
         titleGroup.addView(TextView(this).apply {
             text = "DEEP33"
             setTextColor(Color.WHITE)
-            textSize = 24f
+            textSize = 23f
+            letterSpacing = 0.10f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
         currentPersonalityView = TextView(this).apply {
@@ -402,7 +403,7 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(28), dp(14), dp(16))
-            setBackgroundColor(Color.rgb(8, 10, 15))
+            setBackgroundColor(Color.rgb(6, 6, 9))
             elevation = dp(12).toFloat()
         }
 
@@ -412,7 +413,7 @@ class MainActivity : Activity() {
         }
         header.addView(
             TextView(this).apply {
-                text = "Chats"
+                text = "DEEP33 · CHATS"
                 setTextColor(Color.WHITE)
                 textSize = 22f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -429,7 +430,7 @@ class MainActivity : Activity() {
             text = "＋  Nuevo chat"
             isAllCaps = false
             setTextColor(Color.rgb(0, 255, 140))
-            setBackground(neonPanel(Color.rgb(18, 28, 27), Color.rgb(0, 255, 140)))
+            setBackground(neonPanel(Color.rgb(10, 10, 13), Color.rgb(82, 70, 74)))
             setOnClickListener {
                 startNewSession()
                 hideSidebar()
@@ -440,7 +441,7 @@ class MainActivity : Activity() {
             text = "⚙  Configuración"
             isAllCaps = false
             setTextColor(Color.rgb(255, 70, 90))
-            setBackground(neonPanel(Color.rgb(30, 18, 22), Color.rgb(255, 70, 90)))
+            setBackground(neonPanel(Color.rgb(15, 7, 10), Color.rgb(180, 28, 48)))
             setOnClickListener {
                 showTab(Tab.SETTINGS)
                 hideSidebar()
@@ -573,7 +574,7 @@ class MainActivity : Activity() {
             visibility = View.GONE
             setBackground(
                 GradientDrawable().apply {
-                    setColor(Color.rgb(15, 22, 31))
+                    setColor(Color.rgb(9, 9, 13))
                     cornerRadius = dp(22).toFloat()
                     setStroke(dp(1), Personality.fromKey(store.personality).accent)
                 }
@@ -607,6 +608,7 @@ class MainActivity : Activity() {
 
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(5, 5, 8))
             setPadding(dp(4), dp(12), dp(4), dp(12))
         }
         chatScroll = ScrollView(this).apply {
@@ -617,7 +619,7 @@ class MainActivity : Activity() {
 
         input = EditText(this).apply {
             hint = "Escribe un mensaje"
-            setHintTextColor(Color.rgb(130, 138, 150))
+            setHintTextColor(Color.rgb(118, 112, 116))
             setTextColor(Color.WHITE)
             textSize = 16f
             maxLines = 5
@@ -631,9 +633,9 @@ class MainActivity : Activity() {
         val inputBubble = FrameLayout(this).apply {
             setBackground(
                 GradientDrawable().apply {
-                    setColor(Color.rgb(18, 22, 30))
+                    setColor(Color.rgb(10, 10, 14))
                     cornerRadius = dp(22).toFloat()
-                    setStroke(dp(1), Color.rgb(46, 54, 68))
+                    setStroke(dp(1), Color.rgb(58, 18, 25))
                 }
             )
         }
@@ -747,12 +749,16 @@ class MainActivity : Activity() {
         box.addView(Button(this).apply {
             text = "📡  Estado y conectividad"
             isAllCaps = false
+            setTextColor(Color.LTGRAY)
+            setBackground(neonPanel(Color.rgb(11, 11, 15), Color.rgb(58, 58, 66)))
             setOnClickListener { showTab(Tab.STATUS) }
         }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         box.addView(Button(this).apply {
             text = if (store.voiceEnabled) "VOZ DE RESPUESTA: ACTIVADA" else "VOZ DE RESPUESTA: DESACTIVADA"
             isAllCaps = false
+            setTextColor(Color.LTGRAY)
+            setBackground(neonPanel(Color.rgb(11, 11, 15), Color.rgb(72, 20, 28)))
             setOnClickListener {
                 store.voiceEnabled = !store.voiceEnabled
                 text = if (store.voiceEnabled) "VOZ DE RESPUESTA: ACTIVADA" else "VOZ DE RESPUESTA: DESACTIVADA"
@@ -1449,8 +1455,8 @@ class MainActivity : Activity() {
                 GradientDrawable().apply {
                     setColor(background)
                     cornerRadius = dp(22).toFloat()
-                    val neon = if (isAssistant) Color.rgb(255, 45, 70) else Color.rgb(0, 255, 140)
-                    setStroke(dp(2), neon)
+                    val neon = if (isAssistant) Color.rgb(210, 24, 48) else Color.rgb(74, 74, 82)
+                    setStroke(dp(1), neon)
                 }
             )
         }
@@ -1465,6 +1471,7 @@ class MainActivity : Activity() {
         val contentView = TextView(this).apply {
             tag = content
             textSize = 16f
+            letterSpacing = 0.01f
             setTextColor(Color.WHITE)
             setPadding(0, dp(6), 0, 0)
             movementMethod = LinkMovementMethod.getInstance()
