@@ -133,3 +133,33 @@ def test_chat_endpoint_returns_active_personality_ack(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.headers["X-DEEP33-Personality"] == "CONSPIRANOICO"
     assert response.json()["result"]["personality"] == "CONSPIRANOICO"
+
+
+def test_personality_contract_has_distinct_deep33_identity() -> None:
+    import backend.main as main
+
+    expected_signatures = {
+        "AGRESIVO": "direct pressure",
+        "NEUTRO": "calm precision",
+        "COMICO": "brief wit",
+        "CONSPIRANOICO": "pattern detection",
+    }
+
+    for name, signature in expected_signatures.items():
+        prompt = main.personality_prompt(name)
+        assert "DEEP33 IDENTITY CORE v1" in prompt
+        assert "not as a generic assistant" in prompt
+        assert "Claro" in prompt
+        assert "Como IA" in prompt
+        assert f"SIGNATURE={signature}" in prompt
+        assert "Do not announce the personality" in prompt
+
+
+def test_personality_contract_keeps_fact_hypothesis_boundary() -> None:
+    import backend.main as main
+
+    for name in main.PERSONALITIES:
+        prompt = main.personality_prompt(name)
+        assert "Separate facts, inferences, hypotheses, and unknowns" in prompt
+        assert "Do not manufacture confidence" in prompt
+
