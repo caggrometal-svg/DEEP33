@@ -1493,7 +1493,7 @@ class MainActivity : Activity() {
             movementMethod = LinkMovementMethod.getInstance()
         }
         bubble.addView(contentView)
-        renderMarkdown(contentView, content)
+        renderMarkdown(contentView, content, isAssistant)
 
         val params = LinearLayout.LayoutParams(
             if (isAssistant) ViewGroup.LayoutParams.MATCH_PARENT else
@@ -1513,8 +1513,11 @@ class MainActivity : Activity() {
         return contentView
     }
 
-    private fun renderMarkdown(view: TextView, markdown: String) {
-        view.text = MarkdownRenderer.render(markdown)
+    private fun renderMarkdown(view: TextView, markdown: String, isAssistant: Boolean = false) {
+        view.text = MarkdownRenderer.render(
+            markdown,
+            suppressAssistantSources = isAssistant
+        )
         view.movementMethod = LinkMovementMethod.getInstance()
     }
 
