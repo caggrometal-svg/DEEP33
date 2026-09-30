@@ -40,6 +40,12 @@ object MarkdownRenderer {
         // is also sanitized immediately before rendering on the Android UI.
         value = value.replace(Regex("(?s)(?:cite|url).*?"), "")
         value = value.replace(Regex("(?is)<a\\b[^>]*>.*?</a>"), "")
+        // Hide search-provider citation IDs (for example, 【turn0search0】) in visible answers.
+        value = value.replace(
+            Regex("【\\s*turn\\d+(?:search|news|reddit|fetch|image|product|business)\\d+\\s*】", RegexOption.IGNORE_CASE),
+            ""
+        )
+        value = value.replace(Regex("\\(turn\\d+(?:search|news|reddit|fetch)\\d+\\)"), "")
         value = value.replace(
             Regex(
                 "(?im)^\\s*(?:#{0,6}\\s*)?" +
