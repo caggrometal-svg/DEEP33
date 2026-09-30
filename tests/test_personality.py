@@ -186,4 +186,4 @@ def test_sanitizer_removes_generic_opening_and_full_width_citations() -> None:
     value = main.sanitize_assistant_text(
         "Claro, aquí está la respuesta. Evidencia real [1] y marcador 【2】."
     )
-    assert value == "aquí está la respuesta. Evidencia real y marcador ."
+    assert value == "aquí está la respuesta. Evidencia real y marcador."
