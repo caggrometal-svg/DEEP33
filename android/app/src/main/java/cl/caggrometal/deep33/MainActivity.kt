@@ -688,8 +688,15 @@ class MainActivity : Activity() {
         )
 
         cancelButton = Button(this).apply {
-            text = "CANCELAR"
+            text = "▪"
+            contentDescription = "Detener generación"
+            textSize = 26f
+            isAllCaps = false
+            minWidth = 0
             minHeight = dp(58)
+            setPadding(0, 0, 0, dp(2))
+            setTextColor(Color.rgb(255, 70, 90))
+            setBackground(neonPanel(Color.rgb(24, 8, 12), Color.rgb(150, 28, 46)))
             visibility = View.GONE
             setOnClickListener { cancelGeneration() }
         }
@@ -848,7 +855,6 @@ class MainActivity : Activity() {
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
-        if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
