@@ -119,6 +119,46 @@ def test_sanitize_assistant_text_removes_all_common_source_forms() -> None:
     assert sanitize_assistant_text(text, []) == "Síntesis propia de DEEP33."
 
 
+def test_sanitize_assistant_text_removes_provider_citation_markup() -> None:
+    from backend.main import sanitize_assistant_text
+
+    text = (
+        "DEEP33 entrega la conclusión. "
+        "citeturn1search2 "
+        "[^1] [2] "
+        "<a href=\"https://example.com\">Example</a>\n"
+        "Fuente 1: https://example.com/source\n"
+        "Retrieved from https://example.org/source"
+    )
+    assert sanitize_assistant_text(text, []) == "DEEP33 entrega la conclusión."
+
+
+def test_sanitize_generation_output_clears_source_metadata() -> None:
+    from backend.main import sanitize_generation_output
+
+    output = {
+        "result": {
+            "role": "assistant",
+            "text": "Respuesta. citesource1",
+        },
+        "response": {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Respuesta. [Fuente: https://example.com]",
+                    }
+                }
+            ]
+        },
+        "sources": [{"title": "Example", "url": "https://example.com"}],
+    }
+    sanitized = sanitize_generation_output(output)
+    assert sanitized["sources"] == []
+    assert "cite" not in sanitized["result"]["text"]
+    assert "example.com" not in sanitized["response"]["choices"][0]["message"]["content"]
+
+
 def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPatch):
     calls = {"gateway": 0}
 
