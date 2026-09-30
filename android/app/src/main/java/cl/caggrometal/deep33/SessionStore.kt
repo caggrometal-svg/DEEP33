@@ -24,6 +24,18 @@ data class PendingTurn(
     val payloadJson: String
 )
 
+enum class GenerationStatus { RUNNING, DONE, FAILED, CANCELLED }
+
+data class GenerationState(
+    val status: GenerationStatus,
+    val requestId: String,
+    val sessionId: String,
+    val personality: String,
+    val partialOutput: String = "",
+    val finalText: String = "",
+    val error: String = ""
+)
+
 class SessionStore(
     context: Context,
     name: String = PREFS_NAME
@@ -168,6 +180,56 @@ class SessionStore(
         }
     }
 
+    fun saveGenerationState(
+        status: GenerationStatus,
+        requestId: String,
+        sessionId: String,
+        personality: String,
+        partialOutput: String = "",
+        finalText: String = "",
+        error: String = ""
+    ) {
+        val json = JSONObject()
+            .put("status", status.name)
+            .put("request_id", requestId)
+            .put("session_id", sessionId)
+            .put("personality", personality)
+            .put("partial_output", partialOutput)
+            .put("final_text", finalText)
+            .put("error", error)
+        prefs.edit().putString(KEY_GENERATION_STATE, json.toString()).apply()
+    }
+
+    fun loadGenerationState(): GenerationState? {
+        val raw = prefs.getString(KEY_GENERATION_STATE, null) ?: return null
+        return try {
+            val json = JSONObject(raw)
+            val status = GenerationStatus.valueOf(json.optString("status"))
+            val requestId = json.optString("request_id")
+            val sessionId = json.optString("session_id")
+            val personality = json.optString("personality", "NEUTRO")
+            if (requestId.isBlank() || sessionId.isBlank()) null
+            else GenerationState(
+                status = status,
+                requestId = requestId,
+                sessionId = sessionId,
+                personality = personality,
+                partialOutput = json.optString("partial_output"),
+                finalText = json.optString("final_text"),
+                error = json.optString("error")
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun clearGenerationState(requestId: String? = null) {
+        val current = loadGenerationState()
+        if (requestId == null || current?.requestId == requestId) {
+            prefs.edit().remove(KEY_GENERATION_STATE).commit()
+        }
+    }
+
     fun saveChatSummary(title: String) {
         val normalized = title.replace(Regex("\\s+"), " ").trim().take(60)
         if (normalized.isBlank()) return
@@ -236,6 +298,7 @@ class SessionStore(
         private const val KEY_VOICE_TONE = "voice_tone"
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
         private const val KEY_PENDING_TURN = "pending_turn_json"
+        private const val KEY_GENERATION_STATE = "generation_state_json"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
     }
