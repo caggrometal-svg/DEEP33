@@ -943,7 +943,6 @@ async function probeInference(sessionId: string) {
   }
 }
 
-async function probeMemory
 async function probeMemory(sessionId: string) {
   if (SUPABASE_SECRET_KEY) {
     try {
