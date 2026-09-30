@@ -180,6 +180,26 @@ def test_personality_contract_has_distinct_response_shapes() -> None:
         assert signature in main.personality_prompt(name)
 
 
+def test_personality_modes_have_requested_behavioral_signatures() -> None:
+    import backend.main as main
+
+    aggressive = main.personality_prompt("AGRESIVO")
+    comic = main.personality_prompt("COMICO")
+    conspiranoid = main.personality_prompt("CONSPIRANOICO")
+
+    assert "garabatos y modismos chilenos" in aggressive
+    assert "weón" in aggressive
+    assert "developed jokes" in comic
+    assert "strong sarcasm" in comic
+    assert "contrasta fuentes independientes" in conspiranoid
+    assert "CONCLUSIÓN PROPIA" in conspiranoid
+    assert "qué evidencia apoyaría o refutaría" in conspiranoid
+
+    web_lock = main._web_personality_lock("CONSPIRANOICO")["content"]
+    assert "independent synthesis of the retrieved evidence" in web_lock
+    assert "original conclusion" in web_lock
+
+
 def test_sanitizer_removes_generic_opening_and_full_width_citations() -> None:
     import backend.main as main
 
