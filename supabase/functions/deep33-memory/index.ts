@@ -394,12 +394,14 @@ Deno.serve(async (req) => {
           return { body: { error: "MEMORY_INVALID" }, status: 400 };
         }
 
+        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
+        const memorySessionId = memoryProfileId || sessionId;
         const fingerprint = await sha256(kind + "\n" + content);
 
         const { error: sessionError } = await supabase
           .from("deep33_sessions")
           .upsert(
-            { session_id: sessionId, updated_at: new Date().toISOString() },
+            { session_id: memorySessionId, updated_at: new Date().toISOString() },
             { onConflict: "session_id" },
           );
         if (sessionError) throw sessionError;
@@ -408,7 +410,7 @@ Deno.serve(async (req) => {
           .from("deep33_memories")
           .upsert(
             {
-              session_id: sessionId,
+              session_id: memorySessionId,
               kind,
               content,
               fingerprint,
@@ -424,8 +426,10 @@ Deno.serve(async (req) => {
 
     if (action === "preferences") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.preferences", async () => {
+        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
+        const memorySessionId = memoryProfileId || sessionId;
         const patch: Record<string, unknown> = {
-          session_id: sessionId,
+          session_id: memorySessionId,
           updated_at: new Date().toISOString(),
         };
 
