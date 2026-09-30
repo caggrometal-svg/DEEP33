@@ -19,6 +19,18 @@ class Deep33UiContractV2Test {
     }
 
     @Test
+    fun assistantRendererHidesSourceMetadata() {
+        val rendered = MarkdownRenderer.render(
+            "Respuesta propia. [Fuente](https://example.com/source)\\n" +
+                "Fuentes: https://example.org\\n" +
+                "citeturn1search1 [1]",
+            suppressAssistantSources = true
+        ).toString()
+
+        assertEquals("Respuesta propia.", rendered)
+    }
+
+    @Test
     fun voiceProfilesAreBounded() {
         assertEquals(1.00f, PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).pitchFactor)
         assertEquals(0.74f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
