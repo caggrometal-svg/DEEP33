@@ -378,7 +378,7 @@ class Deep33GenerationService : Service() {
         // a durable RUNNING checkpoint before closing the socket so the redelivered
         // request can continue from the same persisted turn instead of becoming lost.
         val pending = SessionStore(this).loadPendingTurn()
-        if (pending?.requestId == runningRequestId && !userCancelled.get()) {
+        if (pending != null && pending.requestId == runningRequestId && !userCancelled.get()) {
             persistRecoveryCheckpoint(pending)
         }
         stoppingBySystem = true
