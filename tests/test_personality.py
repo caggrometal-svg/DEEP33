@@ -147,7 +147,7 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
 
     for name, signature in expected_signatures.items():
         prompt = main.personality_prompt(name)
-        assert "DEEP33 IDENTITY CORE v1" in prompt
+        assert "DEEP33 IDENTITY CORE v2" in prompt
         assert "not as a generic assistant" in prompt
         assert "Claro" in prompt
         assert "Como IA" in prompt
@@ -164,3 +164,26 @@ def test_personality_contract_keeps_fact_hypothesis_boundary() -> None:
         assert "Separate facts, inferences, hypotheses, and unknowns" in prompt
         assert "Do not manufacture confidence" in prompt
 
+
+
+def test_personality_contract_has_distinct_response_shapes() -> None:
+    import backend.main as main
+
+    expected = {
+        "AGRESIVO": "Open with the conclusion or the flaw.",
+        "NEUTRO": "Lead with the answer, then the necessary evidence or logic.",
+        "COMICO": "Prefer a clean answer followed by one well-placed comic turn.",
+        "CONSPIRANOICO": "Lead with the observable anomaly",
+    }
+
+    for name, signature in expected.items():
+        assert signature in main.personality_prompt(name)
+
+
+def test_sanitizer_removes_generic_opening_and_full_width_citations() -> None:
+    import backend.main as main
+
+    value = main.sanitize_assistant_text(
+        "Claro, aquí está la respuesta. Evidencia real [1] y marcador 【2】."
+    )
+    assert value == "aquí está la respuesta. Evidencia real y marcador ."
