@@ -259,7 +259,8 @@ class MainActivity : Activity() {
 
         contentFrame = FrameLayout(this)
         main.addView(contentFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-        main.addView(buildNavigation(), ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Conversation navigation was removed from the bottom bar so it cannot
+        // replace/rebuild the chat screen and break the active conversation thread.
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
         drawerScrim = View(this).apply {
@@ -277,42 +278,6 @@ class MainActivity : Activity() {
         sidebar.visibility = View.GONE
         return rootFrame
     }
-
-    private fun buildNavigation(): View {
-        val nav = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(4), dp(6), dp(4), dp(2))
-        }
-        nav.addView(
-            navButton("💬  Conversación") { showTab(Tab.CHAT) },
-            LinearLayout.LayoutParams(-1, dp(52)).apply {
-                setMargins(dp(2), 0, dp(2), 0)
-            }
-        )
-        return nav
-    }
-
-    private fun weightParams() =
-        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            setMargins(dp(3), 0, dp(3), 0)
-        }
-
-    private fun navButton(label: String, action: () -> Unit): Button =
-        Button(this).apply {
-            text = label
-            textSize = 14f
-            minHeight = dp(52)
-            isAllCaps = false
-            setTextColor(Personality.fromKey(store.personality).accent)
-            setBackground(
-                neonPanel(
-                    Color.rgb(18, 22, 30),
-                    Personality.fromKey(store.personality).accent
-                )
-            )
-            setOnClickListener { action() }
-        }
 
     private fun buildSidebar(): LinearLayout {
         val panel = LinearLayout(this).apply {
@@ -519,20 +484,64 @@ class MainActivity : Activity() {
                     setStroke(dp(1), Color.rgb(46, 54, 68))
                 }
             )
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            // Reserve space inside the same bubble for the speaker and send controls.
+            setPadding(dp(16), dp(12), dp(112), dp(12))
         }
 
+        val inputBubble = FrameLayout(this).apply {
+            setBackground(
+                GradientDrawable().apply {
+                    setColor(Color.rgb(18, 22, 30))
+                    cornerRadius = dp(22).toFloat()
+                    setStroke(dp(1), Color.rgb(46, 54, 68))
+                }
+            )
+        }
+        inputBubble.addView(
+            input,
+            FrameLayout.LayoutParams(-1, dp(58))
+        )
+
         micButton = Button(this).apply {
-            text = "MIC"
-            minWidth = dp(58)
-            minHeight = dp(58)
+            text = "🔈"
+            contentDescription = "Voz"
+            textSize = 20f
+            isAllCaps = false
+            minWidth = 0
+            minHeight = 0
+            setPadding(0, 0, 0, 0)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.TRANSPARENT)
+            elevation = 0f
             setOnClickListener { toggleVoiceInput() }
         }
+        inputBubble.addView(
+            micButton,
+            FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(56)
+            }
+        )
+
         sendButton = Button(this).apply {
-            text = "ENVIAR"
-            minHeight = dp(58)
+            text = ">"
+            contentDescription = "Enviar"
+            textSize = 28f
+            isAllCaps = false
+            minWidth = 0
+            minHeight = 0
+            setPadding(0, 0, 0, dp(2))
+            setTextColor(Personality.fromKey(store.personality).accent)
+            setBackgroundColor(Color.TRANSPARENT)
+            elevation = 0f
             setOnClickListener { sendMessage() }
         }
+        inputBubble.addView(
+            sendButton,
+            FrameLayout.LayoutParams(dp(50), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(4)
+            }
+        )
+
         cancelButton = Button(this).apply {
             text = "CANCELAR"
             minHeight = dp(58)
@@ -544,16 +553,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(0, dp(8), 0, 0)
-            addView(input, LinearLayout.LayoutParams(0, dp(58), 1f).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
-            addView(sendButton, LinearLayout.LayoutParams(dp(86), dp(58)).apply {
+            addView(inputBubble, LinearLayout.LayoutParams(0, dp(58), 1f).apply {
                 setMargins(0, 0, dp(6), 0)
             })
             addView(cancelButton, LinearLayout.LayoutParams(dp(88), dp(58)).apply {
                 setMargins(0, 0, dp(6), 0)
             })
-            addView(micButton, LinearLayout.LayoutParams(dp(62), dp(58)))
         }
         box.addView(composer)
         return box
