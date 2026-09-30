@@ -5,7 +5,9 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:label="@string/app_name"\n        android:icon="@drawable/ic_deep33_flame"\n        android:roundIcon="@drawable/ic_deep33_flame"
+        android:label="@string/app_name"
+        android:icon="@drawable/ic_deep33_flame"
+        android:roundIcon="@drawable/ic_deep33_flame"
         android:supportsRtl="true"
         android:theme="@style/Theme.DEep33">
         <activity android:name=".MainActivity" android:exported="true">
