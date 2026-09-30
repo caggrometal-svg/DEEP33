@@ -55,12 +55,28 @@ private object VoiceConversationPolicy {
     const val MAX_SPOKEN_CHARS = 560
 
     fun compactForSpeech(text: String, personality: Personality = Personality.NEUTRO): String {
-        val cleaned = text
+        var cleaned = text
             .replace(Regex("\\[([^]]+)\\]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
             .replace("`", "")
+            .replace("•", "")
+            .replace("—", ", ")
+            .replace("–", ", ")
+            .replace(";", ", ")
             .replace(Regex("\\s+"), " ")
             .trim()
+
+        cleaned = when (personality) {
+            Personality.AGRESIVO -> cleaned
+            Personality.NEUTRO -> cleaned
+            Personality.COMICO -> cleaned.replace(
+                Regex("\\bpor lo tanto\\b", RegexOption.IGNORE_CASE), "así que"
+            )
+            Personality.CONSPIRANOICO -> cleaned.replace(
+                Regex("\\bpero\\b", RegexOption.IGNORE_CASE), "... pero"
+            )
+        }
+
         if (cleaned.length <= MAX_SPOKEN_CHARS) return cleaned
 
         val sentences = cleaned
@@ -89,22 +105,10 @@ private object VoiceConversationPolicy {
         val normalized = normalizeForComparison(value)
         if (normalized.isBlank()) return false
         val commands = listOf(
-            "para",
-            "parar",
-            "detenlo",
-            "detener",
-            "deja de hablar",
-            "para de hablar",
-            "detente",
-            "deten",
-            "corta",
-            "basta",
-            "callate",
-            "silencio",
-            "espera",
-            "un segundo",
-            "espera un segundo",
-            "ya basta"
+            "para", "parar", "detenlo", "detener", "deja de hablar",
+            "para de hablar", "detente", "deten", "corta", "basta",
+            "callate", "silencio", "espera", "un segundo",
+            "espera un segundo", "ya basta"
         )
         return commands.any {
             normalized == it || normalized.startsWith("$it ") || normalized.contains(" $it ")
