@@ -105,3 +105,26 @@ def test_memory_request_hash_is_deterministic():
     second = MemoryClient._request_hash("sync", "session", dict(payload))
     assert first == second
     assert len(first) == 64
+
+def test_memory_edge_sync_persists_session_before_messages():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "supabase"
+        / "functions"
+        / "deep33-memory"
+        / "index.ts"
+    ).read_text(encoding="utf-8")
+
+    session_upsert = source.index(
+        '.from("deep33_sessions")'
+    )
+    session_patch = source.index("upsert(sessionPatch, { onConflict: \"session_id\" })")
+    incoming = source.index(
+        "const incoming = Array.isArray(body.messages) ? body.messages : [];"
+    )
+
+    assert session_upsert < incoming
+    assert session_patch < incoming
+
