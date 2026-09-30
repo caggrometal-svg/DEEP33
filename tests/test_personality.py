@@ -97,3 +97,39 @@ def test_personality_header_and_body_must_agree() -> None:
         assert exc.detail == "DEEP33_PERSONALITY_TRANSPORT_MISMATCH"
     else:
         raise AssertionError("expected transport mismatch")
+
+
+def test_chat_endpoint_returns_active_personality_ack(monkeypatch) -> None:
+    import backend.main as main
+    from fastapi.testclient import TestClient
+
+    async def fake_generate(request, session_id, **kwargs):
+        selected = main.normalize_personality(request.personality)
+        return {
+            "result": {
+                "role": "assistant",
+                "text": "ok",
+                "model": "test",
+                "provider": "test",
+                "personality": selected,
+            }
+        }
+
+    monkeypatch.setattr(main, "generate", fake_generate)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/v1/chat",
+        headers={
+            "X-DEEP33-Session-Id": "personality-ack-test",
+            "X-DEEP33-Personality": "CONSPIRANOICO",
+        },
+        json={
+            "messages": [{"role": "user", "content": "test"}],
+            "personality": "CONSPIRANOICO",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["X-DEEP33-Personality"] == "CONSPIRANOICO"
+    assert response.json()["result"]["personality"] == "CONSPIRANOICO"
