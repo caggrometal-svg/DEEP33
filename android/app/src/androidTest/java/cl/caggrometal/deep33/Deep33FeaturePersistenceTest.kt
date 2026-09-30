@@ -8,6 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+// CI verification marker: feature persistence contracts must compile and execute in Android instrumentation.
 class Deep33FeaturePersistenceTest {
     @Test
     fun memoryProfilePersonalityAndVoiceSurviveSessionAndStoreRecreation() {
