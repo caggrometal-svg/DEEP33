@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
+  DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   DEEP33_SECONDARY_URL: ${{ secrets.DEEP33_SECONDARY_URL }}
   DEEP33_TERTIARY_URL: ${{ secrets.DEEP33_TERTIARY_URL }}
   DEEP33_REQUIRE_REDUNDANCY: "true"
@@ -22,7 +22,7 @@ jobs:
       - name: Verify DEEP33 edge backend
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 45 "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS"'
+          curl -fsS --connect-timeout 8 --max-time 45 "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
           curl -fsS --connect-timeout 8 --max-time 90 "$DEEP33_PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
           echo "DEEP33_EDGE_GATE_PASS"
 
