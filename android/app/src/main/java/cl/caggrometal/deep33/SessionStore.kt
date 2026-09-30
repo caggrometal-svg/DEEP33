@@ -201,42 +201,74 @@ class SessionStore(
     }
 
     fun savePendingMemorySync(sync: PendingMemorySync) {
-        val json = JSONObject()
-            .put("session_id", sync.sessionId)
-            .put("request_id", sync.requestId)
-            .put("personality", sync.personality)
-            .put("memory_profile_id", sync.memoryProfileId)
-            .put("messages", sync.messagesJson)
-        // Remote-memory retry state is durable so a process death cannot erase the
-        // only remaining path to cross-session memory synchronization.
+        val queued = loadPendingMemorySyncQueue().toMutableList()
+        queued.removeAll { it.requestId == sync.requestId }
+        queued.add(sync)
+        val json = JSONArray()
+        queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+            json.put(
+                JSONObject()
+                    .put("session_id", it.sessionId)
+                    .put("request_id", it.requestId)
+                    .put("personality", it.personality)
+                    .put("memory_profile_id", it.memoryProfileId)
+                    .put("messages", it.messagesJson)
+            )
+        }
+        // Remote-memory retry state is a durable queue. Multiple completed chats may
+        // finish while the backend is unavailable, so one marker must never overwrite
+        // another session's unsent memory.
         prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
     }
 
-    fun loadPendingMemorySync(): PendingMemorySync? {
-        val raw = prefs.getString(KEY_PENDING_MEMORY_SYNC, null) ?: return null
+    fun loadPendingMemorySync(): PendingMemorySync? =
+        loadPendingMemorySyncQueue().firstOrNull()
+
+    private fun loadPendingMemorySyncQueue(): List<PendingMemorySync> {
+        val raw = prefs.getString(KEY_PENDING_MEMORY_SYNC, null) ?: return emptyList()
         return try {
-            val json = JSONObject(raw)
-            val sessionId = json.optString("session_id")
-            val requestId = json.optString("request_id")
-            val personality = json.optString("personality", "NEUTRO")
-            val memoryProfileId = json.optString("memory_profile_id")
-            val messagesJson = json.optString("messages")
-            if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) {
-                null
-            } else {
-                JSONArray(messagesJson)
-                PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson)
+            val json = JSONArray(raw)
+            buildList {
+                for (i in 0 until json.length()) {
+                    val item = json.optJSONObject(i) ?: continue
+                    val sessionId = item.optString("session_id")
+                    val requestId = item.optString("request_id")
+                    val personality = item.optString("personality", "NEUTRO")
+                    val memoryProfileId = item.optString("memory_profile_id")
+                    val messagesJson = item.optString("messages")
+                    if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) continue
+                    runCatching { JSONArray(messagesJson) }.getOrNull() ?: continue
+                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson))
+                }
             }
         } catch (_: Exception) {
-            null
+            emptyList()
         }
     }
 
     fun clearPendingMemorySync(requestId: String? = null) {
-        val current = loadPendingMemorySync()
-        if (requestId == null || current?.requestId == requestId) {
-            prefs.edit().remove(KEY_PENDING_MEMORY_SYNC).commit()
+        val queued = loadPendingMemorySyncQueue()
+        val remaining = if (requestId == null) {
+            emptyList()
+        } else {
+            queued.filterNot { it.requestId == requestId }
         }
+        if (remaining.isEmpty()) {
+            prefs.edit().remove(KEY_PENDING_MEMORY_SYNC).commit()
+            return
+        }
+        val json = JSONArray()
+        remaining.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+            json.put(
+                JSONObject()
+                    .put("session_id", it.sessionId)
+                    .put("request_id", it.requestId)
+                    .put("personality", it.personality)
+                    .put("memory_profile_id", it.memoryProfileId)
+                    .put("messages", it.messagesJson)
+            )
+        }
+        prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
     }
 
     fun saveGenerationState(
@@ -368,5 +400,6 @@ class SessionStore(
         private const val KEY_GENERATION_STATE = "generation_state_json"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
+        private const val MAX_PENDING_MEMORY_SYNCS = 10
     }
 }
