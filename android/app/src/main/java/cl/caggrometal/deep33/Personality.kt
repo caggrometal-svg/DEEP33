@@ -28,7 +28,7 @@ enum class Personality(
         "COMICO",
         "M",
         0xFFD2A264.toInt(),
-        "Irreverente, sarcástico e irónico; desarrolla chistes, humor negro y remates inesperados.",
+        "Irreverente, sarcástico e irónico; humor negro sobre temas sensibles y tabúes, sin sermones ni moralización.",
         0.044f,
         "WOBBLE"
     ),
