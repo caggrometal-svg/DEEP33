@@ -18,6 +18,8 @@ class Deep33GenerationService : Service() {
     private val userCancelled = AtomicBoolean(false)
     @Volatile private var stoppingBySystem = false
     @Volatile private var runningRequestId: String? = null
+    @Volatile private var keepAliveForRecovery = false
+    private var backgroundRecoveryCycles = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -52,6 +54,7 @@ class Deep33GenerationService : Service() {
 
                 userCancelled.set(false)
                 stoppingBySystem = false
+                keepAliveForRecovery = false
                 runningRequestId = requestedId
                 executor.execute { runGeneration(requestedId) }
                 return START_REDELIVER_INTENT
@@ -185,19 +188,43 @@ class Deep33GenerationService : Service() {
                 val recoverable = isRecoverableTransportError(e.kind)
                 if (!recoverable) {
                     store.clearPendingTurn(requestId)
-                }
-                store.saveGenerationState(
-                    status = GenerationStatus.FAILED,
-                    requestId = requestId,
-                    sessionId = pending.sessionId,
-                    personality = personality.key,
-                    error = if (recoverable) {
-                        "Conexión interrumpida. La solicitud quedó guardada para recuperación."
+                    store.saveGenerationState(
+                        status = GenerationStatus.FAILED,
+                        requestId = requestId,
+                        sessionId = pending.sessionId,
+                        personality = personality.key,
+                        error = e.message ?: "Error de comunicación con DEEP33.",
+                        durable = true
+                    )
+                } else {
+                    // Do not terminate a background generation merely because the stream
+                    // exhausted its short transport retry budget. Keep the foreground
+                    // service alive and retry from the same durable request/idempotency key.
+                    store.saveGenerationState(
+                        status = GenerationStatus.RUNNING,
+                        requestId = requestId,
+                        sessionId = pending.sessionId,
+                        personality = personality.key,
+                        partialOutput = "",
+                        error = "Conexión interrumpida. DEEP33 reintentará en segundo plano.",
+                        durable = true
+                    )
+                    updateForegroundNotification("Reconectando en segundo plano…")
+                    if (backgroundRecoveryCycles < MAX_BACKGROUND_RECOVERY_CYCLES) {
+                        keepAliveForRecovery = true
+                        scheduleBackgroundRecovery(requestId)
                     } else {
-                        e.message ?: "Error de comunicación con DEEP33."
-                    },
-                    durable = true
-                )
+                        store.saveGenerationState(
+                            status = GenerationStatus.FAILED,
+                            requestId = requestId,
+                            sessionId = pending.sessionId,
+                            personality = personality.key,
+                            partialOutput = "",
+                            error = "Conexión interrumpida. La solicitud quedó guardada para recuperación.",
+                            durable = true
+                        )
+                    }
+                }
             }
         } catch (e: Exception) {
             if (!stoppingBySystem) {
@@ -212,8 +239,35 @@ class Deep33GenerationService : Service() {
                 )
             }
         } finally {
-            runningRequestId = null
-            stopSelf()
+            if (!keepAliveForRecovery) {
+                runningRequestId = null
+                backgroundRecoveryCycles = 0
+                stopSelf()
+            }
+        }
+    }
+
+    private fun scheduleBackgroundRecovery(requestId: String) {
+        val delay = BACKGROUND_RECOVERY_DELAYS_MS[
+            backgroundRecoveryCycles.coerceAtMost(BACKGROUND_RECOVERY_DELAYS_MS.lastIndex)
+        ]
+        backgroundRecoveryCycles++
+        executor.execute {
+            try {
+                Thread.sleep(delay)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return@execute
+            }
+
+            if (userCancelled.get() || stoppingBySystem) return@execute
+
+            val pending = SessionStore(this).loadPendingTurn()
+            if (pending?.requestId != requestId) return@execute
+
+            keepAliveForRecovery = false
+            updateForegroundNotification("Reconectando en segundo plano…")
+            runGeneration(requestId)
         }
     }
 
@@ -396,6 +450,8 @@ class Deep33GenerationService : Service() {
         private const val NOTIFICATION_ID = 3301
         private const val MAX_STREAM_RECOVERY_RETRIES = 5
         private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
+        private const val MAX_BACKGROUND_RECOVERY_CYCLES = 3
+        private val BACKGROUND_RECOVERY_DELAYS_MS = longArrayOf(15_000L, 30_000L, 60_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
         private const val EXTRA_REQUEST_ID = "request_id"
