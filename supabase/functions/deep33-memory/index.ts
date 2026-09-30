@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
     const sessionId = String(body.session_id || "").trim();
 
     if (action === "ping") {
-      return response({ ok: true, service: "deep33-memory", version: 5 });
+      return response({ ok: true, service: "deep33-memory", version: 6 });
     }
 
     if (action === "hybrid_search" || action === "hybrid_index") {
@@ -327,6 +327,15 @@ Deno.serve(async (req) => {
         if (typeof body.preferences === "object" && body.preferences !== null) {
           sessionPatch.preferences = body.preferences;
         }
+
+        // The message table has a foreign key to deep33_sessions. The previous
+        // implementation built sessionPatch but never persisted it, so the first
+        // sync for a new session could fail with a foreign-key violation and the
+        // Android client would silently continue without remote memory.
+        const { error: sessionError } = await supabase
+          .from("deep33_sessions")
+          .upsert(sessionPatch, { onConflict: "session_id" });
+        if (sessionError) throw sessionError;
 
         const incoming = Array.isArray(body.messages) ? body.messages : [];
         const rows = [];
