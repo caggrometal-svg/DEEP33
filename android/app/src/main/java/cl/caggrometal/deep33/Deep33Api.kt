@@ -81,7 +81,8 @@ object Deep33Api {
         personality: String = "NEUTRO",
         requestId: String = UUID.randomUUID().toString(),
         idempotencyKey: String = requestId,
-        endpointOverride: List<String>? = null
+        endpointOverride: List<String>? = null,
+        acceptResponse: ((JSONObject) -> Boolean)? = null
     ): JSONObject =
         request(
             "POST",
@@ -94,7 +95,19 @@ object Deep33Api {
         )
 
     fun memoryContext(sessionId: String): JSONObject =
-        request("GET", "/v1/memory/context", null, sessionId)
+        request(
+            "GET",
+            "/v1/memory/context",
+            null,
+            sessionId,
+            acceptResponse = { payload ->
+                payload.optJSONObject("session") != null ||
+                    payload.optJSONArray("messages")?.length().orZero() > 0 ||
+                    payload.optJSONArray("memories")?.length().orZero() > 0
+            }
+        )
+
+    private fun Int?.orZero(): Int = this ?: 0
 
     fun syncMemory(
         sessionId: String,
@@ -389,11 +402,26 @@ object Deep33Api {
                     if (code !in 200..299) throw mapError(code)
 
                     val payload = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    return try {
+                    val json = try {
                         JSONObject(payload)
                     } catch (e: Exception) {
                         throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code, e)
                     }
+
+                    // A memory context endpoint can legally return HTTP 200 while
+                    // exposing no session/messages/memories because that endpoint
+                    // is backed by a stale or empty upstream. Treat that response
+                    // as unusable so the next failover endpoint can serve the
+                    // current remote memory store.
+                    if (acceptResponse != null && !acceptResponse(json)) {
+                        lastError = Deep33ApiException(
+                            Deep33ApiException.Kind.BAD_RESPONSE,
+                            code
+                        )
+                        break
+                    }
+
+                    return json
                 } catch (e: Deep33ApiException) {
                     lastError = e
                     if (!Deep33FailoverPolicy.canFailover(
