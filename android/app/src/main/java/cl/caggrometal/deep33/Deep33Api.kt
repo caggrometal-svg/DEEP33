@@ -388,6 +388,9 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
+                    if (!memoryProfileId.isNullOrBlank()) {
+                        connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
+                    }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
