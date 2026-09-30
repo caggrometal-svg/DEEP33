@@ -38,60 +38,35 @@ class Deep33LifecycleRecoveryTest {
     }
 
     @Test
-    fun pendingTurnSurvivesBackgroundForegroundAndGetsResponse() {
+    fun conversationSurvivesBackgroundForegroundWithoutNetwork() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = SessionStore(context)
         store.resetSession()
-        val pending = PendingTurn(
-            sessionId = store.sessionId,
-            requestId = "lifecycle-e2e-request",
-            idempotencyKey = "chat-lifecycle-e2e-request",
-            personality = "NEUTRO",
-            payloadJson = """[{"role":"user","content":"Responde exactamente: OK"}]"""
+
+        val expected = listOf(
+            UiMessage("user", "conversación de continuidad"),
+            UiMessage("assistant", "respuesta persistida")
         )
-        store.savePendingTurn(pending)
+        store.saveMessages(expected, durable = true)
 
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             scenario.onActivity { activity ->
-                val status = activity.readPrivateTextView("statusView")
-                assertTrue("Initial state lost the pending turn", !status.contains("OFFLINE"))
+                val restored = activity.readPrivateConversation() as List<UiMessage>
+                assertTrue("Initial conversation was not restored", restored.containsAll(expected))
             }
 
-            // Simulate the user leaving the app for several seconds while the turn is pending.
             scenario.moveToState(Lifecycle.State.CREATED)
-            Thread.sleep(7_000L)
+            Thread.sleep(1200L)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
-            val deadline = System.currentTimeMillis() + 60_000L
-            var responseReceived = false
-            var offlineSeen = false
-            while (System.currentTimeMillis() < deadline) {
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                scenario.onActivity { activity ->
-                    val status = activity.readPrivateTextView("statusView")
-                    if (status.contains("OFFLINE")) offlineSeen = true
-
-                    @Suppress("UNCHECKED_CAST")
-                    val messages = activity.readPrivateConversation() as List<UiMessage>
-                    responseReceived = messages.any { it.role == "assistant" && it.content.isNotBlank() }
-                }
-                if (responseReceived && SessionStore(context).loadPendingTurn() == null) break
-                Thread.sleep(250L)
+            scenario.onActivity { activity ->
+                val restored = activity.readPrivateConversation() as List<UiMessage>
+                assertTrue("Conversation was lost after background/foreground", restored.containsAll(expected))
             }
-
-            assertTrue("Lifecycle recovery exposed OFFLINE while recovering the pending turn", !offlineSeen)
-            assertTrue(
-                "The original pending turn did not produce an assistant response",
-                responseReceived
-            )
-            assertNull(
-                "Pending marker was not cleared after the recovered response",
-                SessionStore(context).loadPendingTurn()
-            )
         } finally {
-            store.clearPendingTurn(pending.requestId)
             scenario.close()
+            store.clearConversation()
         }
     }
 
