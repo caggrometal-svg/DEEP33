@@ -55,6 +55,11 @@ class Deep33UiContractV2Test {
     }
 
     @Test
+    fun generationStopControlUsesThemedSquareGlyph() {
+        assertEquals("▪️", MainActivity.STOP_BUTTON_GLYPH)
+    }
+
+    @Test
     fun voiceProfilesAreBounded() {
         assertEquals(1.00f, PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).pitchFactor)
         assertEquals(0.74f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
