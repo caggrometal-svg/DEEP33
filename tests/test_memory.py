@@ -64,7 +64,8 @@ def test_context_system_message_contains_preferences_and_memory():
     }
     system = extract_context_system_message(context)
     assert system is not None
-    assert "DIRECTO" in system
+    assert "language" in system
+    assert "DIRECTO" not in system
     assert "DEEP33" in system
     assert "Do not reveal" in system
 
