@@ -16,6 +16,14 @@ data class ChatSummary(
     val updatedAt: Long
 )
 
+data class PendingTurn(
+    val sessionId: String,
+    val requestId: String,
+    val idempotencyKey: String,
+    val personality: String,
+    val payloadJson: String
+)
+
 class SessionStore(
     context: Context,
     name: String = PREFS_NAME
@@ -111,6 +119,45 @@ class SessionStore(
         prefs.edit().putString(messagesKey(sessionId), json.toString()).apply()
     }
 
+    fun savePendingTurn(turn: PendingTurn) {
+        val json = JSONObject()
+            .put("session_id", turn.sessionId)
+            .put("request_id", turn.requestId)
+            .put("idempotency_key", turn.idempotencyKey)
+            .put("personality", turn.personality)
+            .put("payload", turn.payloadJson)
+        // commit() is intentional: the pending turn must survive Activity destruction
+        // before the network request begins.
+        prefs.edit().putString(KEY_PENDING_TURN, json.toString()).commit()
+    }
+
+    fun loadPendingTurn(): PendingTurn? {
+        val raw = prefs.getString(KEY_PENDING_TURN, null) ?: return null
+        return try {
+            val json = JSONObject(raw)
+            val session = json.optString("session_id")
+            val requestId = json.optString("request_id")
+            val idempotencyKey = json.optString("idempotency_key")
+            val personality = json.optString("personality", "NEUTRO")
+            val payload = json.optString("payload")
+            if (session.isBlank() || requestId.isBlank() || idempotencyKey.isBlank() || payload.isBlank()) {
+                null
+            } else {
+                JSONArray(payload)
+                PendingTurn(session, requestId, idempotencyKey, personality, payload)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun clearPendingTurn(requestId: String? = null) {
+        val current = loadPendingTurn()
+        if (requestId == null || current?.requestId == requestId) {
+            prefs.edit().remove(KEY_PENDING_TURN).commit()
+        }
+    }
+
     fun saveChatSummary(title: String) {
         val normalized = title.replace(Regex("\\s+"), " ").trim().take(60)
         if (normalized.isBlank()) return
@@ -177,6 +224,7 @@ class SessionStore(
         private const val KEY_PERSONALITY_USER_SELECTED = "personality_user_selected"
         private const val KEY_VOICE_TONE = "voice_tone"
         private const val KEY_CHAT_SUMMARIES = "chat_summaries_json"
+        private const val KEY_PENDING_TURN = "pending_turn_json"
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
     }

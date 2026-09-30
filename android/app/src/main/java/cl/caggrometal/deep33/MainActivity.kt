@@ -148,6 +148,9 @@ class MainActivity : Activity() {
     private var edgeDownY = 0f
     private var personalitySelectionGeneration = 0L
     private var currentTab = Tab.CHAT
+    private var wasBackgrounded = false
+    private var activeRequestId: String? = null
+    private var activeIdempotencyKey: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -236,6 +239,27 @@ class MainActivity : Activity() {
         applyPersonalityTheme(Personality.fromKey(store.personality))
         checkConnectivity()
         loadRemoteContext()
+        restorePendingTurnIfNeeded()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (wasBackgrounded) {
+            if (activeTask?.isDone == false) {
+                // A pending generation is not a connectivity failure. Keep it in a
+                // recoverable state while the Activity returns to the foreground.
+                updateConnection(ConnectionState.CONNECTING)
+            } else {
+                restorePendingTurnIfNeeded()
+                if (activeTask?.isDone != false) checkConnectivity()
+            }
+        }
+        wasBackgrounded = false
+    }
+
+    override fun onStop() {
+        wasBackgrounded = true
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -951,7 +975,13 @@ class MainActivity : Activity() {
                     "OFFLINE\\nLa cadena real de DEEP33 no está completamente verificada."
                 }
                 runOnUiThread {
-                    updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+                    // Connectivity probes must not overwrite a live generation state
+                    // while the user has temporarily left and returned to the Activity.
+                    if (activeTask?.isDone == false) {
+                        updateConnection(ConnectionState.CONNECTING)
+                    } else {
+                        updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+                    }
                     if (::diagnosticsView.isInitialized) diagnosticsView.text = summary
                 }
             } catch (e: Deep33ApiException) {
@@ -995,7 +1025,6 @@ class MainActivity : Activity() {
         refreshSidebarHistory()
 
         activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
-        cancelRequested.set(false)
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
@@ -1007,34 +1036,84 @@ class MainActivity : Activity() {
             payload.put(org.json.JSONObject().put("role", it.role).put("content", it.content))
         }
 
+        val requestId = UUID.randomUUID().toString()
+        val idempotencyKey = "chat-" + requestId
+        val sessionId = store.sessionId
+
+        // Persist before network execution so Activity/process destruction can recover
+        // the exact turn with the same idempotency key.
+        store.savePendingTurn(
+            PendingTurn(
+                sessionId = sessionId,
+                requestId = requestId,
+                idempotencyKey = idempotencyKey,
+                personality = requestPersonality.key,
+                payloadJson = payload.toString()
+            )
+        )
+        launchGeneration(payload, sessionId, requestPersonality, requestId, idempotencyKey)
+    }
+
+    private fun restorePendingTurnIfNeeded() {
+        if (activeTask?.isDone == false) return
+        val pending = store.loadPendingTurn() ?: return
+        if (pending.sessionId != store.sessionId) return
+
+        val payload = try {
+            org.json.JSONArray(pending.payloadJson)
+        } catch (_: Exception) {
+            store.clearPendingTurn(pending.requestId)
+            return
+        }
+
+        val requestPersonality = Personality.fromKey(pending.personality)
+        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        sendButton.isEnabled = false
+        input.isEnabled = false
+        micButton.isEnabled = false
+        cancelButton.visibility = View.VISIBLE
+        updateConnection(ConnectionState.CONNECTING)
+        launchGeneration(
+            payload,
+            pending.sessionId,
+            requestPersonality,
+            pending.requestId,
+            pending.idempotencyKey
+        )
+    }
+
+    private fun launchGeneration(
+        payload: org.json.JSONArray,
+        sessionId: String,
+        requestPersonality: Personality,
+        requestId: String,
+        idempotencyKey: String
+    ) {
+        cancelRequested.set(false)
+        activeRequestId = requestId
+        activeIdempotencyKey = idempotencyKey
         activeTask = executor.submit {
             try {
-                val requestId = UUID.randomUUID().toString()
-                val idempotencyKey = "chat-" + requestId
-                val finalText = try {
-                    Deep33Api.stream(
-                        payload,
-                        store.sessionId,
-                        requestPersonality.key,
-                        requestId = requestId,
-                        idempotencyKey = idempotencyKey,
-                        isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
-                        onText = { chunk ->
-                            runOnUiThread {
-                                val bubble = activeBubble ?: return@runOnUiThread
-                                val current = (bubble.tag as? String ?: "").let { currentText ->
-                                    if (currentText == "Pensando...") "" else currentText
-                                }
-                                val next = current + chunk
-                                bubble.tag = next
-                                renderMarkdown(bubble, next)
-                                setVoiceState(AvatarState.SPEAKING)
+                val finalText = Deep33Api.stream(
+                    payload,
+                    sessionId,
+                    requestPersonality.key,
+                    requestId = requestId,
+                    idempotencyKey = idempotencyKey,
+                    isCancelled = { cancelRequested.get() || Thread.currentThread().isInterrupted },
+                    onText = { chunk ->
+                        runOnUiThread {
+                            val bubble = activeBubble ?: return@runOnUiThread
+                            val current = (bubble.tag as? String ?: "").let { currentText ->
+                                if (currentText == "Pensando...") "" else currentText
                             }
+                            val next = current + chunk
+                            bubble.tag = next
+                            renderMarkdown(bubble, next)
+                            setVoiceState(AvatarState.SPEAKING)
                         }
-                    )
-                } catch (streamError: Deep33ApiException) {
-                    throw streamError
-                }
+                    }
+                )
 
                 if (finalText.isBlank()) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
 
@@ -1052,7 +1131,7 @@ class MainActivity : Activity() {
                         )
                     }
                     Deep33Api.syncMemory(
-                        store.sessionId,
+                        sessionId,
                         memoryPayload,
                         requestPersonality.key,
                         requestId = requestId,
@@ -1061,12 +1140,20 @@ class MainActivity : Activity() {
                     // Local conversation remains available; remote memory retries on the next turn.
                 }
 
+                // The response is durable locally before clearing the pending marker.
+                store.clearPendingTurn(requestId)
+
                 runOnUiThread {
                     speakAssistant(finalText, requestPersonality)
                     cleanupGeneration(true)
                     refreshSidebarHistory()
                 }
             } catch (e: Deep33ApiException) {
+                // A lifecycle/process interruption intentionally leaves the pending marker
+                // intact so a newly created Activity can resume the same turn.
+                if (e.kind != Deep33ApiException.Kind.CANCELLED) {
+                    store.clearPendingTurn(requestId)
+                }
                 runOnUiThread {
                     val bubble = activeBubble
                     if (e.kind == Deep33ApiException.Kind.CANCELLED || cancelRequested.get()) {
@@ -1083,6 +1170,7 @@ class MainActivity : Activity() {
                     cleanupGeneration(false)
                 }
             } catch (_: Exception) {
+                store.clearPendingTurn(requestId)
                 runOnUiThread {
                     activeBubble?.let {
                         it.tag = "Error inesperado de comunicación."
@@ -1097,6 +1185,7 @@ class MainActivity : Activity() {
     private fun cancelGeneration() {
         if (activeTask?.isDone != false) return
         cancelRequested.set(true)
+        store.clearPendingTurn(activeRequestId)
         Deep33Api.cancelActiveStream()
         activeTask?.cancel(true)
         activeBubble?.let {
@@ -1109,6 +1198,8 @@ class MainActivity : Activity() {
     private fun cleanupGeneration(success: Boolean) {
         activeTask = null
         activeBubble = null
+        activeRequestId = null
+        activeIdempotencyKey = null
         sendButton.isEnabled = true
         input.isEnabled = true
         micButton.isEnabled = true
