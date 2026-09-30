@@ -360,18 +360,6 @@ class Deep33GenerationService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        // Removing the task must not cancel an in-flight generation. The request and
-        // idempotency key are already durable, so a later service restart can resume
-        // the same logical turn without duplicating inference.
-        val pending = SessionStore(this).loadPendingTurn()
-        if (pending?.requestId == runningRequestId) {
-            persistRecoveryCheckpoint(pending)
-            updateForegroundNotification("Generación en segundo plano…")
-        }
-        super.onTaskRemoved(rootIntent)
-    }
-
     private fun persistRecoveryCheckpoint(pending: PendingTurn) {
         val store = SessionStore(this)
         val state = store.loadGenerationState()
