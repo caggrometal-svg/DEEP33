@@ -1562,7 +1562,7 @@ async def generate(
             request_id,
             session_id,
         )
-        return sanitize_generation_output cached
+        return sanitize_generation_output(cached)
 
     local_cached = local_idempotency_get(session_id, idempotency_key, request_hash)
     if local_cached is not None:
@@ -1571,7 +1571,7 @@ async def generate(
             request_id,
             session_id,
         )
-        return sanitize_generation_output local_cached
+        return sanitize_generation_output(local_cached)
 
     state, record = await shared_idempotency_claim(
         session_id,
