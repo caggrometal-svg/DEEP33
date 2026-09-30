@@ -396,7 +396,12 @@ object Deep33Api {
                     }
                 } catch (e: Deep33ApiException) {
                     lastError = e
-                    if (!Deep33FailoverPolicy.canFailover(method, requestBodyStarted, e.kind)) throw e
+                    if (!Deep33FailoverPolicy.canFailover(
+                            method,
+                            requestBodyStarted,
+                            e.kind,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw e
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: SocketTimeoutException) {
                     lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
