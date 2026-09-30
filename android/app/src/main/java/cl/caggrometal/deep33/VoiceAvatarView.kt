@@ -78,7 +78,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         canvas.drawCircle(
             centerX,
             centerY,
-            radius + dp(7) + dp(5) * activity,
+            radius + dp(7f) + dp(5f) * activity,
             strokePaint
         )
 
