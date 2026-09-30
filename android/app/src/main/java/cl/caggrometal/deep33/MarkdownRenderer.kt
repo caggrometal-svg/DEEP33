@@ -79,6 +79,13 @@ object MarkdownRenderer {
             Regex("\\[[^\\]]+\\]\\(https?://[^)]+\\)"),
             ""
         )
+        // Remove empty URL parentheses left after a source markdown link is stripped.
+        value = value.replace(Regex("\\(\\s*\\)"), "")
+        // A source heading without a body is still metadata and must not reach the user.
+        value = value.replace(
+            Regex("(?im)^\\s*(?:fuentes?|sources?|referencias?|references?)\\s*:?\\s*$"),
+            ""
+        )
         value = value.replace(Regex("(?i)https?://[^\\s)\\]>]+"), "")
         value = value.replace(Regex("[ \\t]{2,}"), " ")
         value = value.replace(Regex(" *\\n *\\n *"), "\n\n")
