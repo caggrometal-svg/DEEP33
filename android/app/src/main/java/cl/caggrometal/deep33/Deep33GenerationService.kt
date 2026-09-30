@@ -97,6 +97,7 @@ class Deep33GenerationService : Service() {
             personality = personality.key,
             partialOutput = ""
         )
+        updateForegroundNotification("Generando respuesta…")
 
         try {
             val finalText = streamWithBackgroundRecovery(
@@ -271,7 +272,12 @@ class Deep33GenerationService : Service() {
                     partialOutput = ""
                 )
                 updateForegroundNotification("Reconectando…")
-                Thread.sleep(RETRY_DELAYS_MS[attempt])
+                try {
+                    Thread.sleep(RETRY_DELAYS_MS[attempt])
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                }
             }
         }
 
