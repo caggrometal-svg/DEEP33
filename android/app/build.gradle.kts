@@ -12,8 +12,8 @@ android {
         applicationId = "cl.caggrometal.deep33"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.4.2"
+        versionCode = 7
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -59,17 +59,17 @@ android {
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-backend.onrender.com"
+        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
 
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
+        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
 
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+        ?: "https://deep33-backend.onrender.com"
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
