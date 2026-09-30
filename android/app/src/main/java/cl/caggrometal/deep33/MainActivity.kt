@@ -146,6 +146,10 @@ class MainActivity : Activity() {
     private val executor = Executors.newFixedThreadPool(2)
     private lateinit var store: SessionStore
     private val conversation = mutableListOf<UiMessage>()
+    // Monotonic UI revision: remote-memory loads may only merge into the exact
+    // conversation state they were started against. This prevents stale async work
+    // from restoring an older chat over a newer local conversation.
+    private var conversationRevision = 0L
     private var generationActive = false
     private var activeBubble: TextView? = null
     private val generationHandler = Handler(Looper.getMainLooper())
@@ -293,6 +297,11 @@ class MainActivity : Activity() {
     override fun onStop() {
         activityVisible = false
         wasBackgrounded = true
+        // Commit the visible conversation before the Activity leaves the foreground.
+        // This is local persistence only; the network path is intentionally untouched.
+        if (::store.isInitialized) {
+            store.saveMessages(conversation, durable = true)
+        }
         super.onStop()
     }
 
@@ -425,17 +434,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        titleGroup.addView(TextView(this).apply {
-            text = "DEEP33"
-            contentDescription = "DEEP33"
-            setTextColor(Deep33Theme.TEXT)
-            textSize = 29f
-            letterSpacing = 0.16f
-            setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD))
-        })
         currentPersonalityView = TextView(this).apply {
-            textSize = 10.5f
-            letterSpacing = 0.14f
+            textSize = 12.5f
+            letterSpacing = 0.10f
             setPadding(0, dp(3), 0, 0)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
@@ -854,7 +855,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 0)
             val accent = Personality.fromKey(store.personality).accent
             setTextColor(Color.WHITE)
-            setBackground(chatActionPanel(Color.rgb(110, 12, 28), accent))
+            setBackground(chatActionPanel(Color.rgb(142, 14, 38), accent))
             elevation = 0f
             stateListAnimator = null
             setOnClickListener { sendMessage() }
@@ -1093,6 +1094,7 @@ class MainActivity : Activity() {
             setTextColor(Color.rgb(255, 113, 132))
             setBackground(neonPanel(Color.rgb(24, 7, 11), Color.rgb(112, 25, 41)))
             setOnClickListener {
+                conversationRevision++
                 conversation.clear()
                 store.clearConversation()
                 renderConversation()
@@ -1159,7 +1161,7 @@ class MainActivity : Activity() {
         cancelButton.setTextColor(Color.WHITE)
         cancelButton.setBackground(
             neonPanel(
-                Color.rgb(110, 12, 28),
+                Color.rgb(142, 14, 38),
                 personality.accent
             )
         )
@@ -1203,6 +1205,7 @@ class MainActivity : Activity() {
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
         store.resetSession()
+        conversationRevision++
         conversation.clear()
         showTab(Tab.CHAT)
         renderConversation()
@@ -1214,6 +1217,7 @@ class MainActivity : Activity() {
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
         store.activateSession(sessionId)
+        conversationRevision++
         conversation.clear()
         conversation.addAll(store.loadMessages())
         showTab(Tab.CHAT)
@@ -1274,7 +1278,7 @@ class MainActivity : Activity() {
         val targetMemoryProfileId = store.memoryProfileId
         val localPersonality = store.personality
         val selectionGeneration = personalitySelectionGeneration
-        val localConversation = conversation.takeLast(50)
+        val targetConversationRevision = conversationRevision
 
         executor.submit {
             try {
@@ -1304,21 +1308,22 @@ class MainActivity : Activity() {
                     }
                 }
 
-                val merged = mutableListOf<UiMessage>()
-                val seen = mutableSetOf<Pair<String, String>>()
-                (remoteMessages + localConversation).forEach {
-                    if (seen.add(it.role to it.content)) merged.add(it)
-                }
-                val mergedSnapshot = merged.takeLast(50)
-
                 runOnUiThread {
-                    // Re-check the session on the UI thread immediately before mutating
-                    // the active conversation. This closes the final race between the
-                    // worker finishing and the user opening a different chat.
-                    if (store.sessionId != targetSessionId) return@runOnUiThread
+                    // The session AND local conversation revision must still match.
+                    // Otherwise this remote result belongs to an older UI state and is
+                    // forbidden from rebuilding the current chat.
+                    if (store.sessionId != targetSessionId || conversationRevision != targetConversationRevision) {
+                        return@runOnUiThread
+                    }
 
+                    val merged = mutableListOf<UiMessage>()
+                    val seen = mutableSetOf<Pair<String, String>>()
+                    (remoteMessages + conversation.takeLast(50)).forEach {
+                        if (seen.add(it.role to it.content)) merged.add(it)
+                    }
                     conversation.clear()
-                    conversation.addAll(mergedSnapshot)
+                    conversation.addAll(merged.takeLast(50))
+                    conversationRevision++
                     store.saveMessages(conversation)
 
                     // Remote memory refresh must not rebuild the chat while a pending
@@ -1429,6 +1434,7 @@ class MainActivity : Activity() {
         }
 
         conversation.add(UiMessage("user", text))
+        conversationRevision++
         store.saveMessages(conversation)
         saveCurrentSummary()
         appendBubble("TÚ", text, Color.rgb(12, 34, 27))
@@ -1470,6 +1476,7 @@ class MainActivity : Activity() {
         if (state?.status == GenerationStatus.DONE && state.sessionId == store.sessionId) {
             conversation.clear()
             conversation.addAll(store.loadMessages())
+            conversationRevision++
             store.clearGenerationState(state.requestId)
             generationActive = false
             activeRequestId = null
@@ -1561,6 +1568,7 @@ class MainActivity : Activity() {
                 val finalText = state.finalText.trim()
                 conversation.clear()
                 conversation.addAll(store.loadMessages())
+                conversationRevision++
                 renderConversation()
                 store.clearGenerationState(state.requestId)
                 generationActive = false
@@ -1982,14 +1990,14 @@ class MainActivity : Activity() {
             val speakerButton = Button(this).apply {
                 text = "🔊"
                 contentDescription = "Reproducir respuesta de DEEP33"
-                textSize = 16f
+                textSize = 17f
                 isAllCaps = false
                 minWidth = 0
                 minHeight = 0
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, 0)
-                setTextColor(accent)
-                setBackground(chatActionPanel(Color.rgb(28, 9, 15), accent))
+                setTextColor(Color.WHITE)
+                setBackground(chatActionPanel(Color.rgb(110, 12, 28), accent))
                 elevation = 0f
                 stateListAnimator = null
                 setOnClickListener { speakAssistant(content, Personality.fromKey(store.personality)) }
