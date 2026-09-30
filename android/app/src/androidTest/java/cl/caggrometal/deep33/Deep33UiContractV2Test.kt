@@ -1,9 +1,13 @@
 package cl.caggrometal.deep33
 
 import android.app.Activity
+import android.view.View
 import android.widget.Button
+import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Deep33UiContractV2Test {
@@ -60,10 +64,80 @@ class Deep33UiContractV2Test {
     }
 
     @Test
-    fun voiceProfilesAreBounded() {
-        assertEquals(1.00f, PersonalityVoiceProfile.forPersonality(Personality.NEUTRO).pitchFactor)
-        assertEquals(0.74f, PersonalityVoiceProfile.forPersonality(Personality.CONSPIRANOICO).speechRateFactor)
-        assertEquals(1.22f, PersonalityVoiceProfile.forPersonality(Personality.AGRESIVO).speechRateFactor)
-        assertEquals(1.18f, PersonalityVoiceProfile.forPersonality(Personality.COMICO).speechRateFactor)
+    fun voiceContractHasThreeTonesAndSafeProfiles() {
+        assertEquals(3, VoiceTone.entries.size)
+        val profiles = VoiceTone.entries.flatMap { tone ->
+            Personality.entries.map { personality ->
+                VoiceProfileCalculator.calculate(tone, personality)
+            }
+        }
+        assertEquals(12, profiles.size)
+        assertTrue(profiles.all { it.pitch in 0.65f..1.35f })
+        assertTrue(profiles.all { it.speechRate in 0.60f..1.45f })
+    }
+
+    @Test
+    fun headerExposesDeep33IdentityAndActivePersonality() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val personalityField = activity.javaClass
+                    .getDeclaredField("currentPersonalityView")
+                    .apply { isAccessible = true }
+                val personalityView = personalityField.get(activity) as TextView
+
+                assertTrue(personalityView.text.toString().contains("NEUTRO"))
+                assertEquals("DEEP33", findTextView(activity, "DEEP33")?.text?.toString())
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun voiceModeIsAudioOnlyInUiContract() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val voicePanel = privateView(activity, "voicePanel")
+                val chatScroll = privateView(activity, "chatScroll")
+                val composer = privateView(activity, "composer")
+                val setVoiceModeUi = activity.javaClass
+                    .getDeclaredMethod("setVoiceModeUi", Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }
+
+                setVoiceModeUi.invoke(activity, true)
+
+                assertEquals(View.VISIBLE, voicePanel.visibility)
+                assertEquals(View.GONE, chatScroll.visibility)
+                assertEquals(View.GONE, composer.visibility)
+                assertFalse(activity.javaClass.getDeclaredField("voiceModeActive")
+                    .apply { isAccessible = true }
+                    .getBoolean(activity).not())
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    private fun privateView(activity: Activity, fieldName: String): View {
+        val field = activity.javaClass.getDeclaredField(fieldName).apply { isAccessible = true }
+        return field.get(activity) as View
+    }
+
+    private fun findTextView(activity: Activity, text: String): TextView? {
+        val root = activity.window.decorView
+        return findTextViewRecursive(root, text)
+    }
+
+    private fun findTextViewRecursive(view: View, text: String): TextView? {
+        if (view is TextView && view.text?.toString() == text) return view
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val match = findTextViewRecursive(view.getChildAt(i), text)
+                if (match != null) return match
+            }
+        }
+        return null
     }
 }
