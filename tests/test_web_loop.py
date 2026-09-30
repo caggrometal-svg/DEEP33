@@ -103,6 +103,22 @@ def test_sanitize_assistant_text_never_exposes_retrieved_sources() -> None:
     )
     assert sanitize_assistant_text(text, [source]) == "La conclusión de DEEP33 está aquí."
 
+def test_sanitize_assistant_text_removes_all_common_source_forms() -> None:
+    from backend.main import sanitize_assistant_text
+
+    text = (
+        "Síntesis propia de DEEP33. "
+        "[Ver estudio](https://example.com/source) "
+        "https://example.org/raw "
+        "(Fuente: Example Research) "
+        "[Source: Example Research]\n\n"
+        "## Referencias\n"
+        "- Example Research\n"
+        "- Another source"
+    )
+    assert sanitize_assistant_text(text, []) == "Síntesis propia de DEEP33."
+
+
 def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: pytest.MonkeyPatch):
     async def fake_gateway(payload, **kwargs):
         system_text = "\n".join(
