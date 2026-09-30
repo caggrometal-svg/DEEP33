@@ -6,7 +6,6 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -111,9 +110,9 @@ class Deep33UiContractV2Test {
                 assertEquals(View.VISIBLE, voicePanel.visibility)
                 assertEquals(View.GONE, chatScroll.visibility)
                 assertEquals(View.GONE, composer.visibility)
-                assertFalse(activity.javaClass.getDeclaredField("voiceModeActive")
+                assertTrue(activity.javaClass.getDeclaredField("voiceModeActive")
                     .apply { isAccessible = true }
-                    .getBoolean(activity).not())
+                    .getBoolean(activity))
             }
         } finally {
             scenario.close()
