@@ -987,12 +987,21 @@ class MainActivity : Activity() {
                 }
 
                 val messages = remote.optJSONArray("messages") ?: return@submit
+
+                // The memory profile is deliberately broader than one chat session.
+                // Its messages are model context, not UI history. Only restore messages
+                // belonging to the active session into the visible conversation; otherwise
+                // opening "Nuevo chat" could repopulate it with older conversations.
                 val remoteMessages = buildList {
                     for (i in 0 until messages.length()) {
                         val item = messages.optJSONObject(i) ?: continue
+                        val messageSessionId = item.optString("session_id")
                         val role = item.optString("role")
                         val content = item.optString("content")
-                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                        if (messageSessionId == sessionId &&
+                            role in setOf("user", "assistant") &&
+                            content.isNotBlank()
+                        ) {
                             add(UiMessage(role, content))
                         }
                     }
