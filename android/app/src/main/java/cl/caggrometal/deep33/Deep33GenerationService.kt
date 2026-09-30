@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import org.json.JSONArray
@@ -47,10 +48,7 @@ class Deep33GenerationService : Service() {
                     return START_REDELIVER_INTENT
                 }
 
-                startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification("Generando respuesta…")
-                )
+                startForegroundCompat("Generando respuesta…")
 
                 userCancelled.set(false)
                 stoppingBySystem = false
@@ -289,11 +287,24 @@ class Deep33GenerationService : Service() {
             kind == Deep33ApiException.Kind.TIMEOUT ||
             kind == Deep33ApiException.Kind.SERVER
 
+    private fun startForegroundCompat(text: String) {
+        val notification = buildNotification(text)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
     private fun updateForegroundNotification(text: String) {
         // Re-submit the existing foreground notification instead of calling
         // NotificationManager.notify(), which would require POST_NOTIFICATIONS on
         // Android 13+ and is not necessary for an active foreground service.
-        startForeground(NOTIFICATION_ID, buildNotification(text))
+        startForegroundCompat(text)
     }
 
     private fun buildNotification(text: String): Notification =
@@ -338,7 +349,39 @@ class Deep33GenerationService : Service() {
         stopSelf()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Removing the task must not cancel an in-flight generation. The request and
+        // idempotency key are already durable, so a later service restart can resume
+        // the same logical turn without duplicating inference.
+        val pending = SessionStore(this).loadPendingTurn()
+        if (pending?.requestId == runningRequestId) {
+            persistRecoveryCheckpoint(pending)
+            updateForegroundNotification("Generación en segundo plano…")
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun persistRecoveryCheckpoint(pending: PendingTurn) {
+        val store = SessionStore(this)
+        val state = store.loadGenerationState()
+        store.saveGenerationState(
+            status = GenerationStatus.RUNNING,
+            requestId = pending.requestId,
+            sessionId = pending.sessionId,
+            personality = Personality.fromKey(pending.personality).key,
+            partialOutput = state?.takeIf { it.requestId == pending.requestId }?.partialOutput.orEmpty(),
+            durable = true
+        )
+    }
+
     override fun onDestroy() {
+        // Android may recreate a foreground service after process reclamation. Preserve
+        // a durable RUNNING checkpoint before closing the socket so the redelivered
+        // request can continue from the same persisted turn instead of becoming lost.
+        val pending = SessionStore(this).loadPendingTurn()
+        if (pending?.requestId == runningRequestId && !userCancelled.get()) {
+            persistRecoveryCheckpoint(pending)
+        }
         stoppingBySystem = true
         Deep33Api.cancelActiveStream()
         executor.shutdownNow()
