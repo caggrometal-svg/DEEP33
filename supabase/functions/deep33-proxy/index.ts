@@ -1391,6 +1391,15 @@ Deno.serve(async (req) => {
         ];
 
         const edgeMessages = buildEdgeMessages(enrichedMessages, payload.personality);
+        edgeMessages.push({
+          role: "system",
+          content:
+            "FINAL DEEP33 STYLE LOCK. ACTIVE_PERSONALITY=" +
+            String(payload.personality || "NEUTRO").toUpperCase() +
+            ". Synthesize the web evidence in your own words and reasoning. " +
+            personalityInstruction(payload.personality) +
+            " Never copy source wording, never reproduce source paragraphs, and never emit source links, citations, or URLs.",
+        });
         if (edgeAIConfigured()) {
           const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
           try {
