@@ -328,14 +328,16 @@ def extract_context_system_message(data: dict) -> str | None:
 
     memory_items: list[str] = []
     if isinstance(memories, list):
-        for item in memories[:20]:
+        # Long-term memory must remain compact enough to protect the model's
+        # attention budget. Full transcript history belongs to the current session.
+        for item in memories[:12]:
             if not isinstance(item, dict):
                 continue
             kind = str(item.get("kind", "")).strip()
             value = str(item.get("content", "")).strip()
             if not value:
                 continue
-            memory_items.append(f"- {kind or 'memory'}: {value[:2000]}")
+            memory_items.append(f"- {kind or 'memory'}: {value[:900]}")
     if memory_items:
         parts.append("Relevant long-term memory:")
         parts.extend(memory_items)
