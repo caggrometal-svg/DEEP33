@@ -119,6 +119,77 @@ def test_sanitize_assistant_text_removes_all_common_source_forms() -> None:
     assert sanitize_assistant_text(text, []) == "Síntesis propia de DEEP33."
 
 
+def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPatch):
+    calls = {"gateway": 0}
+
+    async def fake_gateway(payload, **kwargs):
+        calls["gateway"] += 1
+        if calls["gateway"] == 1:
+            return {
+                "model": "test",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
+                        }
+                    }
+                ],
+            }
+        return {
+            "model": "test",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "DEEP33 resume el punto: los paneles usan materiales semiconductores para transformar la radiación solar en energía eléctrica.",
+                    }
+                }
+            ],
+        }
+
+    async def fake_search(query, **kwargs):
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Solar",
+                    "url": "https://example.com/solar",
+                    "snippet": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
+                }
+            ],
+        }
+
+    async def fake_fetch(url, **kwargs):
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Solar",
+            "text": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
+        }
+
+    monkeypatch.setattr(main, "call_gateway", fake_gateway)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+
+    result, _ = asyncio.run(
+        main.run_web_tool_loop(
+            [{"role": "system", "content": "web"}, {"role": "user", "content": "busca energía solar"}],
+            model="test",
+            request_id="r-originality",
+            idempotency_key="i-originality",
+            force_web=True,
+            personality="NEUTRO",
+        )
+    )
+
+    assert calls["gateway"] == 2
+    assert result["choices"][0]["message"]["content"] == (
+        "DEEP33 resume el punto: los paneles usan materiales semiconductores para transformar la radiación solar en energía eléctrica."
+    )
+
+
 def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: pytest.MonkeyPatch):
     async def fake_gateway(payload, **kwargs):
         system_text = "\n".join(
