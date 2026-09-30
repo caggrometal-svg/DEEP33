@@ -48,6 +48,16 @@ object MarkdownRenderer {
             ),
             ""
         )
+        // Remove inline source labels such as "Fuentes: <url>" before URL stripping,
+        // otherwise an empty label can survive as visible UI text.
+        value = value.replace(
+            Regex(
+                "(?im)^\\s*(?:#{0,6}\\s*)?" +
+                    "(?:fuente|sources?|referencias?|references?|cita|citations?)" +
+                    "\\s*(?:#?\\d+)?\\s*[:\\-–]\\s*.*$"
+            ),
+            ""
+        )
         value = value.replace(
             Regex("(?im)^\\s*(?:retrieved from|consultado en|recuperado de)\\s+https?://\\S+\\s*$"),
             ""
