@@ -52,6 +52,8 @@ class Deep33GenerationService : Service() {
                     buildNotification("Generando respuesta…")
                 )
 
+                userCancelled.set(false)
+                stoppingBySystem = false
                 runningRequestId = requestedId
                 executor.execute { runGeneration(requestedId) }
                 return START_REDELIVER_INTENT
