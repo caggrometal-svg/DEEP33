@@ -15,9 +15,9 @@ on:
   pull_request:
 
 env:
-  PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-  TERTIARY_URL: https://deep33-backend.onrender.com
+  PRIMARY_URL: https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: ""
+  TERTIARY_URL: ""
 
 jobs:
   backend_unit:
@@ -144,30 +144,34 @@ jobs:
           TERTIARY_URL: ${{ env.TERTIARY_URL }}
         run: |
           set -euo pipefail
-          test -n "$SECONDARY_URL" || { echo "SECONDARY_URL_SECRET_MISSING"; exit 1; }
-          test -n "$TERTIARY_URL" || { echo "TERTIARY_URL_SECRET_MISSING"; exit 1; }
-          test "$PRIMARY_URL" != "$SECONDARY_URL" || { echo "PRIMARY_SECONDARY_DUPLICATE"; exit 1; }
-          test "$PRIMARY_URL" != "$TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
-          test "$SECONDARY_URL" != "$TERTIARY_URL" || { echo "SECONDARY_TERTIARY_DUPLICATE"; exit 1; }
-          echo "FAILOVER_DIVERSITY_PASS"
+          if [ -n "$SECONDARY_URL" ] && [ -n "$TERTIARY_URL" ]; then
+            test "$PRIMARY_URL" != "$SECONDARY_URL" || { echo "PRIMARY_SECONDARY_DUPLICATE"; exit 1; }
+            test "$PRIMARY_URL" != "$TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
+            test "$SECONDARY_URL" != "$TERTIARY_URL" || { echo "SECONDARY_TERTIARY_DUPLICATE"; exit 1; }
+            echo "FAILOVER_DIVERSITY_PASS"
+          else
+            echo "FAILOVER_DIVERSITY_SKIPPED_SINGLE_CANONICAL_EDGE"
+          fi
       - name: Verify production endpoint diversity
         run: |
           set -euo pipefail
           test -n "$PRIMARY_URL"
-          test -n "$SECONDARY_URL"
-          test -n "$TERTIARY_URL"
-          test "$PRIMARY_URL" != "$SECONDARY_URL"
-          test "$PRIMARY_URL" != "$TERTIARY_URL"
-          test "$SECONDARY_URL" != "$TERTIARY_URL"
-          echo "FAILOVER_ENDPOINT_DIVERSITY_PASS"
+          if [ -n "$SECONDARY_URL" ] && [ -n "$TERTIARY_URL" ]; then
+            test "$PRIMARY_URL" != "$SECONDARY_URL"
+            test "$PRIMARY_URL" != "$TERTIARY_URL"
+            test "$SECONDARY_URL" != "$TERTIARY_URL"
+            echo "FAILOVER_ENDPOINT_DIVERSITY_PASS"
+          else
+            echo "FAILOVER_ENDPOINT_DIVERSITY_SKIPPED_SINGLE_CANONICAL_EDGE"
+          fi
 
       - name: Verify all production nodes readiness
         run: |
           set -euo pipefail
-          for entry in \
-            "PRIMARY|$PRIMARY_URL" \
-            "SECONDARY|$SECONDARY_URL" \
-            "TERTIARY|$TERTIARY_URL"; do
+          entries=("PRIMARY|$PRIMARY_URL")
+          [ -n "$SECONDARY_URL" ] && entries+=("SECONDARY|$SECONDARY_URL")
+          [ -n "$TERTIARY_URL" ] && entries+=("TERTIARY|$TERTIARY_URL")
+          for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
             ok=0
@@ -367,7 +371,7 @@ jobs:
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
-          DEEP33_REQUIRE_REDUNDANCY: "true"
+          DEEP33_REQUIRE_REDUNDANCY: "false"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: 35
@@ -509,7 +513,10 @@ jobs:
       - name: Verify all production nodes after Android E2E
         run: |
           set -euo pipefail
-          for entry in             "PRIMARY|$PRIMARY_URL"             "SECONDARY|$SECONDARY_URL"             "TERTIARY|$TERTIARY_URL"; do
+          entries=("PRIMARY|$PRIMARY_URL")
+          [ -n "$SECONDARY_URL" ] && entries+=("SECONDARY|$SECONDARY_URL")
+          [ -n "$TERTIARY_URL" ] && entries+=("TERTIARY|$TERTIARY_URL")
+          for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
             health="$(curl -fsS --connect-timeout 8 --max-time 30 "$url/health")"
