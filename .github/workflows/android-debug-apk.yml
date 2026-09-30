@@ -1,4 +1,4 @@
-name: DEEP33 Android Debug APK
+name: DEEP33 Android Debug APK v0.4.3
 
 on:
   workflow_dispatch:
@@ -65,12 +65,12 @@ jobs:
       - name: Publish DEEP33 debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DEEP33-v0.4.2-debug-apk
+          name: DEEP33-v0.4.3-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Publish instrumentation APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DEEP33-v0.4.2-androidTest-apk
+          name: DEEP33-v0.4.3-androidTest-apk
           path: android/app/build/outputs/apk/androidTest/debug/*androidTest.apk
           if-no-files-found: error
