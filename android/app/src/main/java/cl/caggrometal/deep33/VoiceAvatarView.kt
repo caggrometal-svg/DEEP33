@@ -43,13 +43,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        val phaseSpeed = when (personality) {
-            Personality.AGRESIVO -> 0.052f
-            Personality.NEUTRO -> 0.035f
-            Personality.COMICO -> 0.044f
-            Personality.CONSPIRANOICO -> 0.021f
-        }
-        phase = (phase + phaseSpeed) % (2f * PI.toFloat())
+        phase = (phase + personality.avatarMotion) % (2f * PI.toFloat())
 
         val size = min(width, height).toFloat()
         val centerX = width / 2f
@@ -71,11 +65,11 @@ class VoiceAvatarView @JvmOverloads constructor(
 
         strokePaint.strokeCap = Paint.Cap.ROUND
 
-        when (personality) {
-            Personality.AGRESIVO -> drawAggressive(canvas, centerX, centerY, radius, accent, activity)
-            Personality.NEUTRO -> drawNeutral(canvas, centerX, centerY, radius, accent, activity)
-            Personality.COMICO -> drawComic(canvas, centerX, centerY, radius, accent, activity)
-            Personality.CONSPIRANOICO -> drawConspiranoic(canvas, centerX, centerY, radius, accent, activity)
+        when (personality.avatarGeometry) {
+            "ANGULAR" -> drawAggressive(canvas, centerX, centerY, radius, accent, activity)
+            "ORBITAL" -> drawNeutral(canvas, centerX, centerY, radius, accent, activity)
+            "WOBBLE" -> drawComic(canvas, centerX, centerY, radius, accent, activity)
+            "CROSSHAIR" -> drawConspiranoic(canvas, centerX, centerY, radius, accent, activity)
         }
 
         val coreRadius = radius * (0.11f + 0.07f * activity)
@@ -86,9 +80,9 @@ class VoiceAvatarView @JvmOverloads constructor(
         canvas.drawCircle(centerX, centerY, radius * 0.022f, fillPaint)
 
         if (state != AvatarState.IDLE) {
-            val count = when (personality) {
-                Personality.AGRESIVO -> 2
-                Personality.CONSPIRANOICO -> 4
+            val count = when (personality.avatarGeometry) {
+                "ANGULAR" -> 2
+                "CROSSHAIR" -> 4
                 else -> 3
             }
             repeat(count) { index ->
