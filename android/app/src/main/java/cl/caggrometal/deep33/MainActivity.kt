@@ -1036,14 +1036,19 @@ class MainActivity : Activity() {
         val localPersonality = store.personality
         val selectionGeneration = personalitySelectionGeneration
         val localConversation = conversation.takeLast(50)
+
         executor.submit {
             try {
                 val remote = Deep33Api.memoryContext(targetSessionId, targetMemoryProfileId)
                 val session = remote.optJSONObject("session")
                 val remotePersonality = session?.optString("personality").orEmpty()
+
+                if (store.sessionId != targetSessionId) return@submit
+
                 val shouldApplyRemotePersonality =
                     personalitySelectionGeneration == selectionGeneration &&
                         store.personality == localPersonality
+
                 if (remotePersonality.isNotBlank() && shouldApplyRemotePersonality) {
                     store.applyRemotePersonalityIfUnset(remotePersonality)
                 }
@@ -1060,25 +1065,28 @@ class MainActivity : Activity() {
                     }
                 }
 
-                // The user may have opened another chat while this request was in flight.
-                // Discard stale results instead of contaminating the active conversation.
-                if (store.sessionId != targetSessionId) return@submit
-
                 val merged = mutableListOf<UiMessage>()
                 val seen = mutableSetOf<Pair<String, String>>()
                 (remoteMessages + localConversation).forEach {
                     if (seen.add(it.role to it.content)) merged.add(it)
                 }
-
-                conversation.clear()
-                conversation.addAll(merged.takeLast(50))
-                store.saveMessages(conversation)
+                val mergedSnapshot = merged.takeLast(50)
 
                 runOnUiThread {
+                    // Re-check the session on the UI thread immediately before mutating
+                    // the active conversation. This closes the final race between the
+                    // worker finishing and the user opening a different chat.
+                    if (store.sessionId != targetSessionId) return@runOnUiThread
+
+                    conversation.clear()
+                    conversation.addAll(mergedSnapshot)
+                    store.saveMessages(conversation)
+
                     // Remote memory refresh must not rebuild the chat while a pending
                     // generation is active, otherwise the "Pensando..." bubble can be
                     // detached from the active request after foreground recovery.
                     if (generationActive) return@runOnUiThread
+
                     applyPersonalityTheme(Personality.fromKey(store.personality))
                     renderConversation()
                     refreshSidebarHistory()
