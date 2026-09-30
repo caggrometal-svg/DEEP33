@@ -1004,25 +1004,25 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
 
     # Remove explicit citation/source markup that can be emitted by web/RAG providers.
     value = re.sub(r"(?s)(?:cite|url).*?", "", value)
-    value = re.sub(r"(?is)<a\\b[^>]*>.*?</a>", "", value)
+    value = re.sub(r"(?is)<a\b[^>]*>.*?</a>", "", value)
     value = re.sub(
-        r"(?im)^\\s*(?:[-*]|\\d+[.)])?\\s*"
+        r"(?im)^\s*(?:[-*]|\d+[.)])?\s*"
         r"(?:fuente|sources?|referencias?|references?|cita|citations?)"
-        r"\\s*(?:#?\\d+)?\\s*[:\\-–]\\s*.*$",
+        r"\s*(?:#?\d+)?\s*[:\-–]\s*.*$",
         "",
         value,
     )
     value = re.sub(
-        r"(?im)^\\s*(?:retrieved from|consultado en|recuperado de)\\s+https?://\\S+\\s*$",
+        r"(?im)^\s*(?:retrieved from|consultado en|recuperado de)\s+https?://\S+\s*$",
         "",
         value,
     )
-    value = re.sub(r"(?m)^\\s*(?:[-*]|\\d+[.)])\\s*\\[[^\\]]{1,120}\\]\\s*$", "", value)
-    value = re.sub(r"(?i)\\s*\\((?:fuente|source|ref(?:erencia)?|citation|cita)\\s*:?\\s*[^)]{0,180}\\)", "", value)
-    value = re.sub(r"(?i)\\s*\\[(?:fuente|source|ref(?:erencia)?|citation|cita)\\s*:?\\s*[^\\]]{0,180}\\]", "", value)
+    value = re.sub(r"(?m)^\s*(?:[-*]|\d+[.)])\s*\[[^\]]{1,120}\]\s*$", "", value)
+    value = re.sub(r"(?i)\s*\((?:fuente|source|ref(?:erencia)?|citation|cita)\s*:?\s*[^)]{0,180}\)", "", value)
+    value = re.sub(r"(?i)\s*\[(?:fuente|source|ref(?:erencia)?|citation|cita)\s*:?\s*[^\]]{0,180}\]", "", value)
     # Numeric/footnote citation markers are removed only when they are isolated
     # markers, not when they are part of ordinary prose or markdown links.
-    value = re.sub(r"(?<!\\w)\\[\\^?\\d{1,3}(?:\\s*[,;]\\s*\\^?\\d{1,3})*\\](?!\\()", "", value)
+    value = re.sub(r"(?<!\w)\[\^?\d{1,3}(?:\s*[,;]\s*\^?\d{1,3})*\](?!\()", "", value)
 
     # Remove exact retrieved URLs even when embedded in otherwise valid text.
     for source in sources or []:
