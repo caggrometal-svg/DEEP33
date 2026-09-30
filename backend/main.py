@@ -268,6 +268,11 @@ def session_id_from_request(request: Request) -> str:
     return value[:128]
 
 
+def memory_profile_id_from_request(request: Request) -> str | None:
+    value = request.headers.get("X-DEEP33-Memory-Profile-Id", "").strip()
+    return value[:128] if value else None
+
+
 def request_id_from_request(request: Request) -> str:
     value = getattr(request.state, "request_id", "").strip()
     if value:
@@ -1256,7 +1261,7 @@ def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) ->
     }
 
 
-async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[dict[str, str]], str]:
+async def prepare_messages(request: ChatRequest, session_id: str, memory_profile_id: str | None = None) -> tuple[list[dict[str, str]], str]:
     requested = [
         message.model_dump()
         for message in request.messages
@@ -1268,7 +1273,7 @@ async def prepare_messages(request: ChatRequest, session_id: str) -> tuple[list[
         return [personality_control, *requested[-49:]], selected
 
     try:
-        context = await memory.context(session_id)
+        context = await memory.context(session_id, memory_profile_id=memory_profile_id)
         remote = extract_context_messages(context)
         merged = merge_messages(remote, requested, limit=49)
         system_context = extract_context_system_message(context)
@@ -1292,11 +1297,12 @@ async def persist_messages(
     messages: list[dict[str, str]],
     *,
     personality: str | None = None,
+    memory_profile_id: str | None = None,
 ) -> None:
     if not memory.enabled:
         return
     try:
-        await memory.sync(session_id, messages, personality=personality)
+        await memory.sync(session_id, messages, personality=personality, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
         logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
 
@@ -1308,6 +1314,7 @@ async def generate(
     request_id: str,
     idempotency_key: str,
     skip_web_tools: bool = False,
+    memory_profile_id: str | None = None,
 ) -> dict:
     personality = normalize_personality(request.personality)
     logger.info("personality_selected request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
@@ -1347,7 +1354,7 @@ async def generate(
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
     try:
-        messages, personality = await prepare_messages(request, session_id)
+        messages, personality = await prepare_messages(request, session_id, memory_profile_id)
         payload = {
             "messages": messages,
             "model": request.model or AI_GATEWAY_MODEL,
