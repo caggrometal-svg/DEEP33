@@ -173,6 +173,55 @@ def test_chat_contract(monkeypatch) -> None:
     assert body["result"]["text"] == "DEEP33 connectivity PASS"
 
 
+def test_stream_contract_hides_sources(monkeypatch) -> None:
+    patch_memory(monkeypatch)
+
+    async def fake_web_loop(*_args, **_kwargs):
+        return (
+            {
+                "id": "stream-test",
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "Respuesta propia de DEEP33.\\n\\n"
+                                "Fuentes:\\n- Example https://example.com\\n"
+                                "citeturn1search1【1】"
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "_deep33_gateway": {"provider": "test", "model": "test-model"},
+            },
+            [{"title": "Example", "url": "https://example.com"}],
+        )
+
+    monkeypatch.setattr(main, "run_web_tool_loop", fake_web_loop)
+    with client.stream(
+        "POST",
+        "/v1/chat/stream",
+        json={
+            "messages": [{"role": "user", "content": "Busca y responde"}],
+            "personality": "NEUTRO",
+        },
+        headers={
+            "X-DEEP33-Session-Id": "stream-source-sanitization",
+            "X-Idempotency-Key": "stream-source-sanitization-key",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert "Respuesta propia de DEEP33." in body
+    assert "example.com" not in body
+    assert "turn1search1" not in body
+    assert "Fuentes:" not in body
+
+
 def test_generate_contract(monkeypatch) -> None:
     patch_memory(monkeypatch)
     monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
