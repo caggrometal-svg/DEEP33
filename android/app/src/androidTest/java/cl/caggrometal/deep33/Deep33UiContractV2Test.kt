@@ -76,6 +76,13 @@ class Deep33UiContractV2Test {
     }
 
     @Test
+    fun personalityProfilesRemainVisiblyDistinct() {
+        val descriptions = Personality.entries.map { it.description }
+        val voiceProfiles = Personality.entries.map { PersonalityVoiceProfile.forPersonality(it) }
+        assertEquals(Personality.entries.size, descriptions.distinct().size)
+        assertEquals(Personality.entries.size, voiceProfiles.map { it.pitchFactor to it.speechRateFactor }.distinct().size)
+    }
+
     fun headerExposesDeep33IdentityAndActivePersonality() {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
@@ -86,7 +93,7 @@ class Deep33UiContractV2Test {
                 val personalityView = personalityField.get(activity) as TextView
 
                 assertTrue(personalityView.text.toString().contains("NEUTRO"))
-                assertEquals("DEEP33", findTextView(activity, "DEEP33")?.text?.toString())
+                assertNull(findTextView(activity, "DEEP33"))
             }
         } finally {
             scenario.close()
