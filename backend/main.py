@@ -997,7 +997,7 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     # Remove markdown links, including links whose destination is not one of the
     # retrieved URLs. This prevents a provider from smuggling a citation through
     # alternate link text or a rewritten source URL.
-    value = re.sub(r"\[([^\]]+)\]\(https?://[^)\s]+\)", r"\1", value)
+    value = re.sub(r"\[([^\]]+)\]\(https?://[^)\s]+\)", "", value)
 
     # Bare HTTP(S) URLs are never part of the final synthesized prose.
     value = re.sub(r"(?i)https?://[^\s)\]>]+", "", value)
