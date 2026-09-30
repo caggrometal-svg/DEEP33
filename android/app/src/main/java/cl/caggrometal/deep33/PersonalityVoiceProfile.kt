@@ -11,14 +11,15 @@ data class PersonalityVoiceProfile(
 ) {
     companion object {
         fun forPersonality(personality: Personality): PersonalityVoiceProfile = when (personality) {
-            // Lower, firmer and faster: clearly aggressive, with controlled delivery.
-            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 0.90f, 1.10f)
-            // Balanced baseline: calm and natural.
-            Personality.NEUTRO -> PersonalityVoiceProfile(personality, 0.99f, 0.97f)
-            // Brighter, quicker and more animated: unmistakably comic.
-            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.06f, 1.06f)
-            // Deep, slow and deliberate: restrained, suspicious and measured.
-            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.91f, 0.88f)
+            // Grave, firme y con más empuje: la personalidad debe sentirse físicamente distinta.
+            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 0.84f, 1.05f)
+            // Calmado, pasivo y de baja intensidad: más lento y menos invasivo.
+            Personality.NEUTRO -> PersonalityVoiceProfile(personality, 0.98f, 0.92f)
+            // Cálido y juguetón: ritmo cómodo y una altura menos agresiva que la base anterior.
+            // Android TTS no expone un control directo de "calidez"; aquí se aproxima con pitch/ritmo.
+            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.00f, 0.95f)
+            // Grave, muy pausado y confidencial: sensación de secreto/anomalía sin teatralidad.
+            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.88f, 0.86f)
         }
     }
 }
