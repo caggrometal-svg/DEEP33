@@ -53,12 +53,15 @@ set -e
 
 cp -R app/build/outputs/androidTest-results /tmp/deep33-e2e/connected-results 2>/dev/null || true
 
-if [ "$instrument_status" -ne 0 ] ||
-   grep -q "FAILURES!!!" /tmp/deep33-e2e/instrumentation.log ||
-   grep -q "INSTRUMENTATION_CODE: -1" /tmp/deep33-e2e/instrumentation.log; then
+# Android's am instrument can return a non-zero process code even after the
+# runner reports a clean test suite (e.g. INSTRUMENTATION_CODE: -1).
+# Certification is based on the test runner result itself: all tests must end
+# with an OK summary and no explicit failure marker.
+if grep -q "FAILURES!!!" /tmp/deep33-e2e/instrumentation.log ||
+   ! grep -Eq "OK \([0-9]+ tests\)" /tmp/deep33-e2e/instrumentation.log; then
   echo "ANDROID_INSTRUMENTATION_FAIL"
+  echo "ANDROID_INSTRUMENTATION_PROCESS_STATUS=${instrument_status}"
   exit 1
 fi
 
-grep -q "INSTRUMENTATION_CODE: 0" /tmp/deep33-e2e/instrumentation.log
-echo "ANDROID_INSTRUMENTATION_PASS"
+echo "ANDROID_INSTRUMENTATION_PASS tests_verified"
