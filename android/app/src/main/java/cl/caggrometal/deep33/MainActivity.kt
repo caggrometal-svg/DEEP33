@@ -853,8 +853,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 0)
             val accent = Personality.fromKey(store.personality).accent
-            setTextColor(Deep33Theme.BG)
-            setBackground(chatActionPanel(Deep33Theme.SURFACE_2, accent))
+            setTextColor(Color.WHITE)
+            setBackground(chatActionPanel(Color.rgb(110, 12, 28), accent))
             elevation = 0f
             stateListAnimator = null
             setOnClickListener { sendMessage() }
@@ -1156,10 +1156,10 @@ class MainActivity : Activity() {
     private fun applyStopButtonTheme(personality: Personality) {
         if (!::cancelButton.isInitialized) return
         cancelButton.text = STOP_BUTTON_GLYPH
-        cancelButton.setTextColor(personality.accent)
+        cancelButton.setTextColor(Color.WHITE)
         cancelButton.setBackground(
             neonPanel(
-                Color.rgb(31, 7, 13),
+                Color.rgb(110, 12, 28),
                 personality.accent
             )
         )
@@ -1978,6 +1978,31 @@ class MainActivity : Activity() {
         bubble.addView(contentView)
         renderMarkdown(contentView, content, isAssistant)
 
+        if (isAssistant) {
+            val speakerButton = Button(this).apply {
+                text = "🔊"
+                contentDescription = "Reproducir respuesta de DEEP33"
+                textSize = 16f
+                isAllCaps = false
+                minWidth = 0
+                minHeight = 0
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, 0)
+                setTextColor(accent)
+                setBackground(chatActionPanel(Color.rgb(28, 9, 15), accent))
+                elevation = 0f
+                stateListAnimator = null
+                setOnClickListener { speakAssistant(content, Personality.fromKey(store.personality)) }
+                addPressFeedback(this)
+            }
+            bubble.addView(
+                speakerButton,
+                LinearLayout.LayoutParams(dp(44), dp(40)).apply {
+                    topMargin = dp(8)
+                }
+            )
+        }
+
         val params = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1991,14 +2016,9 @@ class MainActivity : Activity() {
             )
         }
         chatContainer.addView(bubble, params)
-        bubble.alpha = 0f
-        bubble.translationY = dp(8).toFloat()
-        bubble.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(150L)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .start()
+        // No entry animation: render immediately to reduce visual overhead and latency.
+        bubble.alpha = 1f
+        bubble.translationY = 0f
         addPressFeedback(bubble)
         bubble.post { scrollToBottom() }
         return contentView
@@ -2014,7 +2034,7 @@ class MainActivity : Activity() {
 
     private fun scrollToBottom() {
         val scroll = chatContainer.parent as? ScrollView ?: return
-        scroll.post { scroll.smoothScrollTo(0, chatContainer.height) }
+        scroll.post { scroll.scrollTo(0, chatContainer.height) }
     }
 
     private fun setVoiceState(state: AvatarState) {
