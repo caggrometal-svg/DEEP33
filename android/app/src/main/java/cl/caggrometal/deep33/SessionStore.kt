@@ -30,6 +30,16 @@ class SessionStore(
 ) {
     private val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
 
+    /** Stable device/profile identity. Conversation session IDs can change; this one must not. */
+    val memoryProfileId: String
+        get() {
+            val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
+            if (!existing.isNullOrBlank()) return existing
+            val created = "profile-" + UUID.randomUUID().toString()
+            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).apply()
+            return created
+        }
+
     val sessionId: String
         get() {
             val existing = prefs.getString(KEY_SESSION_ID, null)
@@ -218,6 +228,7 @@ class SessionStore(
     companion object {
         private const val PREFS_NAME = "deep33_session"
         private const val KEY_SESSION_ID = "session_id"
+        private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
         private const val KEY_MESSAGES_LEGACY = "messages_json"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
         private const val KEY_PERSONALITY = "personality"
