@@ -79,7 +79,12 @@ const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
 const EDGE_AI_REQUIRES_AUTH =
   (Deno.env.get("AI_GATEWAY_REQUIRES_AUTH") || "").trim().toLowerCase() === "true" ||
   EDGE_AI_PROVIDER.toLowerCase() === "kilo";
-const EDGE_AI_TIMEOUT_MS = Math.max(3000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "18000")));
+const EDGE_AI_TIMEOUT_MS = Math.max(5000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "30000")));
+const EDGE_AI_RETRY_COUNT = Math.max(0, Math.min(2, Number(Deno.env.get("AI_PROVIDER_RETRY_COUNT") || "1")));
+const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(5000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "750")));
+const edgeCircuit = new Map<string, { failures: number; openUntil: number }>();
+const EDGE_CIRCUIT_THRESHOLD = 3;
+const EDGE_CIRCUIT_COOLDOWN_MS = 15000;
 
 type EdgeAIProvider = { name: string; url: string; api_key: string; model: string; requires_auth: boolean };
 
