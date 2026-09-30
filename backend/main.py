@@ -229,6 +229,12 @@ class ChatRequest(BaseModel):
     personality: str | None = Field(default=None, pattern="^(AGRESIVO|NEUTRO|COMICO|CONSPIRANOICO)$")
 
 
+class MemorySyncRequest(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list, max_length=50)
+    personality: str | None = Field(default=None, max_length=32)
+    preferences: dict = Field(default_factory=dict, max_length=32)
+
+
 class MemoryRememberRequest(BaseModel):
     kind: str = Field(pattern="^(preference|explicit|summary|context)$")
     content: str = Field(min_length=1, max_length=10000)
@@ -1507,6 +1513,31 @@ async def memory_context(http_request: Request) -> dict:
     enforce_client_controls(http_request, session_id)
     try:
         return await memory.context(session_id)
+    except MemoryUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
+
+
+@app.post("/v1/memory/sync")
+async def memory_sync(
+    payload: MemorySyncRequest,
+    http_request: Request,
+) -> dict:
+    if not memory.enabled:
+        raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
+    session_id = session_id_from_request(http_request)
+    enforce_client_controls(http_request, session_id)
+    messages = [
+        message.model_dump()
+        for message in payload.messages
+        if message.role in {"user", "assistant"}
+    ]
+    try:
+        return await memory.sync(
+            session_id,
+            messages,
+            personality=payload.personality,
+            preferences=payload.preferences,
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
