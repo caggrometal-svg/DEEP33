@@ -51,8 +51,20 @@ class VoiceAvatarView @JvmOverloads constructor(
         val radius = min(width, height) * 0.30f
         val accent = personality.accent
 
-        fillPaint.color = 0xFF10151F.toInt()
+        fillPaint.color = 0xFF07070A.toInt()
         canvas.drawCircle(centerX, centerY, radius, fillPaint)
+
+        // Subtle dark halo keeps the avatar readable without turning the UI neon.
+        for (ring in 3 downTo 1) {
+            strokePaint.color = withAlpha(accent, 18 + ring * 12)
+            strokePaint.strokeWidth = dp((ring * 2).toFloat())
+            canvas.drawCircle(
+                centerX,
+                centerY,
+                radius + dp((10 + ring * 6).toFloat()),
+                strokePaint
+            )
+        }
 
         val activity = when (state) {
             AvatarState.IDLE -> 0.12f
@@ -106,6 +118,9 @@ class VoiceAvatarView @JvmOverloads constructor(
         postInvalidateDelayed(33L)
     }
 
-    private fun dp(value: Int): Float =
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        (color and 0x00FFFFFF) or ((alpha.coerceIn(0, 255)) shl 24)
+
+    private fun dp(value: Float): Float =
         value * resources.displayMetrics.density
 }
