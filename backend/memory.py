@@ -176,6 +176,7 @@ class MemoryClient:
         session_id: str,
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
+        memory_profile_id: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {}
         if personality:
@@ -188,6 +189,7 @@ class MemoryClient:
             session_id,
             idempotency_key=f"memory:preferences:{request_hash}",
             request_hash=request_hash,
+            memory_profile_id=memory_profile_id,
             **payload,
         )
 
