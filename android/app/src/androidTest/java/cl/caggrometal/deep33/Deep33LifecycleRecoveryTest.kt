@@ -1,5 +1,8 @@
 package cl.caggrometal.deep33
 
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
@@ -12,6 +15,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class Deep33LifecycleRecoveryTest {
+    @Test
+    fun generationServiceContractIsForegroundAndTaskIndependent() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val info = context.packageManager.getServiceInfo(
+            ComponentName(context, Deep33GenerationService::class.java),
+            PackageManager.GET_META_DATA
+        )
+
+        assertTrue(
+            "Generation service must declare dataSync foreground execution",
+            info.foregroundServiceType and ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC != 0
+        )
+        assertTrue(
+            "Generation service must not stop with the Activity task",
+            !info.isolatedProcess && info.stopWithTask.not()
+        )
+    }
+
     @Test
     fun pendingTurnSurvivesBackgroundForegroundAndGetsResponse() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
