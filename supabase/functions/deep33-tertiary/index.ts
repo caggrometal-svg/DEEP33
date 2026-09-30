@@ -836,18 +836,7 @@ Deno.serve(async (req) => {
                 text: String(responseBody.text ?? ""),
                 sources,
               };
-
-        const sourceMarkdown =
-          "\n\nFuentes consultadas:\n" +
-          sources.map((source, index) =>
-            (index + 1) + ". [" + source.title + "](" + source.url + ")"
-          ).join("\n");
-
-        if (typeof result.text === "string" && !result.text.includes("Fuentes consultadas:")) {
-          result.text = result.text + sourceMarkdown;
-        }
-
-        return json({
+return json({
           ...responseBody,
           web_navigation: true,
           sources,
