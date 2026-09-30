@@ -29,8 +29,6 @@ import android.widget.Toast
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
-import java.util.concurrent.Future
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
@@ -131,10 +129,8 @@ class MainActivity : Activity() {
     private val executor = Executors.newFixedThreadPool(2)
     private lateinit var store: SessionStore
     private val conversation = mutableListOf<UiMessage>()
-    private var activeTask: Future<*>? = null
     private var generationActive = false
     private var activeBubble: TextView? = null
-    private val cancelRequested = AtomicBoolean(false)
     private val generationHandler = Handler(Looper.getMainLooper())
     private var activityVisible = false
     private val generationMonitor = object : Runnable {
@@ -160,7 +156,6 @@ class MainActivity : Activity() {
     private val personalitySyncLock = Any()
     private var currentTab = Tab.CHAT
     private var wasBackgrounded = false
-    private var lifecycleDestroying = false
     private var activeRequestId: String? = null
     private var activeIdempotencyKey: String? = null
 
@@ -273,7 +268,6 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        lifecycleDestroying = true
         generationHandler.removeCallbacks(generationMonitor)
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
@@ -1264,7 +1258,6 @@ class MainActivity : Activity() {
     }
 
     private fun cleanupGeneration(success: Boolean) {
-        activeTask = null
         activeBubble = null
         activeRequestId = null
         activeIdempotencyKey = null
