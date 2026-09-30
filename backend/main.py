@@ -1476,6 +1476,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
     enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     request = resolve_personality_request(request, http_request)
     output = await generate(
         request,
@@ -1486,6 +1487,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
             http_request.headers.get("x-deep33-skip-web-tools", "").strip().lower()
             in {"1", "true", "yes", "on"}
         ),
+        memory_profile_id=memory_profile_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -1505,6 +1507,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
         session_id,
         request_id=request_id,
         idempotency_key=idempotency_key,
+        memory_profile_id=memory_profile_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
