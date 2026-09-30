@@ -1051,6 +1051,10 @@ async function publicWebSearch(query: string) {
       name: "ddg_public",
       url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
     },
+    {
+      name: "mojeek_public",
+      url: "https://www.mojeek.com/search?q=" + encodeURIComponent(q) + "&fmt=html",
+    },
   ];
 
   const merged = new Map<string, Record<string, string>>();
@@ -1078,13 +1082,20 @@ async function publicWebSearch(query: string) {
           const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
         }
-      } else {
+      } else if (provider.name === "ddg_public") {
         const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
         for (const item of items.slice(0, 8)) {
           const rawUrl = decodeHtml(String(item[1] ?? ""));
           const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
           const urlMatch = rawUrl.match(/uddg=([^&]+)/i);
           const url = urlMatch ? decodeURIComponent(urlMatch[1]) : rawUrl;
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
+        }
+      } else {
+        const items = [...html.matchAll(/<a[^>]+class="ob"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+        for (const item of items.slice(0, 8)) {
+          const url = decodeHtml(String(item[1] ?? "").trim());
+          const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
         }
       }
@@ -1277,7 +1288,7 @@ Deno.serve(async (req) => {
               tool_loop_enabled: true,
               provider_independent: true,
               configured_provider: "edge-direct",
-              fallback_providers: ["bing_public", "ddg_public"],
+              fallback_providers: ["bing_public", "ddg_public", "mojeek_public"],
             }),
       ]);
 
