@@ -53,6 +53,8 @@ class MainActivity : Activity() {
     private lateinit var composer: LinearLayout
     private lateinit var chatScroll: ScrollView
     private var voiceModeActive = false
+    private var voiceModeGeneration = 0L
+    private lateinit var personalityModesContainer: LinearLayout
 
     private val executor = Executors.newFixedThreadPool(2)
     private lateinit var store: SessionStore
@@ -94,17 +96,7 @@ class MainActivity : Activity() {
                     setVoiceState(AvatarState.IDLE)
                     if (voiceModeActive) {
                         setVoiceModeUi(true)
-                        // Voice chat remains audio-only and immediately returns to listening
-                        // after DEEP33 finishes speaking. A guard prevents a stale callback
-                        // from reopening voice mode after the user explicitly exited it.
-                        window.decorView.postDelayed({
-                            if (voiceModeActive &&
-                                textToSpeech?.isSpeaking != true &&
-                                !speechListening
-                            ) {
-                                startVoiceInput()
-                            }
-                        }, 200L)
+                        scheduleNextVoiceTurn()
                     } else {
                         // Voice responses enabled from text chat must not force the UI into
                         // persistent voice mode.
@@ -120,6 +112,7 @@ class MainActivity : Activity() {
                         setVoiceModeUi(false)
                     } else {
                         setVoiceModeUi(true)
+                        scheduleNextVoiceTurn(450L)
                     }
                 }
             }
@@ -335,11 +328,11 @@ class MainActivity : Activity() {
             setPadding(0, dp(16), 0, dp(8))
         })
 
-        val modes = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        Personality.entries.forEach { option ->
-            modes.addView(personalityButton(option))
+        personalityModesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
-        panel.addView(modes)
+        refreshPersonalityButtons()
+        panel.addView(personalityModesContainer)
 
         panel.addView(TextView(this).apply {
             text = "HISTORIAL"
@@ -360,13 +353,32 @@ class MainActivity : Activity() {
         return panel
     }
 
+    private fun refreshPersonalityButtons() {
+        if (!::personalityModesContainer.isInitialized) return
+        personalityModesContainer.removeAllViews()
+        Personality.entries.forEach { option ->
+            personalityModesContainer.addView(personalityButton(option))
+        }
+    }
+
     private fun personalityButton(option: Personality): Button =
         Button(this).apply {
-            text = option.key + " · " + option.description
+            val active = Personality.fromKey(store.personality) == option
+            text = if (active) {
+                "✓ " + option.key + " · ACTIVA"
+            } else {
+                "○ " + option.key
+            }
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             minHeight = dp(54)
             setTextColor(option.accent)
+            setBackground(
+                neonPanel(
+                    if (active) Color.rgb(30, 20, 24) else Color.rgb(14, 17, 24),
+                    option.accent
+                )
+            )
             setOnClickListener {
                 selectPersonality(option)
                 hideSidebar()
@@ -498,8 +510,8 @@ class MainActivity : Activity() {
         )
 
         micButton = Button(this).apply {
-            text = "🔈"
-            contentDescription = "Voz"
+            text = "🔊"
+            contentDescription = "Voz · conversación por voz"
             textSize = 20f
             isAllCaps = false
             minWidth = 0
@@ -518,8 +530,8 @@ class MainActivity : Activity() {
         )
 
         sendButton = Button(this).apply {
-            text = ">"
-            contentDescription = "Enviar"
+            text = "➤"
+            contentDescription = "Enviar mensaje"
             textSize = 28f
             isAllCaps = false
             minWidth = 0
@@ -674,8 +686,10 @@ class MainActivity : Activity() {
         // exact mode chosen by the user, independent of older memory/preferences.
         store.setPersonalityFromUser(personality.key)
         Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
-        currentPersonalityView.text = "Modo: " + personality.key
+        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
+        currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
+        refreshPersonalityButtons()
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
         if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
@@ -688,8 +702,10 @@ class MainActivity : Activity() {
     }
 
     private fun applyPersonalityTheme(personality: Personality) {
-        currentPersonalityView.text = "Modo: " + personality.key
+        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
+        currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
+        refreshPersonalityButtons()
         if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
         if (::cancelButton.isInitialized) cancelButton.setTextColor(personality.accent)
         if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
@@ -1016,6 +1032,9 @@ class MainActivity : Activity() {
 
     private fun setVoiceModeUi(active: Boolean) {
         if (!::voicePanel.isInitialized) return
+        if (voiceModeActive != active) {
+            voiceModeGeneration++
+        }
         voiceModeActive = active
         if (active) {
             voicePanel.visibility = View.VISIBLE
@@ -1034,6 +1053,26 @@ class MainActivity : Activity() {
             voiceStateView.visibility = View.GONE
             avatarView.layoutParams = LinearLayout.LayoutParams(dp(86), dp(86))
         }
+    }
+
+    private fun scheduleNextVoiceTurn(delayMs: Long = 250L) {
+        if (!voiceModeActive ||
+            speechListening ||
+            textToSpeech?.isSpeaking == true ||
+            activeTask?.isDone == false
+        ) return
+
+        val generation = voiceModeGeneration
+        window.decorView.postDelayed({
+            if (voiceModeActive &&
+                voiceModeGeneration == generation &&
+                !speechListening &&
+                textToSpeech?.isSpeaking != true &&
+                activeTask?.isDone != false
+            ) {
+                startVoiceInput()
+            }
+        }, delayMs)
     }
 
     private fun speakAssistant(
@@ -1214,6 +1253,7 @@ class MainActivity : Activity() {
             setVoiceState(AvatarState.IDLE)
             if (voiceModeActive) {
                 setVoiceModeUi(true)
+                scheduleNextVoiceTurn(450L)
             } else {
                 setVoiceModeUi(false)
             }
