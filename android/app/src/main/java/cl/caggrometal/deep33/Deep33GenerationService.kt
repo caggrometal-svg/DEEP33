@@ -336,17 +336,28 @@ class Deep33GenerationService : Service() {
             val store = SessionStore(this)
             val pending = store.loadPendingTurn()
             if (pending?.requestId == requestId) {
-                store.clearPendingTurn(requestId)
+                // Never discard the durable request when Android ends a data-sync
+                // foreground service because of its platform time budget.
                 store.saveGenerationState(
                     status = GenerationStatus.FAILED,
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = pending.personality,
-                    error = "La generación superó el límite permitido en segundo plano."
+                    error = "La generación superó el límite temporal de segundo plano. La solicitud quedó guardada para continuar.",
+                    durable = true
                 )
             }
         }
         stopSelf()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // stopWithTask=false keeps this service alive even when the user dismisses
+        // the DEEP33 task from the recent-apps list.
+        if (runningRequestId != null) {
+            updateForegroundNotification("DEEP33 continúa generando en segundo plano…")
+        }
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -393,8 +404,8 @@ class Deep33GenerationService : Service() {
     companion object {
         private const val CHANNEL_ID = "deep33_generation"
         private const val NOTIFICATION_ID = 3301
-        private const val MAX_STREAM_RECOVERY_RETRIES = 3
-        private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L)
+        private const val MAX_STREAM_RECOVERY_RETRIES = 5
+        private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
         private const val EXTRA_REQUEST_ID = "request_id"
