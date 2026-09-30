@@ -12,13 +12,13 @@ data class PersonalityVoiceProfile(
     companion object {
         fun forPersonality(personality: Personality): PersonalityVoiceProfile = when (personality) {
             // Firmer, slightly lower and quicker delivery.
-            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 0.96f, 1.08f)
+            Personality.AGRESIVO -> PersonalityVoiceProfile(personality, 0.82f, 1.12f)
             // Balanced baseline: calm and natural.
             Personality.NEUTRO -> PersonalityVoiceProfile(personality, 1.00f, 1.00f)
             // Brighter and more animated, without cartoonish extremes.
-            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.08f, 1.04f)
+            Personality.COMICO -> PersonalityVoiceProfile(personality, 1.14f, 1.08f)
             // Lower, slower and more measured, with a restrained mysterious quality.
-            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.93f, 0.92f)
+            Personality.CONSPIRANOICO -> PersonalityVoiceProfile(personality, 0.88f, 0.84f)
         }
     }
 }
