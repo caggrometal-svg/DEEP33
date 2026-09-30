@@ -923,7 +923,9 @@ class MainActivity : Activity() {
                         onText = { chunk ->
                             runOnUiThread {
                                 val bubble = activeBubble ?: return@runOnUiThread
-                                val current = bubble.tag as? String ?: ""
+                                val current = (bubble.tag as? String ?: "").let { currentText ->
+                                    if (currentText == "Pensando...") "" else currentText
+                                }
                                 val next = current + chunk
                                 bubble.tag = next
                                 renderMarkdown(bubble, next)
