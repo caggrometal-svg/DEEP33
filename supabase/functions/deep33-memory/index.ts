@@ -237,10 +237,6 @@ Deno.serve(async (req) => {
       return await handleHybridAction(body, req);
     }
 
-    if (action === "hybrid_search" || action === "hybrid_index") {
-      return await handleHybridAction(body, req);
-    }
-
     if (!sessionId || sessionId.length > 128) {
       return response({ error: "SESSION_ID_REQUIRED" }, 400);
     }
@@ -289,35 +285,37 @@ Deno.serve(async (req) => {
       if (sessionError) throw sessionError;
 
       const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
-      const messageSessionIds = memoryProfileId && memoryProfileId !== sessionId
+      const memorySessionIds = memoryProfileId && memoryProfileId !== sessionId
         ? [sessionId, memoryProfileId]
         : [sessionId];
+
+      // Conversation history is session-scoped. Long-term continuity crosses chats only
+      // through explicit/profile memory, never by importing another chat transcript.
       const { data: messages, error: messageError } = await supabase
         .from("deep33_messages")
         .select("role, content, model, provider, request_id, created_at, session_id")
-        .in("session_id", messageSessionIds)
+        .eq("session_id", sessionId)
         .in("role", ["user", "assistant"])
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
         .limit(100);
       if (messageError) throw messageError;
 
       const { data: memories, error: memoryError } = await supabase
         .from("deep33_memories")
         .select("id, kind, content, created_at, updated_at, session_id")
-        .in("session_id", messageSessionIds)
+        .in("session_id", memorySessionIds)
         .order("updated_at", { ascending: false })
         .order("id", { ascending: false })
-        .limit(40);
+        .limit(30);
       if (memoryError) throw memoryError;
 
       return response({
         session,
-        messages: (messages || []).reverse(),
+        messages: messages || [],
         memories: memories || [],
       });
     }
-
     if (action === "sync") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
         const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
@@ -369,16 +367,40 @@ Deno.serve(async (req) => {
         }
 
         if (rows.length) {
-          const profileRows = profileSessionId === sessionId
-            ? rows
-            : rows.map((row) => ({ ...row, session_id: profileSessionId }));
           const { error } = await supabase
             .from("deep33_messages")
-            .upsert([...rows, ...profileRows], {
+            .upsert(rows, {
               onConflict: "session_id,fingerprint",
               ignoreDuplicates: true,
             });
           if (error) throw error;
+        }
+
+        // Keep transcript history scoped to the current chat. Cross-chat continuity
+        // is represented as compact profile memory, not a copied global transcript.
+        if (profileSessionId !== sessionId) {
+          const latestUser = [...incoming].reverse().find(
+            (message) => String(message?.role || "") === "user",
+          );
+          const latestAssistant = [...incoming].reverse().find(
+            (message) => String(message?.role || "") === "assistant",
+          );
+          if (latestUser && latestAssistant) {
+            const userText = String(latestUser.content || "").replace(/\s+/g, " ").trim().slice(0, 500);
+            const assistantText = String(latestAssistant.content || "").replace(/\s+/g, " ").trim().slice(0, 700);
+            const summary = "Recent exchange. User: " + userText + " DEEP33: " + assistantText;
+            const fingerprint = await sha256("summary\n" + summary);
+            const { error: summaryError } = await supabase
+              .from("deep33_memories")
+              .upsert({
+                session_id: profileSessionId,
+                kind: "summary",
+                content: summary,
+                fingerprint,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: "session_id,fingerprint" });
+            if (summaryError) throw summaryError;
+          }
         }
 
         return { body: { ok: true, session_id: sessionId, memory_profile_id: profileSessionId, saved: rows.length }, status: 200 };

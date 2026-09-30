@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -50,16 +51,32 @@ private object Deep33Theme {
 }
 
 private object VoiceConversationPolicy {
-    const val MAX_SPOKEN_SENTENCES = 3
-    const val MAX_SPOKEN_CHARS = 420
+    const val MAX_SPOKEN_SENTENCES = 4
+    const val MAX_SPOKEN_CHARS = 560
 
-    fun compactForSpeech(text: String): String {
-        val cleaned = text
+    fun compactForSpeech(text: String, personality: Personality = Personality.NEUTRO): String {
+        var cleaned = text
             .replace(Regex("\\[([^]]+)\\]\\(([^)]+)\\)"), "$1")
             .replace(Regex("[*_#>]"), "")
             .replace("`", "")
+            .replace("•", "")
+            .replace("—", ", ")
+            .replace("–", ", ")
+            .replace(";", ", ")
             .replace(Regex("\\s+"), " ")
             .trim()
+
+        cleaned = when (personality) {
+            Personality.AGRESIVO -> cleaned
+            Personality.NEUTRO -> cleaned
+            Personality.COMICO -> cleaned.replace(
+                Regex("\\bpor lo tanto\\b", RegexOption.IGNORE_CASE), "así que"
+            )
+            Personality.CONSPIRANOICO -> cleaned.replace(
+                Regex("\\bpero\\b", RegexOption.IGNORE_CASE), "... pero"
+            )
+        }
+
         if (cleaned.length <= MAX_SPOKEN_CHARS) return cleaned
 
         val sentences = cleaned
@@ -88,22 +105,10 @@ private object VoiceConversationPolicy {
         val normalized = normalizeForComparison(value)
         if (normalized.isBlank()) return false
         val commands = listOf(
-            "para",
-            "parar",
-            "detenlo",
-            "detener",
-            "deja de hablar",
-            "para de hablar",
-            "detente",
-            "deten",
-            "corta",
-            "basta",
-            "callate",
-            "silencio",
-            "espera",
-            "un segundo",
-            "espera un segundo",
-            "ya basta"
+            "para", "parar", "detenlo", "detener", "deja de hablar",
+            "para de hablar", "detente", "deten", "corta", "basta",
+            "callate", "silencio", "espera", "un segundo",
+            "espera un segundo", "ya basta"
         )
         return commands.any {
             normalized == it || normalized.startsWith("$it ") || normalized.contains(" $it ")
@@ -523,9 +528,9 @@ class MainActivity : Activity() {
         Button(this).apply {
             val active = Personality.fromKey(store.personality) == option
             text = if (active) {
-                "✓ " + option.key + " · ACTIVA"
+                "✓ " + option.key + " · " + option.uiTag + " · ACTIVA"
             } else {
-                "○ " + option.key
+                "○ " + option.key + " · " + option.uiTag
             }
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -1160,6 +1165,23 @@ class MainActivity : Activity() {
         }
 
         val pending = store.loadPendingTurn() ?: return
+        if (store.isCancellationRequested(pending.requestId)) {
+            store.saveGenerationState(
+                status = GenerationStatus.CANCELLED,
+                requestId = pending.requestId,
+                sessionId = pending.sessionId,
+                personality = pending.personality,
+                error = "Generación cancelada.",
+                durable = true
+            )
+            store.clearPendingTurn(pending.requestId)
+            store.clearCancellationRequest(pending.requestId)
+            generationActive = false
+            activeRequestId = null
+            activeIdempotencyKey = null
+            activeBubble = null
+            return
+        }
         if (generationActive) return
 
         val payload = try {
@@ -1292,10 +1314,12 @@ class MainActivity : Activity() {
 
     private fun cancelGeneration() {
         if (!generationActive) return
-        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId ?: return
+
+        // Persist cancellation first so Activity/process recreation cannot resurrect it.
+        store.requestCancellation(requestId)
         Deep33GenerationService.cancel(this, requestId)
-        store.clearPendingTurn(requestId)
-        store.clearGenerationState(requestId)
+
         generationActive = false
         activeRequestId = null
         activeIdempotencyKey = null
@@ -1314,7 +1338,14 @@ class MainActivity : Activity() {
         input.isEnabled = true
         micButton.isEnabled = true
         cancelButton.visibility = View.GONE
-        updateConnection(if (success) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+        val hasRecoverableTurn = store.loadPendingTurn() != null
+        updateConnection(
+            when {
+                success -> ConnectionState.ONLINE
+                hasRecoverableTurn -> ConnectionState.CONNECTING
+                else -> ConnectionState.OFFLINE
+            }
+        )
         if (!success || textToSpeech?.isSpeaking != true) {
             setVoiceState(AvatarState.IDLE)
             if (!voiceModeActive) setVoiceModeUi(false)
@@ -1346,8 +1377,36 @@ class MainActivity : Activity() {
         val tts = textToSpeech ?: return
         val tone = VoiceTone.fromKey(store.voiceTone)
         val profile = PersonalityVoiceProfile.forPersonality(personality)
-        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.65f, 1.35f))
-        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.60f, 1.45f))
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val localSpanish = tts.voices.orEmpty()
+                .filter { it.locale.language.equals("es", ignoreCase = true) }
+                .filterNot { it.isNetworkConnectionRequired }
+
+            val selectedVoice = profile.preferredLocales.asSequence()
+                .mapNotNull { preferred ->
+                    localSpanish
+                        .filter { it.locale == preferred }
+                        .sortedWith(
+                            compareByDescending<android.speech.tts.Voice> { it.quality }
+                                .thenBy { it.latency }
+                        )
+                        .firstOrNull()
+                }
+                .firstOrNull()
+                ?: localSpanish
+                    .sortedWith(
+                        compareByDescending<android.speech.tts.Voice> { it.quality }
+                            .thenBy { it.latency }
+                    )
+                    .firstOrNull()
+
+            if (selectedVoice != null) tts.voice = selectedVoice
+        }
+
+        // Keep personality differences audible without pushing pitch/rate into caricature.
+        tts.setPitch((tone.pitch * profile.pitchFactor).coerceIn(0.70f, 1.30f))
+        tts.setSpeechRate((tone.speechRate * profile.speechRateFactor).coerceIn(0.72f, 1.28f))
     }
 
     private fun setVoiceModeUi(active: Boolean) {
@@ -1484,7 +1543,7 @@ class MainActivity : Activity() {
         }
         applyVoiceTone(personality)
 
-        val speech = VoiceConversationPolicy.compactForSpeech(text)
+        val speech = VoiceConversationPolicy.compactForSpeech(text, personality)
         if (speech.isBlank()) return
 
         val utteranceId = "deep33-response-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
