@@ -17,7 +17,7 @@ def test_personality_prompt_is_style_only() -> None:
     conspiranoic = personality_prompt("CONSPIRANOICO")
     assert "CONSPIRANOICO" in conspiranoic
     assert "active personality contract" in conspiranoic.lower()
-    assert "must not silently fall back to NEUTRO" in conspiranoic
+    assert "Do not silently fall back to NEUTRO" in conspiranoic
     assert "higher-priority system rules" in conspiranoic
 
     comic = personality_prompt("COMICO")
@@ -65,10 +65,10 @@ def test_prepare_messages_keeps_current_personality_as_final_system_instruction(
 
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
-    assert messages[1]["role"] == "system"
-    assert "Personality preference: NEUTRO." not in messages[0]["content"]
-    assert "ACTIVE_PERSONALITY=COMICO" in messages[1]["content"]
-    assert messages[1]["content"].rfind("MODE CHECK:") > messages[1]["content"].find("ACTIVE_PERSONALITY=COMICO")
+    assert messages[0]["role"] == "system"
+    assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
+    assert messages[0]["content"].rfind("MODE CHECK:") > messages[0]["content"].find("ACTIVE_PERSONALITY=COMICO")
+    assert all("Personality preference: NEUTRO." not in message["content"] for message in messages)
 
 
 def test_personality_header_and_body_must_agree() -> None:
