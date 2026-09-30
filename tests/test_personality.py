@@ -34,7 +34,7 @@ def test_personality_prompt_rejects_unknown_to_neutral() -> None:
 
 def test_personality_protocol_is_machine_readable_and_explicit() -> None:
     prompt = personality_prompt("COMICO")
-    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v3" in prompt
+    assert "DEEP33 PERSONALITY CONTROL PROTOCOL v4" in prompt
     assert "ACTIVE_PERSONALITY=COMICO" in prompt
     assert "per-turn runtime control" in prompt
     assert "Do not silently fall back to NEUTRO" in prompt
@@ -152,6 +152,7 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
         assert "Claro" in prompt
         assert "Como IA" in prompt
         assert f"SIGNATURE={signature}" in prompt
+        assert "Make at least two traits from the MODE SIGNATURE observable" in prompt
         assert "Do not announce the personality" in prompt
 
 
