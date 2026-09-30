@@ -69,12 +69,15 @@ class MemoryClient:
         *,
         idempotency_key: str | None = None,
         request_hash: str | None = None,
+        memory_profile_id: str | None = None,
         **payload: Any,
     ) -> dict:
         if not self.enabled:
             return {}
 
         body = {"action": action, "session_id": session_id, **payload}
+        if memory_profile_id:
+            body["memory_profile_id"] = memory_profile_id
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
         if request_hash:
@@ -130,8 +133,8 @@ class MemoryClient:
     async def ping(self) -> dict:
         return await self._call("ping", "deep33-health")
 
-    async def context(self, session_id: str) -> dict:
-        return await self._call("context", session_id)
+    async def context(self, session_id: str, memory_profile_id: str | None = None) -> dict:
+        return await self._call("context", session_id, memory_profile_id=memory_profile_id)
 
     async def sync(
         self,
