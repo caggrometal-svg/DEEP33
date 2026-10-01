@@ -441,6 +441,12 @@ class Deep33GenerationService : Service() {
     }
 
     override fun onDestroy() {
+        // Mark system teardown before touching the active stream. Otherwise a socket
+        // closed as part of Activity/process/service lifecycle teardown can race with
+        // the generation thread and be misclassified as a transport failure.
+        stoppingBySystem = true
+        keepAliveForRecovery = false
+
         // Android may recreate a foreground service after process reclamation. Preserve
         // a durable RUNNING checkpoint before closing the socket so the redelivered
         // request can continue from the same persisted turn instead of becoming lost.
@@ -450,7 +456,7 @@ class Deep33GenerationService : Service() {
                 persistRecoveryCheckpoint(it)
             }
         }
-        stoppingBySystem = true
+
         Deep33Api.cancelActiveStream()
         executor.shutdownNow()
         super.onDestroy()
