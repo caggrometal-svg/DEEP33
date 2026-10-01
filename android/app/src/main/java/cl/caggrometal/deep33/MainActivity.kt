@@ -417,17 +417,28 @@ class MainActivity : Activity() {
         }
 
         header.addView(Button(this).apply {
-            text = "≡"
-            textSize = 22f
+            text = "☰"
+            textSize = 17f
             minWidth = 0
             minHeight = 0
             setPadding(0, 0, 0, 0)
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setBackgroundColor(Color.TRANSPARENT)
+            gravity = Gravity.CENTER
+            isAllCaps = false
+            setTextColor(Deep33Theme.RED_DEEP)
+            setBackground(
+                GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.rgb(18, 3, 7))
+                    setStroke(dp(1), Deep33Theme.RED_DEEP)
+                }
+            )
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            paint.setShadowLayer(dp(4).toFloat(), 0f, 0f, Deep33Theme.RED_DEEP)
+            elevation = dp(2).toFloat()
             stateListAnimator = null
             setOnClickListener { toggleSidebar() }
             addPressFeedback(this)
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }, LinearLayout.LayoutParams(dp(38), dp(38)))
 
         statusView = TextView(this).apply {
             text = "PROCESANDO · DEEP33"
@@ -437,25 +448,41 @@ class MainActivity : Activity() {
 
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
         currentPersonalityView = TextView(this).apply {
+            text = "DEEP33"
             textSize = 12.5f
             letterSpacing = 0.10f
-            setPadding(0, dp(3), 0, 0)
+            singleLine = true
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Deep33Theme.RED_DEEP)
+            setBackground(
+                GradientDrawable().apply {
+                    setColor(Color.rgb(18, 3, 7))
+                    cornerRadius = dp(16).toFloat()
+                    setStroke(dp(1), Deep33Theme.RED_DEEP)
+                }
+            )
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            paint.setShadowLayer(dp(5).toFloat(), 0f, 0f, Deep33Theme.RED_DEEP)
+            contentDescription = "Personalidad activa de DEEP33"
         }
-        titleGroup.addView(currentPersonalityView)
-        titleGroup.addView(View(this).apply {
-            setBackgroundColor(Deep33Theme.RED)
-            layoutParams = LinearLayout.LayoutParams(dp(26), dp(1)).apply {
-                topMargin = dp(7)
-            }
-        })
+
+        titleGroup.addView(
+            currentPersonalityView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         header.addView(
             titleGroup,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                leftMargin = dp(8)
+            }
         )
         statusView = TextView(this).apply {
             text = "● CONECTANDO"
@@ -1157,9 +1184,23 @@ class MainActivity : Activity() {
     }
 
     private fun applyPersonalityTheme(personality: Personality) {
-        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
+        // The header identity follows the active personality: name + neon border.
+        currentPersonalityView.text = personality.key
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
+        currentPersonalityView.setBackground(
+            GradientDrawable().apply {
+                setColor(Color.argb(42, Color.red(personality.accent), Color.green(personality.accent), Color.blue(personality.accent)))
+                cornerRadius = dp(16).toFloat()
+                setStroke(dp(1), personality.accent)
+            }
+        )
+        currentPersonalityView.paint.setShadowLayer(
+            dp(5).toFloat(),
+            0f,
+            0f,
+            personality.accent
+        )
         refreshPersonalityButtons()
         applyChatActionButtonTheme(personality)
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
