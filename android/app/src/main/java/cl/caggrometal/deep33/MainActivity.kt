@@ -1472,7 +1472,7 @@ class MainActivity : Activity() {
         input.setText("")
         refreshSidebarHistory()
 
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(102, 7, 24))
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
@@ -1540,7 +1540,7 @@ class MainActivity : Activity() {
         activeBubble = appendBubble(
             "DEEP33",
             partial.ifBlank { "Pensando..." },
-            Color.rgb(42, 12, 18)
+            Color.rgb(102, 7, 24)
         )
         activeBubble?.tag = partial.ifBlank { "Pensando..." }
 
