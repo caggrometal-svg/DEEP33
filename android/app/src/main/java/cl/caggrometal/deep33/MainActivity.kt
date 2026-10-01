@@ -143,7 +143,7 @@ class MainActivity : Activity() {
     private var voiceModeGeneration = 0L
     private lateinit var personalityModesContainer: LinearLayout
 
-    private val executor = Executors.newFixedThreadPool(2)
+    private val executor = Executors.newFixedThreadPool(4)
     private lateinit var store: SessionStore
     private val conversation = mutableListOf<UiMessage>()
     private var generationActive = false
@@ -270,10 +270,16 @@ class MainActivity : Activity() {
         showTab(Tab.CHAT)
         renderConversation()
         applyPersonalityTheme(Personality.fromKey(store.personality))
-        checkConnectivity()
-        loadRemoteContext()
-        retryPendingMemorySync()
+        // Keep startup lightweight: health is enough for the initial status.
+        // Full AI/network diagnostics remain manual and never compete with the first chat turn.
+        checkHealthFast()
         restorePendingTurnIfNeeded()
+        window.decorView.postDelayed({
+            if (activityVisible && !generationActive) {
+                loadRemoteContext()
+                retryPendingMemorySync()
+            }
+        }, 600L)
     }
 
     override fun onStart() {
@@ -283,7 +289,7 @@ class MainActivity : Activity() {
             // Reattach to the durable generation after returning from another app.
             restorePendingTurnIfNeeded()
             retryPendingMemorySync()
-            checkConnectivity()
+            checkHealthFast()
         }
         retryPendingMemorySync()
         startGenerationMonitor()
@@ -1327,6 +1333,41 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
                 Log.w("DEEP33", "Remote memory load failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun checkHealthFast() {
+        updateConnection(ConnectionState.CONNECTING)
+        executor.submit {
+            try {
+                val health = Deep33Api.get("/health", store.sessionId)
+                val online = health.optString("status") == "PASS"
+                runOnUiThread {
+                    if (generationActive) {
+                        updateConnection(ConnectionState.CONNECTING)
+                    } else {
+                        updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+                    }
+                    if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                        diagnosticsView.text = if (online) {
+                            "ONLINE\nEDGE: PASS\nHEALTH: PASS\nDiagnóstico profundo: disponible manualmente."
+                        } else {
+                            "OFFLINE\nDEEP33 no respondió al chequeo rápido."
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    if (generationActive || store.loadPendingTurn() != null) {
+                        updateConnection(ConnectionState.CONNECTING)
+                    } else {
+                        updateConnection(ConnectionState.OFFLINE)
+                    }
+                    if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                        diagnosticsView.text = "OFFLINE\n" + (e.message ?: "No se pudo comprobar DEEP33.")
+                    }
+                }
             }
         }
     }
