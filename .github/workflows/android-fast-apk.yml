@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           cd android
-          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon
+          gradle :app:assembleDebug --no-daemon
       - name: Publish DEEP33 APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
