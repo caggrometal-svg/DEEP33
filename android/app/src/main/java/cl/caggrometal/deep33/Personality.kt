@@ -14,7 +14,7 @@ enum class Personality(
         0xFFFF1744.toInt(),
         "Directo, impaciente, sarcástico y confrontacional.",
         0.052f,
-        "ANGULAR"
+        "ORBITAL"
     ),
     NEUTRO(
         "NEUTRO",
@@ -30,7 +30,7 @@ enum class Personality(
         0xFFD2A264.toInt(),
         "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión.",
         0.044f,
-        "WOBBLE"
+        "ORBITAL"
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
@@ -38,7 +38,7 @@ enum class Personality(
         0xFF9278C1.toInt(),
         "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis.",
         0.021f,
-        "CROSSHAIR"
+        "ORBITAL"
     );
 
     companion object {
