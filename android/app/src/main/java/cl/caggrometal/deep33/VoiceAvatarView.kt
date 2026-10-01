@@ -144,7 +144,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         val eyeGap = radius * 0.40f
         val eyeRadius = radius * 0.045f
 
-        // Eyes are deliberately fixed: no gaze drift, blinking animation or oscillation.
+        // Static eyes: no movement or blink animation.
         fillPaint.color = withAlpha(accent, 225)
         canvas.drawCircle(cx - eyeGap, eyeY, eyeRadius, fillPaint)
         canvas.drawCircle(cx + eyeGap, eyeY, eyeRadius, fillPaint)
@@ -175,7 +175,6 @@ class VoiceAvatarView @JvmOverloads constructor(
             accent
         )
 
-        // No nose is rendered.
         val mouthY = cy + radius * 0.30f
         val expression = when (personality) {
             Personality.AGRESIVO -> -0.30f
