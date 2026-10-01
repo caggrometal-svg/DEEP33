@@ -3,6 +3,8 @@ package cl.caggrometal.deep33
 import android.Manifest
 import android.media.AudioAttributes
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -22,6 +24,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -1995,6 +1998,14 @@ class MainActivity : Activity() {
         bubble.addView(contentView)
         renderMarkdown(contentView, content, isAssistant)
 
+        if (isAssistant && content.trim() != "Pensando...") {
+            addAssistantActionRow(
+                bubble = bubble,
+                contentView = contentView,
+                content = content
+            )
+        }
+
         val params = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -2019,6 +2030,150 @@ class MainActivity : Activity() {
         addPressFeedback(bubble)
         bubble.post { scrollToBottom() }
         return contentView
+    }
+
+    private fun addAssistantActionRow(
+        bubble: LinearLayout,
+        contentView: TextView,
+        content: String
+    ) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(5), 0, 0)
+        }
+
+        val normalTint = Color.rgb(158, 164, 174)
+        val activeTint = Personality.fromKey(store.personality).accent
+
+        fun actionButton(
+            icon: Int,
+            description: String,
+            onClick: (ImageButton) -> Unit
+        ): ImageButton =
+            ImageButton(this).apply {
+                setImageResource(icon)
+                imageTintList = android.content.res.ColorStateList.valueOf(normalTint)
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setBackgroundColor(Color.TRANSPARENT)
+                contentDescription = description
+                minimumWidth = 0
+                minimumHeight = 0
+                layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
+                    rightMargin = dp(2)
+                }
+                addPressFeedback(this)
+                setOnClickListener { onClick(this) }
+            }
+
+        row.addView(
+            actionButton(
+                R.drawable.ic_action_copy,
+                "Copiar respuesta"
+            ) { button ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("DEEP33", content))
+                button.imageTintList =
+                    android.content.res.ColorStateList.valueOf(activeTint)
+                button.postDelayed({
+                    button.imageTintList =
+                        android.content.res.ColorStateList.valueOf(normalTint)
+                }, 650L)
+            }
+        )
+
+        row.addView(
+            actionButton(
+                R.drawable.ic_action_volume,
+                "Leer respuesta en voz alta"
+            ) { button ->
+                speakAssistant(content, Personality.fromKey(store.personality))
+                button.imageTintList =
+                    android.content.res.ColorStateList.valueOf(activeTint)
+                button.postDelayed({
+                    button.imageTintList =
+                        android.content.res.ColorStateList.valueOf(normalTint)
+                }, 900L)
+            }
+        )
+
+        val likeButton = actionButton(
+            R.drawable.ic_action_like,
+            "Respuesta útil"
+        ) { button ->
+            button.imageTintList =
+                android.content.res.ColorStateList.valueOf(activeTint)
+            dislikeButtonTint(normalTint, likeButton = button, other = null)
+        }
+        row.addView(likeButton)
+
+        val dislikeButton = actionButton(
+            R.drawable.ic_action_dislike,
+            "Respuesta no útil"
+        ) { button ->
+            button.imageTintList =
+                android.content.res.ColorStateList.valueOf(activeTint)
+            dislikeButtonTint(normalTint, likeButton = null, other = button)
+        }
+        row.addView(dislikeButton)
+
+        // One final compact action, matching the common response-action pattern.
+        row.addView(
+            actionButton(
+                R.drawable.ic_action_retry,
+                "Intentar de nuevo"
+            ) {
+                regenerateLastResponse()
+            }
+        )
+
+        bubble.addView(
+            row,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(38)
+            )
+        )
+    }
+
+    private fun dislikeButtonTint(
+        normalTint: Int,
+        likeButton: ImageButton?,
+        other: ImageButton?
+    ) {
+        // The feedback selection is intentionally local to this bubble.
+        if (likeButton != null) {
+            likeButton.imageTintList =
+                android.content.res.ColorStateList.valueOf(Personality.fromKey(store.personality).accent)
+        }
+        if (other != null) {
+            other.imageTintList =
+                android.content.res.ColorStateList.valueOf(Personality.fromKey(store.personality).accent)
+        }
+    }
+
+    private fun regenerateLastResponse() {
+        if (generationActive) return
+
+        val assistantIndex = conversation.indexOfLast { it.role == "assistant" }
+        if (assistantIndex < 0) return
+
+        val userIndex = conversation
+            .take(assistantIndex)
+            .indexOfLast { it.role == "user" }
+
+        if (userIndex < 0) return
+
+        val prompt = conversation[userIndex].content
+        while (conversation.size > userIndex) {
+            conversation.removeAt(userIndex)
+        }
+
+        store.saveMessages(conversation)
+        saveCurrentSummary()
+        renderConversation()
+        sendMessage(prompt)
     }
 
     private fun renderMarkdown(view: TextView, markdown: String, isAssistant: Boolean = false) {
