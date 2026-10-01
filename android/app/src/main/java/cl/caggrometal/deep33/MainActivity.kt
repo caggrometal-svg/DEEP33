@@ -297,6 +297,11 @@ class MainActivity : Activity() {
     override fun onStop() {
         activityVisible = false
         wasBackgrounded = true
+        // Do not let an already queued UI poll mutate a stopped Activity. The durable
+        // generation state remains owned by the foreground service and is re-attached
+        // when the Activity returns to the foreground.
+        generationHandler.removeCallbacks(generationMonitor)
+
         // Commit the visible conversation before the Activity leaves the foreground.
         // This is local persistence only; the network path is intentionally untouched.
         if (::store.isInitialized) {
@@ -1520,7 +1525,7 @@ class MainActivity : Activity() {
     }
 
     private fun monitorGeneration() {
-        if (!generationActive) return
+        if (!generationActive || !activityVisible) return
 
         val state = store.loadGenerationState()
         if (state == null || state.requestId != activeRequestId) {
