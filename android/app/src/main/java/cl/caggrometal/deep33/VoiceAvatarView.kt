@@ -229,7 +229,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         strokePaint.strokeWidth = dp(1.6f)
 
         if (speaking) {
-            val openHeight = height + radiusIndependent(audioLevel) * dp(4f)
+            val openHeight = height + audioLevel.coerceIn(0f, 1f) * dp(4f)
             canvas.drawOval(
                 RectF(
                     cx - width,
