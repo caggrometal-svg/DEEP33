@@ -27,10 +27,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     private var audioLevel = 0f
     private var animationRunning = false
 
-    fun setPersonality(value: Personality) {
-        personality = value
-        invalidate()
-    }
+    fun setPersonality(value: Personality) { personality = value; invalidate() }
 
     fun setVoiceState(value: AvatarState) {
         state = value
@@ -81,8 +78,8 @@ class VoiceAvatarView @JvmOverloads constructor(
         val radius = size * 0.31f
         val accent = personality.accent
 
-        // Static, lightweight face: no nose, no head rings, no orbiting effects,
-        // and no continuous redraw loop. State changes redraw only when needed.
+        // Static face: no nose, head motion, gaze, blinking or mouth animation.
+        // Facial expression is controlled only by the eyebrows.
         fillPaint.color = 0xFF08080A.toInt()
         canvas.drawCircle(cx, cy, radius, fillPaint)
 
@@ -90,44 +87,21 @@ class VoiceAvatarView @JvmOverloads constructor(
         strokePaint.color = withAlpha(accent, 160)
         canvas.drawCircle(cx, cy, radius, strokePaint)
 
-        val headMotion = when (state) {
-            AvatarState.SPEAKING -> sin(now / 520.0).toFloat() * 0.035f
-            AvatarState.LISTENING -> sin(now / 900.0).toFloat() * 0.018f
-            AvatarState.THINKING -> sin(now / 1250.0).toFloat() * 0.012f
-            AvatarState.IDLE -> 0f
-        }
-        canvas.save()
-        canvas.rotate(headMotion * 180f / Math.PI.toFloat(), cx, cy)
-
         val eyeY = cy - radius * 0.10f
         val eyeGap = radius * 0.37f
         val eyeW = radius * 0.17f
         val eyeH = radius * 0.12f
         val irisR = radius * 0.035f
 
-        val blinkPhase = (now % 4200L).toFloat()
-        val blink = when {
-            blinkPhase < 120f -> 0.08f
-            blinkPhase < 180f -> 0.45f
-            blinkPhase < 240f -> 1f
-            else -> 0f
-        }
-        val eyeOpen = 1f - blink
-        val gazeX = when (state) {
-            AvatarState.THINKING -> sin(now / 650.0).toFloat() * radius * 0.035f
-            AvatarState.LISTENING -> sin(now / 1100.0).toFloat() * radius * 0.02f
-            AvatarState.SPEAKING -> sin(now / 780.0).toFloat() * radius * 0.015f
-            AvatarState.IDLE -> 0f
-        }
-        val gazeY = if (state == AvatarState.THINKING) -radius * 0.018f else 0f
-
-        val microExpression = when (state) {
+        // Only eyebrows express state/personality.
+        val browMotion = when (state) {
             AvatarState.SPEAKING -> sin(now / 1700.0).toFloat() * radius * 0.012f
             AvatarState.LISTENING -> sin(now / 2100.0).toFloat() * radius * 0.018f
             AvatarState.THINKING -> radius * 0.025f
             AvatarState.IDLE -> 0f
         }
-        val browY = eyeY - radius * 0.14f + microExpression
+        val browY = eyeY - radius * 0.14f + browMotion
+
         when (personality) {
             Personality.AGRESIVO -> {
                 drawBrow(canvas, cx - eyeGap, browY, eyeW, -radius * 0.07f, radius * 0.07f, accent)
@@ -146,17 +120,13 @@ class VoiceAvatarView @JvmOverloads constructor(
                 drawBrow(canvas, cx + eyeGap, browY, eyeW, -radius * 0.04f, radius * 0.02f, accent)
             }
         }
-        drawEye(canvas, cx - eyeGap + gazeX, eyeY + gazeY, eyeW, eyeH * eyeOpen, irisR, accent)
-        drawEye(canvas, cx + eyeGap + gazeX, eyeY + gazeY, eyeW, eyeH * eyeOpen, irisR, accent)
 
-        drawExpressionMouth(
-            canvas,
-            cx,
-            cy + radius * 0.30f,
-            radius * (0.23f + audioLevel * 0.06f),
-            accent
-        )
-        canvas.restore()
+        // Eyes stay completely neutral.
+        drawEye(canvas, cx - eyeGap, eyeY, eyeW, eyeH, irisR, accent)
+        drawEye(canvas, cx + eyeGap, eyeY, eyeW, eyeH, irisR, accent)
+
+        // Mouth stays completely neutral.
+        drawNeutralMouth(canvas, cx, cy + radius * 0.30f, radius * 0.23f, accent)
     }
 
     private fun drawEye(
@@ -192,7 +162,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         canvas.drawPath(path, strokePaint)
     }
 
-    private fun drawExpressionMouth(
+    private fun drawNeutralMouth(
         canvas: Canvas,
         cx: Float,
         cy: Float,
@@ -201,31 +171,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     ) {
         strokePaint.color = withAlpha(accent, 225)
         strokePaint.strokeWidth = dp(1.8f)
-        val path = Path()
-        val speaking = state == AvatarState.SPEAKING
-        when (personality) {
-            Personality.AGRESIVO -> {
-                path.moveTo(cx - width, cy - if (speaking) dp(1f) else 0f)
-                path.quadTo(cx, cy + width * 0.20f, cx + width, cy - if (speaking) dp(1f) else 0f)
-            }
-            Personality.NEUTRO -> {
-                if (speaking) {
-                    canvas.drawOval(RectF(cx - width * 0.72f, cy - dp(2.2f), cx + width * 0.72f, cy + dp(2.2f)), strokePaint)
-                    return
-                }
-                path.moveTo(cx - width, cy)
-                path.lineTo(cx + width, cy)
-            }
-            Personality.COMICO -> {
-                path.moveTo(cx - width, cy - dp(1f))
-                path.quadTo(cx, cy + width * 0.24f, cx + width, cy - dp(1f))
-            }
-            Personality.CONSPIRANOICO -> {
-                path.moveTo(cx - width, cy + dp(1.5f))
-                path.quadTo(cx, cy - width * 0.08f, cx + width, cy - dp(1.5f))
-            }
-        }
-        canvas.drawPath(path, strokePaint)
+        canvas.drawLine(cx - width, cy, cx + width, cy, strokePaint)
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int =
