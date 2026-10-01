@@ -454,7 +454,7 @@ class MainActivity : Activity() {
             text = "DEEP33"
             textSize = 12.5f
             letterSpacing = 0.10f
-            singleLine = true
+            setSingleLine(true)
             setPadding(dp(12), dp(6), dp(12), dp(6))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Deep33Theme.RED_DEEP)
