@@ -54,26 +54,13 @@ class VoiceAvatarView @JvmOverloads constructor(
         val radius = size * 0.29f
         val accent = personality.accent
 
-        // Minimal visual system: one static personality contour, static face,
-        // and one small active core. No rotating halos, particles or decorative rings.
+        // Minimal visual system: one static personality contour and static face.
+        // There is intentionally no central dot/core/nose.
         fillPaint.color = 0xFF050505.toInt()
         canvas.drawCircle(centerX, centerY, radius + dp(18f), fillPaint)
 
         drawPersonalityContour(canvas, centerX, centerY, radius, accent)
         drawStaticFace(canvas, centerX, centerY, radius, accent)
-
-        val activeLevel = when (state) {
-            AvatarState.LISTENING, AvatarState.SPEAKING -> audioLevel
-            AvatarState.THINKING -> 0.16f
-            AvatarState.IDLE -> 0f
-        }
-
-        val coreRadius = radius * (0.11f + 0.035f * activeLevel)
-        fillPaint.color = withAlpha(accent, if (state == AvatarState.IDLE) 210 else 235)
-        canvas.drawCircle(centerX, centerY, coreRadius, fillPaint)
-
-        fillPaint.color = 0xFFF0F0F0.toInt()
-        canvas.drawCircle(centerX, centerY, radius * 0.022f, fillPaint)
     }
 
     private fun drawPersonalityContour(
