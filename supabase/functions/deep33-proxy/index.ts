@@ -79,9 +79,15 @@ const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
 const EDGE_AI_REQUIRES_AUTH =
   (Deno.env.get("AI_GATEWAY_REQUIRES_AUTH") || "").trim().toLowerCase() === "true" ||
   EDGE_AI_PROVIDER.toLowerCase() === "kilo";
-const EDGE_AI_TIMEOUT_MS = Math.max(5000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "30000")));
-const EDGE_AI_RETRY_COUNT = Math.max(0, Math.min(2, Number(Deno.env.get("AI_PROVIDER_RETRY_COUNT") || "1")));
-const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(5000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "750")));
+// Interactive chat is latency-first. A provider that does not begin streaming quickly
+// should be abandoned before a long retry chain can stall the user experience.
+const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "45000")));
+const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = Math.max(
+  3000,
+  Math.min(15000, Number(Deno.env.get("AI_PROVIDER_FIRST_CHUNK_TIMEOUT_MS") || "8000")),
+);
+const EDGE_AI_RETRY_COUNT = Math.max(0, Math.min(2, Number(Deno.env.get("AI_PROVIDER_RETRY_COUNT") || "0")));
+const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(2000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "250")));
 const edgeCircuit = new Map<string, { failures: number; openUntil: number }>();
 const EDGE_CIRCUIT_THRESHOLD = 3;
 const EDGE_CIRCUIT_COOLDOWN_MS = 15000;
@@ -180,6 +186,51 @@ function extractProviderText(body: Record<string, unknown>): string {
   return "";
 }
 
+function providerPayload(
+  payload: Record<string, unknown>,
+  stream: boolean,
+): Record<string, unknown> {
+  const providerPayload = { ...payload, stream };
+  delete providerPayload.personality;
+  delete providerPayload.web_navigation;
+  delete providerPayload.sources;
+  return providerPayload;
+}
+
+function providerRequestHeaders(provider: EdgeAIProvider, requestId: string, accept: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Accept": accept,
+    ...(provider.requires_auth && provider.api_key
+      ? { "Authorization": "Bearer " + provider.api_key }
+      : {}),
+    "X-Request-ID": requestId,
+  };
+}
+
+function isRetryableStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+function recordProviderFailure(
+  provider: EdgeAIProvider,
+): { failures: number; openUntil: number } {
+  const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
+  circuit.failures += 1;
+  if (circuit.failures >= EDGE_CIRCUIT_THRESHOLD) {
+    circuit.openUntil = Date.now() + EDGE_CIRCUIT_COOLDOWN_MS;
+  }
+  edgeCircuit.set(provider.name, circuit);
+  return circuit;
+}
+
 async function callEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
@@ -192,12 +243,6 @@ async function callEdgeAI(
   for (const provider of providers) {
     const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
     if (Date.now() < circuit.openUntil) {
-      console.warn(JSON.stringify({
-        event: "edge_ai_provider_circuit_open",
-        provider: provider.name,
-        model: provider.model,
-        request_id: requestId,
-      }));
       continue;
     }
 
@@ -207,23 +252,11 @@ async function callEdgeAI(
       const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
 
       try {
-        const providerPayload = { ...payload, stream: false };
-        delete providerPayload.personality;
-        delete providerPayload.web_navigation;
-        delete providerPayload.sources;
-
         const response = await fetch(provider.url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            ...(provider.requires_auth && provider.api_key
-              ? { "Authorization": "Bearer " + provider.api_key }
-              : {}),
-            "X-Request-ID": requestId,
-          },
+          headers: providerRequestHeaders(provider, requestId, "application/json"),
           body: JSON.stringify({
-            ...providerPayload,
+            ...providerPayload(payload, false),
             ...(provider.model ? { model: provider.model } : {}),
           }),
           signal: controller.signal,
@@ -263,7 +296,11 @@ async function callEdgeAI(
         } else {
           const providerError =
             typeof body.error === "object" && body.error
-              ? String((body.error as Record<string, unknown>).message ?? (body.error as Record<string, unknown>).code ?? "")
+              ? String(
+                  (body.error as Record<string, unknown>).message ??
+                    (body.error as Record<string, unknown>).code ??
+                    "",
+                )
               : "";
           lastError =
             provider.name +
@@ -272,15 +309,7 @@ async function callEdgeAI(
             (providerError ? "_" + providerError.slice(0, 80).replace(/\s+/g, "_") : "");
         }
 
-        const retryable =
-          response.status === 408 ||
-          response.status === 429 ||
-          response.status === 500 ||
-          response.status === 502 ||
-          response.status === 503 ||
-          response.status === 504;
-
-        if (retryable && attempt < EDGE_AI_RETRY_COUNT) {
+        if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
           await new Promise((resolve) =>
             setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
           );
@@ -288,16 +317,8 @@ async function callEdgeAI(
         }
 
         if (response.status >= 500 || response.status === 429) {
-          circuit.failures += 1;
-          if (circuit.failures >= EDGE_CIRCUIT_THRESHOLD) {
-            circuit.openUntil = Date.now() + EDGE_CIRCUIT_COOLDOWN_MS;
-          }
-          edgeCircuit.set(provider.name, circuit);
-          // Never let a failed provider block an independently configured fallback.
-          break;
+          recordProviderFailure(provider);
         }
-
-        edgeCircuit.set(provider.name, circuit);
         break;
       } catch (error) {
         const elapsedMs = Math.round(performance.now() - started);
@@ -313,6 +334,8 @@ async function callEdgeAI(
           error: message.slice(0, 200),
         }));
 
+        // Do not spend another long provider timeout on the normal interactive path.
+        // Move directly to an independent fallback when available.
         if (attempt < EDGE_AI_RETRY_COUNT) {
           await new Promise((resolve) =>
             setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
@@ -320,14 +343,217 @@ async function callEdgeAI(
           continue;
         }
 
-        circuit.failures += 1;
-        if (circuit.failures >= EDGE_CIRCUIT_THRESHOLD) {
-          circuit.openUntil = Date.now() + EDGE_CIRCUIT_COOLDOWN_MS;
-        }
-        edgeCircuit.set(provider.name, circuit);
+        recordProviderFailure(provider);
         break;
       } finally {
         clearTimeout(timer);
+      }
+    }
+  }
+
+  throw new Error(lastError);
+}
+
+async function streamEdgeAI(
+  payload: Record<string, unknown>,
+  requestId: string,
+  onController: (controller: AbortController) => void,
+  onChunk: (chunk: string) => void,
+): Promise<{ text: string; provider: string; model: string }> {
+  const providers = edgeProviders();
+  if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
+
+  let lastError = "EDGE_AI_GATEWAY_UNAVAILABLE";
+
+  for (const provider of providers) {
+    const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
+    if (Date.now() < circuit.openUntil) continue;
+
+    for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
+      const started = performance.now();
+      const controller = new AbortController();
+      onController(controller);
+      const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+      let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+        () => controller.abort(),
+        EDGE_AI_FIRST_CHUNK_TIMEOUT_MS,
+      );
+      let emitted = false;
+      let done = false;
+      let buffer = "";
+      let fullText = "";
+
+      try {
+        const response = await fetch(provider.url, {
+          method: "POST",
+          headers: providerRequestHeaders(provider, requestId, "text/event-stream"),
+          body: JSON.stringify({
+            ...providerPayload(payload, true),
+            ...(provider.model ? { model: provider.model } : {}),
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          let body: Record<string, unknown> = {};
+          try {
+            const parsed = JSON.parse(errorText);
+            if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+          } catch {
+            // Non-JSON provider errors are handled by status below.
+          }
+          lastError = provider.name + "_HTTP_" + response.status;
+          if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+            );
+            continue;
+          }
+          if (response.status >= 500 || response.status === 429) {
+            recordProviderFailure(provider);
+          }
+          break;
+        }
+
+        if (!response.body) {
+          lastError = provider.name + "_EMPTY_STREAM";
+          break;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const flushEvent = (event: string) => {
+          const lines = event.split(/\r?\n/);
+          let eventType = "";
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventType = line.slice(6).trim();
+              continue;
+            }
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (!data) continue;
+            if (eventType === "error") {
+              throw new Error(data);
+            }
+            if (data === "[DONE]") {
+              done = true;
+              continue;
+            }
+            try {
+              const parsed = JSON.parse(data) as Record<string, unknown>;
+              const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+              const first = choices.length && typeof choices[0] === "object"
+                ? choices[0] as Record<string, unknown>
+                : {};
+              const delta = first.delta && typeof first.delta === "object"
+                ? first.delta as Record<string, unknown>
+                : {};
+              let chunk = typeof delta.content === "string" ? delta.content : "";
+              if (!chunk) {
+                const content = first.message && typeof first.message === "object"
+                  ? (first.message as Record<string, unknown>).content
+                  : undefined;
+                if (typeof content === "string") chunk = content;
+              }
+              if (chunk) {
+                emitted = true;
+                fullText += chunk;
+                onChunk(chunk);
+                if (firstChunkTimer) {
+                  clearTimeout(firstChunkTimer);
+                  firstChunkTimer = null;
+                }
+              }
+            } catch {
+              // Ignore provider SSE metadata that is not a text delta.
+            }
+          }
+        };
+
+        while (!done) {
+          if (controller.signal.aborted) {
+            throw new Error("EDGE_AI_STREAM_TIMEOUT");
+          }
+          const { value, done: readerDone } = await reader.read();
+          if (readerDone) {
+            if (buffer.trim()) {
+              flushEvent(buffer);
+              buffer = "";
+            }
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split(/\r?\n\r?\n/);
+          buffer = events.pop() || "";
+          for (const event of events) {
+            flushEvent(event);
+            if (done) break;
+          }
+        }
+
+        if (!done && buffer.trim()) {
+          flushEvent(buffer);
+        }
+
+        if (!done) {
+          throw new Error("EDGE_AI_STREAM_INCOMPLETE");
+        }
+
+        if (!fullText.trim()) {
+          throw new Error("EDGE_AI_EMPTY_RESPONSE");
+        }
+
+        const elapsedMs = Math.round(performance.now() - started);
+        console.log(JSON.stringify({
+          event: "edge_ai_provider_stream_complete",
+          provider: provider.name,
+          model: provider.model,
+          elapsed_ms: elapsedMs,
+          first_chunk_emitted: emitted,
+          attempt: attempt + 1,
+          request_id: requestId,
+        }));
+        edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+        return {
+          text: fullText,
+          provider: provider.name,
+          model: provider.model,
+        };
+      } catch (error) {
+        const elapsedMs = Math.round(performance.now() - started);
+        const message = error instanceof Error ? error.message : String(error);
+        lastError = provider.name + "_" + message;
+        console.error(JSON.stringify({
+          event: "edge_ai_provider_stream_error",
+          provider: provider.name,
+          model: provider.model,
+          elapsed_ms: elapsedMs,
+          first_chunk_emitted: emitted,
+          attempt: attempt + 1,
+          request_id: requestId,
+          error: message.slice(0, 200),
+        }));
+
+        // A partially emitted stream cannot safely fail over without duplicating
+        // visible text. Once output begins, surface the error to the client.
+        if (emitted) {
+          throw new Error(lastError);
+        }
+
+        if (attempt < EDGE_AI_RETRY_COUNT) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+          );
+          continue;
+        }
+
+        recordProviderFailure(provider);
+        break;
+      } finally {
+        if (firstChunkTimer) clearTimeout(firstChunkTimer);
+        clearTimeout(overallTimer);
       }
     }
   }
@@ -1356,52 +1582,62 @@ Deno.serve(async (req) => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
-          // Flush headers immediately. This prevents a slow provider response from
-          // looking like an idle/dead connection to Android or an intermediate proxy.
           controller.enqueue(encoder.encode(": DEEP33\n\n"));
+          let abortProvider = () => {};
 
           (async () => {
             try {
-              const ai = await callEdgeAI({
-                ...payload,
-                messages: buildEdgeMessages(messages, activePersonality),
-              }, requestId);
-
-              const responseText = sanitizeAssistantText(extractProviderText(ai.body));
-              if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
-
-              controller.enqueue(
-                encoder.encode(
-                  "data: " +
-                    JSON.stringify({
-                      choices: [{ delta: { content: responseText } }],
-                      _deep33_gateway: {
-                        provider: ai.provider,
-                        model: ai.model,
-                      },
-                    }) +
-                    "\n\n",
-                ),
+              const ai = await streamEdgeAI(
+                {
+                  ...payload,
+                  messages: buildEdgeMessages(messages, activePersonality),
+                },
+                requestId,
+                (providerController) => {
+                  abortProvider = () => providerController.abort();
+                },
+                (chunk) => {
+                  const safeChunk = sanitizeAssistantText(chunk);
+                  if (!safeChunk) return;
+                  controller.enqueue(
+                    encoder.encode(
+                      "data: " +
+                        JSON.stringify({
+                          choices: [{ delta: { content: safeChunk } }],
+                          _deep33_gateway: {
+                            provider: activePersonality,
+                            model: "stream",
+                          },
+                        }) +
+                        "\n\n",
+                    ),
+                  );
+                },
               );
+
+              const responseText = sanitizeAssistantText(ai.text);
+              if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 
-              try {
-                await Promise.race([
-                  memoryCall("sync", sessionId, {
-                    messages: [...messages, { role: "assistant", content: responseText }],
-                    personality: activePersonality,
-                    preferences: payload.preferences,
-                  }),
-                  new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)
-                  ),
-                ]);
-              } catch {
+              // Memory remains outside the first-response path. The answer is already
+              // visible when this background persistence starts.
+              void memoryCall("sync", sessionId, {
+                messages: [...messages, { role: "assistant", content: responseText }],
+                personality: activePersonality,
+                preferences: payload.preferences,
+              }).catch(() => {
                 console.warn(JSON.stringify({
                   event: "edge_memory_sync_degraded",
                   request_id: requestId,
                 }));
-              }
+              });
+
+              console.log(JSON.stringify({
+                event: "edge_chat_stream_complete",
+                provider: ai.provider,
+                model: ai.model,
+                request_id: requestId,
+              }));
             } catch (error) {
               const body = {
                 status: "FAIL",
@@ -1425,8 +1661,12 @@ Deno.serve(async (req) => {
               }
             }
           })();
+
+          (controller as unknown as { __abortProvider?: () => void }).__abortProvider = abortProvider;
         },
         cancel(reason) {
+          const abort = (controller as unknown as { __abortProvider?: () => void }).__abortProvider;
+          abort?.();
           console.warn(JSON.stringify({
             event: "edge_client_stream_cancelled",
             request_id: requestId,
@@ -1658,237 +1898,3 @@ Deno.serve(async (req) => {
         edgeMessages.push({
           role: "system",
           content:
-            "FINAL DEEP33 STYLE LOCK. ACTIVE_PERSONALITY=" +
-            String(payload.personality || "NEUTRO").toUpperCase() +
-            ". Synthesize the web evidence in your own words and reasoning. " +
-            personalityInstruction(payload.personality) +
-            " Never copy source wording, never reproduce source paragraphs, and never emit source links, citations, or URLs.",
-        });
-        if (edgeAIConfigured()) {
-          const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
-          try {
-            const ai = await callEdgeAI({ ...payload, messages: edgeMessages }, requestId);
-            const responseText = extractProviderText(ai.body);
-            let memoryPersisted = false;
-            try {
-              await Promise.race([
-                memoryCall("sync", sessionId, {
-                  messages: [...messages, { role: "assistant", content: responseText }],
-                  personality: payload.personality,
-                  preferences: payload.preferences,
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
-              ]);
-              memoryPersisted = true;
-            } catch {
-              // Generation remains available when memory persistence is degraded.
-            }
-return json({
-              status: "PASS",
-              request_id: requestId,
-              web_navigation: true,
-              sources,
-              memory_persisted: memoryPersisted,
-              result: {
-                role: "assistant",
-                text: responseText,
-                provider: ai.provider,
-                model: ai.model,
-                sources,
-              },
-            });
-          } catch (error) {
-            return json({
-              status: "FAIL",
-              error: error instanceof Error ? error.message : String(error),
-              web_navigation: true,
-              sources,
-            }, 502);
-          }
-        }
-
-        const upstream = await fetchUpstream(
-          "/v1/ai/generate",
-          {
-            method: "POST",
-            headers: {
-              ...headerSubset(req),
-              "Content-Type": "application/json",
-              "X-DEEP33-Skip-Web-Tools": "true",
-            },
-            body: JSON.stringify({
-              ...payload,
-              messages: enrichedMessages,
-            }),
-          },
-          sessionId,
-        );
-
-        const responseBody = await readJson(upstream);
-        if (!upstream.ok) {
-          return json(responseBody, upstream.status);
-        }
-
-        const result =
-          responseBody.result && typeof responseBody.result === "object"
-            ? {
-                ...(responseBody.result as Record<string, unknown>),
-                sources,
-              }
-            : {
-                role: "assistant",
-                text: String(responseBody.text ?? ""),
-                sources,
-              };
-return json({
-          ...responseBody,
-          web_navigation: true,
-          sources,
-          result,
-        }, upstream.status);
-      }
-
-      if (edgeAIConfigured()) {
-        const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
-        try {
-          const ai = await callEdgeAI({
-            ...payload,
-            messages: buildEdgeMessages(messages, payload.personality),
-          }, requestId);
-          const responseText = extractProviderText(ai.body);
-          let memoryPersisted = false;
-          try {
-            await Promise.race([
-              memoryCall("sync", sessionId, {
-                messages: [...messages, { role: "assistant", content: responseText }],
-                personality: payload.personality,
-                preferences: payload.preferences,
-              }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
-            ]);
-            memoryPersisted = true;
-          } catch {
-            // Generation remains available when memory persistence is degraded.
-          }
-          return json({
-            status: "PASS",
-            request_id: requestId,
-            web_navigation: false,
-            memory_persisted: memoryPersisted,
-            result: {
-              role: "assistant",
-              text: responseText,
-              provider: ai.provider,
-              model: ai.model,
-            },
-          });
-        } catch (error) {
-          return json({
-            status: "FAIL",
-            error: error instanceof Error ? error.message : String(error),
-          }, 502);
-        }
-      }
-
-      const bodyBuffer = new TextEncoder().encode(JSON.stringify(payload)).buffer;
-      const upstream = await fetchUpstream(
-        "/v1/ai/generate",
-        {
-          method: "POST",
-          headers: {
-            ...headerSubset(req),
-            "Content-Type": "application/json",
-          },
-          body: bodyBuffer,
-        },
-        sessionId,
-      );
-      return new Response(
-        upstream.body,
-        { status: upstream.status, headers: copyResponseHeaders(upstream) },
-      );
-    }
-
-    if (path === "/v1/web/status" && req.method === "GET") {
-      return json({
-        enabled: true,
-        engine: "DEEP33 Search Engine",
-        engine_version: "1.1.0",
-        tool_loop_enabled: true,
-        provider_independent: true,
-        configured_provider: "edge-public-fallback+upstream",
-        fallback_providers: ["bing_public", "ddg_public"],
-      });
-    }
-
-    if (path === "/v1/web/search" && req.method === "GET") {
-      const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
-      const result = await edgeSearch(query, sessionId);
-      return json(result, result.ok ? 200 : 503);
-    }
-
-    if (path === "/v1/search" && req.method === "GET") {
-      return json(
-        await edgeSearch(
-          url.searchParams.get("q") ||
-            url.searchParams.get("query") ||
-            "",
-          sessionId,
-        ),
-      );
-    }
-
-    if (
-      path.startsWith("/v1/") ||
-      path === "/health" ||
-      path === "/metrics"
-    ) {
-      const body =
-        req.method === "GET" || req.method === "HEAD"
-          ? undefined
-          : await req.arrayBuffer();
-
-      const upstream = await fetchUpstream(
-        path + url.search,
-        {
-          method: req.method,
-          headers: headerSubset(req),
-          body,
-        },
-        sessionId,
-      );
-
-      const out = new Headers(cors);
-      for (const name of [
-        "content-type",
-        "cache-control",
-        "x-request-id",
-      ]) {
-        const value = upstream.headers.get(name);
-        if (value) out.set(name, value);
-      }
-
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: out,
-      });
-    }
-
-    return json({
-      status: "PASS",
-      service: "DEEP33 Internet Edge",
-      path,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return json(
-      {
-        status: "FAIL",
-        error: error instanceof Error ? error.message : String(error),
-        path,
-        timestamp: new Date().toISOString(),
-      },
-      502,
-    );
-  }
-});
