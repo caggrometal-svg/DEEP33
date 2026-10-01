@@ -292,6 +292,26 @@ class Deep33GenerationService : Service() {
         payload: JSONArray
     ): String {
         var lastError: Deep33ApiException? = null
+        val checkpoint = StringBuilder()
+        var lastPersistedLength = 0
+        var lastCheckpointAt = System.nanoTime()
+
+        fun persistCheckpoint(force: Boolean = false) {
+            val now = System.nanoTime()
+            val dueByBytes = checkpoint.length - lastPersistedLength >= 2048
+            val dueByTime = now - lastCheckpointAt >= 120_000_000L
+            if (!force && !dueByBytes && !dueByTime) return
+
+            store.saveGenerationState(
+                status = GenerationStatus.RUNNING,
+                requestId = requestId,
+                sessionId = pending.sessionId,
+                personality = personality.key,
+                partialOutput = checkpoint.toString()
+            )
+            lastPersistedLength = checkpoint.length
+            lastCheckpointAt = now
+        }
 
         for (attempt in 0..MAX_STREAM_RECOVERY_RETRIES) {
             if (userCancelled.get() || Thread.currentThread().isInterrupted) {
@@ -299,7 +319,7 @@ class Deep33GenerationService : Service() {
             }
 
             try {
-                return Deep33Api.stream(
+                val result = Deep33Api.stream(
                     payload,
                     pending.sessionId,
                     personality.key,
@@ -310,16 +330,12 @@ class Deep33GenerationService : Service() {
                         userCancelled.get() || Thread.currentThread().isInterrupted
                     },
                     onText = { chunk ->
-                        val current = store.loadGenerationState()?.partialOutput.orEmpty()
-                        store.saveGenerationState(
-                            status = GenerationStatus.RUNNING,
-                            requestId = requestId,
-                            sessionId = pending.sessionId,
-                            personality = personality.key,
-                            partialOutput = current + chunk
-                        )
+                        checkpoint.append(chunk)
+                        persistCheckpoint()
                     }
                 )
+                persistCheckpoint(force = true)
+                return result
             } catch (e: Deep33ApiException) {
                 lastError = e
                 if (!isRecoverableTransportError(e.kind) || attempt == MAX_STREAM_RECOVERY_RETRIES) {
