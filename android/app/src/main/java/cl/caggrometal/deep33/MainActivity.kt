@@ -1465,7 +1465,10 @@ class MainActivity : Activity() {
         if (state?.status == GenerationStatus.DONE && state.sessionId == store.sessionId) {
             conversation.clear()
             conversation.addAll(store.loadMessages())
-            store.clearGenerationState(state.requestId)
+            // Final messages were committed before DONE. Clear the recovery markers
+            // together so a process death between DONE and pending cleanup cannot replay
+            // the same request on the next Activity instance.
+            store.clearCompletedGeneration(state.requestId)
             generationActive = false
             activeRequestId = null
             activeIdempotencyKey = null

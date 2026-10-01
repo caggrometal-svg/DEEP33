@@ -86,4 +86,57 @@ class SessionStorePersistenceTest {
         }
     }
 
+    @Test
+    fun completedGenerationCleanupClearsPendingTurnAtomically() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefsName = "deep33_completed_generation_cleanup_test"
+        context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
+
+        try {
+            val store = SessionStore(context, prefsName)
+            val sessionId = store.sessionId
+            val requestId = "done-with-pending-request"
+
+            store.saveMessages(
+                listOf(
+                    UiMessage("user", "DONE_USER"),
+                    UiMessage("assistant", "DONE_ASSISTANT"),
+                ),
+                durable = true
+            )
+            store.savePendingTurn(
+                PendingTurn(
+                    sessionId = sessionId,
+                    requestId = requestId,
+                    idempotencyKey = "idempotency-$requestId",
+                    personality = "NEUTRO",
+                    payloadJson = """[{"role":"user","content":"DONE_USER"}]"""
+                )
+            )
+            store.saveGenerationState(
+                status = GenerationStatus.DONE,
+                requestId = requestId,
+                sessionId = sessionId,
+                personality = "NEUTRO",
+                finalText = "DONE_ASSISTANT",
+                durable = true
+            )
+
+            val recreated = SessionStore(context, prefsName)
+            recreated.clearCompletedGeneration(requestId)
+
+            assertTrue(recreated.loadPendingTurn() == null)
+            assertTrue(recreated.loadGenerationState() == null)
+            assertEquals("DONE_ASSISTANT", recreated.loadMessages().last().content)
+        } finally {
+            context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit()
+        }
+    }
+
 }

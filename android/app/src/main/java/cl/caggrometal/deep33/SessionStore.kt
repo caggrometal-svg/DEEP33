@@ -328,6 +328,23 @@ class SessionStore(
         }
     }
 
+    /**
+     * A DONE generation is a durable recovery boundary. Remove both markers together so
+     * Activity/process recreation cannot replay a request whose final messages are already safe.
+     */
+    fun clearCompletedGeneration(requestId: String) {
+        val state = loadGenerationState()
+        val pending = loadPendingTurn()
+        val edit = prefs.edit()
+        if (state?.status == GenerationStatus.DONE && state.requestId == requestId) {
+            edit.remove(KEY_GENERATION_STATE)
+        }
+        if (pending?.requestId == requestId) {
+            edit.remove(KEY_PENDING_TURN)
+        }
+        edit.commit()
+    }
+
     fun saveChatSummary(title: String) {
         val normalized = title.replace(Regex("\\s+"), " ").trim().take(60)
         if (normalized.isBlank()) return
