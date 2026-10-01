@@ -830,14 +830,21 @@ class MainActivity : Activity() {
         input.setOnFocusChangeListener { _, focused -> setComposerBackground(input, focused) }
 
         micButton = Button(this).apply {
-            text = "◉"
+            text = "▂▅▃▆"
             contentDescription = "Abrir modo voz"
-            textSize = 20f
+            textSize = 12f
             isAllCaps = false
             minWidth = 0
             minHeight = 0
             setTextColor(Personality.fromKey(store.personality).accent)
-            setBackgroundColor(Color.TRANSPARENT)
+            setBackground(
+                GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), Personality.fromKey(store.personality).accent)
+                }
+            )
+            gravity = Gravity.CENTER
             stateListAnimator = null
             setOnClickListener { toggleVoiceInput() }
             addPressFeedback(this)
@@ -850,9 +857,9 @@ class MainActivity : Activity() {
         )
 
         sendButton = Button(this).apply {
-            text = "↑"
+            text = "➤"
             contentDescription = "Enviar mensaje"
-            textSize = 27f
+            textSize = 24f
             isAllCaps = false
             minWidth = 0
             minHeight = 0
