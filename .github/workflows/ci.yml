@@ -111,7 +111,7 @@ jobs:
           working-directory: android
           script: |
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
-            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest --no-daemon
+            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest,cl.caggrometal.deep33.Deep33LifecycleRecoveryTest,cl.caggrometal.deep33.SessionStorePersistenceTest --no-daemon
 
   change_scope:
     runs-on: ubuntu-latest
