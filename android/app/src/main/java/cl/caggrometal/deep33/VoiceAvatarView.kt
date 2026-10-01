@@ -152,7 +152,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         val browY = eyeY - radius * 0.13f
         val browWidth = radius * 0.19f
         val browTilt = when (personality) {
-            Personality.AGRESIVO -> radius * 0.065f
+            Personality.AGRESIVO -> -radius * 0.085f
             Personality.NEUTRO -> radius * 0.010f
             Personality.COMICO -> radius * 0.020f
             Personality.CONSPIRANOICO -> radius * 0.040f
