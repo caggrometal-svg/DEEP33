@@ -1597,17 +1597,14 @@ Deno.serve(async (req) => {
                   abortProvider = () => providerController.abort();
                 },
                 (chunk) => {
-                  const safeChunk = sanitizeAssistantText(chunk);
-                  if (!safeChunk) return;
+                  if (!chunk) return;
+                  // Forward provider deltas unchanged. Sanitizing each fragment can
+                  // remove boundary whitespace and merge words incorrectly.
                   controller.enqueue(
                     encoder.encode(
                       "data: " +
                         JSON.stringify({
-                          choices: [{ delta: { content: safeChunk } }],
-                          _deep33_gateway: {
-                            provider: activePersonality,
-                            model: "stream",
-                          },
+                          choices: [{ delta: { content: chunk } }],
                         }) +
                         "\n\n",
                     ),
@@ -1662,11 +1659,9 @@ Deno.serve(async (req) => {
             }
           })();
 
-          (controller as unknown as { __abortProvider?: () => void }).__abortProvider = abortProvider;
         },
         cancel(reason) {
-          const abort = (controller as unknown as { __abortProvider?: () => void }).__abortProvider;
-          abort?.();
+          abortProvider();
           console.warn(JSON.stringify({
             event: "edge_client_stream_cancelled",
             request_id: requestId,
