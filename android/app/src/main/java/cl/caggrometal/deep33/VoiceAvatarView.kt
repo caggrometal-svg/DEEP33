@@ -112,7 +112,10 @@ class VoiceAvatarView @JvmOverloads constructor(
                 canvas.drawOval(rect, strokePaint)
             }
 
-            "CROSSHAIR" -> {\n                canvas.drawCircle(cx, cy, radius + dp(10f), strokePaint)\n            }        }
+            "CROSSHAIR" -> {
+                canvas.drawCircle(cx, cy, radius + dp(10f), strokePaint)
+            }
+        }
     }
 
     private fun drawStaticFace(
