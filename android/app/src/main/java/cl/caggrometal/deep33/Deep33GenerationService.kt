@@ -298,8 +298,8 @@ class Deep33GenerationService : Service() {
 
         fun persistCheckpoint(force: Boolean = false) {
             val now = System.nanoTime()
-            val dueByBytes = checkpoint.length - lastPersistedLength >= 2048
-            val dueByTime = now - lastCheckpointAt >= 120_000_000L
+            val dueByBytes = checkpoint.length - lastPersistedLength >= 256
+            val dueByTime = now - lastCheckpointAt >= 100_000_000L
             if (!force && !dueByBytes && !dueByTime) return
 
             store.saveGenerationState(
