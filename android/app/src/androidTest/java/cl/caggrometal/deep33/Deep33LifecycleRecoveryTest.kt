@@ -88,6 +88,70 @@ class Deep33LifecycleRecoveryTest {
     }
 
     @Test
+    fun generationUiStateWaitsForForegroundBeforeConsumingCompletion() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = SessionStore(context)
+        store.resetSession()
+        val sessionId = store.sessionId
+        val requestId = "lifecycle-ui-request"
+
+        val expected = listOf(
+            UiMessage("user", "pregunta en segundo plano"),
+            UiMessage("assistant", "respuesta recuperada")
+        )
+
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity ->
+                activity.setPrivateBoolean("generationActive", true)
+                activity.setPrivateString("activeRequestId", requestId)
+                activity.invokePrivateNoArg("startGenerationMonitor")
+            }
+
+            scenario.moveToState(Lifecycle.State.CREATED)
+
+            store.saveMessages(expected, durable = true)
+            store.saveGenerationState(
+                status = GenerationStatus.DONE,
+                requestId = requestId,
+                sessionId = sessionId,
+                personality = "NEUTRO",
+                partialOutput = "respuesta recuperada",
+                finalText = "respuesta recuperada",
+                durable = true
+            )
+
+            // While the Activity is stopped, the UI monitor must not consume the
+            // terminal generation state. Foreground recovery owns the handoff.
+            Thread.sleep(900L)
+            assertTrue(
+                "Stopped Activity consumed the completion state",
+                store.loadGenerationState()?.requestId == requestId
+            )
+
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+            scenario.onActivity { activity ->
+                val restored = activity.readPrivateConversation() as List<UiMessage>
+                assertTrue(
+                    "Completed response was not restored on foreground return",
+                    restored.containsAll(expected)
+                )
+            }
+
+            assertNull(
+                "Completion state was not consumed after foreground recovery",
+                store.loadGenerationState()
+            )
+        } finally {
+            scenario.close()
+            store.clearConversation()
+            store.clearGenerationState(requestId)
+        }
+    }
+
+    @Test
     fun pendingTurnSurvivesActivityProcessState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = SessionStore(context)
@@ -112,6 +176,27 @@ class Deep33LifecycleRecoveryTest {
         recreatedStore.clearPendingTurn(pending.requestId)
         assertNull(recreatedStore.loadPendingTurn())
     }
+    private fun Any.setPrivateBoolean(fieldName: String, value: Boolean) {
+        javaClass.getDeclaredField(fieldName).apply {
+            isAccessible = true
+            setBoolean(this@setPrivateBoolean, value)
+        }
+    }
+
+    private fun Any.setPrivateString(fieldName: String, value: String?) {
+        javaClass.getDeclaredField(fieldName).apply {
+            isAccessible = true
+            set(this@setPrivateString, value)
+        }
+    }
+
+    private fun Any.invokePrivateNoArg(methodName: String) {
+        javaClass.getDeclaredMethod(methodName).apply {
+            isAccessible = true
+            invoke(this@invokePrivateNoArg)
+        }
+    }
+
     private fun Any.readPrivateTextView(fieldName: String): String {
         val field = javaClass.getDeclaredField(fieldName).apply { isAccessible = true }
         return (field.get(this) as TextView).text?.toString().orEmpty()
