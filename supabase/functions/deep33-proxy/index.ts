@@ -1785,9 +1785,6 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/v1/ai/generate" && req.method === "POST") {
-      if (!edgeAIConfigured()) {
-        return json({ status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED", direct_edge: true }, 503);
-      }
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const messages = Array.isArray(payload.messages)
         ? payload.messages as Array<Record<string, unknown>>
@@ -1893,3 +1890,237 @@ Deno.serve(async (req) => {
         edgeMessages.push({
           role: "system",
           content:
+            "FINAL DEEP33 STYLE LOCK. ACTIVE_PERSONALITY=" +
+            String(payload.personality || "NEUTRO").toUpperCase() +
+            ". Synthesize the web evidence in your own words and reasoning. " +
+            personalityInstruction(payload.personality) +
+            " Never copy source wording, never reproduce source paragraphs, and never emit source links, citations, or URLs.",
+        });
+        if (edgeAIConfigured()) {
+          const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+          try {
+            const ai = await callEdgeAI({ ...payload, messages: edgeMessages }, requestId);
+            const responseText = extractProviderText(ai.body);
+            let memoryPersisted = false;
+            try {
+              await Promise.race([
+                memoryCall("sync", sessionId, {
+                  messages: [...messages, { role: "assistant", content: responseText }],
+                  personality: payload.personality,
+                  preferences: payload.preferences,
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
+              ]);
+              memoryPersisted = true;
+            } catch {
+              // Generation remains available when memory persistence is degraded.
+            }
+return json({
+              status: "PASS",
+              request_id: requestId,
+              web_navigation: true,
+              sources,
+              memory_persisted: memoryPersisted,
+              result: {
+                role: "assistant",
+                text: responseText,
+                provider: ai.provider,
+                model: ai.model,
+                sources,
+              },
+            });
+          } catch (error) {
+            return json({
+              status: "FAIL",
+              error: error instanceof Error ? error.message : String(error),
+              web_navigation: true,
+              sources,
+            }, 502);
+          }
+        }
+
+        const upstream = await fetchUpstream(
+          "/v1/ai/generate",
+          {
+            method: "POST",
+            headers: {
+              ...headerSubset(req),
+              "Content-Type": "application/json",
+              "X-DEEP33-Skip-Web-Tools": "true",
+            },
+            body: JSON.stringify({
+              ...payload,
+              messages: enrichedMessages,
+            }),
+          },
+          sessionId,
+        );
+
+        const responseBody = await readJson(upstream);
+        if (!upstream.ok) {
+          return json(responseBody, upstream.status);
+        }
+
+        const result =
+          responseBody.result && typeof responseBody.result === "object"
+            ? {
+                ...(responseBody.result as Record<string, unknown>),
+                sources,
+              }
+            : {
+                role: "assistant",
+                text: String(responseBody.text ?? ""),
+                sources,
+              };
+return json({
+          ...responseBody,
+          web_navigation: true,
+          sources,
+          result,
+        }, upstream.status);
+      }
+
+      if (edgeAIConfigured()) {
+        const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+        try {
+          const ai = await callEdgeAI({
+            ...payload,
+            messages: buildEdgeMessages(messages, payload.personality),
+          }, requestId);
+          const responseText = extractProviderText(ai.body);
+          let memoryPersisted = false;
+          try {
+            await Promise.race([
+              memoryCall("sync", sessionId, {
+                messages: [...messages, { role: "assistant", content: responseText }],
+                personality: payload.personality,
+                preferences: payload.preferences,
+              }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
+            ]);
+            memoryPersisted = true;
+          } catch {
+            // Generation remains available when memory persistence is degraded.
+          }
+          return json({
+            status: "PASS",
+            request_id: requestId,
+            web_navigation: false,
+            memory_persisted: memoryPersisted,
+            result: {
+              role: "assistant",
+              text: responseText,
+              provider: ai.provider,
+              model: ai.model,
+            },
+          });
+        } catch (error) {
+          return json({
+            status: "FAIL",
+            error: error instanceof Error ? error.message : String(error),
+          }, 502);
+        }
+      }
+
+      const bodyBuffer = new TextEncoder().encode(JSON.stringify(payload)).buffer;
+      const upstream = await fetchUpstream(
+        "/v1/ai/generate",
+        {
+          method: "POST",
+          headers: {
+            ...headerSubset(req),
+            "Content-Type": "application/json",
+          },
+          body: bodyBuffer,
+        },
+        sessionId,
+      );
+      return new Response(
+        upstream.body,
+        { status: upstream.status, headers: copyResponseHeaders(upstream) },
+      );
+    }
+
+    if (path === "/v1/web/status" && req.method === "GET") {
+      return json({
+        enabled: true,
+        engine: "DEEP33 Search Engine",
+        engine_version: "1.1.0",
+        tool_loop_enabled: true,
+        provider_independent: true,
+        configured_provider: "edge-public-fallback+upstream",
+        fallback_providers: ["bing_public", "ddg_public"],
+      });
+    }
+
+    if (path === "/v1/web/search" && req.method === "GET") {
+      const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
+      const result = await edgeSearch(query, sessionId);
+      return json(result, result.ok ? 200 : 503);
+    }
+
+    if (path === "/v1/search" && req.method === "GET") {
+      return json(
+        await edgeSearch(
+          url.searchParams.get("q") ||
+            url.searchParams.get("query") ||
+            "",
+          sessionId,
+        ),
+      );
+    }
+
+    if (
+      path.startsWith("/v1/") ||
+      path === "/health" ||
+      path === "/metrics"
+    ) {
+      const body =
+        req.method === "GET" || req.method === "HEAD"
+          ? undefined
+          : await req.arrayBuffer();
+
+      const upstream = await fetchUpstream(
+        path + url.search,
+        {
+          method: req.method,
+          headers: headerSubset(req),
+          body,
+        },
+        sessionId,
+      );
+
+      const out = new Headers(cors);
+      for (const name of [
+        "content-type",
+        "cache-control",
+        "x-request-id",
+      ]) {
+        const value = upstream.headers.get(name);
+        if (value) out.set(name, value);
+      }
+
+      return new Response(upstream.body, {
+        status: upstream.status,
+        headers: out,
+      });
+    }
+
+    return json({
+      status: "PASS",
+      service: "DEEP33 Internet Edge",
+      path,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    return json(
+      {
+        status: "FAIL",
+        error: error instanceof Error ? error.message : String(error),
+        path,
+        timestamp: new Date().toISOString(),
+      },
+      502,
+    );
+  }
+});
