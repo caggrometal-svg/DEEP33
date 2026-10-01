@@ -1579,7 +1579,7 @@ class MainActivity : Activity() {
                 cleanupGeneration(false)
                 return
             }
-            generationHandler.postDelayed(generationMonitor, 250L)
+            generationHandler.postDelayed(generationMonitor, 75L)
             return
         }
 
@@ -1633,7 +1633,7 @@ class MainActivity : Activity() {
                 return
             }
         }
-        generationHandler.postDelayed(generationMonitor, 250L)
+        generationHandler.postDelayed(generationMonitor, 75L)
     }
 
     private fun launchGeneration(
