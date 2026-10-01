@@ -737,7 +737,7 @@ class MainActivity : Activity() {
     private fun buildChat(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Deep33Theme.BG)
+            setBackgroundColor(Color.BLACK)
         }
 
         voicePanel = LinearLayout(this).apply {
@@ -801,11 +801,12 @@ class MainActivity : Activity() {
 
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Deep33Theme.BG)
+            setBackgroundColor(Color.BLACK)
             setPadding(dp(2), dp(10), dp(2), dp(8))
         }
         chatScroll = ScrollView(this).apply {
             isFillViewport = true
+            setBackgroundColor(Color.BLACK)
             addView(chatContainer)
         }
         box.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
