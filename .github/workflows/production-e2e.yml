@@ -21,7 +21,7 @@ jobs:
       - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
+          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
           jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
