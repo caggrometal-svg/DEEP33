@@ -22,7 +22,6 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.FrameLayout
@@ -131,6 +130,7 @@ private object VoiceConversationPolicy {
 class MainActivity : Activity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
+    private lateinit var mainHeader: View
     private lateinit var sidebar: LinearLayout
     private lateinit var drawerScrim: View
     private lateinit var historyContainer: LinearLayout
@@ -446,6 +446,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(2), 0, dp(10))
         }
+        mainHeader = header
 
         header.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_action_menu)
@@ -1128,9 +1129,6 @@ class MainActivity : Activity() {
         scroll.addView(box)
         return scroll
     }
-    private fun voicePanelOrNull(): LinearLayout? =
-        if (::voicePanel.isInitialized) voicePanel else null
-
     private fun selectPersonality(personality: Personality) {
         personalitySelectionGeneration++
         // Persist before repainting so every subsequent request uses the exact selection.
@@ -1779,6 +1777,7 @@ class MainActivity : Activity() {
         voiceModeActive = active
 
         if (active) {
+            mainHeader.visibility = View.GONE
             voicePanel.visibility = View.VISIBLE
             voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
@@ -1792,6 +1791,7 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
             }
         } else {
+            mainHeader.visibility = View.VISIBLE
             voicePanel.visibility = View.GONE
             voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -2408,6 +2408,7 @@ class MainActivity : Activity() {
          private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
+
 
 
 
