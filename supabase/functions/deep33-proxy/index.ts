@@ -231,134 +231,360 @@ function recordProviderFailure(
   return circuit;
 }
 
+
+// Durable generation idempotency is backed by the DEEP33 memory function's Postgres
+// idempotency RPCs. The provider call is claimed once per session/request key and its
+// completed text is replayable after transport loss or Android app recreation.
+type EdgeIdempotencyContext = {
+  sessionId: string;
+  idempotencyKey: string;
+  operation: string;
+  requestHash: string;
+};
+
+type EdgeIdempotencyRecord = {
+  text: string;
+  provider?: string;
+  model?: string;
+};
+
+function idempotencyResultBody(record: EdgeIdempotencyRecord): Record<string, unknown> {
+  return {
+    choices: [{ message: { role: "assistant", content: record.text } }],
+    model: record.model || "",
+  };
+}
+
+async function buildEdgeIdempotencyContext(
+  payload: Record<string, unknown>,
+  sessionId: string,
+  idempotencyKey: string,
+  operation: string,
+  stream: boolean,
+): Promise<EdgeIdempotencyContext | null> {
+  const key = idempotencyKey.trim();
+  const session = sessionId.trim();
+  if (!key || !session) return null;
+  const requestHash = await sha256(
+    JSON.stringify({
+      operation,
+      stream,
+      provider_payload: providerPayload(payload, stream),
+    }),
+  );
+  return {
+    sessionId: session,
+    idempotencyKey: key,
+    operation,
+    requestHash,
+  };
+}
+
+async function edgeIdempotencyAction(
+  action: string,
+  context: EdgeIdempotencyContext,
+  extra: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const result = await memoryCall(action, context.sessionId, {
+    idempotency_key: context.idempotencyKey,
+    request_hash: context.requestHash,
+    operation: context.operation,
+    lease_seconds: 180,
+    ...extra,
+  });
+  return result.body;
+}
+
+async function edgeIdempotencyStatus(
+  context: EdgeIdempotencyContext,
+): Promise<Record<string, unknown>> {
+  return edgeIdempotencyAction("idempotency_status", context);
+}
+
+async function edgeIdempotencyComplete(
+  context: EdgeIdempotencyContext,
+  record: EdgeIdempotencyRecord,
+): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await edgeIdempotencyAction("idempotency_complete", context, {
+        lease_token: contextLeaseToken(context),
+        status_code: 200,
+        response: record,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("IDEMPOTENCY_COMPLETE_FAILED");
+}
+
+const edgeLeaseTokens = new Map<string, string>();
+
+function contextLeaseToken(context: EdgeIdempotencyContext): string {
+  return edgeLeaseTokens.get(contextKey(context)) || "";
+}
+
+function contextKey(context: EdgeIdempotencyContext): string {
+  return context.sessionId + ":" + context.idempotencyKey;
+}
+
+function rememberLeaseToken(context: EdgeIdempotencyContext, leaseToken: string) {
+  edgeLeaseTokens.set(contextKey(context), leaseToken);
+}
+
+function forgetLeaseToken(context: EdgeIdempotencyContext) {
+  edgeLeaseTokens.delete(contextKey(context));
+}
+
+async function edgeIdempotencyRelease(context: EdgeIdempotencyContext): Promise<void> {
+  const leaseToken = contextLeaseToken(context);
+  if (!leaseToken) return;
+  try {
+    await edgeIdempotencyAction("idempotency_release", context, {
+      lease_token: leaseToken,
+    });
+  } finally {
+    forgetLeaseToken(context);
+  }
+}
+
+async function acquireEdgeIdempotency(
+  context: EdgeIdempotencyContext | null,
+): Promise<{ context: EdgeIdempotencyContext; completed: EdgeIdempotencyRecord | null }> {
+  if (!context) return { context: context as EdgeIdempotencyContext, completed: null };
+
+  const initial = await edgeIdempotencyAction("idempotency_claim", context);
+  const state = String(initial.state || "").toUpperCase();
+
+  if (state === "CLAIMED") {
+    const leaseToken = String(initial.lease_token || "").trim();
+    if (!leaseToken) throw new Error("IDEMPOTENCY_LEASE_MISSING");
+    rememberLeaseToken(context, leaseToken);
+    return { context, completed: null };
+  }
+
+  if (state === "COMPLETED") {
+    const response = initial.response;
+    if (!response || typeof response !== "object") {
+      throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
+    }
+    return { context, completed: response as EdgeIdempotencyRecord };
+  }
+
+  if (state === "FAILED") {
+    throw new Error(String(initial.error || "IDEMPOTENCY_PREVIOUS_FAILURE"));
+  }
+
+  if (state === "CONFLICT") {
+    throw new Error("IDEMPOTENCY_KEY_REUSED");
+  }
+
+  if (state === "IN_PROGRESS") {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const status = await edgeIdempotencyStatus(context);
+      const statusState = String(status.state || "").toUpperCase();
+      if (statusState === "COMPLETED") {
+        const response = status.response;
+        if (!response || typeof response !== "object") {
+          throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
+        }
+        return { context, completed: response as EdgeIdempotencyRecord };
+      }
+      if (statusState === "FAILED") {
+        throw new Error(String(status.error || "IDEMPOTENCY_PREVIOUS_FAILURE"));
+      }
+      if (statusState === "CONFLICT") {
+        throw new Error("IDEMPOTENCY_KEY_REUSED");
+      }
+      if (statusState === "MISSING") {
+        const retry = await edgeIdempotencyAction("idempotency_claim", context);
+        const retryState = String(retry.state || "").toUpperCase();
+        if (retryState === "CLAIMED") {
+          const leaseToken = String(retry.lease_token || "").trim();
+          if (!leaseToken) throw new Error("IDEMPOTENCY_LEASE_MISSING");
+          rememberLeaseToken(context, leaseToken);
+          return { context, completed: null };
+        }
+        if (retryState === "COMPLETED") {
+          const response = retry.response;
+          if (!response || typeof response !== "object") {
+            throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
+          }
+          return { context, completed: response as EdgeIdempotencyRecord };
+        }
+      }
+    }
+    throw new Error("IDEMPOTENCY_IN_PROGRESS");
+  }
+
+  throw new Error("IDEMPOTENCY_CLAIM_INVALID_STATE");
+}
+
 async function callEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
+  idempotencyContext: EdgeIdempotencyContext | null = null,
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
 
+  let leaseContext: EdgeIdempotencyContext | null = idempotencyContext;
   let lastError = "EDGE_AI_GATEWAY_UNAVAILABLE";
 
-  for (const provider of providers) {
-    const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-    if (Date.now() < circuit.openUntil) {
-      continue;
-    }
-
-    for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
-      const started = performance.now();
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-
-      try {
-        const response = await fetch(provider.url, {
-          method: "POST",
-          headers: providerRequestHeaders(provider, requestId, "application/json"),
-          body: JSON.stringify({
-            ...providerPayload(payload, false),
-            ...(provider.model ? { model: provider.model } : {}),
-          }),
-          signal: controller.signal,
-        });
-
-        const bodyText = await response.text();
-        let body: Record<string, unknown> = {};
-        try {
-          const parsed = JSON.parse(bodyText);
-          if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
-        } catch {
-          body = {};
-        }
-
-        const elapsedMs = Math.round(performance.now() - started);
-        console.log(JSON.stringify({
-          event: "edge_ai_provider_response",
-          provider: provider.name,
-          model: provider.model,
-          status: response.status,
-          elapsed_ms: elapsedMs,
-          attempt: attempt + 1,
-          request_id: requestId,
-        }));
-
-        if (response.ok) {
-          const text = extractProviderText(body);
-          if (text.trim()) {
-            edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
-            return {
-              body,
-              provider: provider.name,
-              model: provider.model || String(body.model || ""),
-            };
-          }
-          lastError = provider.name + "_EMPTY_RESPONSE";
-        } else {
-          const providerError =
-            typeof body.error === "object" && body.error
-              ? String(
-                  (body.error as Record<string, unknown>).message ??
-                    (body.error as Record<string, unknown>).code ??
-                    "",
-                )
-              : "";
-          lastError =
-            provider.name +
-            "_HTTP_" +
-            response.status +
-            (providerError ? "_" + providerError.slice(0, 80).replace(/\s+/g, "_") : "");
-        }
-
-        if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
-          );
-          continue;
-        }
-
-        if (response.status >= 500 || response.status === 429) {
-          recordProviderFailure(provider);
-        }
-        break;
-      } catch (error) {
-        const elapsedMs = Math.round(performance.now() - started);
-        const message = error instanceof Error ? error.message : String(error);
-        lastError = provider.name + "_" + message;
-        console.error(JSON.stringify({
-          event: "edge_ai_provider_error",
-          provider: provider.name,
-          model: provider.model,
-          elapsed_ms: elapsedMs,
-          attempt: attempt + 1,
-          request_id: requestId,
-          error: message.slice(0, 200),
-        }));
-
-        // Do not spend another long provider timeout on the normal interactive path.
-        // Move directly to an independent fallback when available.
-        if (attempt < EDGE_AI_RETRY_COUNT) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
-          );
-          continue;
-        }
-
-        recordProviderFailure(provider);
-        break;
-      } finally {
-        clearTimeout(timer);
-      }
+  if (leaseContext) {
+    const acquired = await acquireEdgeIdempotency(leaseContext);
+    if (acquired.completed) {
+      const record = acquired.completed;
+      return {
+        body: idempotencyResultBody(record),
+        provider: String(record.provider || "idempotency-replay"),
+        model: String(record.model || ""),
+      };
     }
   }
 
+  try {
+    for (const provider of providers) {
+      const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
+      if (Date.now() < circuit.openUntil) continue;
+
+      for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
+        const started = performance.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(provider.url, {
+            method: "POST",
+            headers: providerRequestHeaders(provider, requestId, "application/json"),
+            body: JSON.stringify({
+              ...providerPayload(payload, false),
+              ...(provider.model ? { model: provider.model } : {}),
+            }),
+            signal: controller.signal,
+          });
+
+          const bodyText = await response.text();
+          let body: Record<string, unknown> = {};
+          try {
+            const parsed = JSON.parse(bodyText);
+            if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+          } catch {
+            body = {};
+          }
+
+          const elapsedMs = Math.round(performance.now() - started);
+          console.log(JSON.stringify({
+            event: "edge_ai_provider_response",
+            provider: provider.name,
+            model: provider.model,
+            status: response.status,
+            elapsed_ms: elapsedMs,
+            attempt: attempt + 1,
+            request_id: requestId,
+          }));
+
+          if (response.ok) {
+            const text = extractProviderText(body);
+            if (text.trim()) {
+              edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+              const record: EdgeIdempotencyRecord = {
+                text,
+                provider: provider.name,
+                model: provider.model || String(body.model || ""),
+              };
+              if (leaseContext) {
+                await edgeIdempotencyComplete(leaseContext, record);
+                forgetLeaseToken(leaseContext);
+              }
+              return {
+                body,
+                provider: provider.name,
+                model: record.model || "",
+              };
+            }
+            lastError = provider.name + "_EMPTY_RESPONSE";
+          } else {
+            const providerError =
+              typeof body.error === "object" && body.error
+                ? String(
+                    (body.error as Record<string, unknown>).message ??
+                      (body.error as Record<string, unknown>).code ??
+                      "",
+                  )
+                : "";
+            lastError =
+              provider.name +
+              "_HTTP_" +
+              response.status +
+              (providerError ? "_" + providerError.slice(0, 80).replace(/s+/g, "_") : "");
+          }
+
+          if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+            );
+            continue;
+          }
+
+          if (response.status >= 500 || response.status === 429) {
+            recordProviderFailure(provider);
+          }
+          break;
+        } catch (error) {
+          const elapsedMs = Math.round(performance.now() - started);
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = provider.name + "_" + message;
+          console.error(JSON.stringify({
+            event: "edge_ai_provider_error",
+            provider: provider.name,
+            model: provider.model,
+            elapsed_ms: elapsedMs,
+            attempt: attempt + 1,
+            request_id: requestId,
+            error: message.slice(0, 200),
+          }));
+
+          if (attempt < EDGE_AI_RETRY_COUNT) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+            );
+            continue;
+          }
+
+          recordProviderFailure(provider);
+          break;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    }
+  } catch (error) {
+    if (leaseContext) {
+      await edgeIdempotencyRelease(leaseContext).catch(() => {});
+    }
+    throw error;
+  }
+
+  if (leaseContext) {
+    await edgeIdempotencyRelease(leaseContext).catch(() => {});
+  }
   throw new Error(lastError);
 }
-
 async function streamEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
   onController: (controller: AbortController) => void,
   onChunk: (chunk: string) => void,
+  idempotencyContext: EdgeIdempotencyContext | null = null,
 ): Promise<{ text: string; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -379,215 +605,233 @@ async function streamEdgeAI(
     provider_count: providers.length,
   }));
 
-  for (const provider of providers) {
-    const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-    if (Date.now() < circuit.openUntil) continue;
+  if (idempotencyContext) {
+    const acquired = await acquireEdgeIdempotency(idempotencyContext);
+    if (acquired.completed) {
+      const record = acquired.completed;
+      const text = String(record.text || "");
+      if (!text.trim()) throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
+      onChunk(text);
+      return {
+        text,
+        provider: String(record.provider || "idempotency-replay"),
+        model: String(record.model || ""),
+      };
+    }
+  }
 
-    for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
-      const started = performance.now();
-      const controller = new AbortController();
-      onController(controller);
-      const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-      let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
-        () => controller.abort(),
-        EDGE_AI_FIRST_CHUNK_TIMEOUT_MS,
-      );
-      let emitted = false;
-      let firstChunkMs: number | null = null;
-      let done = false;
-      let buffer = "";
-      let fullText = "";
+  try {
+    for (const provider of providers) {
+      const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
+      if (Date.now() < circuit.openUntil) continue;
 
-      try {
-        const response = await fetch(provider.url, {
-          method: "POST",
-          headers: providerRequestHeaders(provider, requestId, "text/event-stream"),
-          body: JSON.stringify({
-            ...providerPayload(payload, true),
-            ...(provider.model ? { model: provider.model } : {}),
-          }),
-          signal: controller.signal,
-        });
+      for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
+        const started = performance.now();
+        const controller = new AbortController();
+        onController(controller);
+        const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+        let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
+          () => controller.abort(),
+          EDGE_AI_FIRST_CHUNK_TIMEOUT_MS,
+        );
+        let emitted = false;
+        let firstChunkMs: number | null = null;
+        let done = false;
+        let buffer = "";
+        let fullText = "";
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
-          let body: Record<string, unknown> = {};
-          try {
-            const parsed = JSON.parse(errorText);
-            if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
-          } catch {
-            // Non-JSON provider errors are handled by status below.
+        try {
+          const response = await fetch(provider.url, {
+            method: "POST",
+            headers: providerRequestHeaders(provider, requestId, "text/event-stream"),
+            body: JSON.stringify({
+              ...providerPayload(payload, true),
+              ...(provider.model ? { model: provider.model } : {}),
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "");
+            let body: Record<string, unknown> = {};
+            try {
+              const parsed = JSON.parse(errorText);
+              if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+            } catch {}
+            lastError = provider.name + "_HTTP_" + response.status;
+            if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
+              await new Promise((resolve) =>
+                setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
+              );
+              continue;
+            }
+            if (response.status >= 500 || response.status === 429) {
+              recordProviderFailure(provider);
+            }
+            break;
           }
-          lastError = provider.name + "_HTTP_" + response.status;
-          if (isRetryableStatus(response.status) && attempt < EDGE_AI_RETRY_COUNT) {
+
+          if (!response.body) {
+            lastError = provider.name + "_EMPTY_STREAM";
+            break;
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          const flushEvent = (event: string) => {
+            const lines = event.split(/\r?\n/);
+            let eventType = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                eventType = line.slice(6).trim();
+                continue;
+              }
+              if (!line.startsWith("data:")) continue;
+              const data = line.slice(5).trim();
+              if (!data) continue;
+              if (eventType === "error") throw new Error(data);
+              if (data === "[DONE]") {
+                done = true;
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(data) as Record<string, unknown>;
+                const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+                const first = choices.length && typeof choices[0] === "object"
+                  ? choices[0] as Record<string, unknown>
+                  : {};
+                const delta = first.delta && typeof first.delta === "object"
+                  ? first.delta as Record<string, unknown>
+                  : {};
+                let chunk = typeof delta.content === "string" ? delta.content : "";
+                if (!chunk) {
+                  const content = first.message && typeof first.message === "object"
+                    ? (first.message as Record<string, unknown>).content
+                    : undefined;
+                  if (typeof content === "string") chunk = content;
+                }
+                if (chunk) {
+                  if (!emitted) {
+                    emitted = true;
+                    firstChunkMs = Math.round(performance.now() - started);
+                    console.log(JSON.stringify({
+                      event: "edge_ai_provider_first_chunk",
+                      provider: provider.name,
+                      model: provider.model,
+                      first_chunk_ms: firstChunkMs,
+                      attempt: attempt + 1,
+                      request_id: requestId,
+                    }));
+                  }
+                  fullText += chunk;
+                  onChunk(chunk);
+                  if (firstChunkTimer) {
+                    clearTimeout(firstChunkTimer);
+                    firstChunkTimer = null;
+                  }
+                }
+              } catch {}
+            }
+          };
+
+          while (!done) {
+            if (controller.signal.aborted) throw new Error("EDGE_AI_STREAM_TIMEOUT");
+            const { value, done: readerDone } = await reader.read();
+            if (readerDone) {
+              if (buffer.trim()) {
+                flushEvent(buffer);
+                buffer = "";
+              }
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() || "";
+            for (const event of events) {
+              flushEvent(event);
+              if (done) break;
+            }
+          }
+
+          if (!done && buffer.trim()) flushEvent(buffer);
+          if (!done) throw new Error("EDGE_AI_STREAM_INCOMPLETE");
+          if (!fullText.trim()) throw new Error("EDGE_AI_EMPTY_RESPONSE");
+
+          const elapsedMs = Math.round(performance.now() - started);
+          console.log(JSON.stringify({
+            event: "edge_ai_provider_stream_complete",
+            provider: provider.name,
+            model: provider.model,
+            elapsed_ms: elapsedMs,
+            first_chunk_emitted: emitted,
+            first_chunk_ms: firstChunkMs,
+            attempt: attempt + 1,
+            request_id: requestId,
+          }));
+          edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+          const record: EdgeIdempotencyRecord = {
+            text: fullText,
+            provider: provider.name,
+            model: provider.model,
+          };
+          if (idempotencyContext) {
+            await edgeIdempotencyComplete(idempotencyContext, record);
+            forgetLeaseToken(idempotencyContext);
+          }
+          return {
+            text: fullText,
+            provider: provider.name,
+            model: provider.model,
+          };
+        } catch (error) {
+          const elapsedMs = Math.round(performance.now() - started);
+          const message = error instanceof Error ? error.message : String(error);
+          lastError = provider.name + "_" + message;
+          console.error(JSON.stringify({
+            event: "edge_ai_provider_stream_error",
+            provider: provider.name,
+            model: provider.model,
+            elapsed_ms: elapsedMs,
+            first_chunk_emitted: emitted,
+            attempt: attempt + 1,
+            request_id: requestId,
+            error: message.slice(0, 200),
+          }));
+
+          if (emitted) {
+            throw new Error(lastError);
+          }
+
+          if (attempt < EDGE_AI_RETRY_COUNT) {
             await new Promise((resolve) =>
               setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
             );
             continue;
           }
-          if (response.status >= 500 || response.status === 429) {
-            recordProviderFailure(provider);
-          }
+
+          recordProviderFailure(provider);
           break;
-        }
-
-        if (!response.body) {
-          lastError = provider.name + "_EMPTY_STREAM";
-          break;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        const flushEvent = (event: string) => {
-          const lines = event.split(/\r?\n/);
-          let eventType = "";
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              eventType = line.slice(6).trim();
-              continue;
-            }
-            if (!line.startsWith("data:")) continue;
-            const data = line.slice(5).trim();
-            if (!data) continue;
-            if (eventType === "error") {
-              throw new Error(data);
-            }
-            if (data === "[DONE]") {
-              done = true;
-              continue;
-            }
-            try {
-              const parsed = JSON.parse(data) as Record<string, unknown>;
-              const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
-              const first = choices.length && typeof choices[0] === "object"
-                ? choices[0] as Record<string, unknown>
-                : {};
-              const delta = first.delta && typeof first.delta === "object"
-                ? first.delta as Record<string, unknown>
-                : {};
-              let chunk = typeof delta.content === "string" ? delta.content : "";
-              if (!chunk) {
-                const content = first.message && typeof first.message === "object"
-                  ? (first.message as Record<string, unknown>).content
-                  : undefined;
-                if (typeof content === "string") chunk = content;
-              }
-              if (chunk) {
-                if (!emitted) {
-                  emitted = true;
-                  firstChunkMs = Math.round(performance.now() - started);
-                  console.log(JSON.stringify({
-                    event: "edge_ai_provider_first_chunk",
-                    provider: provider.name,
-                    model: provider.model,
-                    first_chunk_ms: firstChunkMs,
-                    attempt: attempt + 1,
-                    request_id: requestId,
-                  }));
-                }
-                fullText += chunk;
-                onChunk(chunk);
-                if (firstChunkTimer) {
-                  clearTimeout(firstChunkTimer);
-                  firstChunkTimer = null;
-                }
-              }
-            } catch {
-              // Ignore provider SSE metadata that is not a text delta.
-            }
-          }
-        };
-
-        while (!done) {
-          if (controller.signal.aborted) {
-            throw new Error("EDGE_AI_STREAM_TIMEOUT");
-          }
-          const { value, done: readerDone } = await reader.read();
-          if (readerDone) {
-            if (buffer.trim()) {
-              flushEvent(buffer);
-              buffer = "";
-            }
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split(/\r?\n\r?\n/);
-          buffer = events.pop() || "";
-          for (const event of events) {
-            flushEvent(event);
-            if (done) break;
+        } finally {
+          clearTimeout(overallTimer);
+          if (firstChunkTimer) {
+            clearTimeout(firstChunkTimer);
+            firstChunkTimer = null;
           }
         }
-
-        if (!done && buffer.trim()) {
-          flushEvent(buffer);
-        }
-
-        if (!done) {
-          throw new Error("EDGE_AI_STREAM_INCOMPLETE");
-        }
-
-        if (!fullText.trim()) {
-          throw new Error("EDGE_AI_EMPTY_RESPONSE");
-        }
-
-        const elapsedMs = Math.round(performance.now() - started);
-        console.log(JSON.stringify({
-          event: "edge_ai_provider_stream_complete",
-          provider: provider.name,
-          model: provider.model,
-          elapsed_ms: elapsedMs,
-          first_chunk_emitted: emitted,
-          first_chunk_ms: firstChunkMs,
-          attempt: attempt + 1,
-          request_id: requestId,
-        }));
-        edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
-        return {
-          text: fullText,
-          provider: provider.name,
-          model: provider.model,
-        };
-      } catch (error) {
-        const elapsedMs = Math.round(performance.now() - started);
-        const message = error instanceof Error ? error.message : String(error);
-        lastError = provider.name + "_" + message;
-        console.error(JSON.stringify({
-          event: "edge_ai_provider_stream_error",
-          provider: provider.name,
-          model: provider.model,
-          elapsed_ms: elapsedMs,
-          first_chunk_emitted: emitted,
-          attempt: attempt + 1,
-          request_id: requestId,
-          error: message.slice(0, 200),
-        }));
-
-        // A partially emitted stream cannot safely fail over without duplicating
-        // visible text. Once output begins, surface the error to the client.
-        if (emitted) {
-          throw new Error(lastError);
-        }
-
-        if (attempt < EDGE_AI_RETRY_COUNT) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, EDGE_AI_RETRY_BACKOFF_MS * (attempt + 1))
-          );
-          continue;
-        }
-
-        recordProviderFailure(provider);
-        break;
-      } finally {
-        if (firstChunkTimer) clearTimeout(firstChunkTimer);
-        clearTimeout(overallTimer);
       }
     }
+  } catch (error) {
+    if (idempotencyContext) {
+      await edgeIdempotencyRelease(idempotencyContext).catch(() => {});
+    }
+    throw error;
   }
 
+  if (idempotencyContext) {
+    await edgeIdempotencyRelease(idempotencyContext).catch(() => {});
+  }
   throw new Error(lastError);
 }
-
 function normalizePersonality(value: unknown): string {
   const selected = String(value || "NEUTRO").trim().toUpperCase();
   return ["AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO"].includes(selected) ? selected : "NEUTRO";
@@ -1581,6 +1825,8 @@ Deno.serve(async (req) => {
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const activePersonality = normalizePersonality(payload.personality);
+      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+      const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
 
       if (!edgeAIConfigured()) {
         return new Response(
@@ -1610,6 +1856,16 @@ Deno.serve(async (req) => {
 
           (async () => {
             try {
+              const idempotencyContext = await buildEdgeIdempotencyContext(
+                {
+                  ...payload,
+                  messages: buildEdgeMessages(messages, activePersonality),
+                },
+                sessionId,
+                idempotencyKey,
+                "ai.chat.stream",
+                true,
+              );
               const ai = await streamEdgeAI(
                 {
                   ...payload,
@@ -1633,6 +1889,7 @@ Deno.serve(async (req) => {
                     ),
                   );
                 },
+                idempotencyContext,
               );
 
               const responseText = sanitizeAssistantText(ai.text);
@@ -1920,9 +2177,19 @@ Deno.serve(async (req) => {
             " Never copy source wording, never reproduce source paragraphs, and never emit source links, citations, or URLs.",
         });
         if (edgeAIConfigured()) {
-          const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
           try {
-            const ai = await callEdgeAI({ ...payload, messages: edgeMessages }, requestId);
+            const idempotencyContext = await buildEdgeIdempotencyContext(
+              { ...payload, messages: edgeMessages },
+              sessionId,
+              idempotencyKey,
+              "ai.generate",
+              false,
+            );
+            const ai = await callEdgeAI(
+              { ...payload, messages: edgeMessages },
+              requestId,
+              idempotencyContext,
+            );
             const responseText = extractProviderText(ai.body);
             let memoryPersisted = false;
             try {
@@ -2004,12 +2271,20 @@ return json({
       }
 
       if (edgeAIConfigured()) {
-        const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
         try {
-          const ai = await callEdgeAI({
-            ...payload,
-            messages: buildEdgeMessages(messages, payload.personality),
-          }, requestId);
+          const edgeMessages = buildEdgeMessages(messages, payload.personality);
+          const idempotencyContext = await buildEdgeIdempotencyContext(
+            { ...payload, messages: edgeMessages },
+            sessionId,
+            idempotencyKey,
+            "ai.generate",
+            false,
+          );
+          const ai = await callEdgeAI(
+            { ...payload, messages: edgeMessages },
+            requestId,
+            idempotencyContext,
+          );
           const responseText = extractProviderText(ai.body);
           let memoryPersisted = false;
           try {
