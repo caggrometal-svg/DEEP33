@@ -1534,7 +1534,7 @@ async function publicWebSearch(query: string) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
 
-  const providers = [
+  const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
       name: "bing_public",
       url: "https://www.bing.com/search?format=rss&q=" + encodeURIComponent(q),
@@ -1542,6 +1542,14 @@ async function publicWebSearch(query: string) {
     {
       name: "mojeek_public",
       url: "https://www.mojeek.com/search?q=" + encodeURIComponent(q) + "&fmt=html",
+    },
+    {
+      name: "marginalia_public",
+      url: "https://api2.marginalia-search.com/search?query=" + encodeURIComponent(q) + "&count=8",
+      headers: {
+        "API-Key": "public",
+        "Accept": "application/json",
+      },
     },
     {
       name: "ddg_public",
@@ -1558,6 +1566,7 @@ async function publicWebSearch(query: string) {
         headers: {
           "User-Agent": "DEEP33-EdgeSearch/1.1",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          ...(provider.headers || {}),
         },
         redirect: "follow",
       });
@@ -1584,6 +1593,21 @@ async function publicWebSearch(query: string) {
           const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
           const snippet = snippets[index] ?? "";
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+        }
+      } else if (provider.name === "marginalia_public") {
+        try {
+          const body = JSON.parse(html);
+          const items = Array.isArray(body.results) ? body.results : [];
+          for (const item of items.slice(0, 8)) {
+            if (!item || typeof item !== "object") continue;
+            const value = item as Record<string, unknown>;
+            const title = String(value.title ?? "").trim();
+            const url = String(value.url ?? "").trim();
+            const snippet = String(value.description ?? value.desc ?? "").trim();
+            if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+          }
+        } catch {
+          // Ignore malformed provider JSON and continue with the next engine.
         }
       } else {
         const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
