@@ -25,7 +25,6 @@ class VoiceAvatarView @JvmOverloads constructor(
 
     private var personality = Personality.NEUTRO
     private var state = AvatarState.IDLE
-    private var audioLevel = 0f
 
     fun setPersonality(value: Personality) {
         personality = value
@@ -34,15 +33,12 @@ class VoiceAvatarView @JvmOverloads constructor(
 
     fun setVoiceState(value: AvatarState) {
         state = value
-        if (value == AvatarState.IDLE) audioLevel = 0f
         invalidate()
     }
 
     fun setAudioLevel(value: Float) {
-        audioLevel = value.coerceIn(0f, 1f)
-        if (state == AvatarState.LISTENING || state == AvatarState.SPEAKING) {
-            invalidate()
-        }
+        // Audio level is intentionally ignored visually. Voice mode stays expressive
+        // through state text rather than motion, pulsing, or mouth scaling.
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -54,55 +50,16 @@ class VoiceAvatarView @JvmOverloads constructor(
         val radius = size * 0.29f
         val accent = personality.accent
 
-        // Minimal visual system: one static personality contour and static face.
-        // There is intentionally no central dot/core/nose.
-        fillPaint.color = 0xFF050505.toInt()
-        canvas.drawCircle(centerX, centerY, radius + dp(18f), fillPaint)
+        // One static round face, one contour, two eyes, brows and mouth.
+        // No pulse, orbit, wobble, blink, scale or audio-reactive effect.
+        fillPaint.color = 0xFF0A0A0A.toInt()
+        canvas.drawCircle(centerX, centerY, radius + dp(2f), fillPaint)
 
-        drawPersonalityContour(canvas, centerX, centerY, radius, accent)
-        drawStaticFace(canvas, centerX, centerY, radius, accent)
-    }
-
-    private fun drawPersonalityContour(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        radius: Float,
-        accent: Int
-    ) {
-        strokePaint.color = withAlpha(accent, 190)
+        strokePaint.color = withAlpha(accent, 205)
         strokePaint.strokeWidth = dp(2f)
+        canvas.drawCircle(centerX, centerY, radius + dp(2f), strokePaint)
 
-        when (personality.avatarGeometry) {
-            "ANGULAR" -> {
-                val inset = dp(12f)
-                val rect = RectF(
-                    cx - radius - inset,
-                    cy - radius * 0.82f,
-                    cx + radius + inset,
-                    cy + radius * 0.82f
-                )
-                canvas.drawRoundRect(rect, dp(10f), dp(10f), strokePaint)
-            }
-
-            "ORBITAL" -> {
-                canvas.drawCircle(cx, cy, radius + dp(10f), strokePaint)
-            }
-
-            "WOBBLE" -> {
-                val rect = RectF(
-                    cx - radius - dp(10f),
-                    cy - radius * 0.88f,
-                    cx + radius + dp(10f),
-                    cy + radius * 0.88f
-                )
-                canvas.drawOval(rect, strokePaint)
-            }
-
-            "CROSSHAIR" -> {
-                canvas.drawCircle(cx, cy, radius + dp(10f), strokePaint)
-            }
-        }
+        drawStaticFace(canvas, centerX, centerY, radius, accent)
     }
 
     private fun drawStaticFace(
@@ -116,7 +73,6 @@ class VoiceAvatarView @JvmOverloads constructor(
         val eyeGap = radius * 0.40f
         val eyeRadius = radius * 0.045f
 
-        // Static eyes: no movement or blink animation.
         fillPaint.color = withAlpha(accent, 225)
         canvas.drawCircle(cx - eyeGap, eyeY, eyeRadius, fillPaint)
         canvas.drawCircle(cx + eyeGap, eyeY, eyeRadius, fillPaint)
@@ -130,22 +86,8 @@ class VoiceAvatarView @JvmOverloads constructor(
             Personality.CONSPIRANOICO -> radius * 0.040f
         }
 
-        drawBrow(
-            canvas,
-            cx - eyeGap,
-            browY,
-            browWidth,
-            browTilt,
-            accent
-        )
-        drawBrow(
-            canvas,
-            cx + eyeGap,
-            browY,
-            browWidth,
-            -browTilt,
-            accent
-        )
+        drawBrow(canvas, cx - eyeGap, browY, browWidth, browTilt, accent)
+        drawBrow(canvas, cx + eyeGap, browY, browWidth, -browTilt, accent)
 
         val mouthY = cy + radius * 0.30f
         val expression = when (personality) {
@@ -155,17 +97,7 @@ class VoiceAvatarView @JvmOverloads constructor(
             Personality.CONSPIRANOICO -> -0.12f
         }
 
-        drawMouth(
-            canvas = canvas,
-            cx = cx,
-            cy = mouthY,
-            width = radius * 0.25f,
-            height = radius * 0.07f,
-            expression = expression,
-            speaking = state == AvatarState.SPEAKING,
-            audioLevel = audioLevel,
-            accent = accent
-        )
+        drawMouth(canvas, cx, mouthY, radius * 0.25f, radius * 0.07f, expression, accent)
     }
 
     private fun drawBrow(
@@ -192,26 +124,10 @@ class VoiceAvatarView @JvmOverloads constructor(
         width: Float,
         height: Float,
         expression: Float,
-        speaking: Boolean,
-        audioLevel: Float,
         accent: Int
     ) {
         strokePaint.color = withAlpha(accent, 195)
         strokePaint.strokeWidth = dp(1.6f)
-
-        if (speaking) {
-            val openHeight = height + audioLevel.coerceIn(0f, 1f) * dp(4f)
-            canvas.drawOval(
-                RectF(
-                    cx - width,
-                    cy - openHeight,
-                    cx + width,
-                    cy + openHeight
-                ),
-                strokePaint
-            )
-            return
-        }
 
         val smileDepth = expression.coerceIn(-0.5f, 0.6f) * height * 2.2f
         val path = Path()
@@ -219,8 +135,6 @@ class VoiceAvatarView @JvmOverloads constructor(
         path.quadTo(cx, cy + smileDepth, cx + width, cy)
         canvas.drawPath(path, strokePaint)
     }
-
-    private fun radiusIndependent(value: Float): Float = value.coerceIn(0f, 1f)
 
     private fun withAlpha(color: Int, alpha: Int): Int =
         (color and 0x00FFFFFF) or ((alpha.coerceIn(0, 255)) shl 24)

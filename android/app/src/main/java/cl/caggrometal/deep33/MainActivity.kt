@@ -131,9 +131,9 @@ class MainActivity : Activity() {
     private lateinit var historyContainer: LinearLayout
     private lateinit var chatContainer: LinearLayout
     private lateinit var input: EditText
-    private lateinit var sendButton: Button
-    private lateinit var micButton: Button
-    private lateinit var cancelButton: Button
+    private lateinit var sendButton: ImageButton
+    private lateinit var micButton: ImageButton
+    private lateinit var cancelButton: ImageButton
     private lateinit var statusView: TextView
     private lateinit var currentPersonalityView: TextView
     private lateinit var diagnosticsView: TextView
@@ -344,16 +344,25 @@ class MainActivity : Activity() {
         (value * resources.displayMetrics.density).roundToInt()
 
     private fun addPressFeedback(view: View) {
-        view.setOnTouchListener { touched, event ->
-            when (event.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN ->
-                    touched.animate().scaleX(0.975f).scaleY(0.975f).setDuration(70L).start()
-                android.view.MotionEvent.ACTION_UP,
-                android.view.MotionEvent.ACTION_CANCEL ->
-                    touched.animate().scaleX(1f).scaleY(1f).setDuration(110L).start()
-            }
-            false
+        // Deliberately no animated press effect: keep interaction immediate and quiet.
+        view.stateListAnimator = null
+    }
+
+    private fun iconCircleBackground(fill: Int, stroke: Int): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(fill)
+            setStroke(dp(1), stroke)
         }
+
+    private fun styleIconButton(button: ImageButton, tint: Int, fill: Int, stroke: Int) {
+        button.imageTintList = android.content.res.ColorStateList.valueOf(tint)
+        button.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+        button.setPadding(dp(9), dp(9), dp(9), dp(9))
+        button.background = iconCircleBackground(fill, stroke)
+        button.stateListAnimator = null
+        button.minimumWidth = 0
+        button.minimumHeight = 0
     }
 
     private fun setHeaderStatusStyle(textView: TextView, state: ConnectionState) {
@@ -369,7 +378,7 @@ class MainActivity : Activity() {
         textView.setBackground(
             GradientDrawable().apply {
                 setColor(fill)
-                cornerRadius = dp(18).toFloat()
+                cornerRadius = dp(14).toFloat()
                 setStroke(dp(1), stroke)
             }
         )
@@ -411,18 +420,12 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(16))
         }
 
-        header.addView(Button(this).apply {
-            text = "≡"
-            textSize = 22f
-            minWidth = 0
-            minHeight = 0
-            setPadding(0, 0, 0, 0)
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setBackgroundColor(Color.TRANSPARENT)
-            stateListAnimator = null
+        header.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_menu)
+            contentDescription = "Abrir menú"
+            styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
             setOnClickListener { toggleSidebar() }
-            addPressFeedback(this)
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         statusView = TextView(this).apply {
             text = "PROCESANDO · DEEP33"
@@ -439,12 +442,12 @@ class MainActivity : Activity() {
             contentDescription = "DEEP33"
             setTextColor(Deep33Theme.TEXT)
             textSize = 29f
-            letterSpacing = 0.16f
+            letterSpacing = 0.08f
             setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD))
         })
         currentPersonalityView = TextView(this).apply {
             textSize = 10.5f
-            letterSpacing = 0.14f
+            letterSpacing = 0.06f
             setPadding(0, dp(3), 0, 0)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
@@ -502,7 +505,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(28), dp(14), dp(16))
             setBackgroundColor(Color.rgb(6, 6, 9))
-            elevation = dp(12).toFloat()
+            elevation = dp(4).toFloat()
         }
 
         val header = LinearLayout(this).apply {
@@ -659,55 +662,30 @@ class MainActivity : Activity() {
 
     private fun showSidebar() {
         refreshSidebarHistory()
-        drawerScrim.animate().cancel()
-        sidebar.animate().cancel()
-        drawerScrim.alpha = 0f
+        drawerScrim.alpha = 1f
         drawerScrim.visibility = View.VISIBLE
+        sidebar.translationX = 0f
         sidebar.visibility = View.VISIBLE
-        sidebar.translationX = -dp(322).toFloat()
-        drawerScrim.animate().alpha(1f).setDuration(180L).start()
-        sidebar.animate()
-            .translationX(0f)
-            .setDuration(240L)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .start()
     }
 
     private fun hideSidebar() {
         if (sidebar.visibility != View.VISIBLE) return
-        drawerScrim.animate().cancel()
-        sidebar.animate().cancel()
-        drawerScrim.animate().alpha(0f).setDuration(150L).start()
-        sidebar.animate()
-            .translationX(-dp(322).toFloat())
-            .setDuration(190L)
-            .setInterpolator(android.view.animation.AccelerateInterpolator())
-            .withEndAction {
-                sidebar.visibility = View.GONE
-                sidebar.translationX = 0f
-                drawerScrim.visibility = View.GONE
-                drawerScrim.alpha = 1f
-            }
-            .start()
+        sidebar.translationX = 0f
+        sidebar.visibility = View.GONE
+        drawerScrim.visibility = View.GONE
+        drawerScrim.alpha = 1f
     }
 
     private fun showTab(tab: Tab) {
         currentTab = tab
-        contentFrame.animate().cancel()
-        contentFrame.alpha = 0f
-        contentFrame.translationY = dp(8).toFloat()
+        contentFrame.alpha = 1f
+        contentFrame.translationY = 0f
         contentFrame.removeAllViews()
         when (tab) {
             Tab.CHAT -> contentFrame.addView(buildChat())
             Tab.STATUS -> contentFrame.addView(buildStatus())
             Tab.SETTINGS -> contentFrame.addView(buildSettings())
         }
-        contentFrame.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(170L)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .start()
     }
 
     private fun buildChat(): View {
@@ -829,64 +807,44 @@ class MainActivity : Activity() {
         inputShell.addView(input, FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         input.setOnFocusChangeListener { _, focused -> setComposerBackground(input, focused) }
 
-        micButton = Button(this).apply {
-            text = "▂▅▃▆"
+        micButton = ImageButton(this).apply {
             contentDescription = "Abrir modo voz"
-            textSize = 12f
-            isAllCaps = false
-            minWidth = 0
-            minHeight = 0
-            setTextColor(Personality.fromKey(store.personality).accent)
-            setBackground(
-                GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(Color.TRANSPARENT)
-                    setStroke(dp(1), Personality.fromKey(store.personality).accent)
-                }
-            )
-            gravity = Gravity.CENTER
-            stateListAnimator = null
             setOnClickListener { toggleVoiceInput() }
-            addPressFeedback(this)
         }
+        styleIconButton(
+            micButton,
+            Personality.fromKey(store.personality).accent,
+            Deep33Theme.SURFACE_2,
+            Personality.fromKey(store.personality).accent
+        )
         inputShell.addView(
             micButton,
-            FrameLayout.LayoutParams(dp(46), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(55)
+            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(54)
             }
         )
 
-        sendButton = Button(this).apply {
-            text = "➤"
+        sendButton = ImageButton(this).apply {
             contentDescription = "Enviar mensaje"
-            textSize = 24f
-            isAllCaps = false
-            minWidth = 0
-            minHeight = 0
-            setTextColor(Personality.fromKey(store.personality).accent)
-            setBackgroundColor(Color.TRANSPARENT)
-            stateListAnimator = null
             setOnClickListener { sendMessage() }
-            addPressFeedback(this)
         }
+        styleIconButton(
+            sendButton,
+            Color.WHITE,
+            Personality.fromKey(store.personality).accent,
+            Personality.fromKey(store.personality).accent
+        )
         inputShell.addView(
             sendButton,
-            FrameLayout.LayoutParams(dp(48), dp(46), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
                 marginEnd = dp(4)
             }
         )
 
-        cancelButton = Button(this).apply {
-            text = "■"
+        cancelButton = ImageButton(this).apply {
             contentDescription = "Detener generación"
-            textSize = 17f
-            isAllCaps = false
-            minWidth = 0
-            minHeight = 0
-            gravity = Gravity.CENTER
             visibility = View.GONE
             setOnClickListener { cancelGeneration() }
-            addPressFeedback(this)
         }
         applyStopButtonTheme(Personality.fromKey(store.personality))
 
@@ -897,7 +855,7 @@ class MainActivity : Activity() {
             addView(inputShell, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
                 setMargins(0, 0, dp(6), 0)
             })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+            addView(cancelButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
                 setMargins(0, dp(4), dp(2), 0)
             })
         }
@@ -1137,27 +1095,17 @@ class MainActivity : Activity() {
         // exact mode chosen by the user, independent of older memory/preferences.
         store.setPersonalityFromUser(personality.key)
         Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
-        currentPersonalityView.animate().cancel()
-        currentPersonalityView.alpha = 0.25f
         currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
-        currentPersonalityView.animate().alpha(1f).setDuration(180L).start()
         refreshPersonalityButtons()
-        if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        if (::sendButton.isInitialized) sendButton.imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE); sendButton.background = iconCircleBackground(personality.accent, personality.accent)
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
-        if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
+        if (::micButton.isInitialized) micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent); micButton.background = iconCircleBackground(Deep33Theme.SURFACE_2, personality.accent)
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
-            avatarView.animate()
-                .scaleX(0.92f).scaleY(0.92f)
-                .setDuration(80L)
-                .withEndAction {
-                    avatarView.setPersonality(personality)
-                    avatarView.animate().scaleX(1f).scaleY(1f).setDuration(150L).start()
-                }
-                .start()
+            avatarView.setPersonality(personality)
         }
         applyVoiceTone(personality)
         syncPreferences()
@@ -1165,13 +1113,12 @@ class MainActivity : Activity() {
 
     private fun applyStopButtonTheme(personality: Personality) {
         if (!::cancelButton.isInitialized) return
-        cancelButton.text = STOP_BUTTON_GLYPH
-        cancelButton.setTextColor(personality.accent)
-        cancelButton.setBackground(
-            neonPanel(
-                Color.rgb(31, 7, 13),
-                personality.accent
-            )
+        cancelButton.setImageResource(R.drawable.ic_action_stop)
+        styleIconButton(
+            cancelButton,
+            personality.accent,
+            Color.rgb(31, 7, 13),
+            personality.accent
         )
     }
 
@@ -1180,9 +1127,15 @@ class MainActivity : Activity() {
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
-        if (::sendButton.isInitialized) sendButton.setTextColor(personality.accent)
+        if (::sendButton.isInitialized) {
+            sendButton.imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            sendButton.background = iconCircleBackground(personality.accent, personality.accent)
+        }
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
-        if (::micButton.isInitialized) micButton.setTextColor(personality.accent)
+        if (::micButton.isInitialized) {
+            micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent)
+            micButton.background = iconCircleBackground(Deep33Theme.SURFACE_2, personality.accent)
+        }
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
@@ -2000,7 +1953,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(7), 0, 0)
             movementMethod = LinkMovementMethod.getInstance()
             maxWidth = (resources.displayMetrics.widthPixels *
-                if (isAssistant) 0.91f else 0.78f).roundToInt().coerceAtLeast(dp(120))
+                if (isAssistant) 0.92f else 0.82f).roundToInt().coerceAtLeast(dp(120))
         }
         bubble.addView(contentView)
         renderMarkdown(contentView, content, isAssistant)
@@ -2026,15 +1979,8 @@ class MainActivity : Activity() {
             )
         }
         chatContainer.addView(bubble, params)
-        bubble.alpha = 0f
-        bubble.translationY = dp(8).toFloat()
-        bubble.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(150L)
-            .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .start()
-        addPressFeedback(bubble)
+        bubble.alpha = 1f
+        bubble.translationY = 0f
         bubble.post { scrollToBottom() }
         return contentView
     }
@@ -2062,13 +2008,13 @@ class MainActivity : Activity() {
                 setImageResource(icon)
                 imageTintList = android.content.res.ColorStateList.valueOf(normalTint)
                 scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                setBackgroundColor(Color.TRANSPARENT)
+                setPadding(dp(9), dp(9), dp(9), dp(9))
+                background = iconCircleBackground(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT)
                 contentDescription = description
                 minimumWidth = 0
                 minimumHeight = 0
-                layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply {
-                    rightMargin = dp(2)
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                    rightMargin = dp(4)
                 }
                 addPressFeedback(this)
                 setOnClickListener { onClick(this) }
@@ -2139,7 +2085,7 @@ class MainActivity : Activity() {
             row,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(38)
+                dp(40)
             )
         )
     }
@@ -2401,8 +2347,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        internal const val STOP_BUTTON_GLYPH = "▪️"
-
-        private const val VOICE_PERMISSION_REQUEST = 7001
+         private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
