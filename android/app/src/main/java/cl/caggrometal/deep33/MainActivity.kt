@@ -450,12 +450,6 @@ class MainActivity : Activity() {
             setOnClickListener { toggleSidebar() }
         }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.START or Gravity.CENTER_VERTICAL))
 
-        statusView = TextView(this).apply {
-            text = "PROCESANDO · DEEP33"
-            textSize = 11f
-            setPadding(0, dp(2), 0, 0)
-        }
-
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -1723,7 +1717,7 @@ class MainActivity : Activity() {
                 sendButton.isEnabled = true
                 input.isEnabled = true
                 micButton.isEnabled = true
-                cancelButton.visibility = View.GONE
+                cancelButton.visibility = View.INVISIBLE
                 updateConnection(ConnectionState.OFFLINE)
                 setVoiceState(AvatarState.IDLE)
                 if (!voiceModeActive) setVoiceModeUi(false)
