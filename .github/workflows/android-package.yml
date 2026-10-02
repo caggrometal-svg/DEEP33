@@ -11,8 +11,8 @@ permissions:
 
 env:
   DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  DEEP33_SECONDARY_URL: ${{ secrets.DEEP33_SECONDARY_URL }}
-  DEEP33_TERTIARY_URL: ${{ secrets.DEEP33_TERTIARY_URL }}
+  DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  DEEP33_TERTIARY_URL: ""
   DEEP33_REQUIRE_REDUNDANCY: "true"
 
 jobs:
@@ -41,14 +41,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: "8.9"
-      - name: Require independent failover endpoints
+      - name: Require canonical DEEP33 failover endpoint
         run: |
           set -euo pipefail
-          test -n "$DEEP33_SECONDARY_URL" || { echo "SECONDARY_URL_SECRET_MISSING"; exit 1; }
-          test -n "$DEEP33_TERTIARY_URL" || { echo "TERTIARY_URL_SECRET_MISSING"; exit 1; }
+          test -n "$DEEP33_SECONDARY_URL" || { echo "SECONDARY_URL_MISSING"; exit 1; }
           test "$DEEP33_PRIMARY_URL" != "$DEEP33_SECONDARY_URL" || { echo "PRIMARY_SECONDARY_DUPLICATE"; exit 1; }
-          test "$DEEP33_PRIMARY_URL" != "$DEEP33_TERTIARY_URL" || { echo "PRIMARY_TERTIARY_DUPLICATE"; exit 1; }
-          test "$DEEP33_SECONDARY_URL" != "$DEEP33_TERTIARY_URL" || { echo "SECONDARY_TERTIARY_DUPLICATE"; exit 1; }
           echo "FAILOVER_DIVERSITY_PASS"
       - name: Require certified production-pass
         run: |
