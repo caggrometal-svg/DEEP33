@@ -447,12 +447,18 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(16))
         }
 
-        header.addView(ImageButton(this).apply {
-            setImageResource(R.drawable.ic_action_menu)
-            contentDescription = "Abrir menú"
-            styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
-            setOnClickListener { toggleSidebar() }
-        }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.START or Gravity.CENTER_VERTICAL))
+        val menuSlot = FrameLayout(this).apply {
+            addView(ImageButton(this).apply {
+                setImageResource(R.drawable.ic_action_menu)
+                contentDescription = "Abrir menú"
+                styleIconButton(this, Deep33Theme.TEXT_MUTED, Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT)
+                setOnClickListener { toggleSidebar() }
+            }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.START or Gravity.CENTER_VERTICAL))
+        }
+        header.addView(
+            menuSlot,
+            FrameLayout.LayoutParams(dp(104), dp(44), Gravity.START or Gravity.CENTER_VERTICAL)
+        )
 
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -725,7 +731,7 @@ class MainActivity : Activity() {
         voicePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(18), dp(16), dp(18), dp(22))
+            setPadding(dp(18), dp(16), dp(18), dp(20))
             visibility = View.GONE
             setBackground(
                 GradientDrawable().apply {
@@ -764,6 +770,7 @@ class MainActivity : Activity() {
             }
             addPressFeedback(this)
         }, LinearLayout.LayoutParams(dp(46), dp(46)))
+
         voicePanel.addView(voiceHeader)
 
         voiceStateView = TextView(this).apply {
@@ -780,11 +787,11 @@ class MainActivity : Activity() {
             setVoiceState(AvatarState.IDLE)
             contentDescription = "Avatar de voz de DEEP33"
         }
-        val maxAvatar = minOf(dp(252), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
+        val maxAvatar = minOf(dp(228), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
         voicePanel.addView(avatarView, LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
             gravity = Gravity.CENTER
-            topMargin = dp(28)
-            bottomMargin = dp(24)
+            topMargin = dp(20)
+            bottomMargin = dp(12)
         })
 
         voicePanel.addView(TextView(this).apply {
@@ -812,7 +819,11 @@ class MainActivity : Activity() {
             target.background = GradientDrawable().apply {
                 setColor(Deep33Theme.SURFACE)
                 cornerRadius = dp(20).toFloat()
-                setStroke(dp(1), if (focused) Personality.fromKey(store.personality).accent else Deep33Theme.LINE_SOFT)
+                setStroke(
+                    dp(1),
+                    if (focused) Personality.fromKey(store.personality).accent
+                    else Deep33Theme.LINE_SOFT
+                )
             }
         }
 
@@ -823,19 +834,31 @@ class MainActivity : Activity() {
             textSize = 16f
             minLines = 1
             maxLines = 5
+            minHeight = dp(56)
             gravity = Gravity.CENTER_VERTICAL
             isSingleLine = false
-            setPadding(dp(16), dp(12), dp(112), dp(12))
+            setPadding(dp(16), dp(10), dp(16), dp(10))
             setComposerBackground(this, false)
         }
 
-        val inputShell = FrameLayout(this).apply {
-            setPadding(0, dp(4), 0, dp(4))
+        composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(4))
         }
-        inputShell.addView(input, FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        input.setOnFocusChangeListener { _, focused -> setComposerBackground(input, focused) }
+
+        input.setOnFocusChangeListener { _, focused ->
+            setComposerBackground(input, focused)
+        }
+        composer.addView(
+            input,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                rightMargin = dp(6)
+            }
+        )
 
         micButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_mic)
             contentDescription = "Abrir modo voz"
             setOnClickListener { toggleVoiceInput() }
         }
@@ -845,14 +868,15 @@ class MainActivity : Activity() {
             Deep33Theme.SURFACE_2,
             Personality.fromKey(store.personality).accent
         )
-        inputShell.addView(
+        composer.addView(
             micButton,
-            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(54)
+            LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                rightMargin = dp(6)
             }
         )
 
         sendButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_send)
             contentDescription = "Enviar mensaje"
             setOnClickListener { sendMessage() }
         }
@@ -862,31 +886,25 @@ class MainActivity : Activity() {
             Personality.fromKey(store.personality).accent,
             Personality.fromKey(store.personality).accent
         )
-        inputShell.addView(
+        composer.addView(
             sendButton,
-            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(4)
+            LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+                rightMargin = dp(6)
             }
         )
 
         cancelButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_stop)
             contentDescription = "Detener generación"
             visibility = View.INVISIBLE
             setOnClickListener { cancelGeneration() }
         }
         applyStopButtonTheme(Personality.fromKey(store.personality))
+        composer.addView(
+            cancelButton,
+            LinearLayout.LayoutParams(dp(44), dp(44))
+        )
 
-        composer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-            setPadding(0, dp(6), 0, dp(4))
-            addView(inputShell, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
-                setMargins(0, 0, dp(6), 0)
-            })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                setMargins(0, dp(4), dp(2), 0)
-            })
-        }
         box.addView(composer)
         return box
     }
@@ -1142,12 +1160,18 @@ class MainActivity : Activity() {
     private fun applyStopButtonTheme(personality: Personality) {
         if (!::cancelButton.isInitialized) return
         cancelButton.setImageResource(R.drawable.ic_action_stop)
-        styleIconButton(
-            cancelButton,
-            personality.accent,
-            Color.rgb(31, 7, 13),
-            personality.accent
-        )
+        cancelButton.imageTintList =
+            android.content.res.ColorStateList.valueOf(personality.accent)
+        cancelButton.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+        cancelButton.setPadding(dp(9), dp(9), dp(9), dp(9))
+        cancelButton.background = GradientDrawable().apply {
+            setColor(Color.rgb(31, 7, 13))
+            cornerRadius = dp(12).toFloat()
+            setStroke(dp(1), personality.accent)
+        }
+        cancelButton.stateListAnimator = null
+        cancelButton.minimumWidth = 0
+        cancelButton.minimumHeight = 0
     }
 
     private fun applyPersonalityTheme(personality: Personality) {
