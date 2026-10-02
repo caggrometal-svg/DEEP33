@@ -22,7 +22,6 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.FrameLayout
@@ -38,19 +37,24 @@ import kotlin.math.roundToInt
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
 private object Deep33Theme {
+    // Deep black surfaces are the visual foundation. Neon is reserved for identity and focus.
     val BG = Color.rgb(3, 3, 3)
-    val SURFACE = Color.rgb(8, 8, 8)
-    val SURFACE_2 = Color.rgb(13, 13, 13)
-    val SURFACE_3 = Color.rgb(18, 18, 18)
-    val LINE = Color.rgb(29, 29, 29)
-    val LINE_SOFT = Color.rgb(38, 38, 38)
-    val TEXT = Color.rgb(244, 244, 244)
-    val TEXT_MUTED = Color.rgb(150, 150, 150)
+    val SURFACE = Color.rgb(7, 7, 7)
+    val SURFACE_2 = Color.rgb(11, 11, 11)
+    val SURFACE_3 = Color.rgb(16, 16, 16)
+    val LINE = Color.rgb(24, 24, 24)
+    val LINE_SOFT = Color.rgb(34, 34, 34)
+    val TEXT = Color.rgb(242, 242, 242)
+    val TEXT_MUTED = Color.rgb(142, 148, 158)
     val RED = Color.rgb(255, 23, 68)
-    val RED_DEEP = Color.rgb(102, 7, 24)
-    val RED_SURFACE = Color.rgb(28, 7, 12)
-    val USER_BUBBLE = Color.rgb(16, 16, 16)
-    val ASSISTANT_BUBBLE = Color.rgb(10, 10, 10)
+    val RED_NEON = Color.rgb(255, 24, 80)
+    val RED_DEEP = Color.rgb(105, 7, 25)
+    val RED_SURFACE = Color.rgb(25, 6, 11)
+    val GREEN = Color.rgb(57, 255, 20)
+    val GREEN_DEEP = Color.rgb(18, 92, 8)
+    val GREEN_SURFACE = Color.rgb(6, 25, 4)
+    val USER_BUBBLE = Color.rgb(9, 12, 9)
+    val ASSISTANT_BUBBLE = Color.rgb(11, 7, 8)
 }
 
 private object VoiceConversationPolicy {
@@ -126,6 +130,7 @@ private object VoiceConversationPolicy {
 class MainActivity : Activity() {
     private lateinit var rootFrame: FrameLayout
     private lateinit var contentFrame: FrameLayout
+    private lateinit var mainHeader: View
     private lateinit var sidebar: LinearLayout
     private lateinit var drawerScrim: View
     private lateinit var historyContainer: LinearLayout
@@ -138,7 +143,6 @@ class MainActivity : Activity() {
     private lateinit var currentPersonalityView: TextView
     private lateinit var diagnosticsView: TextView
     private lateinit var voicePanel: LinearLayout
-    private lateinit var voiceStateView: TextView
     private lateinit var avatarView: VoiceAvatarView
     private lateinit var composer: LinearLayout
     private lateinit var chatScroll: ScrollView
@@ -179,6 +183,10 @@ class MainActivity : Activity() {
     private var memorySyncRunning = false
     private var currentTab = Tab.CHAT
     private var wasBackgrounded = false
+    // UI-only state: preserves an unsent draft and keeps long chats navigable without
+    // inflating the view hierarchy all at once.
+    private var chatDraft = ""
+    private var visibleHistoryCount = 50
     private var activeRequestId: String? = null
     private var activeIdempotencyKey: String? = null
 
@@ -260,13 +268,18 @@ class MainActivity : Activity() {
         window.statusBarColor = Deep33Theme.BG
         window.navigationBarColor = Deep33Theme.BG
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-            @Suppress("DEPRECATION")
-            view.setPadding(
-                insets.systemWindowInsetLeft,
-                insets.systemWindowInsetTop,
-                insets.systemWindowInsetRight,
-                insets.systemWindowInsetBottom
-            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+            }
             insets
         }
 
@@ -382,17 +395,17 @@ class MainActivity : Activity() {
     private fun setHeaderStatusStyle(textView: TextView, state: ConnectionState) {
         val (fill, stroke, textColor) = when (state) {
             ConnectionState.CONNECTING ->
-                Triple(Color.rgb(35, 27, 8), Color.rgb(112, 84, 20), Color.rgb(244, 198, 74))
+                Triple(Color.rgb(19, 16, 7), Color.rgb(88, 68, 19), Color.rgb(231, 190, 68))
             ConnectionState.ONLINE ->
-                Triple(Color.rgb(8, 32, 18), Color.rgb(24, 103, 58), Color.rgb(111, 226, 157))
+                Triple(Deep33Theme.GREEN_SURFACE, Deep33Theme.GREEN_DEEP, Deep33Theme.GREEN)
             ConnectionState.OFFLINE ->
-                Triple(Color.rgb(39, 9, 14), Color.rgb(116, 26, 42), Color.rgb(255, 102, 121))
+                Triple(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP, Color.rgb(255, 108, 128))
         }
         textView.setTextColor(textColor)
         textView.setBackground(
             GradientDrawable().apply {
                 setColor(fill)
-                cornerRadius = dp(14).toFloat()
+                cornerRadius = dp(12).toFloat()
                 setStroke(dp(1), stroke)
             }
         )
@@ -409,7 +422,7 @@ class MainActivity : Activity() {
                 if (edgeSwipeTracking && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
                     val dx = event.x - edgeDownX
                     val dy = kotlin.math.abs(event.y - edgeDownY)
-                    if (dx >= dp(72) && dy <= dp(96)) showSidebar()
+                    if (!voiceModeActive && dx >= dp(72) && dy <= dp(96)) showSidebar()
                 }
                 edgeSwipeTracking = false
             }
@@ -425,27 +438,22 @@ class MainActivity : Activity() {
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Deep33Theme.BG)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(16))
+            setPadding(0, dp(2), 0, dp(10))
         }
+        mainHeader = header
 
         header.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_action_menu)
             contentDescription = "Abrir menú"
             styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
             setOnClickListener { toggleSidebar() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-
-        statusView = TextView(this).apply {
-            text = "PROCESANDO · DEEP33"
-            textSize = 11f
-            setPadding(0, dp(2), 0, 0)
-        }
+        }, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -455,21 +463,23 @@ class MainActivity : Activity() {
             text = "DEEP33"
             contentDescription = "DEEP33"
             setTextColor(Deep33Theme.TEXT)
-            textSize = 29f
-            letterSpacing = 0.08f
+            textSize = 26f
+            letterSpacing = 0.10f
             setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD))
         })
         currentPersonalityView = TextView(this).apply {
-            textSize = 10.5f
-            letterSpacing = 0.06f
-            setPadding(0, dp(3), 0, 0)
+            textSize = 9.5f
+            letterSpacing = 0.10f
+            setPadding(0, dp(2), 0, 0)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            contentDescription = "Personalidad activa"
         }
         titleGroup.addView(currentPersonalityView)
         titleGroup.addView(View(this).apply {
-            setBackgroundColor(Deep33Theme.RED)
-            layoutParams = LinearLayout.LayoutParams(dp(26), dp(1)).apply {
-                topMargin = dp(7)
+            setBackgroundColor(Deep33Theme.RED_NEON)
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(1)).apply {
+                topMargin = dp(6)
             }
         })
 
@@ -477,29 +487,28 @@ class MainActivity : Activity() {
             titleGroup,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
+
         statusView = TextView(this).apply {
             text = "● CONECTANDO"
-            textSize = 9.5f
-            letterSpacing = 0.08f
+            textSize = 9f
+            letterSpacing = 0.07f
             gravity = Gravity.CENTER
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(10), 0, dp(10), 0)
-            minWidth = dp(94)
+            setPadding(dp(8), 0, dp(8), 0)
+            minWidth = dp(82)
             setHeaderStatusStyle(this, ConnectionState.CONNECTING)
             contentDescription = "Estado de conexión de DEEP33"
         }
-        header.addView(statusView, LinearLayout.LayoutParams(dp(104), dp(34)))
+        header.addView(statusView, LinearLayout.LayoutParams(dp(88), dp(32)))
 
         main.addView(header, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         contentFrame = FrameLayout(this)
         main.addView(contentFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Conversation navigation was removed from the bottom bar so it cannot
-        // replace/rebuild the chat screen and break the active conversation thread.
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
         drawerScrim = View(this).apply {
-            setBackgroundColor(Color.argb(145, 0, 0, 0))
+            setBackgroundColor(Color.argb(175, 0, 0, 0))
             visibility = View.GONE
             setOnClickListener { hideSidebar() }
         }
@@ -508,72 +517,77 @@ class MainActivity : Activity() {
         sidebar = buildSidebar()
         rootFrame.addView(
             sidebar,
-            FrameLayout.LayoutParams(dp(322), -1).apply { gravity = Gravity.START }
+            FrameLayout.LayoutParams(dp(318), -1).apply { gravity = Gravity.START }
         )
         sidebar.visibility = View.GONE
         return rootFrame
     }
-
     private fun buildSidebar(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(28), dp(14), dp(16))
-            setBackgroundColor(Color.rgb(6, 6, 9))
-            elevation = dp(4).toFloat()
+            setPadding(dp(18), dp(20), dp(12), dp(14))
+            setBackgroundColor(Color.rgb(5, 5, 6))
+            elevation = dp(6).toFloat()
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(
-            TextView(this).apply {
-                text = "DEEP33 · CHATS"
-                setTextColor(Color.WHITE)
-                textSize = 22f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        header.addView(Button(this).apply {
-            text = "Cerrar"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+        header.addView(TextView(this).apply {
+            text = "DEEP33"
+            textSize = 20f
+            letterSpacing = 0.08f
+            setTextColor(Deep33Theme.TEXT)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+
+        header.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_close)
+            contentDescription = "Cerrar menú"
+            styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Color.TRANSPARENT)
             setOnClickListener { hideSidebar() }
-            addPressFeedback(this)
-        })
+        }, LinearLayout.LayoutParams(dp(42), dp(42)))
         panel.addView(header)
 
-        panel.addView(Button(this).apply {
-            text = "＋  NUEVO CHAT"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
-            setOnClickListener {
-                startNewSession()
-                hideSidebar()
+        fun row(text: String, accent: Int = Deep33Theme.TEXT, active: Boolean = false, onClick: () -> Unit): TextView =
+            TextView(this).apply {
+                this.text = text
+                textSize = 14f
+                setTextColor(accent)
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                setPadding(dp(13), 0, dp(10), 0)
+                background = neonPanel(
+                    if (active) Deep33Theme.RED_SURFACE else Color.TRANSPARENT,
+                    if (active) accent else Color.TRANSPARENT,
+                    12
+                )
+                minHeight = dp(46)
+                setOnClickListener { onClick() }
             }
-            addPressFeedback(this)
-        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        panel.addView(Button(this).apply {
-            text = "CONFIGURACIÓN"
-            isAllCaps = false
-            setTextColor(Color.rgb(255, 70, 90))
-            setBackground(neonPanel(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP))
-            setOnClickListener {
-                showTab(Tab.SETTINGS)
-                hideSidebar()
-            }
-            addPressFeedback(this)
-        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        panel.addView(row("＋  NUEVO CHAT", Deep33Theme.TEXT) {
+            startNewSession()
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(46)).apply { topMargin = dp(14) })
+
+        panel.addView(row("ESTADO", Deep33Theme.GREEN) {
+            showTab(Tab.STATUS)
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(4) })
+
+        panel.addView(row("CONFIGURACIÓN", Deep33Theme.RED_NEON) {
+            showTab(Tab.SETTINGS)
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(2) })
 
         panel.addView(TextView(this).apply {
-            text = "MODOS"
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-            setPadding(0, dp(16), 0, dp(8))
+            text = "PERSONALIDAD"
+            textSize = 10f
+            letterSpacing = 0.14f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(dp(8), dp(18), dp(8), dp(7))
         })
 
         personalityModesContainer = LinearLayout(this).apply {
@@ -584,9 +598,10 @@ class MainActivity : Activity() {
 
         panel.addView(TextView(this).apply {
             text = "HISTORIAL"
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-            setPadding(0, dp(18), 0, dp(8))
+            textSize = 10f
+            letterSpacing = 0.14f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(dp(8), dp(18), dp(8), dp(7))
         })
 
         historyContainer = LinearLayout(this).apply {
@@ -594,13 +609,13 @@ class MainActivity : Activity() {
         }
         val historyScroll = ScrollView(this).apply {
             isFillViewport = true
+            isVerticalScrollBarEnabled = false
             addView(historyContainer)
         }
         panel.addView(historyScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         refreshSidebarHistory()
         return panel
     }
-
     private fun refreshPersonalityButtons() {
         if (!::personalityModesContainer.isInitialized) return
         personalityModesContainer.removeAllViews()
@@ -609,17 +624,15 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun personalityButton(option: Personality): Button =
-        Button(this).apply {
+    private fun personalityButton(option: Personality): TextView =
+        TextView(this).apply {
             val active = Personality.fromKey(store.personality) == option
-            text = if (active) {
-                "●  " + option.key + " · ACTIVA"
-            } else {
-                "○  " + option.key
-            }
-            isAllCaps = false
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(54)
+            text = (if (active) "●  " else "○  ") + option.key
+            isClickable = true
+            textSize = 13.5f
+            gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false
+            setPadding(dp(13), 0, dp(10), 0)
             setTextColor(option.accent)
             setTypeface(typeface, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             contentDescription = if (active) {
@@ -627,70 +640,85 @@ class MainActivity : Activity() {
             } else {
                 option.description + ". Activar personalidad."
             }
-            setBackground(
-                neonPanel(
-                    if (active) Color.rgb(30, 8, 13) else Deep33Theme.SURFACE,
-                    if (active) option.accent else Deep33Theme.LINE_SOFT
-                )
+            background = neonPanel(
+                if (active) Color.rgb(20, 6, 10) else Color.TRANSPARENT,
+                if (active) option.accent else Color.TRANSPARENT,
+                12
             )
+            minHeight = dp(44)
             setOnClickListener {
                 selectPersonality(option)
                 hideSidebar()
             }
-            addPressFeedback(this)
         }
-
     private fun refreshSidebarHistory() {
         if (!::historyContainer.isInitialized) return
         historyContainer.removeAllViews()
         val items = store.loadChatSummaries()
         if (items.isEmpty()) {
             historyContainer.addView(TextView(this).apply {
-                text = "Todavía no hay conversaciones guardadas."
-                setTextColor(Color.GRAY)
-                textSize = 13f
-                setPadding(0, dp(8), 0, dp(8))
+                text = "No hay conversaciones guardadas."
+                setTextColor(Deep33Theme.TEXT_MUTED)
+                textSize = 12f
+                setPadding(dp(8), dp(8), dp(8), dp(8))
             })
             return
         }
         items.forEach { item ->
-            historyContainer.addView(Button(this).apply {
+            historyContainer.addView(TextView(this).apply {
                 text = item.title
-                isAllCaps = false
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                minHeight = dp(52)
+                textSize = 13f
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 setTextColor(Deep33Theme.TEXT_MUTED)
-                setBackground(neonPanel(Color.rgb(9, 9, 11), Deep33Theme.LINE))
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                setPadding(dp(13), dp(8), dp(10), dp(8))
+                background = neonPanel(Color.TRANSPARENT, Color.TRANSPARENT, 11)
+                minHeight = dp(44)
                 setOnClickListener {
                     openSession(item.sessionId)
                     hideSidebar()
                 }
-                addPressFeedback(this)
             })
         }
     }
-
     private fun toggleSidebar() {
         if (sidebar.visibility == View.VISIBLE) hideSidebar() else showSidebar()
     }
 
     private fun showSidebar() {
         refreshSidebarHistory()
-        drawerScrim.alpha = 1f
         drawerScrim.visibility = View.VISIBLE
-        sidebar.translationX = 0f
+        drawerScrim.alpha = 0f
+        drawerScrim.animate().alpha(1f).setDuration(150L).start()
         sidebar.visibility = View.VISIBLE
+        sidebar.translationX = -dp(318).toFloat()
+        sidebar.animate()
+            .translationX(0f)
+            .setDuration(180L)
+            .start()
     }
-
     private fun hideSidebar() {
         if (sidebar.visibility != View.VISIBLE) return
-        sidebar.translationX = 0f
-        sidebar.visibility = View.GONE
-        drawerScrim.visibility = View.GONE
-        drawerScrim.alpha = 1f
+        drawerScrim.animate().alpha(0f).setDuration(120L).withEndAction {
+            drawerScrim.visibility = View.GONE
+            drawerScrim.alpha = 1f
+        }.start()
+        sidebar.animate()
+            .translationX(-dp(318).toFloat())
+            .setDuration(150L)
+            .withEndAction {
+                sidebar.visibility = View.GONE
+                sidebar.translationX = 0f
+            }
+            .start()
     }
-
     private fun showTab(tab: Tab) {
+        val previousTab = currentTab
+        if (previousTab == Tab.CHAT && ::input.isInitialized) {
+            chatDraft = input.text.toString()
+        }
         currentTab = tab
         contentFrame.alpha = 1f
         contentFrame.translationY = 0f
@@ -701,7 +729,6 @@ class MainActivity : Activity() {
             Tab.SETTINGS -> contentFrame.addView(buildSettings())
         }
     }
-
     private fun buildChat(): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -711,85 +738,58 @@ class MainActivity : Activity() {
         voicePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(18), dp(16), dp(18), dp(22))
+            setPadding(dp(12), dp(8), dp(12), dp(18))
             visibility = View.GONE
             setBackground(
                 GradientDrawable().apply {
                     setColor(Deep33Theme.BG)
-                    cornerRadius = dp(22).toFloat()
+                    cornerRadius = dp(24).toFloat()
                     setStroke(dp(1), Personality.fromKey(store.personality).accent)
                 }
             )
         }
 
-        val voiceHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        voiceHeader.addView(TextView(this).apply {
-            text = "DEEP33 · VOZ"
-            textSize = 18f
-            letterSpacing = 0.08f
-            setTextColor(Deep33Theme.TEXT)
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        voiceHeader.addView(Button(this).apply {
-            text = "×"
+        val voiceClose = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_close)
             contentDescription = "Cerrar modo voz"
-            textSize = 24f
-            isAllCaps = false
-            minWidth = dp(46)
-            minHeight = dp(46)
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+            styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
             setOnClickListener {
                 stopVoiceInput()
                 interruptAssistantSpeech(resumeListening = false)
                 setVoiceModeUi(false)
             }
-            addPressFeedback(this)
-        }, LinearLayout.LayoutParams(dp(46), dp(46)))
-        voicePanel.addView(voiceHeader)
-
-        voiceStateView = TextView(this).apply {
-            text = "Modo voz"
-            setTextColor(Personality.fromKey(store.personality).accent)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            visibility = View.GONE
         }
-        voicePanel.addView(voiceStateView, LinearLayout.LayoutParams(-1, dp(24)))
+        val voiceTop = FrameLayout(this)
+        voiceTop.addView(
+            voiceClose,
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.END or Gravity.TOP)
+        )
+        voicePanel.addView(voiceTop, LinearLayout.LayoutParams(-1, dp(44)))
 
         avatarView = VoiceAvatarView(this).apply {
             setPersonality(Personality.fromKey(store.personality))
             setVoiceState(AvatarState.IDLE)
             contentDescription = "Avatar de voz de DEEP33"
         }
-        val maxAvatar = minOf(dp(252), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
-        voicePanel.addView(avatarView, LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
+        val avatarSize = minOf(dp(310), (resources.displayMetrics.widthPixels - dp(28)).coerceAtLeast(dp(220)))
+        voicePanel.addView(avatarView, LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
             gravity = Gravity.CENTER
-            topMargin = dp(28)
-            bottomMargin = dp(24)
+            topMargin = dp(8)
+            bottomMargin = dp(10)
         })
-
-        voicePanel.addView(TextView(this).apply {
-            text = "PERSONALIDAD · " + Personality.fromKey(store.personality).key
-            textSize = 10.5f
-            letterSpacing = 0.12f
-            gravity = Gravity.CENTER
-            setTextColor(Personality.fromKey(store.personality).accent)
-        }, LinearLayout.LayoutParams(-1, dp(24)))
 
         box.addView(voicePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
         chatContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Deep33Theme.BG)
-            setPadding(dp(2), dp(10), dp(2), dp(8))
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+            clipToPadding = false
         }
         chatScroll = ScrollView(this).apply {
             isFillViewport = true
+            clipToPadding = false
+            isVerticalScrollBarEnabled = false
             addView(chatContainer)
         }
         box.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -797,8 +797,11 @@ class MainActivity : Activity() {
         fun setComposerBackground(target: View, focused: Boolean) {
             target.background = GradientDrawable().apply {
                 setColor(Deep33Theme.SURFACE)
-                cornerRadius = dp(20).toFloat()
-                setStroke(dp(1), if (focused) Personality.fromKey(store.personality).accent else Deep33Theme.LINE_SOFT)
+                cornerRadius = dp(18).toFloat()
+                setStroke(
+                    dp(1),
+                    if (focused) Personality.fromKey(store.personality).accent else Deep33Theme.LINE_SOFT
+                )
             }
         }
 
@@ -811,12 +814,15 @@ class MainActivity : Activity() {
             maxLines = 5
             gravity = Gravity.CENTER_VERTICAL
             isSingleLine = false
-            setPadding(dp(16), dp(12), dp(112), dp(12))
+            includeFontPadding = false
+            setPadding(dp(16), dp(10), dp(108), dp(10))
             setComposerBackground(this, false)
+            setText(chatDraft)
+            setSelection(text.length)
         }
 
         val inputShell = FrameLayout(this).apply {
-            setPadding(0, dp(4), 0, dp(4))
+            setPadding(0, dp(3), 0, dp(3))
         }
         inputShell.addView(input, FrameLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         input.setOnFocusChangeListener { _, focused -> setComposerBackground(input, focused) }
@@ -828,13 +834,13 @@ class MainActivity : Activity() {
         styleIconButton(
             micButton,
             Personality.fromKey(store.personality).accent,
-            Deep33Theme.SURFACE_2,
-            Personality.fromKey(store.personality).accent
+            Color.TRANSPARENT,
+            Color.TRANSPARENT
         )
         inputShell.addView(
             micButton,
-            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
-                marginEnd = dp(54)
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                marginEnd = dp(50)
             }
         )
 
@@ -850,7 +856,7 @@ class MainActivity : Activity() {
         )
         inputShell.addView(
             sendButton,
-            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            FrameLayout.LayoutParams(dp(42), dp(42), Gravity.END or Gravity.CENTER_VERTICAL).apply {
                 marginEnd = dp(4)
             }
         )
@@ -865,266 +871,285 @@ class MainActivity : Activity() {
         composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
-            setPadding(0, dp(6), 0, dp(4))
-            addView(inputShell, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
-                setMargins(0, 0, dp(6), 0)
+            setPadding(0, dp(5), 0, dp(3))
+            addView(inputShell, LinearLayout.LayoutParams(0, dp(62), 1f).apply {
+                setMargins(0, 0, dp(5), 0)
             })
-            addView(cancelButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                setMargins(0, dp(4), dp(2), 0)
+            addView(cancelButton, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                setMargins(0, dp(4), dp(1), 0)
             })
         }
         box.addView(composer)
         return box
     }
-
     private fun buildStatus(): View {
-        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(10), dp(8), dp(24))
+            setPadding(dp(6), dp(12), dp(6), dp(24))
         }
 
         box.addView(TextView(this).apply {
-            text = "Estado"
-            textSize = 26f
+            text = "ESTADO"
+            textSize = 23f
+            letterSpacing = 0.06f
             setTextColor(Deep33Theme.TEXT)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(10), dp(8), dp(10), dp(18))
+            setPadding(dp(8), dp(5), dp(8), dp(15))
         })
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(16))
-            setBackground(neonPanel(Deep33Theme.SURFACE, Deep33Theme.LINE))
+            setPadding(dp(15), dp(14), dp(15), dp(15))
+            setBackground(neonPanel(Deep33Theme.SURFACE, Deep33Theme.LINE_SOFT, 16))
         }
 
-        card.addView(TextView(this).apply {
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleRow.addView(TextView(this).apply {
             text = "CONECTIVIDAD REAL"
-            textSize = 11f
-            letterSpacing = 0.10f
+            textSize = 10.5f
+            letterSpacing = 0.12f
             setTextColor(Deep33Theme.TEXT_MUTED)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, dp(28), 1f))
+        titleRow.addView(View(this).apply {
+            setBackgroundColor(Deep33Theme.GREEN)
+            layoutParams = LinearLayout.LayoutParams(dp(7), dp(7))
         })
+        card.addView(titleRow)
 
         diagnosticsView = TextView(this).apply {
             text = "Consultando diagnóstico…"
-            textSize = 15f
+            textSize = 14f
             setTextColor(Deep33Theme.TEXT)
-            setPadding(0, dp(10), 0, dp(16))
+            setPadding(0, dp(12), 0, dp(14))
+            includeFontPadding = false
         }
         card.addView(diagnosticsView)
 
-        card.addView(Button(this).apply {
+        card.addView(TextView(this).apply {
+            text = "El diagnóstico completo se ejecuta solo desde aquí."
+            textSize = 11.5f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(0, 0, 0, dp(11))
+        })
+
+        card.addView(TextView(this).apply {
             text = "COMPROBAR DE NUEVO"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT)
-            setBackground(neonPanel(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP))
+            textSize = 12f
+            letterSpacing = 0.08f
+            gravity = Gravity.CENTER
+            setTextColor(Deep33Theme.RED_NEON)
+            setBackground(neonPanel(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP, 12))
+            minHeight = dp(44)
             setOnClickListener { checkConnectivity() }
-            addPressFeedback(this)
-        }, LinearLayout.LayoutParams(-1, dp(48)))
+        }, LinearLayout.LayoutParams(-1, dp(44)))
 
         box.addView(card)
         scroll.addView(box)
         return scroll
     }
-
     private fun buildSettings(): View {
-        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(10), dp(8), dp(24))
+            setPadding(dp(6), dp(12), dp(6), dp(24))
         }
 
         box.addView(TextView(this).apply {
-            text = "Configuración"
-            textSize = 26f
+            text = "AJUSTES"
+            textSize = 23f
+            letterSpacing = 0.06f
             setTextColor(Deep33Theme.TEXT)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(10), dp(8), dp(10), dp(18))
+            setPadding(dp(8), dp(5), dp(8), dp(15))
         })
 
-        fun section(title: String, subtitle: String, body: View): View {
+        fun section(title: String, body: View, accent: Int = Deep33Theme.RED_NEON): View {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(14), dp(13), dp(14), dp(14))
-                setBackground(neonPanel(Deep33Theme.SURFACE, Deep33Theme.LINE))
+                setBackground(neonPanel(Deep33Theme.SURFACE, Deep33Theme.LINE_SOFT, 16))
             }
             card.addView(TextView(this).apply {
                 text = title
-                textSize = 15f
-                setTextColor(Deep33Theme.TEXT)
+                textSize = 10.5f
+                letterSpacing = 0.13f
+                setTextColor(accent)
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
-            })
-            card.addView(TextView(this).apply {
-                text = subtitle
-                textSize = 12f
-                setTextColor(Deep33Theme.TEXT_MUTED)
-                setPadding(0, dp(4), 0, dp(10))
+                setPadding(0, 0, 0, dp(10))
             })
             card.addView(body)
             return card
         }
 
+        fun row(
+            title: String,
+            subtitle: String? = null,
+            accent: Int = Deep33Theme.TEXT,
+            active: Boolean = false,
+            onClick: (() -> Unit)? = null
+        ): TextView = TextView(this).apply {
+            text = if (subtitle.isNullOrBlank()) title else "$title\n$subtitle"
+            textSize = 13.5f
+            setTextColor(if (active) accent else Deep33Theme.TEXT)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(9), dp(10), dp(9))
+            background = neonPanel(
+                if (active) Color.rgb(18, 6, 9) else Color.TRANSPARENT,
+                if (active) accent else Color.TRANSPARENT,
+                12
+            )
+            minHeight = if (subtitle.isNullOrBlank()) dp(44) else dp(52)
+            isClickable = onClick != null
+            onClick?.let { setOnClickListener { it() } }
+        }
+
         val voiceBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        voiceBody.addView(Button(this).apply {
-            text = if (store.voiceEnabled) "Voz de respuesta · ACTIVADA" else "Voz de respuesta · DESACTIVADA"
-            isAllCaps = false
-            setTextColor(if (store.voiceEnabled) Color.rgb(105, 226, 158) else Deep33Theme.TEXT_MUTED)
-            setBackground(neonPanel(
-                if (store.voiceEnabled) Color.rgb(7, 28, 16) else Deep33Theme.SURFACE_2,
-                if (store.voiceEnabled) Color.rgb(24, 103, 58) else Deep33Theme.LINE_SOFT
-            ))
-            setOnClickListener {
+        voiceBody.addView(
+            row(
+                title = if (store.voiceEnabled) "VOZ DE RESPUESTA · ACTIVA" else "VOZ DE RESPUESTA · INACTIVA",
+                subtitle = "La voz de respuesta no convierte el chat en modo voz.",
+                accent = if (store.voiceEnabled) Deep33Theme.GREEN else Deep33Theme.TEXT_MUTED,
+                active = store.voiceEnabled
+            ) {
                 store.voiceEnabled = !store.voiceEnabled
-                text = if (store.voiceEnabled) "Voz de respuesta · ACTIVADA" else "Voz de respuesta · DESACTIVADA"
-                setTextColor(if (store.voiceEnabled) Color.rgb(105, 226, 158) else Deep33Theme.TEXT_MUTED)
                 if (!store.voiceEnabled) {
                     textToSpeech?.stop()
                     setVoiceState(AvatarState.IDLE)
                     setVoiceModeUi(false)
                 }
+                showTab(Tab.SETTINGS)
             }
-            addPressFeedback(this)
-        })
-
+        )
         voiceBody.addView(TextView(this).apply {
-            text = "TONO ACTUAL · " + VoiceTone.fromKey(store.voiceTone).key
-            textSize = 12f
+            text = "TONO"
+            textSize = 9.5f
+            letterSpacing = 0.14f
             setTextColor(Deep33Theme.TEXT_MUTED)
-            setPadding(0, dp(12), 0, dp(4))
+            setPadding(dp(4), dp(12), dp(4), dp(5))
         })
 
         VoiceTone.entries.forEach { tone ->
-            voiceBody.addView(Button(this).apply {
-                text = tone.key + " — " + tone.description
-                isAllCaps = false
-                setTextColor(if (tone.key == VoiceTone.fromKey(store.voiceTone).key) Deep33Theme.TEXT else Deep33Theme.TEXT_MUTED)
-                setBackground(
-                    neonPanel(
-                        if (tone.key == VoiceTone.fromKey(store.voiceTone).key) Deep33Theme.RED_SURFACE else Deep33Theme.SURFACE_2,
-                        if (tone.key == VoiceTone.fromKey(store.voiceTone).key) Deep33Theme.RED else Deep33Theme.LINE_SOFT
-                    )
-                )
-                setOnClickListener {
+            val selected = tone.key == VoiceTone.fromKey(store.voiceTone).key
+            voiceBody.addView(
+                row(
+                    title = tone.key,
+                    subtitle = tone.description,
+                    accent = Deep33Theme.RED_NEON,
+                    active = selected
+                ) {
                     store.voiceTone = tone.key
                     applyVoiceTone()
                     showTab(Tab.SETTINGS)
                 }
-                addPressFeedback(this)
-            })
+            )
         }
-        box.addView(section(
-            "Voz",
-            "Audio de respuesta y tono de voz. El modo voz mantiene la interacción sin transcripción visible.",
-            voiceBody
-        ), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(2), 0, dp(2), dp(10))
+
+        box.addView(section("VOZ", voiceBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(2), 0, dp(2), dp(9))
         })
 
         val active = Personality.fromKey(store.personality)
         val personalityBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        personalityBody.addView(TextView(this).apply {
-            text = active.key + " — " + active.description
-            textSize = 14f
-            setTextColor(active.accent)
-            setPadding(0, 0, 0, dp(10))
-        })
-        Personality.entries.forEach { option ->
-            personalityBody.addView(Button(this).apply {
-                val selected = option == active
-                text = (if (selected) "●  " else "○  ") + option.key
-                isAllCaps = false
-                setTextColor(option.accent)
-                setBackground(
-                    neonPanel(
-                        if (selected) Color.rgb(30, 8, 13) else Deep33Theme.SURFACE_2,
-                        if (selected) option.accent else Deep33Theme.LINE_SOFT
-                    )
-                )
-                setOnClickListener {
+        personalityBody.addView(
+            row(
+                title = active.key,
+                subtitle = active.description,
+                accent = active.accent,
+                active = true
+            )
+        )
+        Personality.entries.filter { it != active }.forEach { option ->
+            personalityBody.addView(
+                row(
+                    title = option.key,
+                    subtitle = option.description,
+                    accent = option.accent,
+                    active = false
+                ) {
                     selectPersonality(option)
                     showTab(Tab.SETTINGS)
                 }
-                addPressFeedback(this)
-            })
+            )
         }
-        box.addView(section(
-            "Personalidad",
-            "La identidad activa se refleja en el chat, avatar y voz.",
-            personalityBody
-        ), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(dp(2), 0, dp(2), dp(10))
+        box.addView(section("PERSONALIDAD", personalityBody, active.accent), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(2), 0, dp(2), dp(9))
         })
 
         val sessionBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        sessionBody.addView(TextView(this).apply {
-            text = "SESIÓN ACTIVA\n" + store.sessionId
-            textSize = 12f
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setPadding(0, 0, 0, dp(10))
-        })
-        sessionBody.addView(Button(this).apply {
-            text = "BORRAR CONVERSACIÓN"
-            isAllCaps = false
-            setTextColor(Color.rgb(255, 113, 132))
-            setBackground(neonPanel(Color.rgb(24, 7, 11), Color.rgb(112, 25, 41)))
-            setOnClickListener {
+        sessionBody.addView(
+            row(
+                title = "BORRAR CONVERSACIÓN",
+                subtitle = "Elimina el contenido local de esta conversación.",
+                accent = Deep33Theme.RED_NEON,
+                active = false
+            ) {
                 conversation.clear()
+                visibleHistoryCount = 50
                 store.clearConversation()
                 renderConversation()
             }
-            addPressFeedback(this)
-        })
-        sessionBody.addView(Button(this).apply {
-            text = "NUEVA SESIÓN"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
-            setOnClickListener { startNewSession() }
-            addPressFeedback(this)
-        })
-        box.addView(section(
-            "Sesión",
-            "Conversación local persistente y continuidad entre aperturas.",
-            sessionBody
-        ), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        )
+        sessionBody.addView(
+            row(
+                title = "NUEVA SESIÓN",
+                subtitle = "Abre una conversación limpia sin mostrar identificadores técnicos.",
+                accent = Deep33Theme.TEXT,
+                active = false
+            ) {
+                startNewSession()
+            }
+        )
+        box.addView(section("SESIÓN", sessionBody), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(dp(2), 0, dp(2), 0)
         })
 
         scroll.addView(box)
         return scroll
     }
-
-    private fun voicePanelOrNull(): LinearLayout? =
-        if (::voicePanel.isInitialized) voicePanel else null
-
     private fun selectPersonality(personality: Personality) {
         personalitySelectionGeneration++
-        // Persist the selection first so every subsequent chat/voice request uses the
-        // exact mode chosen by the user, independent of older memory/preferences.
+        // Persist before repainting so every subsequent request uses the exact selection.
         store.setPersonalityFromUser(personality.key)
         Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
-        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
+        currentPersonalityView.text = personality.key
         currentPersonalityView.setTextColor(personality.accent)
+        currentPersonalityView.contentDescription = "Personalidad activa: " + personality.key
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
-        if (::sendButton.isInitialized) sendButton.imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE); sendButton.background = iconCircleBackground(personality.accent, personality.accent)
+        if (::sendButton.isInitialized) {
+            sendButton.imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            sendButton.background = iconCircleBackground(personality.accent, personality.accent)
+        }
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
-        if (::micButton.isInitialized) micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent); micButton.background = iconCircleBackground(Deep33Theme.SURFACE_2, personality.accent)
+        if (::micButton.isInitialized) {
+            micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent)
+            micButton.background = iconCircleBackground(Color.TRANSPARENT, Color.TRANSPARENT)
+        }
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
-            avatarView.setPersonality(personality)
         }
         applyVoiceTone(personality)
         syncPreferences()
     }
-
     private fun applyStopButtonTheme(personality: Personality) {
         if (!::cancelButton.isInitialized) return
         cancelButton.setImageResource(R.drawable.ic_action_stop)
@@ -1137,8 +1162,9 @@ class MainActivity : Activity() {
     }
 
     private fun applyPersonalityTheme(personality: Personality) {
-        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
+        currentPersonalityView.text = personality.key
         currentPersonalityView.setTextColor(personality.accent)
+        currentPersonalityView.contentDescription = "Personalidad activa: " + personality.key
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
         if (::sendButton.isInitialized) {
@@ -1148,17 +1174,14 @@ class MainActivity : Activity() {
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
         if (::micButton.isInitialized) {
             micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent)
-            micButton.background = iconCircleBackground(Deep33Theme.SURFACE_2, personality.accent)
+            micButton.background = iconCircleBackground(Color.TRANSPARENT, Color.TRANSPARENT)
         }
         if (::avatarView.isInitialized) avatarView.setPersonality(personality)
         if (::voicePanel.isInitialized) {
             (voicePanel.background as? GradientDrawable)?.setStroke(dp(1), personality.accent)
         }
-        // Re-apply the voice profile whenever the active personality is restored from
-        // storage/remote memory, not only when the settings button is pressed.
         applyVoiceTone(personality)
     }
-
     private fun syncPreferences() {
         executor.submit {
             // Preference writes are serialized so an older selection can never finish
@@ -1182,6 +1205,8 @@ class MainActivity : Activity() {
         interruptAssistantSpeech(resumeListening = false)
         store.resetSession()
         conversation.clear()
+        visibleHistoryCount = 50
+        chatDraft = ""
         showTab(Tab.CHAT)
         renderConversation()
         refreshSidebarHistory()
@@ -1194,6 +1219,8 @@ class MainActivity : Activity() {
         store.activateSession(sessionId)
         conversation.clear()
         conversation.addAll(store.loadMessages())
+        visibleHistoryCount = 50
+        chatDraft = ""
         showTab(Tab.CHAT)
         renderConversation()
         loadRemoteContext()
@@ -1444,11 +1471,12 @@ class MainActivity : Activity() {
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
         saveCurrentSummary()
-        appendBubble("TÚ", text, Color.rgb(12, 34, 27))
+        appendBubble("TÚ", text, Deep33Theme.USER_BUBBLE)
         input.setText("")
+        chatDraft = ""
         refreshSidebarHistory()
 
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        activeBubble = appendBubble("DEEP33", "Pensando...", Deep33Theme.ASSISTANT_BUBBLE)
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
@@ -1517,7 +1545,7 @@ class MainActivity : Activity() {
         activeBubble = appendBubble(
             "DEEP33",
             partial.ifBlank { "Pensando..." },
-            Color.rgb(42, 12, 18)
+            Deep33Theme.ASSISTANT_BUBBLE
         )
         activeBubble?.tag = partial.ifBlank { "Pensando..." }
 
@@ -1689,10 +1717,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun neonPanel(fill: Int, stroke: Int): GradientDrawable =
+    private fun neonPanel(fill: Int, stroke: Int, radiusDp: Int = 14): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
-            cornerRadius = dp(13).toFloat()
+            cornerRadius = dp(radiusDp).toFloat()
             setStroke(dp(1), stroke)
         }
 
@@ -1742,28 +1770,31 @@ class MainActivity : Activity() {
             voiceModeGeneration++
         }
         voiceModeActive = active
+
         if (active) {
+            mainHeader.visibility = View.GONE
             voicePanel.visibility = View.VISIBLE
-            voicePanel.gravity = Gravity.CENTER_HORIZONTAL
+            voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             chatScroll.visibility = View.GONE
             composer.visibility = View.GONE
-            voiceStateView.visibility = View.GONE
-            val maxAvatar = minOf(dp(252), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
-            avatarView.layoutParams = LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
+            val avatarSize = minOf(
+                dp(310),
+                (resources.displayMetrics.widthPixels - dp(28)).coerceAtLeast(dp(220))
+            )
+            avatarView.layoutParams = LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
                 gravity = Gravity.CENTER
             }
         } else {
+            mainHeader.visibility = View.VISIBLE
             voicePanel.visibility = View.GONE
-            voicePanel.gravity = Gravity.CENTER_VERTICAL
+            voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
             chatScroll.visibility = View.VISIBLE
             composer.visibility = View.VISIBLE
-            voiceStateView.visibility = View.GONE
             avatarView.layoutParams = LinearLayout.LayoutParams(dp(86), dp(86))
         }
     }
-
     private fun scheduleNextVoiceTurn(delayMs: Long = 250L) {
         if (!voiceModeActive ||
             speechListening ||
@@ -1891,49 +1922,67 @@ class MainActivity : Activity() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(28), dp(24), dp(28), dp(30))
+            setPadding(dp(26), dp(24), dp(26), dp(26))
         }
         panel.addView(TextView(this).apply {
             text = "DEEP33"
-            textSize = 26f
-            letterSpacing = 0.16f
+            textSize = 27f
+            letterSpacing = 0.15f
             setTextColor(Deep33Theme.TEXT)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
         })
         panel.addView(View(this).apply {
-            setBackgroundColor(Deep33Theme.RED)
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(1)).apply {
-                topMargin = dp(10)
-                bottomMargin = dp(14)
+            setBackgroundColor(Deep33Theme.RED_NEON)
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(1)).apply {
+                topMargin = dp(9)
+                bottomMargin = dp(15)
             }
         })
         panel.addView(TextView(this).apply {
             text = "Intercambia ideas. Explora. Cuestiona."
-            textSize = 14f
+            textSize = 14.5f
+            setTextColor(Deep33Theme.TEXT)
+            gravity = Gravity.CENTER
+        })
+        panel.addView(TextView(this).apply {
+            text = "Escribe una idea para comenzar."
+            textSize = 12.5f
             setTextColor(Deep33Theme.TEXT_MUTED)
             gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
-        panel.addView(TextView(this).apply {
-            text = "Internet, memoria, personalidad y voz integradas en una sola conversación."
-            textSize = 12.5f
-            setTextColor(Color.rgb(112, 118, 128))
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(10), dp(12), 0)
-        }, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setPadding(0, dp(9), 0, 0)
+        })
         return panel
     }
-
     private fun renderConversation() {
         if (!::chatContainer.isInitialized) return
         chatContainer.removeAllViews()
+
         if (conversation.isEmpty()) {
             chatContainer.addView(
                 buildEmptyState(),
                 LinearLayout.LayoutParams(-1, 0, 1f)
             )
         } else {
-            conversation.takeLast(50).forEach { message ->
+            val start = (conversation.size - visibleHistoryCount).coerceAtLeast(0)
+            if (start > 0) {
+                val older = TextView(this).apply {
+                    text = "CARGAR MENSAJES ANTERIORES"
+                    contentDescription = "Cargar mensajes anteriores"
+                    textSize = 10.5f
+                    letterSpacing = 0.08f
+                    setTextColor(Deep33Theme.TEXT_MUTED)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    setOnClickListener {
+                        visibleHistoryCount = (visibleHistoryCount + 50).coerceAtMost(conversation.size)
+                        renderConversation()
+                    }
+                }
+                chatContainer.addView(older, LinearLayout.LayoutParams(-1, dp(40)))
+            }
+
+            conversation.drop(start).forEach { message ->
                 appendBubble(
                     if (message.role == "user") "TÚ" else "DEEP33",
                     message.content,
@@ -1943,18 +1992,18 @@ class MainActivity : Activity() {
         }
         chatContainer.post { scrollToBottom() }
     }
-
     private fun appendBubble(label: String, content: String, background: Int): TextView {
         val isAssistant = label == "DEEP33"
-        val accent = Personality.fromKey(store.personality).accent
+        val accent = if (isAssistant) Deep33Theme.RED_NEON else Deep33Theme.GREEN
         val bubble = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(15), dp(12), dp(15), dp(12))
+            tag = if (isAssistant) "chat-bubble-assistant" else "chat-bubble-user"
+            setPadding(dp(14), dp(11), dp(14), dp(11))
             setBackground(
                 GradientDrawable().apply {
                     setColor(background)
-                    cornerRadius = dp(18).toFloat()
-                    setStroke(dp(1), if (isAssistant) Color.rgb(74, 18, 30) else Deep33Theme.LINE)
+                    cornerRadius = dp(17).toFloat()
+                    setStroke(dp(1), accent)
                 }
             )
         }
@@ -1965,31 +2014,30 @@ class MainActivity : Activity() {
         }
         headerRow.addView(TextView(this).apply {
             text = label
-            setTextColor(if (isAssistant) accent else Deep33Theme.TEXT_MUTED)
-            textSize = 10f
+            setTextColor(accent)
+            textSize = 9.5f
             letterSpacing = 0.10f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
-        if (isAssistant) {
-            headerRow.addView(View(this).apply {
-                setBackgroundColor(accent)
-                layoutParams = LinearLayout.LayoutParams(dp(18), dp(1)).apply {
-                    leftMargin = dp(8)
-                }
-            })
-        }
+        headerRow.addView(View(this).apply {
+            setBackgroundColor(accent)
+            alpha = 0.58f
+            layoutParams = LinearLayout.LayoutParams(dp(14), dp(1)).apply {
+                leftMargin = dp(7)
+            }
+        })
         bubble.addView(headerRow)
 
         val contentView = TextView(this).apply {
             tag = content
             textSize = 16f
-            letterSpacing = 0.008f
+            letterSpacing = 0.004f
             includeFontPadding = false
             setTextColor(Deep33Theme.TEXT)
             setPadding(0, dp(7), 0, 0)
             movementMethod = LinkMovementMethod.getInstance()
             maxWidth = (resources.displayMetrics.widthPixels *
-                if (isAssistant) 0.92f else 0.82f).roundToInt().coerceAtLeast(dp(120))
+                if (isAssistant) 0.90f else 0.82f).roundToInt().coerceAtLeast(dp(120))
         }
         bubble.addView(contentView)
         renderMarkdown(contentView, content, isAssistant)
@@ -2008,10 +2056,10 @@ class MainActivity : Activity() {
         ).apply {
             gravity = if (isAssistant) Gravity.START else Gravity.END
             setMargins(
-                if (isAssistant) dp(2) else dp(46),
+                if (isAssistant) dp(1) else dp(34),
                 0,
-                if (isAssistant) dp(8) else dp(2),
-                dp(10)
+                if (isAssistant) dp(34) else dp(1),
+                dp(9)
             )
         }
         chatContainer.addView(bubble, params)
@@ -2020,7 +2068,6 @@ class MainActivity : Activity() {
         bubble.post { scrollToBottom() }
         return contentView
     }
-
     private fun addAssistantActionRow(
         bubble: LinearLayout,
         contentView: TextView,
@@ -2029,10 +2076,10 @@ class MainActivity : Activity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            setPadding(0, dp(5), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         }
 
-        val normalTint = Color.rgb(158, 164, 174)
+        val normalTint = Color.rgb(124, 130, 140)
         val activeTint = Personality.fromKey(store.personality).accent
 
         fun actionButton(
@@ -2044,88 +2091,64 @@ class MainActivity : Activity() {
                 setImageResource(icon)
                 imageTintList = android.content.res.ColorStateList.valueOf(normalTint)
                 scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(9), dp(9), dp(9), dp(9))
-                background = iconCircleBackground(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT)
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                background = iconCircleBackground(Color.TRANSPARENT, Color.TRANSPARENT)
                 contentDescription = description
                 minimumWidth = 0
                 minimumHeight = 0
-                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
-                    rightMargin = dp(4)
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply {
+                    rightMargin = dp(2)
                 }
                 addPressFeedback(this)
                 setOnClickListener { onClick(this) }
             }
 
-        row.addView(
-            actionButton(
-                R.drawable.ic_action_copy,
-                "Copiar respuesta"
-            ) { button ->
-                val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("DEEP33", content))
-                button.imageTintList =
-                    android.content.res.ColorStateList.valueOf(activeTint)
-                button.postDelayed({
-                    button.imageTintList =
-                        android.content.res.ColorStateList.valueOf(normalTint)
-                }, 650L)
-            }
-        )
-
-        row.addView(
-            actionButton(
-                R.drawable.ic_action_volume,
-                "Leer respuesta en voz alta"
-            ) { button ->
-                speakAssistant(content, Personality.fromKey(store.personality))
-                button.imageTintList =
-                    android.content.res.ColorStateList.valueOf(activeTint)
-                button.postDelayed({
-                    button.imageTintList =
-                        android.content.res.ColorStateList.valueOf(normalTint)
-                }, 900L)
-            }
-        )
-
-        val likeButton = actionButton(
-            R.drawable.ic_action_like,
-            "Respuesta útil"
+        row.addView(actionButton(
+            R.drawable.ic_action_copy,
+            "Copiar respuesta"
         ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
-            dislikeButtonTint(normalTint, likeButton = button, other = null)
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("DEEP33", content))
+            button.imageTintList = android.content.res.ColorStateList.valueOf(activeTint)
+            button.postDelayed({
+                button.imageTintList = android.content.res.ColorStateList.valueOf(normalTint)
+            }, 650L)
+        })
+
+        row.addView(actionButton(
+            R.drawable.ic_action_volume,
+            "Leer respuesta en voz alta"
+        ) { button ->
+            speakAssistant(content, Personality.fromKey(store.personality))
+            button.imageTintList = android.content.res.ColorStateList.valueOf(activeTint)
+            button.postDelayed({
+                button.imageTintList = android.content.res.ColorStateList.valueOf(normalTint)
+            }, 900L)
+        })
+
+        val likeButton = actionButton(R.drawable.ic_action_like, "Respuesta útil") { button ->
+            button.imageTintList = android.content.res.ColorStateList.valueOf(activeTint)
+            dislikeButtonTint(normalTint, button, null)
         }
         row.addView(likeButton)
 
-        val dislikeButton = actionButton(
-            R.drawable.ic_action_dislike,
-            "Respuesta no útil"
-        ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
-            dislikeButtonTint(normalTint, likeButton = null, other = button)
+        val dislikeButton = actionButton(R.drawable.ic_action_dislike, "Respuesta no útil") { button ->
+            button.imageTintList = android.content.res.ColorStateList.valueOf(activeTint)
+            dislikeButtonTint(normalTint, null, button)
         }
         row.addView(dislikeButton)
 
-        // One final compact action, matching the common response-action pattern.
-        row.addView(
-            actionButton(
-                R.drawable.ic_action_retry,
-                "Intentar de nuevo"
-            ) {
-                regenerateLastResponse()
-            }
-        )
+        row.addView(actionButton(
+            R.drawable.ic_action_retry,
+            "Intentar de nuevo"
+        ) {
+            regenerateLastResponse()
+        })
 
-        bubble.addView(
-            row,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(40)
-            )
-        )
+        bubble.addView(row, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(34)
+        ))
     }
-
     private fun dislikeButtonTint(
         normalTint: Int,
         likeButton: ImageButton?,
@@ -2180,15 +2203,9 @@ class MainActivity : Activity() {
 
     private fun setVoiceState(state: AvatarState) {
         if (!::avatarView.isInitialized) return
+        // Voice mode communicates state visually through the minimal avatar only.
         avatarView.setVoiceState(state)
-        voiceStateView.text = when (state) {
-            AvatarState.IDLE -> "Modo voz"
-            AvatarState.LISTENING -> "Escuchando"
-            AvatarState.THINKING -> "Procesando"
-            AvatarState.SPEAKING -> "Hablando"
-        }
     }
-
     private fun toggleVoiceInput() {
         if (speechListening && !bargeInMonitoring) {
             stopVoiceInput()
@@ -2386,3 +2403,8 @@ class MainActivity : Activity() {
          private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
+
+
+
+
+

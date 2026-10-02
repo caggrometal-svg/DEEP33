@@ -4,41 +4,31 @@ enum class Personality(
     val key: String,
     val avatar: String,
     val accent: Int,
-    val description: String,
-    val avatarMotion: Float,
-    val avatarGeometry: String
+    val description: String
 ) {
     AGRESIVO(
         "AGRESIVO",
         "A",
         0xFFFF1744.toInt(),
-        "Directo, impaciente, sarcástico y confrontacional.",
-        0.052f,
-        "ROUND_GLOW"
+        "Directo, impaciente, sarcástico y confrontacional."
     ),
     NEUTRO(
         "NEUTRO",
         "N",
         0xFFB8C0CC.toInt(),
-        "Analítico, formal, objetivo y basado en datos.",
-        0.035f,
-        "ROUND_FOCUS"
+        "Analítico, formal, objetivo y basado en datos."
     ),
     COMICO(
         "COMICO",
         "M",
         0xFFD2A264.toInt(),
-        "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión.",
-        0.044f,
-        "ROUND_SOFT"
+        "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión."
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
         "C",
         0xFF9278C1.toInt(),
-        "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis.",
-        0.021f,
-        "ROUND_TIGHT"
+        "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis."
     );
 
     companion object {
