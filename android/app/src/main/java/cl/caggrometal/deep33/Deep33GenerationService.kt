@@ -56,7 +56,7 @@ class Deep33GenerationService : Service() {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
                 if (requestId.isNullOrBlank() || requestId == runningRequestId) {
                     userCancelled.set(true)
-                    Deep33Api.cancelActiveStream()
+                    Deep33Api.cancelActiveStream(requestId ?: runningRequestId)
                 }
                 return START_REDELIVER_INTENT
             }
@@ -479,7 +479,7 @@ class Deep33GenerationService : Service() {
             }
         }
         stoppingBySystem = true
-        Deep33Api.cancelActiveStream()
+        Deep33Api.cancelActiveStream(runningRequestId)
         releaseGenerationWakeLock()
         executor.shutdownNow()
         super.onDestroy()
