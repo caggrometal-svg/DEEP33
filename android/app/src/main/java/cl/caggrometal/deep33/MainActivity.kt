@@ -143,7 +143,6 @@ class MainActivity : Activity() {
     private lateinit var currentPersonalityView: TextView
     private lateinit var diagnosticsView: TextView
     private lateinit var voicePanel: LinearLayout
-    private lateinit var voiceStateView: TextView
     private lateinit var avatarView: VoiceAvatarView
     private lateinit var composer: LinearLayout
     private lateinit var chatScroll: ScrollView
@@ -782,19 +781,6 @@ class MainActivity : Activity() {
             topMargin = dp(8)
             bottomMargin = dp(10)
         })
-
-        // A thin visual status mark replaces voice-state text.
-        val voiceStateMark = View(this).apply {
-            setBackgroundColor(Personality.fromKey(store.personality).accent)
-            alpha = 0.32f
-        }
-        voicePanel.addView(
-            voiceStateMark,
-            LinearLayout.LayoutParams(dp(34), dp(2)).apply {
-                gravity = Gravity.CENTER
-                bottomMargin = dp(4)
-            }
-        )
 
         box.addView(voicePanel, LinearLayout.LayoutParams(-1, 0, 1f))
 
@@ -1770,28 +1756,29 @@ class MainActivity : Activity() {
             voiceModeGeneration++
         }
         voiceModeActive = active
+
         if (active) {
             voicePanel.visibility = View.VISIBLE
-            voicePanel.gravity = Gravity.CENTER_HORIZONTAL
+            voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             chatScroll.visibility = View.GONE
             composer.visibility = View.GONE
-            voiceStateView.visibility = View.GONE
-            val maxAvatar = minOf(dp(252), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
-            avatarView.layoutParams = LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
+            val avatarSize = minOf(
+                dp(310),
+                (resources.displayMetrics.widthPixels - dp(28)).coerceAtLeast(dp(220))
+            )
+            avatarView.layoutParams = LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
                 gravity = Gravity.CENTER
             }
         } else {
             voicePanel.visibility = View.GONE
-            voicePanel.gravity = Gravity.CENTER_VERTICAL
+            voicePanel.gravity = Gravity.CENTER
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
             chatScroll.visibility = View.VISIBLE
             composer.visibility = View.VISIBLE
-            voiceStateView.visibility = View.GONE
             avatarView.layoutParams = LinearLayout.LayoutParams(dp(86), dp(86))
         }
     }
-
     private fun scheduleNextVoiceTurn(delayMs: Long = 250L) {
         if (!voiceModeActive ||
             speechListening ||
@@ -2201,15 +2188,9 @@ class MainActivity : Activity() {
 
     private fun setVoiceState(state: AvatarState) {
         if (!::avatarView.isInitialized) return
+        // Voice mode communicates state visually through the minimal avatar only.
         avatarView.setVoiceState(state)
-        voiceStateView.text = when (state) {
-            AvatarState.IDLE -> "Modo voz"
-            AvatarState.LISTENING -> "Escuchando"
-            AvatarState.THINKING -> "Procesando"
-            AvatarState.SPEAKING -> "Hablando"
-        }
     }
-
     private fun toggleVoiceInput() {
         if (speechListening && !bargeInMonitoring) {
             stopVoiceInput()
@@ -2407,5 +2388,6 @@ class MainActivity : Activity() {
          private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
+
 
 
