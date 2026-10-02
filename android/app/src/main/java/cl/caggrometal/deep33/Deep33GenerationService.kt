@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import org.json.JSONArray
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -19,7 +20,9 @@ class Deep33GenerationService : Service() {
     @Volatile private var stoppingBySystem = false
     @Volatile private var runningRequestId: String? = null
     @Volatile private var keepAliveForRecovery = false
+    @Volatile private var backgroundMode = false
     private var backgroundRecoveryCycles = 0
+    private var generationWakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -28,6 +31,25 @@ class Deep33GenerationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_BACKGROUND -> {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+                if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                    backgroundMode = true
+                    updateForegroundNotification("DEEP33 continúa generando en segundo plano…")
+                    Deep33Api.cancelActiveStream()
+                }
+                return START_REDELIVER_INTENT
+            }
+
+            ACTION_FOREGROUND -> {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+                if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                    backgroundMode = false
+                    updateForegroundNotification("Generando respuesta…")
+                }
+                return START_REDELIVER_INTENT
+            }
+
             ACTION_CANCEL -> {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
                 if (requestId.isNullOrBlank() || requestId == runningRequestId) {
@@ -55,7 +77,9 @@ class Deep33GenerationService : Service() {
                 userCancelled.set(false)
                 stoppingBySystem = false
                 keepAliveForRecovery = false
+                backgroundMode = false
                 runningRequestId = requestedId
+                acquireGenerationWakeLock()
                 executor.execute { runGeneration(requestedId) }
                 return START_REDELIVER_INTENT
             }
@@ -255,6 +279,7 @@ class Deep33GenerationService : Service() {
             if (!keepAliveForRecovery) {
                 runningRequestId = null
                 backgroundRecoveryCycles = 0
+                releaseGenerationWakeLock()
                 stopSelf()
             }
         }
@@ -338,6 +363,47 @@ class Deep33GenerationService : Service() {
                 return result
             } catch (e: Deep33ApiException) {
                 lastError = e
+
+                // When the Activity goes to the background, do not depend on a long-lived
+                // SSE socket. The same request/idempotency key is completed through the
+                // non-streaming endpoint, whose result is durable and can be recovered
+                // when the Activity returns.
+                if (backgroundMode && isRecoverableTransportError(e.kind)) {
+                    try {
+                        val direct = Deep33Api.generate(
+                            payload,
+                            pending.sessionId,
+                            personality.key,
+                            requestId = pending.requestId,
+                            idempotencyKey = pending.idempotencyKey,
+                        )
+                        val directText = direct
+                            .optJSONObject("result")
+                            ?.optString("text")
+                            .orEmpty()
+                            .trim()
+                        if (directText.isNotBlank()) {
+                            store.saveGenerationState(
+                                status = GenerationStatus.RUNNING,
+                                requestId = requestId,
+                                sessionId = pending.sessionId,
+                                personality = personality.key,
+                                partialOutput = directText,
+                                error = "Continuando en segundo plano."
+                            )
+                            return directText
+                        }
+                    } catch (fallbackError: Exception) {
+                        lastError = when (fallbackError) {
+                            is Deep33ApiException -> fallbackError
+                            else -> Deep33ApiException(
+                                Deep33ApiException.Kind.NETWORK,
+                                cause = fallbackError
+                            )
+                        }
+                    }
+                }
+
                 if (!isRecoverableTransportError(e.kind) || attempt == MAX_STREAM_RECOVERY_RETRIES) {
                     throw e
                 }
@@ -363,6 +429,25 @@ class Deep33GenerationService : Service() {
         }
 
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
+    }
+
+    private fun acquireGenerationWakeLock() {
+        if (generationWakeLock?.isHeld == true) return
+        val manager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        generationWakeLock = manager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "DEEP33:Generation"
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseGenerationWakeLock() {
+        runCatching {
+            generationWakeLock?.takeIf { it.isHeld }?.release()
+        }
+        generationWakeLock = null
     }
 
     private fun isRecoverableTransportError(kind: Deep33ApiException.Kind): Boolean =
@@ -468,6 +553,7 @@ class Deep33GenerationService : Service() {
         }
         stoppingBySystem = true
         Deep33Api.cancelActiveStream()
+        releaseGenerationWakeLock()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -483,6 +569,8 @@ class Deep33GenerationService : Service() {
         private val BACKGROUND_RECOVERY_DELAYS_MS = longArrayOf(15_000L, 30_000L, 60_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
+        private const val ACTION_BACKGROUND = "cl.caggrometal.deep33.action.APP_BACKGROUND"
+        private const val ACTION_FOREGROUND = "cl.caggrometal.deep33.action.APP_FOREGROUND"
         private const val EXTRA_REQUEST_ID = "request_id"
 
         fun start(context: Context, requestId: String) {
@@ -495,6 +583,20 @@ class Deep33GenerationService : Service() {
         fun cancel(context: Context, requestId: String?) {
             val intent = Intent(context, Deep33GenerationService::class.java)
                 .setAction(ACTION_CANCEL)
+                .putExtra(EXTRA_REQUEST_ID, requestId)
+            context.startService(intent)
+        }
+
+        fun appBackground(context: Context, requestId: String?) {
+            val intent = Intent(context, Deep33GenerationService::class.java)
+                .setAction(ACTION_BACKGROUND)
+                .putExtra(EXTRA_REQUEST_ID, requestId)
+            context.startService(intent)
+        }
+
+        fun appForeground(context: Context, requestId: String?) {
+            val intent = Intent(context, Deep33GenerationService::class.java)
+                .setAction(ACTION_FOREGROUND)
                 .putExtra(EXTRA_REQUEST_ID, requestId)
             context.startService(intent)
         }

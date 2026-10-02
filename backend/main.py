@@ -2040,8 +2040,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         return StreamingResponse(cached_stream(), media_type="text/event-stream",
                                  headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id,"X-DEEP33-Personality":personality})
 
+    # Stream and non-stream generation share one idempotency namespace. This allows
+    # Android to safely fall back from an interrupted SSE connection to /v1/ai/generate
+    # without creating a second inference for the same user turn.
     state, record = await shared_idempotency_claim(
-        session_id, idempotency_key, "deep33.chat.stream", request_hash
+        session_id, idempotency_key, "deep33.ai.generate", request_hash
     )
     if state in {"COMPLETED", "FAILED"}:
         cached = replay_idempotent(state, record)

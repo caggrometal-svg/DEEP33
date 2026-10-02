@@ -289,6 +289,11 @@ class MainActivity : Activity() {
         super.onStart()
         activityVisible = true
         if (wasBackgrounded) {
+            // Tell the foreground service that the Activity is visible again. The service
+            // owns the generation and may have switched from SSE to durable HTTP recovery.
+            val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+            Deep33GenerationService.appForeground(this, requestId)
+
             // Reattach to the durable generation after returning from another app.
             restorePendingTurnIfNeeded()
             retryPendingMemorySync()
@@ -300,7 +305,13 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
+        // Activity lifecycle must never cancel the generation. Hand the active request
+        // explicitly to the foreground service so it can finish without relying on the UI.
         activityVisible = false
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        if (generationActive || requestId != null) {
+            Deep33GenerationService.appBackground(this, requestId)
+        }
         wasBackgrounded = true
         super.onStop()
     }
