@@ -1545,7 +1545,7 @@ async function publicWebSearch(query: string) {
     },
     {
       name: "marginalia_public",
-      url: "https://api2.marginalia-search.com/search?query=" + encodeURIComponent(q) + "&count=8",
+      url: "https://api.marginalia.nu/public/search/" + encodeURIComponent(q) + "?count=8",
       headers: {
         "API-Key": "public",
         "Accept": "application/json",
