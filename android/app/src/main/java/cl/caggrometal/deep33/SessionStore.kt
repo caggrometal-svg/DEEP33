@@ -32,7 +32,7 @@ data class PendingMemorySync(
     val messagesJson: String
 )
 
-enum class GenerationStatus { RUNNING, DONE, FAILED, CANCELLED }
+enum class GenerationStatus { RUNNING, DONE, FAILED, RETRYABLE, CANCELLED }
 
 data class GenerationState(
     val status: GenerationStatus,
