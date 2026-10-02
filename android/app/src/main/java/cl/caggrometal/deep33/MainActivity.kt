@@ -1499,6 +1499,24 @@ class MainActivity : Activity() {
         }
 
         val pending = store.loadPendingTurn() ?: return
+
+        if (state?.status == GenerationStatus.RETRYABLE && state.requestId == pending.requestId) {
+            activeRequestId = null
+            activeIdempotencyKey = null
+            activeBubble = appendBubble(
+                "DEEP33",
+                state.error.ifBlank { "La conexión con DEEP33 no pudo recuperarse. Pulsa reintentar." },
+                Color.rgb(42, 12, 18)
+            )
+            activeBubble?.tag = state.error
+            sendButton.isEnabled = true
+            input.isEnabled = true
+            micButton.isEnabled = true
+            cancelButton.visibility = View.GONE
+            updateConnection(ConnectionState.OFFLINE)
+            return
+        }
+
         if (generationActive) return
 
         val payload = try {
