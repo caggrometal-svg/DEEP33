@@ -1438,46 +1438,51 @@ class MainActivity : Activity() {
         try {
             executor.execute {
                 try {
-                // Do not gate the real DEEP33 probe on Android's NET_CAPABILITY_VALIDATED.
-                // The backend is the authoritative test of application-level connectivity.
-                val osNetworkValidated = hasValidatedInternet()
-                val ready = Deep33Api.get("/ready", store.sessionId)
-                val online = ready.optString("status") == "PASS" &&
-                    ready.optBoolean("ready", false)
-                val checks = ready.optJSONObject("checks")
-                val backend = checks?.optString("BACKEND", "").orEmpty()
-                val model = checks?.optString("MODEL", "").orEmpty()
-                val chat = checks?.optString("CHAT", "").orEmpty()
-                val provider = ready.optJSONObject("inference")?.optString("provider", "").orEmpty()
-                val resolvedOnline = online &&
-                    backend == "PASS" &&
-                    model == "PASS" &&
-                    chat == "PASS"
-                runOnUiThread {
-                    val pendingRecovery = store.loadPendingTurn() != null
-                    if (generationActive || pendingRecovery) {
-                        updateConnection(ConnectionState.CONNECTING)
-                    } else {
-                        updateConnection(if (resolvedOnline) ConnectionState.ONLINE else ConnectionState.OFFLINE)
-                    }
-                    if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
-                        diagnosticsView.text = if (resolvedOnline) {
-                            "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
-                                if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
+                    val osNetworkValidated = hasValidatedInternet()
+                    val ready = Deep33Api.get("/ready", store.sessionId)
+                    val online = ready.optString("status") == "PASS" &&
+                        ready.optBoolean("ready", false)
+                    val checks = ready.optJSONObject("checks")
+                    val backend = checks?.optString("BACKEND", "").orEmpty()
+                    val model = checks?.optString("MODEL", "").orEmpty()
+                    val chat = checks?.optString("CHAT", "").orEmpty()
+                    val provider = ready.optJSONObject("inference")
+                        ?.optString("provider", "").orEmpty()
+                    val resolvedOnline = online &&
+                        backend == "PASS" &&
+                        model == "PASS" &&
+                        chat == "PASS"
+
+                    runOnUiThread {
+                        val pendingRecovery = store.loadPendingTurn() != null
+                        if (generationActive || pendingRecovery) {
+                            updateConnection(ConnectionState.CONNECTING)
                         } else {
-                            "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
+                            updateConnection(
+                                if (resolvedOnline) ConnectionState.ONLINE
+                                else ConnectionState.OFFLINE
+                            )
+                        }
+                        if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                            diagnosticsView.text = if (resolvedOnline) {
+                                "ONLINE\\nBACKEND: PASS\\nAI GATEWAY: PASS\\nMODEL: PASS\\nCHAT: PASS\\nPROVIDER: ${provider}\\nANDROID_VALIDATED: " +
+                                    if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
+                            } else {
+                                "OFFLINE\\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
+                            }
                         }
                     }
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    if (generationActive || store.loadPendingTurn() != null) {
-                        updateConnection(ConnectionState.CONNECTING)
-                    } else {
-                        updateConnection(ConnectionState.OFFLINE)
-                    }
-                    if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
-                        diagnosticsView.text = "OFFLINE\n" + (e.message ?: "No se pudo comprobar DEEP33.")
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        if (generationActive || store.loadPendingTurn() != null) {
+                            updateConnection(ConnectionState.CONNECTING)
+                        } else {
+                            updateConnection(ConnectionState.OFFLINE)
+                        }
+                        if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                            diagnosticsView.text =
+                                "OFFLINE\\n" + (e.message ?: "No se pudo comprobar DEEP33.")
+                        }
                     }
                 }
             }
