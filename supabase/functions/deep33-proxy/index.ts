@@ -1597,7 +1597,7 @@ async function publicWebSearch(query: string) {
       } else if (provider.name === "marginalia_public") {
         try {
           const body = JSON.parse(html);
-          const items = Array.isArray(body.results) ? body.results : [];
+          const items = Array.isArray(body?.response?.results) ? body.response.results : (Array.isArray(body?.results) ? body.results : []);
           for (const item of items.slice(0, 8)) {
             if (!item || typeof item !== "object") continue;
             const value = item as Record<string, unknown>;
