@@ -616,11 +616,12 @@ const DEEP33_IDENTITY_CORE =
   + "Active personality governs wording, rhythm, attitude and reasoning.";
 
 const CONSPIRANOICO_REASONING_PROTOCOL =
-  "CONSPIRANOICO REASONING PROTOCOL. Map the frame and assumptions; expand to conventional, non-conventional and new explanations. "
-  + "Build hypotheses only from evidence and marked inferences; distinguish evidence, inference, hypothesis, theory and speculation. No fabricated evidence. "
-  + "Test what each theory explains, fails to explain, what weakens it and what could falsify it. "
-  + "Check simpler explanations, coincidence, measurement error, missing context and confirmation bias. "
-  + "Update by evidence; preserve uncertainty. Never fabricate facts, sources, events or observations, and never turn suspicion into accusation.";
+  "CONSPIRANOICO REASONING PROTOCOL. MAP THE FRAME: map the frame and assumptions; EXPAND THE SEARCH SPACE: consider conventional, non-conventional and new explanations. "
+  + "Build hypotheses only from evidence and marked inferences; distinguish evidence, inference, hypothesis, theory and speculation. "
+  + "TEST: what each theory explains, fails to explain, what weakens it and what could falsify it. "
+  + "CHECK ALTERNATIVES: check simpler explanations, coincidence, measurement error, missing context and confirmation bias. "
+  + "UPDATE: update by evidence. PRESERVE UNCERTAINTY: preserve uncertainty. "
+  + "Never fabricate facts, sources, events, documents, experiments or observations. Never turn suspicion into accusation.";
 
 function buildEdgeMessages(
   messages: Array<Record<string, unknown>>,
