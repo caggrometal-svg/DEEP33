@@ -2,7 +2,6 @@ package cl.caggrometal.deep33
 
 import android.app.Activity
 import android.view.View
-import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import org.junit.Assert.assertEquals
@@ -16,7 +15,7 @@ class Deep33UiContractV2Test {
         try {
             scenario.onActivity { activity: Activity ->
                 val field = activity.javaClass.getDeclaredField("cancelButton").apply { isAccessible = true }
-                val button = field.get(activity) as Button
+                val button = field.get(activity) as View
                 assertEquals("Detener generación", button.contentDescription.toString())
             }
         } finally {
