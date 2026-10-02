@@ -1660,7 +1660,7 @@ async function publicWebSearch(query: string) {
   if (finalResults.length) {
     return {
       ok: true,
-      engine: "DEEP33 Edge Public Search",
+      engine: "DEEP33 Search Engine",
       engine_version: "1.1.0",
       provider_independent: providerNames.length > 1,
       providers: providerNames,
@@ -1811,7 +1811,7 @@ Deno.serve(async (req) => {
               tool_loop_enabled: true,
               provider_independent: true,
               configured_provider: "edge-direct",
-              fallback_providers: ["bing_public", "ddg_public"],
+              fallback_providers: ["bing_public", "marginalia_public", "ddg_public"],
             }),
       ]);
 
@@ -2386,7 +2386,7 @@ return json({
         tool_loop_enabled: true,
         provider_independent: true,
         configured_provider: "edge-public-fallback+upstream",
-        fallback_providers: ["bing_public", "ddg_public"],
+        fallback_providers: ["bing_public", "marginalia_public", "ddg_public"],
       });
     }
 
