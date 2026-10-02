@@ -10,6 +10,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
@@ -181,6 +184,8 @@ class MainActivity : Activity() {
     private var wasBackgrounded = false
     private var activeRequestId: String? = null
     private var activeIdempotencyKey: String? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -271,6 +276,7 @@ class MainActivity : Activity() {
         }
 
         setContentView(buildRoot())
+        registerConnectivityMonitor()
         showTab(Tab.CHAT)
         renderConversation()
         applyPersonalityTheme(Personality.fromKey(store.personality))
@@ -324,6 +330,11 @@ class MainActivity : Activity() {
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
         executor.shutdownNow()
+        connectivityCallback?.let { callback ->
+            runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        }
+        connectivityCallback = null
+        connectivityManager = null
         speechRecognizer?.destroy()
         speechRecognizer = null
         textToSpeech?.stop()
@@ -1319,10 +1330,63 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun hasValidatedInternet(): Boolean {
+        val manager = connectivityManager
+            ?: getSystemService(ConnectivityManager::class.java)
+            ?: return false
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private fun registerConnectivityMonitor() {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        connectivityManager = manager
+        if (connectivityCallback != null) return
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                runOnUiThread {
+                    if (!activityVisible || generationActive) return@runOnUiThread
+                    updateConnection(ConnectionState.CONNECTING)
+                    window.decorView.postDelayed({ checkHealthFast() }, 250L)
+                }
+            }
+
+            override fun onLost(network: Network) {
+                runOnUiThread {
+                    if (!generationActive) {
+                        updateConnection(ConnectionState.OFFLINE)
+                    }
+                }
+            }
+        }
+
+        connectivityCallback = callback
+        runCatching {
+            manager.registerDefaultNetworkCallback(callback)
+        }.onFailure {
+            connectivityCallback = null
+        }
+    }
+
     private fun checkHealthFast() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
+                if (!hasValidatedInternet()) {
+                    runOnUiThread {
+                        if (!generationActive && store.loadPendingTurn() == null) {
+                            updateConnection(ConnectionState.OFFLINE)
+                        }
+                        if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                            diagnosticsView.text = "OFFLINE\nEl dispositivo no tiene una red validada disponible."
+                        }
+                    }
+                    return@submit
+                }
+
                 val ready = Deep33Api.get("/ready", store.sessionId)
                 val online = ready.optString("status") == "PASS" &&
                     ready.optBoolean("ready", false)
