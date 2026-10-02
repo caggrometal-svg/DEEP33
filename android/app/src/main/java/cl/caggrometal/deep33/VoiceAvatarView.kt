@@ -4,9 +4,9 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
+import kotlin.math.abs
 import kotlin.math.min
 
 enum class AvatarState { IDLE, LISTENING, THINKING, SPEAKING }
@@ -25,20 +25,27 @@ class VoiceAvatarView @JvmOverloads constructor(
 
     private var personality = Personality.NEUTRO
     private var state = AvatarState.IDLE
+    private var audioLevel = 0f
 
     fun setPersonality(value: Personality) {
+        if (personality == value) return
         personality = value
         invalidate()
     }
 
     fun setVoiceState(value: AvatarState) {
+        if (state == value) return
         state = value
         invalidate()
     }
 
     fun setAudioLevel(value: Float) {
-        // Audio level is intentionally ignored visually. Voice mode stays expressive
-        // through state text rather than motion, pulsing, or mouth scaling.
+        // Quantize RMS updates so a noisy recognizer callback stream does not cause
+        // unnecessary redraws. The avatar stays lightweight by design.
+        val next = value.coerceIn(0f, 1f)
+        if (abs(next - audioLevel) < 0.05f) return
+        audioLevel = next
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -47,57 +54,76 @@ class VoiceAvatarView @JvmOverloads constructor(
         val size = min(width, height).toFloat()
         val centerX = width / 2f
         val centerY = height / 2f
-        val radius = size * 0.29f
+        val radius = size * 0.36f
         val accent = personality.accent
 
-        // One static round face, one contour, two eyes, brows and mouth.
-        // No pulse, orbit, wobble, blink, scale or audio-reactive effect.
-        fillPaint.color = 0xFF0A0A0A.toInt()
-        canvas.drawCircle(centerX, centerY, radius + dp(2f), fillPaint)
+        // Minimal geometry: one face, one optional state ring, two eyes, brows and mouth.
+        // There is deliberately no nose and no expensive blur/shadow layer.
+        val ringExpansion = when (state) {
+            AvatarState.IDLE -> 0f
+            AvatarState.LISTENING -> dp(4f)
+            AvatarState.THINKING -> dp(6f)
+            AvatarState.SPEAKING -> dp(4f) + dp(7f) * audioLevel
+        }
 
-        strokePaint.color = withAlpha(accent, 205)
+        fillPaint.color = 0xFF080808.toInt()
+        canvas.drawCircle(centerX, centerY, radius, fillPaint)
+
         strokePaint.strokeWidth = dp(2f)
-        canvas.drawCircle(centerX, centerY, radius + dp(2f), strokePaint)
+        strokePaint.color = withAlpha(accent, when (state) {
+            AvatarState.IDLE -> 195
+            AvatarState.LISTENING -> 230
+            AvatarState.THINKING -> 205
+            AvatarState.SPEAKING -> 245
+        })
+        canvas.drawCircle(centerX, centerY, radius, strokePaint)
 
-        drawStaticFace(canvas, centerX, centerY, radius, accent)
+        if (state != AvatarState.IDLE) {
+            strokePaint.strokeWidth = dp(1f)
+            strokePaint.color = withAlpha(accent, 80)
+            canvas.drawCircle(centerX, centerY, radius + ringExpansion, strokePaint)
+        }
+
+        drawFace(canvas, centerX, centerY, radius, accent)
     }
 
-    private fun drawStaticFace(
-        canvas: Canvas,
-        cx: Float,
-        cy: Float,
-        radius: Float,
-        accent: Int
-    ) {
-        val eyeY = cy - radius * 0.10f
-        val eyeGap = radius * 0.40f
-        val eyeRadius = radius * 0.045f
+    private fun drawFace(canvas: Canvas, cx: Float, cy: Float, radius: Float, accent: Int) {
+        val eyeY = cy - radius * 0.11f
+        val eyeGap = radius * 0.39f
+        val eyeRadius = radius * 0.048f
 
-        fillPaint.color = withAlpha(accent, 225)
+        fillPaint.color = withAlpha(accent, if (state == AvatarState.LISTENING) 255 else 225)
         canvas.drawCircle(cx - eyeGap, eyeY, eyeRadius, fillPaint)
         canvas.drawCircle(cx + eyeGap, eyeY, eyeRadius, fillPaint)
 
-        val browY = eyeY - radius * 0.13f
-        val browWidth = radius * 0.19f
+        val browY = eyeY - radius * 0.15f
+        val browWidth = radius * 0.21f
         val browTilt = when (personality) {
             Personality.AGRESIVO -> -radius * 0.085f
             Personality.NEUTRO -> radius * 0.010f
             Personality.COMICO -> radius * 0.020f
             Personality.CONSPIRANOICO -> radius * 0.040f
         }
-
         drawBrow(canvas, cx - eyeGap, browY, browWidth, browTilt, accent)
         drawBrow(canvas, cx + eyeGap, browY, browWidth, -browTilt, accent)
 
         val mouthY = cy + radius * 0.30f
-        val expression = when (personality) {
+        val baseExpression = when (personality) {
             Personality.AGRESIVO -> -0.30f
             Personality.NEUTRO -> 0f
             Personality.COMICO -> 0.38f
             Personality.CONSPIRANOICO -> -0.12f
         }
-
-        drawMouth(canvas, cx, mouthY, radius * 0.25f, radius * 0.07f, expression, accent)
+        val speakingLift = if (state == AvatarState.SPEAKING) audioLevel * 0.18f else 0f
+        drawMouth(
+            canvas,
+            cx,
+            mouthY,
+            radius * 0.25f,
+            radius * (0.075f + speakingLift),
+            baseExpression,
+            accent
+        )
     }
 
     private fun drawBrow(
@@ -108,9 +134,8 @@ class VoiceAvatarView @JvmOverloads constructor(
         tilt: Float,
         accent: Int
     ) {
-        strokePaint.color = withAlpha(accent, 165)
+        strokePaint.color = withAlpha(accent, 170)
         strokePaint.strokeWidth = dp(2f)
-
         val path = Path()
         path.moveTo(x - width, y + tilt)
         path.quadTo(x, y - dp(1.5f), x + width, y - tilt)
@@ -126,10 +151,9 @@ class VoiceAvatarView @JvmOverloads constructor(
         expression: Float,
         accent: Int
     ) {
-        strokePaint.color = withAlpha(accent, 195)
-        strokePaint.strokeWidth = dp(1.6f)
-
-        val smileDepth = expression.coerceIn(-0.5f, 0.6f) * height * 2.2f
+        strokePaint.color = withAlpha(accent, 205)
+        strokePaint.strokeWidth = dp(1.7f)
+        val smileDepth = expression.coerceIn(-0.5f, 0.6f) * height * 2.0f
         val path = Path()
         path.moveTo(cx - width, cy)
         path.quadTo(cx, cy + smileDepth, cx + width, cy)
