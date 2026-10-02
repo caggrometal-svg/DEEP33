@@ -143,8 +143,8 @@ class Deep33UiContractV2Test {
 
                 val userBg = userBubble.background as android.graphics.drawable.GradientDrawable
                 val assistantBg = assistantBubble.background as android.graphics.drawable.GradientDrawable
-                assertEquals(Deep33Theme.GREEN, userBg.strokeColor.defaultColor)
-                assertEquals(Deep33Theme.RED_NEON, assistantBg.strokeColor.defaultColor)
+                assertEquals(0xFF39FF14.toInt(), userBg.strokeColor.defaultColor)
+                assertEquals(0xFFFF1850.toInt(), assistantBg.strokeColor.defaultColor)
             }
         } finally {
             scenario.close()
@@ -228,7 +228,7 @@ class Deep33UiContractV2Test {
         try {
             scenario.onActivity { activity: Activity ->
                 val avatar = privateView(activity, "avatarView") as VoiceAvatarView
-                assertEquals(0, avatar.childCount)
+                assertTrue(avatar !is android.view.ViewGroup)
                 assertTrue(avatar.contentDescription.toString().contains("Avatar"))
             }
         } finally {
