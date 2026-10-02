@@ -1366,8 +1366,10 @@ class MainActivity : Activity() {
 
             override fun onLost(network: Network) {
                 runOnUiThread {
-                    if (!generationActive) {
+                    if (!generationActive && store.loadPendingTurn() == null) {
                         updateConnection(ConnectionState.OFFLINE)
+                    } else if (store.loadPendingTurn() != null) {
+                        updateConnection(ConnectionState.CONNECTING)
                     }
                 }
             }
@@ -1410,7 +1412,8 @@ class MainActivity : Activity() {
                     model == "PASS" &&
                     chat == "PASS"
                 runOnUiThread {
-                    if (generationActive) {
+                    val pendingRecovery = store.loadPendingTurn() != null
+                    if (generationActive || pendingRecovery) {
                         updateConnection(ConnectionState.CONNECTING)
                     } else {
                         updateConnection(if (resolvedOnline) ConnectionState.ONLINE else ConnectionState.OFFLINE)
