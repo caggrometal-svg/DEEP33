@@ -276,6 +276,20 @@ Deno.serve(async (req) => {
       return response({ ok: true });
     }
 
+    if (action === "idempotency_release") {
+      const scopedKey = await scopedIdempotencyKey(
+        sessionId,
+        String(body.idempotency_key || ""),
+      );
+      const { data, error } = await supabase.rpc("deep33_idempotency_release", {
+        p_idempotency_key: scopedKey,
+        p_request_hash: String(body.request_hash || ""),
+        p_lease_token: String(body.lease_token || ""),
+      });
+      if (error) throw error;
+      return response(data && typeof data === "object" ? data : { ok: true });
+    }
+
     if (action === "context") {
       const { data: session, error: sessionError } = await supabase
         .from("deep33_sessions")
