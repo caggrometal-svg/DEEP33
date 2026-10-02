@@ -1348,6 +1348,22 @@ class MainActivity : Activity() {
                 }
             }
 
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities
+            ) {
+                val validated =
+                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                if (!validated) return
+
+                runOnUiThread {
+                    if (!activityVisible || generationActive) return@runOnUiThread
+                    updateConnection(ConnectionState.CONNECTING)
+                    window.decorView.postDelayed({ checkHealthFast() }, 150L)
+                }
+            }
+
             override fun onLost(network: Network) {
                 runOnUiThread {
                     if (!generationActive) {
