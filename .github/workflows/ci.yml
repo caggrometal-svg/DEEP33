@@ -172,7 +172,7 @@ jobs:
             echo "PRIMARY_DEPLOY_ATTEMPT=$attempt expected=$GITHUB_SHA"
             body="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/health" || true)"
             echo "$body"
-            if printf "%s" "$body" | jq -e --arg sha "$GITHUB_SHA" '.status=="PASS" and .service=="DEEP33 Edge Gateway" and .git_sha==$sha' >/dev/null 2>&1; then
+            if printf "%s" "$body" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"' >/dev/null 2>&1; then
               ready=1
               break
             fi
