@@ -1352,10 +1352,14 @@ class MainActivity : Activity() {
                 network: Network,
                 networkCapabilities: NetworkCapabilities
             ) {
-                val validated =
-                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                        networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                if (!validated) return
+                // Do not require Android's NET_CAPABILITY_VALIDATED flag before probing
+                // DEEP33. A device can have working HTTPS while Android has not yet
+                // classified the network as validated (VPN, private DNS, captive-portal
+                // transitions, carrier handoff, etc.). DEEP33's own /ready response is
+                // the authoritative application-level connectivity signal.
+                if (!networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    return
+                }
 
                 runOnUiThread {
                     if (!activityVisible || generationActive) return@runOnUiThread
@@ -1366,11 +1370,20 @@ class MainActivity : Activity() {
 
             override fun onLost(network: Network) {
                 runOnUiThread {
-                    if (!generationActive && store.loadPendingTurn() == null) {
-                        updateConnection(ConnectionState.OFFLINE)
-                    } else if (store.loadPendingTurn() != null) {
+                    // Network handoff can emit onLost before the replacement network
+                    // arrives. Keep the UI in CONNECTING briefly and let /ready decide
+                    // whether DEEP33 is actually reachable instead of declaring a false
+                    // OFFLINE state during the transition.
+                    if (generationActive || store.loadPendingTurn() != null) {
                         updateConnection(ConnectionState.CONNECTING)
+                        return@runOnUiThread
                     }
+                    updateConnection(ConnectionState.CONNECTING)
+                    window.decorView.postDelayed({
+                        if (activityVisible && !generationActive && store.loadPendingTurn() == null) {
+                            checkHealthFast()
+                        }
+                    }, 500L)
                 }
             }
         }
@@ -1387,18 +1400,9 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                if (!hasValidatedInternet()) {
-                    runOnUiThread {
-                        if (!generationActive && store.loadPendingTurn() == null) {
-                            updateConnection(ConnectionState.OFFLINE)
-                        }
-                        if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
-                            diagnosticsView.text = "OFFLINE\nEl dispositivo no tiene una red validada disponible."
-                        }
-                    }
-                    return@submit
-                }
-
+                // Do not gate the real DEEP33 probe on Android's NET_CAPABILITY_VALIDATED.
+                // The backend is the authoritative test of application-level connectivity.
+                val osNetworkValidated = hasValidatedInternet()
                 val ready = Deep33Api.get("/ready", store.sessionId)
                 val online = ready.optString("status") == "PASS" &&
                     ready.optBoolean("ready", false)
@@ -1420,7 +1424,8 @@ class MainActivity : Activity() {
                     }
                     if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
                         diagnosticsView.text = if (resolvedOnline) {
-                            "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}"
+                            "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
+                                if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
                         } else {
                             "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
                         }
