@@ -2105,6 +2105,8 @@ Deno.serve(async (req) => {
 
     if (path === "/v1/ai/generate" && req.method === "POST") {
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
+      const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const messages = Array.isArray(payload.messages)
         ? payload.messages as Array<Record<string, unknown>>
         : [];
