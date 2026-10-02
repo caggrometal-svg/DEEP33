@@ -61,7 +61,7 @@ android {
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
+        ?: "https://deep33-backend.onrender.com"
 
     val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
