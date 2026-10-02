@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -21,10 +23,13 @@ class Deep33GenerationService : Service() {
     @Volatile private var runningRequestId: String? = null
     @Volatile private var backgroundMode = false
     private var generationWakeLock: PowerManager.WakeLock? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        registerConnectivityMonitor()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -336,6 +341,39 @@ class Deep33GenerationService : Service() {
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
 
+    private fun registerConnectivityMonitor() {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        connectivityManager = manager
+        if (connectivityCallback != null) return
+
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                val requestId = runningRequestId
+                if (!requestId.isNullOrBlank()) {
+                    // Force a fast transport failure so the durable recovery loop can
+                    // switch routes/retry immediately instead of waiting for readTimeout.
+                    Deep33Api.cancelActiveStream(requestId)
+                    updateForegroundNotification("Red perdida · reconectando…")
+                }
+            }
+        }
+
+        connectivityCallback = callback
+        runCatching {
+            manager.registerDefaultNetworkCallback(callback)
+        }.onFailure {
+            connectivityCallback = null
+        }
+    }
+
+    private fun unregisterConnectivityMonitor() {
+        connectivityCallback?.let { callback ->
+            runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        }
+        connectivityCallback = null
+        connectivityManager = null
+    }
+
     private fun acquireGenerationWakeLock() {
         if (generationWakeLock?.isHeld == true) return
         val manager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -480,6 +518,7 @@ class Deep33GenerationService : Service() {
         }
         stoppingBySystem = true
         Deep33Api.cancelActiveStream(runningRequestId)
+        unregisterConnectivityMonitor()
         releaseGenerationWakeLock()
         executor.shutdownNow()
         super.onDestroy()
