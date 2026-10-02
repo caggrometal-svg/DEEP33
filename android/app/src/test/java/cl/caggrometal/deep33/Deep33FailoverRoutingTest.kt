@@ -15,8 +15,12 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun legacyEndpointSlotsStayOptional() {
-        assertTrue(BuildConfig.DEEP33_SECONDARY_URL.isBlank())
+    fun secondaryEndpointUsesCanonicalDeep33TertiaryRoute() {
+        assertEquals(
+            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
+            BuildConfig.DEEP33_SECONDARY_URL
+        )
+        assertTrue(BuildConfig.DEEP33_SECONDARY_URL.isNotBlank())
         assertTrue(BuildConfig.DEEP33_TERTIARY_URL.isBlank())
     }
 }
