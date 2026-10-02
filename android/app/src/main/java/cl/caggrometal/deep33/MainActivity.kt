@@ -2186,6 +2186,47 @@ class MainActivity : Activity() {
     private fun regenerateLastResponse() {
         if (generationActive) return
 
+        val pending = store.loadPendingTurn()
+        val state = store.loadGenerationState()
+        if (
+            pending != null &&
+            state?.status == GenerationStatus.RETRYABLE &&
+            state.requestId == pending.requestId &&
+            pending.sessionId == store.sessionId
+        ) {
+            val payload = runCatching { org.json.JSONArray(pending.payloadJson) }.getOrNull() ?: return
+            val requestPersonality = Personality.fromKey(pending.personality)
+            activeBubble?.let { chatContainer.removeView(it) }
+            activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+            activeBubble?.tag = "Pensando..."
+            generationActive = true
+            activeRequestId = pending.requestId
+            activeIdempotencyKey = pending.idempotencyKey
+            lastRenderedGenerationOutput = ""
+            sendButton.isEnabled = false
+            input.isEnabled = false
+            micButton.isEnabled = false
+            cancelButton.visibility = View.VISIBLE
+            updateConnection(ConnectionState.CONNECTING)
+            store.saveGenerationState(
+                status = GenerationStatus.RUNNING,
+                requestId = pending.requestId,
+                sessionId = pending.sessionId,
+                personality = requestPersonality.key,
+                partialOutput = "",
+                error = "",
+                durable = true
+            )
+            launchGeneration(
+                payload,
+                pending.sessionId,
+                requestPersonality,
+                pending.requestId,
+                pending.idempotencyKey
+            )
+            return
+        }
+
         val assistantIndex = conversation.indexOfLast { it.role == "assistant" }
         if (assistantIndex < 0) return
 
@@ -2205,7 +2246,6 @@ class MainActivity : Activity() {
         renderConversation()
         sendMessage(prompt)
     }
-
     private fun renderMarkdown(view: TextView, markdown: String, isAssistant: Boolean = false) {
         view.text = MarkdownRenderer.render(
             markdown,
