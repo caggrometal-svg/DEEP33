@@ -1476,7 +1476,7 @@ class MainActivity : Activity() {
         chatDraft = ""
         refreshSidebarHistory()
 
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        activeBubble = appendBubble("DEEP33", "Pensando...", Deep33Theme.ASSISTANT_BUBBLE)
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
