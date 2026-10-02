@@ -44,8 +44,11 @@ object Deep33FailoverPolicy {
                 !requestBodyStarted ||
                 idempotentRequest
         Deep33ApiException.Kind.AUTH,
+        Deep33ApiException.Kind.BAD_RESPONSE ->
+            !method.equals("POST", ignoreCase = true) ||
+                !requestBodyStarted ||
+                idempotentRequest
         Deep33ApiException.Kind.RATE_LIMIT,
-        Deep33ApiException.Kind.BAD_RESPONSE,
         Deep33ApiException.Kind.CANCELLED -> false
     }
 }
