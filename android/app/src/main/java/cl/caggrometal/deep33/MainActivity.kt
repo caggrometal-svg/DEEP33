@@ -766,11 +766,6 @@ class MainActivity : Activity() {
         )
         voicePanel.addView(voiceTop, LinearLayout.LayoutParams(-1, dp(44)))
 
-        // Audio-only voice mode: the panel intentionally contains no visible TextView.
-        voiceStateView = TextView(this).apply {
-            visibility = View.GONE
-        }
-
         avatarView = VoiceAvatarView(this).apply {
             setPersonality(Personality.fromKey(store.personality))
             setVoiceState(AvatarState.IDLE)
