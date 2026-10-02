@@ -52,27 +52,27 @@ class SessionStore(
 
     /** Stable device/profile identity. Conversation session IDs can change; this one must not. */
     val memoryProfileId: String
-        get() {
+        get() = synchronized(STORE_LOCK) {
             val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
-            if (!existing.isNullOrBlank()) return existing
+            if (!existing.isNullOrBlank()) return@synchronized existing
             val created = "profile-" + UUID.randomUUID().toString()
-            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).apply()
-            return created
+            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).commit()
+            created
         }
 
     val sessionId: String
-        get() {
+        get() = synchronized(STORE_LOCK) {
             val existing = prefs.getString(KEY_SESSION_ID, null)
-            if (!existing.isNullOrBlank()) return existing
+            if (!existing.isNullOrBlank()) return@synchronized existing
             val created = UUID.randomUUID().toString()
             prefs.edit()
                 .putString(KEY_SESSION_ID, created)
                 .putString(messagesKey(created), "[]")
-                .apply()
-            return created
+                .commit()
+            created
         }
 
-    fun resetSession() {
+    fun resetSession() = synchronized(STORE_LOCK) {
         val created = UUID.randomUUID().toString()
         // Starting a fresh conversation must also invalidate any generation recovery
         // markers belonging to the previous conversation. Otherwise Activity startup
@@ -82,21 +82,26 @@ class SessionStore(
             .putString(messagesKey(created), "[]")
             .remove(KEY_PENDING_TURN)
             .remove(KEY_GENERATION_STATE)
-            .apply()
+            .commit()
     }
 
     fun activateSession(id: String) {
         if (id.isBlank()) return
-        val key = messagesKey(id)
-        if (!prefs.contains(key)) prefs.edit().putString(key, "[]").apply()
-        prefs.edit().putString(KEY_SESSION_ID, id).apply()
+        synchronized(STORE_LOCK) {
+            val key = messagesKey(id)
+            val edit = prefs.edit()
+            if (!prefs.contains(key)) edit.putString(key, "[]")
+            edit.putString(KEY_SESSION_ID, id).commit()
+        }
     }
 
     fun clearConversation() {
-        prefs.edit()
-            .putString(messagesKey(sessionId), "[]")
-            .remove(KEY_MESSAGES_LEGACY)
-            .apply()
+        synchronized(STORE_LOCK) {
+            prefs.edit()
+                .putString(messagesKey(sessionId), "[]")
+                .remove(KEY_MESSAGES_LEGACY)
+                .commit()
+        }
     }
 
     var appBackgrounded: Boolean
@@ -154,30 +159,34 @@ class SessionStore(
     }
 
     fun saveMessages(messages: List<UiMessage>, durable: Boolean = false) {
-        val json = JSONArray()
-        messages.takeLast(MAX_MESSAGES).forEach {
-            json.put(JSONObject().put("role", it.role).put("content", it.content))
-        }
-        val edit = prefs.edit().putString(messagesKey(sessionId), json.toString())
-        if (durable) {
-            // Final conversation data must reach persistent storage before a recoverable
-            // generation marker is cleared after Activity/process destruction.
-            edit.commit()
-        } else {
-            edit.apply()
+        synchronized(STORE_LOCK) {
+            val json = JSONArray()
+            messages.takeLast(MAX_MESSAGES).forEach {
+                json.put(JSONObject().put("role", it.role).put("content", it.content))
+            }
+            val edit = prefs.edit().putString(messagesKey(sessionId), json.toString())
+            if (durable) {
+                // Final conversation data must reach persistent storage before a recoverable
+                // generation marker is cleared after Activity/process destruction.
+                edit.commit()
+            } else {
+                edit.apply()
+            }
         }
     }
 
     fun savePendingTurn(turn: PendingTurn) {
-        val json = JSONObject()
-            .put("session_id", turn.sessionId)
-            .put("request_id", turn.requestId)
-            .put("idempotency_key", turn.idempotencyKey)
-            .put("personality", turn.personality)
-            .put("payload", turn.payloadJson)
-        // commit() is intentional: the pending turn must survive Activity destruction
-        // before the network request begins.
-        prefs.edit().putString(KEY_PENDING_TURN, json.toString()).commit()
+        synchronized(STORE_LOCK) {
+            val json = JSONObject()
+                .put("session_id", turn.sessionId)
+                .put("request_id", turn.requestId)
+                .put("idempotency_key", turn.idempotencyKey)
+                .put("personality", turn.personality)
+                .put("payload", turn.payloadJson)
+            // commit() is intentional: the pending turn must survive Activity destruction
+            // before the network request begins.
+            prefs.edit().putString(KEY_PENDING_TURN, json.toString()).commit()
+        }
     }
 
     fun loadPendingTurn(): PendingTurn? {
@@ -201,31 +210,35 @@ class SessionStore(
     }
 
     fun clearPendingTurn(requestId: String? = null) {
-        val current = loadPendingTurn()
-        if (requestId == null || current?.requestId == requestId) {
-            prefs.edit().remove(KEY_PENDING_TURN).commit()
+        synchronized(STORE_LOCK) {
+            val current = loadPendingTurn()
+            if (requestId == null || current?.requestId == requestId) {
+                prefs.edit().remove(KEY_PENDING_TURN).commit()
+            }
         }
     }
 
     fun savePendingMemorySync(sync: PendingMemorySync) {
-        val queued = loadPendingMemorySyncQueue().toMutableList()
-        queued.removeAll { it.requestId == sync.requestId }
-        queued.add(sync)
-        val json = JSONArray()
-        queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
-            json.put(
-                JSONObject()
-                    .put("session_id", it.sessionId)
-                    .put("request_id", it.requestId)
-                    .put("personality", it.personality)
-                    .put("memory_profile_id", it.memoryProfileId)
-                    .put("messages", it.messagesJson)
-            )
+        synchronized(STORE_LOCK) {
+            val queued = loadPendingMemorySyncQueue().toMutableList()
+            queued.removeAll { it.requestId == sync.requestId }
+            queued.add(sync)
+            val json = JSONArray()
+            queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+                json.put(
+                    JSONObject()
+                        .put("session_id", it.sessionId)
+                        .put("request_id", it.requestId)
+                        .put("personality", it.personality)
+                        .put("memory_profile_id", it.memoryProfileId)
+                        .put("messages", it.messagesJson)
+                )
+            }
+            // Remote-memory retry state is a durable queue. Multiple completed chats may
+            // finish while the backend is unavailable, so one marker must never overwrite
+            // another session's unsent memory.
+            prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
         }
-        // Remote-memory retry state is a durable queue. Multiple completed chats may
-        // finish while the backend is unavailable, so one marker must never overwrite
-        // another session's unsent memory.
-        prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
     }
 
     fun loadPendingMemorySync(): PendingMemorySync? =
@@ -254,28 +267,30 @@ class SessionStore(
     }
 
     fun clearPendingMemorySync(requestId: String? = null) {
-        val queued = loadPendingMemorySyncQueue()
-        val remaining = if (requestId == null) {
-            emptyList()
-        } else {
-            queued.filterNot { it.requestId == requestId }
+        synchronized(STORE_LOCK) {
+            val queued = loadPendingMemorySyncQueue()
+            val remaining = if (requestId == null) {
+                emptyList()
+            } else {
+                queued.filterNot { it.requestId == requestId }
+            }
+            if (remaining.isEmpty()) {
+                prefs.edit().remove(KEY_PENDING_MEMORY_SYNC).commit()
+                return
+            }
+            val json = JSONArray()
+            remaining.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+                json.put(
+                    JSONObject()
+                        .put("session_id", it.sessionId)
+                        .put("request_id", it.requestId)
+                        .put("personality", it.personality)
+                        .put("memory_profile_id", it.memoryProfileId)
+                        .put("messages", it.messagesJson)
+                )
+            }
+            prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
         }
-        if (remaining.isEmpty()) {
-            prefs.edit().remove(KEY_PENDING_MEMORY_SYNC).commit()
-            return
-        }
-        val json = JSONArray()
-        remaining.take(MAX_PENDING_MEMORY_SYNCS).forEach {
-            json.put(
-                JSONObject()
-                    .put("session_id", it.sessionId)
-                    .put("request_id", it.requestId)
-                    .put("personality", it.personality)
-                    .put("memory_profile_id", it.memoryProfileId)
-                    .put("messages", it.messagesJson)
-            )
-        }
-        prefs.edit().putString(KEY_PENDING_MEMORY_SYNC, json.toString()).commit()
     }
 
     fun saveGenerationState(
@@ -288,20 +303,22 @@ class SessionStore(
         error: String = "",
         durable: Boolean = false
     ) {
-        val json = JSONObject()
-            .put("status", status.name)
-            .put("request_id", requestId)
-            .put("session_id", sessionId)
-            .put("personality", personality)
-            .put("partial_output", partialOutput)
-            .put("final_text", finalText)
-            .put("error", error)
-        val edit = prefs.edit().putString(KEY_GENERATION_STATE, json.toString())
-        if (durable) {
-            // DONE/FAILED/CANCELLED are recovery boundaries; commit them synchronously.
-            edit.commit()
-        } else {
-            edit.apply()
+        synchronized(STORE_LOCK) {
+            val json = JSONObject()
+                .put("status", status.name)
+                .put("request_id", requestId)
+                .put("session_id", sessionId)
+                .put("personality", personality)
+                .put("partial_output", partialOutput)
+                .put("final_text", finalText)
+                .put("error", error)
+            val edit = prefs.edit().putString(KEY_GENERATION_STATE, json.toString())
+            if (durable) {
+                // DONE/FAILED/CANCELLED are recovery boundaries; commit them synchronously.
+                edit.commit()
+            } else {
+                edit.apply()
+            }
         }
     }
 
@@ -329,9 +346,11 @@ class SessionStore(
     }
 
     fun clearGenerationState(requestId: String? = null) {
-        val current = loadGenerationState()
-        if (requestId == null || current?.requestId == requestId) {
-            prefs.edit().remove(KEY_GENERATION_STATE).commit()
+        synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            if (requestId == null || current?.requestId == requestId) {
+                prefs.edit().remove(KEY_GENERATION_STATE).commit()
+            }
         }
     }
 
@@ -340,16 +359,18 @@ class SessionStore(
      * Activity/process recreation cannot replay a request whose final messages are already safe.
      */
     fun clearCompletedGeneration(requestId: String) {
-        val state = loadGenerationState()
-        val pending = loadPendingTurn()
-        val edit = prefs.edit()
-        if (state?.status == GenerationStatus.DONE && state.requestId == requestId) {
-            edit.remove(KEY_GENERATION_STATE)
+        synchronized(STORE_LOCK) {
+            val state = loadGenerationState()
+            val pending = loadPendingTurn()
+            val edit = prefs.edit()
+            if (state?.status == GenerationStatus.DONE && state.requestId == requestId) {
+                edit.remove(KEY_GENERATION_STATE)
+            }
+            if (pending?.requestId == requestId) {
+                edit.remove(KEY_PENDING_TURN)
+            }
+            edit.commit()
         }
-        if (pending?.requestId == requestId) {
-            edit.remove(KEY_PENDING_TURN)
-        }
-        edit.commit()
     }
 
     fun saveChatSummary(title: String) {
@@ -410,6 +431,10 @@ class SessionStore(
     private fun messagesKey(id: String): String = "messages_$id"
 
     companion object {
+        // Shared by every SessionStore instance in the process. SharedPreferences is
+        // thread-safe for individual operations, but generation recovery relies on
+        // read-modify-write transactions that must be atomic across Activity and Service.
+        private val STORE_LOCK = Any()
         private const val PREFS_NAME = "deep33_session"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
