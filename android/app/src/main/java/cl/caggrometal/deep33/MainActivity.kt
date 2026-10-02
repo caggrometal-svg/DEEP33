@@ -1500,7 +1500,11 @@ class MainActivity : Activity() {
 
         val pending = store.loadPendingTurn() ?: return
 
-        if (state?.status == GenerationStatus.RETRYABLE && state.requestId == pending.requestId) {
+        if (
+            state?.status == GenerationStatus.RETRYABLE &&
+            state.requestId == pending.requestId &&
+            pending.sessionId == store.sessionId
+        ) {
             activeRequestId = null
             activeIdempotencyKey = null
             activeBubble = appendBubble(
