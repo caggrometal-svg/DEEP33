@@ -117,6 +117,135 @@ class Deep33UiContractV2Test {
         }
     }
 
+
+    @Test
+    fun chatBubblesHaveFixedRedAndGreenNeonBorders() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val conversationField = activity.javaClass.getDeclaredField("conversation")
+                    .apply { isAccessible = true }
+                @Suppress("UNCHECKED_CAST")
+                val messages = conversationField.get(activity) as MutableList<UiMessage>
+                messages.clear()
+                messages.add(UiMessage("user", "mensaje usuario"))
+                messages.add(UiMessage("assistant", "respuesta DEEP33"))
+
+                activity.javaClass.getDeclaredMethod("renderConversation").apply {
+                    isAccessible = true
+                }.invoke(activity)
+
+                val container = privateView(activity, "chatContainer") as android.view.ViewGroup
+                val userBubble = container.findViewWithTag<View>("chat-bubble-user")
+                val assistantBubble = container.findViewWithTag<View>("chat-bubble-assistant")
+                assertTrue(userBubble != null)
+                assertTrue(assistantBubble != null)
+
+                val userBg = userBubble.background as android.graphics.drawable.GradientDrawable
+                val assistantBg = assistantBubble.background as android.graphics.drawable.GradientDrawable
+                assertEquals(Deep33Theme.GREEN, userBg.strokeColor.defaultColor)
+                assertEquals(Deep33Theme.RED_NEON, assistantBg.strokeColor.defaultColor)
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun voiceModeContainsNoVisibleTextViews() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val setVoiceModeUi = activity.javaClass
+                    .getDeclaredMethod("setVoiceModeUi", Boolean::class.javaPrimitiveType!!)
+                    .apply { isAccessible = true }
+                setVoiceModeUi.invoke(activity, true)
+
+                val voicePanel = privateView(activity, "voicePanel")
+                assertEquals(View.VISIBLE, voicePanel.visibility)
+                assertEquals(0, visibleTextViewCount(voicePanel))
+                assertEquals(View.GONE, privateView(activity, "chatScroll").visibility)
+                assertEquals(View.GONE, privateView(activity, "composer").visibility)
+                assertEquals(View.GONE, privateView(activity, "mainHeader").visibility)
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun chatDraftSurvivesUiNavigationRebuild() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val input = privateView(activity, "input") as android.widget.EditText
+                input.setText("borrador persistente")
+
+                val tabClass = Class.forName("cl.caggrometal.deep33.MainActivity\$Tab")
+                val tabs = tabClass.enumConstants
+                val settings = tabs.first { it.toString() == "SETTINGS" }
+                val chat = tabs.first { it.toString() == "CHAT" }
+                val showTab = activity.javaClass
+                    .getDeclaredMethod("showTab", tabClass)
+                    .apply { isAccessible = true }
+
+                showTab.invoke(activity, settings)
+                showTab.invoke(activity, chat)
+
+                val restored = privateView(activity, "input") as android.widget.EditText
+                assertEquals("borrador persistente", restored.text.toString())
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun statusScreenIsReachableFromSidebar() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                activity.javaClass.getDeclaredMethod("showSidebar").apply {
+                    isAccessible = true
+                }.invoke(activity)
+
+                val status = findTextView(activity, "ESTADO")
+                assertTrue(status != null)
+                status?.performClick()
+
+                val tabField = activity.javaClass.getDeclaredField("currentTab")
+                    .apply { isAccessible = true }
+                assertEquals("STATUS", tabField.get(activity).toString())
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun avatarRemainsMinimalCustomView() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val avatar = privateView(activity, "avatarView") as VoiceAvatarView
+                assertEquals(0, avatar.childCount)
+                assertTrue(avatar.contentDescription.toString().contains("Avatar"))
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    private fun visibleTextViewCount(view: View): Int {
+        if (view.visibility != View.VISIBLE) return 0
+        var count = if (view is TextView) 1 else 0
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                count += visibleTextViewCount(view.getChildAt(i))
+            }
+        }
+        return count
+    }
     private fun privateView(activity: Activity, fieldName: String): View {
         val field = activity.javaClass.getDeclaredField(fieldName).apply { isAccessible = true }
         return field.get(activity) as View
