@@ -412,18 +412,27 @@ class Deep33GenerationService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
+        // Mark this as a system-initiated shutdown before touching durable state so
+        // onDestroy/runGeneration cannot turn a timeout recovery marker into a
+        // terminal failure (FAILED -> RUNNING race).
+        stoppingBySystem = true
         val requestId = runningRequestId
         if (!requestId.isNullOrBlank()) {
             val store = SessionStore(this)
             val pending = store.loadPendingTurn()
-            if (pending?.requestId == requestId) {
-                // Never discard the durable request when Android ends a data-sync
-                // foreground service because of its platform time budget.
+            val state = store.loadGenerationState()
+            if (
+                pending?.requestId == requestId &&
+                state?.requestId == requestId &&
+                state.status != GenerationStatus.DONE &&
+                state.status != GenerationStatus.CANCELLED
+            ) {
                 store.saveGenerationState(
-                    status = GenerationStatus.FAILED,
+                    status = GenerationStatus.RUNNING,
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = pending.personality,
+                    partialOutput = state.partialOutput,
                     error = "La generación superó el límite temporal de segundo plano. La solicitud quedó guardada para continuar.",
                     durable = true
                 )
@@ -444,12 +453,25 @@ class Deep33GenerationService : Service() {
     private fun persistRecoveryCheckpoint(pending: PendingTurn) {
         val store = SessionStore(this)
         val state = store.loadGenerationState()
+        if (state?.requestId != pending.requestId) return
+
+        // Recovery checkpoints may only preserve a non-terminal generation. A service
+        // teardown must never overwrite DONE/FAILED/CANCELLED with RUNNING.
+        if (
+            state.status == GenerationStatus.DONE ||
+            state.status == GenerationStatus.FAILED ||
+            state.status == GenerationStatus.CANCELLED
+        ) {
+            return
+        }
+
         store.saveGenerationState(
             status = GenerationStatus.RUNNING,
             requestId = pending.requestId,
             sessionId = pending.sessionId,
             personality = Personality.fromKey(pending.personality).key,
-            partialOutput = state?.takeIf { it.requestId == pending.requestId }?.partialOutput.orEmpty(),
+            partialOutput = state.partialOutput,
+            error = state.error,
             durable = true
         )
     }
