@@ -1825,8 +1825,6 @@ Deno.serve(async (req) => {
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const activePersonality = normalizePersonality(payload.personality);
-      const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
-      const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
 
       if (!edgeAIConfigured()) {
         return new Response(
