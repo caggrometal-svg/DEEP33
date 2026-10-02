@@ -147,6 +147,7 @@ class MainActivity : Activity() {
     private lateinit var personalityModesContainer: LinearLayout
 
     private val executor = Executors.newFixedThreadPool(4)
+    private var lastRenderedGenerationOutput = ""
     private lateinit var store: SessionStore
     private val conversation = mutableListOf<UiMessage>()
     private var generationActive = false
@@ -1454,10 +1455,7 @@ class MainActivity : Activity() {
         cancelButton.visibility = View.VISIBLE
         updateConnection(ConnectionState.CONNECTING)
 
-        val payload = org.json.JSONArray()
-        conversation.takeLast(50).forEach {
-            payload.put(org.json.JSONObject().put("role", it.role).put("content", it.content))
-        }
+        val payload = buildModelPayload()
 
         val requestId = UUID.randomUUID().toString()
         val idempotencyKey = "chat-" + requestId
@@ -1474,6 +1472,7 @@ class MainActivity : Activity() {
                 payloadJson = payload.toString()
             )
         )
+        lastRenderedGenerationOutput = ""
         launchGeneration(payload, sessionId, requestPersonality, requestId, idempotencyKey)
     }
 
@@ -1514,6 +1513,7 @@ class MainActivity : Activity() {
             ?.takeIf { it.requestId == pending.requestId }
             ?.partialOutput
             .orEmpty()
+        lastRenderedGenerationOutput = ""
         activeBubble = appendBubble(
             "DEEP33",
             partial.ifBlank { "Pensando..." },
@@ -1543,6 +1543,25 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun buildModelPayload(): org.json.JSONArray {
+        val selected = GenerationPerformancePolicy.selectModelContext(conversation)
+        val payload = org.json.JSONArray()
+        var chars = 0
+        selected.forEach { message ->
+            chars += message.content.length
+            payload.put(
+                org.json.JSONObject()
+                    .put("role", message.role)
+                    .put("content", message.content)
+            )
+        }
+        Log.i(
+            "DEEP33",
+            "MODEL_CONTEXT messages=${selected.size} chars=${chars}"
+        )
+        return payload
+    }
+
     private fun monitorGeneration() {
         if (!generationActive) return
 
@@ -1555,7 +1574,7 @@ class MainActivity : Activity() {
                 cleanupGeneration(false)
                 return
             }
-            generationHandler.postDelayed(generationMonitor, 75L)
+            generationHandler.postDelayed(generationMonitor, 150L)
             return
         }
 
@@ -1563,11 +1582,14 @@ class MainActivity : Activity() {
             GenerationStatus.RUNNING -> {
                 val output = state.partialOutput.trim()
                 if (output.isNotBlank()) {
-                    activeBubble?.let {
-                        it.tag = output
-                        // Streaming text is assistant content too: apply the same
-                        // source/citation sanitizer used by the final answer.
-                        renderMarkdown(it, output, isAssistant = true)
+                    if (output != lastRenderedGenerationOutput) {
+                        activeBubble?.let {
+                            it.tag = output
+                            // Streaming text is assistant content too: apply the same
+                            // source/citation sanitizer used by the final answer.
+                            renderMarkdown(it, output, isAssistant = true)
+                        }
+                        lastRenderedGenerationOutput = output
                     }
                     setVoiceState(AvatarState.SPEAKING)
                 }
@@ -1609,7 +1631,7 @@ class MainActivity : Activity() {
                 return
             }
         }
-        generationHandler.postDelayed(generationMonitor, 75L)
+        generationHandler.postDelayed(generationMonitor, 150L)
     }
 
     private fun launchGeneration(
@@ -1644,6 +1666,7 @@ class MainActivity : Activity() {
 
     private fun cleanupGeneration(success: Boolean) {
         activeBubble = null
+        lastRenderedGenerationOutput = ""
         activeRequestId = null
         activeIdempotencyKey = null
         sendButton.isEnabled = true
