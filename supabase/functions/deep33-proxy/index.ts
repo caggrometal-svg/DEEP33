@@ -1540,6 +1540,10 @@ async function publicWebSearch(query: string) {
       url: "https://www.bing.com/search?format=rss&q=" + encodeURIComponent(q),
     },
     {
+      name: "mojeek_public",
+      url: "https://www.mojeek.com/search?q=" + encodeURIComponent(q) + "&fmt=html",
+    },
+    {
       name: "ddg_public",
       url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
     },
@@ -1568,6 +1572,17 @@ async function publicWebSearch(query: string) {
           const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
           const url = decodeHtml(String(item[2] ?? "").trim());
           const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+        }
+      } else if (provider.name === "mojeek_public") {
+        const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+        const snippets = [...html.matchAll(/<p[^>]+class="s"[^>]*>([\s\S]*?)<\/p>/gi)]
+          .map((item) => decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim()));
+        for (let index = 0; index < Math.min(items.length, 8); index++) {
+          const item = items[index];
+          const url = decodeHtml(String(item[1] ?? "").trim());
+          const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
+          const snippet = snippets[index] ?? "";
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
         }
       } else {
