@@ -422,7 +422,7 @@ class MainActivity : Activity() {
                 if (edgeSwipeTracking && event.actionMasked == android.view.MotionEvent.ACTION_UP) {
                     val dx = event.x - edgeDownX
                     val dy = kotlin.math.abs(event.y - edgeDownY)
-                    if (dx >= dp(72) && dy <= dp(96)) showSidebar()
+                    if (!voiceModeActive && dx >= dp(72) && dy <= dp(96)) showSidebar()
                 }
                 edgeSwipeTracking = false
             }
@@ -1471,7 +1471,7 @@ class MainActivity : Activity() {
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
         saveCurrentSummary()
-        appendBubble("TÚ", text, Color.rgb(12, 34, 27))
+        appendBubble("TÚ", text, Deep33Theme.USER_BUBBLE)
         input.setText("")
         chatDraft = ""
         refreshSidebarHistory()
@@ -1545,7 +1545,7 @@ class MainActivity : Activity() {
         activeBubble = appendBubble(
             "DEEP33",
             partial.ifBlank { "Pensando..." },
-            Color.rgb(42, 12, 18)
+            Deep33Theme.ASSISTANT_BUBBLE
         )
         activeBubble?.tag = partial.ifBlank { "Pensando..." }
 
