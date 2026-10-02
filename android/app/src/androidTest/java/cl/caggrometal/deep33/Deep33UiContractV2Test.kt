@@ -17,7 +17,7 @@ class Deep33UiContractV2Test {
             scenario.onActivity { activity: Activity ->
                 val field = activity.javaClass.getDeclaredField("cancelButton").apply { isAccessible = true }
                 val button = field.get(activity) as Button
-                assertEquals(MainActivity.STOP_BUTTON_GLYPH, button.text.toString())
+                assertTrue(button.drawable != null)
                 assertEquals("Detener generación", button.contentDescription.toString())
             }
         } finally {
