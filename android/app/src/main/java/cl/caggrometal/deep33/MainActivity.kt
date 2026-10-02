@@ -447,8 +447,8 @@ class MainActivity : Activity() {
             setPadding(0, dp(4), 0, dp(16))
         }
 
-        val menuSlot = FrameLayout(this).apply {
-            addView(ImageButton(this).apply {
+        val menuSlot = FrameLayout(this@MainActivity).apply {
+            addView(ImageButton(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_action_menu)
                 contentDescription = "Abrir menú"
                 styleIconButton(this, Deep33Theme.TEXT_MUTED, Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT)
