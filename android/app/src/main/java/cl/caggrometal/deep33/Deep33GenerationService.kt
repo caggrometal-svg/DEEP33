@@ -316,8 +316,6 @@ class Deep33GenerationService : Service() {
                 // The backend receives the same idempotency key and can replay the exact
                 // completed answer if the first transport died after inference completed.
                 checkpoint.setLength(0)
-                lastPersistedLength = 0
-                lastCheckpointAt = System.nanoTime()
                 store.saveGenerationState(
                     status = GenerationStatus.RUNNING,
                     requestId = requestId,
