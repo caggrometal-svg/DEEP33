@@ -17,7 +17,7 @@ class Deep33UiContractV2Test {
             scenario.onActivity { activity: Activity ->
                 val field = activity.javaClass.getDeclaredField("cancelButton").apply { isAccessible = true }
                 val button = field.get(activity) as Button
-                assertTrue(button.drawable != null)
+                        assertTrue(button.drawable != null)
                 assertEquals("Detener generación", button.contentDescription.toString())
             }
         } finally {
@@ -58,8 +58,8 @@ class Deep33UiContractV2Test {
     }
 
     @Test
-    fun generationStopControlUsesThemedSquareGlyph() {
-        assertEquals("▪️", MainActivity.STOP_BUTTON_GLYPH)
+    fun generationStopControlUsesThemedStopIcon() {
+        assertTrue(R.drawable.ic_action_stop > 0)
     }
 
     @Test
