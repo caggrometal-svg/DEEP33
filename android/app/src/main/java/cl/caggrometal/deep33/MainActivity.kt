@@ -1318,8 +1318,13 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                val health = Deep33Api.get("/health", store.sessionId)
-                val online = health.optString("status") == "PASS"
+                // /health only proves that an HTTP endpoint answered. ONLINE must prove
+                // a real end-to-end AI inference through the active DEEP33 Edge.
+                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
+                val online = inference.optString("status") == "PASS" &&
+                    inference.optBoolean("text_ok", false)
+                val provider = inference.optString("provider", "")
+                val model = inference.optString("model", "")
                 runOnUiThread {
                     if (generationActive) {
                         updateConnection(ConnectionState.CONNECTING)
@@ -1328,9 +1333,9 @@ class MainActivity : Activity() {
                     }
                     if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
                         diagnosticsView.text = if (online) {
-                            "ONLINE\nEDGE: PASS\nHEALTH: PASS\nDiagnóstico profundo: disponible manualmente."
+                            "ONLINE\nEDGE: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nPROVIDER: $provider\nMODEL: $model"
                         } else {
-                            "OFFLINE\nDEEP33 no respondió al chequeo rápido."
+                            "OFFLINE\nLa inferencia real de DEEP33 no pudo ser verificada."
                         }
                     }
                 }
@@ -1355,22 +1360,23 @@ class MainActivity : Activity() {
             try {
                 val health = Deep33Api.get("/health", store.sessionId)
                 val audit = Deep33Api.get("/v1/connectivity/audit", store.sessionId)
-                val diagnostics = Deep33Api.get("/v1/ai/diagnostics", store.sessionId)
+                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
                 val upstream = audit.optJSONObject("upstream")
+                val inferencePass = inference.optString("status") == "PASS" &&
+                    inference.optBoolean("text_ok", false)
                 val online = health.optString("status") == "PASS" &&
                     audit.optString("status") == "PASS" &&
                     audit.optString("edge") == "PASS" &&
                     audit.optString("internet") == "PASS" &&
                     upstream?.optBoolean("ready", false) == true &&
-                    diagnostics.optBoolean("online", false)
-                val gateway = diagnostics.optJSONObject("gateway")
-                val provider = gateway?.optString("provider", "") ?: ""
-                val model = gateway?.optString("model", "") ?: ""
+                    inferencePass
+                val provider = inference.optString("provider", "")
+                val model = inference.optString("model", "")
                 val summary = if (online) {
-                    "ONLINE\\nEDGE: PASS\\nINTERNET: PASS\\nBACKEND: PASS\\nAI GATEWAY: PASS\\nPROVIDER: " +
-                        provider + "\\nMODEL: " + model
+                    "ONLINE\nEDGE: PASS\nINTERNET: PASS\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nPROVIDER: " +
+                        provider + "\nMODEL: " + model
                 } else {
-                    "OFFLINE\\nLa cadena real de DEEP33 no está completamente verificada."
+                    "OFFLINE\nLa cadena real de DEEP33 no está completamente verificada."
                 }
                 runOnUiThread {
                     // Connectivity probes must not overwrite a live generation state
@@ -1386,16 +1392,14 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     val pendingGeneration = generationActive || store.loadPendingTurn() != null
                     if (pendingGeneration) {
-                        // A connectivity probe can fail while the real generation is still
-                        // recoverable. That is not evidence that the pending AI turn is lost.
                         updateConnection(ConnectionState.CONNECTING)
                         if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "PROCESANDO\\nLa solicitud pendiente se conserva mientras se recupera la conexión."
+                            diagnosticsView.text = "PROCESANDO\nLa solicitud pendiente se conserva mientras se recupera la conexión."
                         }
                     } else {
                         updateConnection(ConnectionState.OFFLINE)
                         if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "OFFLINE\\n" + (e.message ?: "Error de conectividad.")
+                            diagnosticsView.text = "OFFLINE\n" + (e.message ?: "Error de conectividad.")
                         }
                     }
                 }
@@ -1405,12 +1409,12 @@ class MainActivity : Activity() {
                     if (pendingGeneration) {
                         updateConnection(ConnectionState.CONNECTING)
                         if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "PROCESANDO\\nLa solicitud pendiente se conserva mientras se recupera la conexión."
+                            diagnosticsView.text = "PROCESANDO\nLa solicitud pendiente se conserva mientras se recupera la conexión."
                         }
                     } else {
                         updateConnection(ConnectionState.OFFLINE)
                         if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "OFFLINE\\nError inesperado de conectividad."
+                            diagnosticsView.text = "OFFLINE\nError inesperado de conectividad."
                         }
                     }
                 }
