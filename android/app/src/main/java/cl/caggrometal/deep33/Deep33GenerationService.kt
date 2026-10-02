@@ -34,6 +34,7 @@ class Deep33GenerationService : Service() {
             ACTION_BACKGROUND -> {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
                 if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                    SessionStore(this).appBackgrounded = true
                     backgroundMode = true
                     updateForegroundNotification("DEEP33 continúa generando en segundo plano…")
                     Deep33Api.cancelActiveStream()
@@ -44,6 +45,7 @@ class Deep33GenerationService : Service() {
             ACTION_FOREGROUND -> {
                 val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
                 if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                    SessionStore(this).appBackgrounded = false
                     backgroundMode = false
                     updateForegroundNotification("Generando respuesta…")
                 }
@@ -77,7 +79,8 @@ class Deep33GenerationService : Service() {
                 userCancelled.set(false)
                 stoppingBySystem = false
                 keepAliveForRecovery = false
-                backgroundMode = false
+                // Recover lifecycle state after Android recreates the service process.
+                backgroundMode = SessionStore(this).appBackgrounded
                 runningRequestId = requestedId
                 acquireGenerationWakeLock()
                 executor.execute { runGeneration(requestedId) }

@@ -99,6 +99,13 @@ class SessionStore(
             .apply()
     }
 
+    var appBackgrounded: Boolean
+        get() = prefs.getBoolean(KEY_APP_BACKGROUNDED, false)
+        set(value) {
+            // Lifecycle state must survive Activity recreation and service recreation.
+            prefs.edit().putBoolean(KEY_APP_BACKGROUNDED, value).commit()
+        }
+
     var voiceEnabled: Boolean
         get() = prefs.getBoolean(KEY_VOICE_ENABLED, false)
         set(value) {
@@ -407,6 +414,7 @@ class SessionStore(
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
         private const val KEY_MESSAGES_LEGACY = "messages_json"
+        private const val KEY_APP_BACKGROUNDED = "app_backgrounded"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
         private const val KEY_PERSONALITY = "personality"
         private const val KEY_PERSONALITY_USER_SELECTED = "personality_user_selected"
