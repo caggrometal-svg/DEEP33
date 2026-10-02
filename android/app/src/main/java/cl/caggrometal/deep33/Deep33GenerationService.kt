@@ -224,12 +224,14 @@ class Deep33GenerationService : Service() {
                 // All transport recovery is handled by streamWithBackgroundRecovery().
                 // When that bounded loop is exhausted, fail this generation exactly once
                 // instead of launching a second recovery scheduler.
-                store.clearPendingTurn(requestId)
+                // Preserve the original pending turn and idempotency key for an explicit
+                // user retry. No second request is created automatically.
                 store.saveGenerationState(
-                    status = GenerationStatus.FAILED,
+                    status = GenerationStatus.RETRYABLE,
                     requestId = requestId,
                     sessionId = pending.sessionId,
                     personality = personality.key,
+                    partialOutput = "",
                     error = e.message ?: "La conexión con DEEP33 no pudo recuperarse.",
                     durable = true
                 )
