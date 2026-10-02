@@ -525,63 +525,69 @@ class MainActivity : Activity() {
     private fun buildSidebar(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(28), dp(14), dp(16))
-            setBackgroundColor(Color.rgb(6, 6, 9))
-            elevation = dp(4).toFloat()
+            setPadding(dp(18), dp(20), dp(12), dp(14))
+            setBackgroundColor(Color.rgb(5, 5, 6))
+            elevation = dp(6).toFloat()
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(
-            TextView(this).apply {
-                text = "DEEP33 · CHATS"
-                setTextColor(Color.WHITE)
-                textSize = 22f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-            },
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        header.addView(Button(this).apply {
-            text = "Cerrar"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT_MUTED)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+        header.addView(TextView(this).apply {
+            text = "DEEP33"
+            textSize = 20f
+            letterSpacing = 0.08f
+            setTextColor(Deep33Theme.TEXT)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, dp(42), 1f))
+
+        header.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_close)
+            contentDescription = "Cerrar menú"
+            styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Color.TRANSPARENT)
             setOnClickListener { hideSidebar() }
-            addPressFeedback(this)
-        })
+        }, LinearLayout.LayoutParams(dp(42), dp(42)))
         panel.addView(header)
 
-        panel.addView(Button(this).apply {
-            text = "＋  NUEVO CHAT"
-            isAllCaps = false
-            setTextColor(Deep33Theme.TEXT)
-            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
-            setOnClickListener {
-                startNewSession()
-                hideSidebar()
+        fun row(text: String, accent: Int = Deep33Theme.TEXT, active: Boolean = false, onClick: () -> Unit): TextView =
+            TextView(this).apply {
+                this.text = text
+                textSize = 14f
+                setTextColor(accent)
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                setPadding(dp(13), 0, dp(10), 0)
+                background = neonPanel(
+                    if (active) Deep33Theme.RED_SURFACE else Color.TRANSPARENT,
+                    if (active) accent else Color.TRANSPARENT,
+                    12
+                )
+                minHeight = dp(46)
+                setOnClickListener { onClick() }
             }
-            addPressFeedback(this)
-        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        panel.addView(Button(this).apply {
-            text = "CONFIGURACIÓN"
-            isAllCaps = false
-            setTextColor(Color.rgb(255, 70, 90))
-            setBackground(neonPanel(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP))
-            setOnClickListener {
-                showTab(Tab.SETTINGS)
-                hideSidebar()
-            }
-            addPressFeedback(this)
-        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+        panel.addView(row("＋  NUEVO CHAT", Deep33Theme.TEXT) {
+            startNewSession()
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(46)).apply { topMargin = dp(14) })
+
+        panel.addView(row("ESTADO", Deep33Theme.GREEN) {
+            showTab(Tab.STATUS)
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(4) })
+
+        panel.addView(row("CONFIGURACIÓN", Deep33Theme.RED_NEON) {
+            showTab(Tab.SETTINGS)
+            hideSidebar()
+        }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(2) })
 
         panel.addView(TextView(this).apply {
-            text = "MODOS"
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-            setPadding(0, dp(16), 0, dp(8))
+            text = "PERSONALIDAD"
+            textSize = 10f
+            letterSpacing = 0.14f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(dp(8), dp(18), dp(8), dp(7))
         })
 
         personalityModesContainer = LinearLayout(this).apply {
@@ -592,9 +598,10 @@ class MainActivity : Activity() {
 
         panel.addView(TextView(this).apply {
             text = "HISTORIAL"
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-            setPadding(0, dp(18), 0, dp(8))
+            textSize = 10f
+            letterSpacing = 0.14f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(dp(8), dp(18), dp(8), dp(7))
         })
 
         historyContainer = LinearLayout(this).apply {
@@ -602,13 +609,13 @@ class MainActivity : Activity() {
         }
         val historyScroll = ScrollView(this).apply {
             isFillViewport = true
+            isVerticalScrollBarEnabled = false
             addView(historyContainer)
         }
         panel.addView(historyScroll, LinearLayout.LayoutParams(-1, 0, 1f))
         refreshSidebarHistory()
         return panel
     }
-
     private fun refreshPersonalityButtons() {
         if (!::personalityModesContainer.isInitialized) return
         personalityModesContainer.removeAllViews()
@@ -617,17 +624,15 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun personalityButton(option: Personality): Button =
-        Button(this).apply {
+    private fun personalityButton(option: Personality): TextView =
+        TextView(this).apply {
             val active = Personality.fromKey(store.personality) == option
-            text = if (active) {
-                "●  " + option.key + " · ACTIVA"
-            } else {
-                "○  " + option.key
-            }
-            isAllCaps = false
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(54)
+            text = (if (active) "●  " else "○  ") + option.key
+            isClickable = true
+            textSize = 13.5f
+            gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false
+            setPadding(dp(13), 0, dp(10), 0)
             setTextColor(option.accent)
             setTypeface(typeface, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             contentDescription = if (active) {
@@ -635,69 +640,80 @@ class MainActivity : Activity() {
             } else {
                 option.description + ". Activar personalidad."
             }
-            setBackground(
-                neonPanel(
-                    if (active) Color.rgb(30, 8, 13) else Deep33Theme.SURFACE,
-                    if (active) option.accent else Deep33Theme.LINE_SOFT
-                )
+            background = neonPanel(
+                if (active) Color.rgb(20, 6, 10) else Color.TRANSPARENT,
+                if (active) option.accent else Color.TRANSPARENT,
+                12
             )
+            minHeight = dp(44)
             setOnClickListener {
                 selectPersonality(option)
                 hideSidebar()
             }
-            addPressFeedback(this)
         }
-
     private fun refreshSidebarHistory() {
         if (!::historyContainer.isInitialized) return
         historyContainer.removeAllViews()
         val items = store.loadChatSummaries()
         if (items.isEmpty()) {
             historyContainer.addView(TextView(this).apply {
-                text = "Todavía no hay conversaciones guardadas."
-                setTextColor(Color.GRAY)
-                textSize = 13f
-                setPadding(0, dp(8), 0, dp(8))
+                text = "No hay conversaciones guardadas."
+                setTextColor(Deep33Theme.TEXT_MUTED)
+                textSize = 12f
+                setPadding(dp(8), dp(8), dp(8), dp(8))
             })
             return
         }
         items.forEach { item ->
-            historyContainer.addView(Button(this).apply {
+            historyContainer.addView(TextView(this).apply {
                 text = item.title
-                isAllCaps = false
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                minHeight = dp(52)
+                textSize = 13f
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 setTextColor(Deep33Theme.TEXT_MUTED)
-                setBackground(neonPanel(Color.rgb(9, 9, 11), Deep33Theme.LINE))
+                gravity = Gravity.CENTER_VERTICAL
+                includeFontPadding = false
+                setPadding(dp(13), dp(8), dp(10), dp(8))
+                background = neonPanel(Color.TRANSPARENT, Color.TRANSPARENT, 11)
+                minHeight = dp(44)
                 setOnClickListener {
                     openSession(item.sessionId)
                     hideSidebar()
                 }
-                addPressFeedback(this)
             })
         }
     }
-
     private fun toggleSidebar() {
         if (sidebar.visibility == View.VISIBLE) hideSidebar() else showSidebar()
     }
 
     private fun showSidebar() {
         refreshSidebarHistory()
-        drawerScrim.alpha = 1f
         drawerScrim.visibility = View.VISIBLE
-        sidebar.translationX = 0f
+        drawerScrim.alpha = 0f
+        drawerScrim.animate().alpha(1f).setDuration(150L).start()
         sidebar.visibility = View.VISIBLE
+        sidebar.translationX = -dp(318).toFloat()
+        sidebar.animate()
+            .translationX(0f)
+            .setDuration(180L)
+            .start()
     }
-
     private fun hideSidebar() {
         if (sidebar.visibility != View.VISIBLE) return
-        sidebar.translationX = 0f
-        sidebar.visibility = View.GONE
-        drawerScrim.visibility = View.GONE
-        drawerScrim.alpha = 1f
+        drawerScrim.animate().alpha(0f).setDuration(120L).withEndAction {
+            drawerScrim.visibility = View.GONE
+            drawerScrim.alpha = 1f
+        }.start()
+        sidebar.animate()
+            .translationX(-dp(318).toFloat())
+            .setDuration(150L)
+            .withEndAction {
+                sidebar.visibility = View.GONE
+                sidebar.translationX = 0f
+            }
+            .start()
     }
-
     private fun showTab(tab: Tab) {
         val previousTab = currentTab
         if (previousTab == Tab.CHAT && ::input.isInitialized) {
@@ -1116,7 +1132,7 @@ class MainActivity : Activity() {
         // exact mode chosen by the user, independent of older memory/preferences.
         store.setPersonalityFromUser(personality.key)
         Log.i("DEEP33", "PERSONALITY ACTIVATED: " + personality.key)
-        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
+        currentPersonalityView.text = personality.key
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
@@ -1144,7 +1160,7 @@ class MainActivity : Activity() {
     }
 
     private fun applyPersonalityTheme(personality: Personality) {
-        currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
+        currentPersonalityView.text = personality.key
         currentPersonalityView.setTextColor(personality.accent)
         currentPersonalityView.setTypeface(currentPersonalityView.typeface, android.graphics.Typeface.BOLD)
         refreshPersonalityButtons()
@@ -2391,4 +2407,5 @@ class MainActivity : Activity() {
          private const val VOICE_PERMISSION_REQUEST = 7001
     }
 }
+
 
