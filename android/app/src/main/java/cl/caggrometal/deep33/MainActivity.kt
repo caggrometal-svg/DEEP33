@@ -38,19 +38,24 @@ import kotlin.math.roundToInt
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
 
 private object Deep33Theme {
+    // Deep black surfaces are the visual foundation. Neon is reserved for identity and focus.
     val BG = Color.rgb(3, 3, 3)
-    val SURFACE = Color.rgb(8, 8, 8)
-    val SURFACE_2 = Color.rgb(13, 13, 13)
-    val SURFACE_3 = Color.rgb(18, 18, 18)
-    val LINE = Color.rgb(29, 29, 29)
-    val LINE_SOFT = Color.rgb(38, 38, 38)
-    val TEXT = Color.rgb(244, 244, 244)
-    val TEXT_MUTED = Color.rgb(150, 150, 150)
+    val SURFACE = Color.rgb(7, 7, 7)
+    val SURFACE_2 = Color.rgb(11, 11, 11)
+    val SURFACE_3 = Color.rgb(16, 16, 16)
+    val LINE = Color.rgb(24, 24, 24)
+    val LINE_SOFT = Color.rgb(34, 34, 34)
+    val TEXT = Color.rgb(242, 242, 242)
+    val TEXT_MUTED = Color.rgb(142, 148, 158)
     val RED = Color.rgb(255, 23, 68)
-    val RED_DEEP = Color.rgb(102, 7, 24)
-    val RED_SURFACE = Color.rgb(28, 7, 12)
-    val USER_BUBBLE = Color.rgb(16, 16, 16)
-    val ASSISTANT_BUBBLE = Color.rgb(10, 10, 10)
+    val RED_NEON = Color.rgb(255, 24, 80)
+    val RED_DEEP = Color.rgb(105, 7, 25)
+    val RED_SURFACE = Color.rgb(25, 6, 11)
+    val GREEN = Color.rgb(57, 255, 20)
+    val GREEN_DEEP = Color.rgb(18, 92, 8)
+    val GREEN_SURFACE = Color.rgb(6, 25, 4)
+    val USER_BUBBLE = Color.rgb(9, 12, 9)
+    val ASSISTANT_BUBBLE = Color.rgb(11, 7, 8)
 }
 
 private object VoiceConversationPolicy {
@@ -260,13 +265,18 @@ class MainActivity : Activity() {
         window.statusBarColor = Deep33Theme.BG
         window.navigationBarColor = Deep33Theme.BG
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-            @Suppress("DEPRECATION")
-            view.setPadding(
-                insets.systemWindowInsetLeft,
-                insets.systemWindowInsetTop,
-                insets.systemWindowInsetRight,
-                insets.systemWindowInsetBottom
-            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(
+                    insets.systemWindowInsetLeft,
+                    insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight,
+                    insets.systemWindowInsetBottom
+                )
+            }
             insets
         }
 
@@ -382,17 +392,17 @@ class MainActivity : Activity() {
     private fun setHeaderStatusStyle(textView: TextView, state: ConnectionState) {
         val (fill, stroke, textColor) = when (state) {
             ConnectionState.CONNECTING ->
-                Triple(Color.rgb(35, 27, 8), Color.rgb(112, 84, 20), Color.rgb(244, 198, 74))
+                Triple(Color.rgb(19, 16, 7), Color.rgb(88, 68, 19), Color.rgb(231, 190, 68))
             ConnectionState.ONLINE ->
-                Triple(Color.rgb(8, 32, 18), Color.rgb(24, 103, 58), Color.rgb(111, 226, 157))
+                Triple(Deep33Theme.GREEN_SURFACE, Deep33Theme.GREEN_DEEP, Deep33Theme.GREEN)
             ConnectionState.OFFLINE ->
-                Triple(Color.rgb(39, 9, 14), Color.rgb(116, 26, 42), Color.rgb(255, 102, 121))
+                Triple(Deep33Theme.RED_SURFACE, Deep33Theme.RED_DEEP, Color.rgb(255, 108, 128))
         }
         textView.setTextColor(textColor)
         textView.setBackground(
             GradientDrawable().apply {
                 setColor(fill)
-                cornerRadius = dp(14).toFloat()
+                cornerRadius = dp(12).toFloat()
                 setStroke(dp(1), stroke)
             }
         )
@@ -425,13 +435,13 @@ class MainActivity : Activity() {
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Deep33Theme.BG)
-            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setPadding(dp(12), dp(6), dp(12), dp(6))
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(16))
+            setPadding(0, dp(2), 0, dp(10))
         }
 
         header.addView(ImageButton(this).apply {
@@ -439,13 +449,7 @@ class MainActivity : Activity() {
             contentDescription = "Abrir menú"
             styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
             setOnClickListener { toggleSidebar() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-
-        statusView = TextView(this).apply {
-            text = "PROCESANDO · DEEP33"
-            textSize = 11f
-            setPadding(0, dp(2), 0, 0)
-        }
+        }, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         val titleGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -455,21 +459,23 @@ class MainActivity : Activity() {
             text = "DEEP33"
             contentDescription = "DEEP33"
             setTextColor(Deep33Theme.TEXT)
-            textSize = 29f
-            letterSpacing = 0.08f
+            textSize = 26f
+            letterSpacing = 0.10f
             setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD))
         })
         currentPersonalityView = TextView(this).apply {
-            textSize = 10.5f
-            letterSpacing = 0.06f
-            setPadding(0, dp(3), 0, 0)
+            textSize = 9.5f
+            letterSpacing = 0.10f
+            setPadding(0, dp(2), 0, 0)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            contentDescription = "Personalidad activa"
         }
         titleGroup.addView(currentPersonalityView)
         titleGroup.addView(View(this).apply {
-            setBackgroundColor(Deep33Theme.RED)
-            layoutParams = LinearLayout.LayoutParams(dp(26), dp(1)).apply {
-                topMargin = dp(7)
+            setBackgroundColor(Deep33Theme.RED_NEON)
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(1)).apply {
+                topMargin = dp(6)
             }
         })
 
@@ -477,29 +483,28 @@ class MainActivity : Activity() {
             titleGroup,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
+
         statusView = TextView(this).apply {
             text = "● CONECTANDO"
-            textSize = 9.5f
-            letterSpacing = 0.08f
+            textSize = 9f
+            letterSpacing = 0.07f
             gravity = Gravity.CENTER
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(10), 0, dp(10), 0)
-            minWidth = dp(94)
+            setPadding(dp(8), 0, dp(8), 0)
+            minWidth = dp(82)
             setHeaderStatusStyle(this, ConnectionState.CONNECTING)
             contentDescription = "Estado de conexión de DEEP33"
         }
-        header.addView(statusView, LinearLayout.LayoutParams(dp(104), dp(34)))
+        header.addView(statusView, LinearLayout.LayoutParams(dp(88), dp(32)))
 
         main.addView(header, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         contentFrame = FrameLayout(this)
         main.addView(contentFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Conversation navigation was removed from the bottom bar so it cannot
-        // replace/rebuild the chat screen and break the active conversation thread.
         rootFrame.addView(main, FrameLayout.LayoutParams(-1, -1))
 
         drawerScrim = View(this).apply {
-            setBackgroundColor(Color.argb(145, 0, 0, 0))
+            setBackgroundColor(Color.argb(175, 0, 0, 0))
             visibility = View.GONE
             setOnClickListener { hideSidebar() }
         }
@@ -508,12 +513,11 @@ class MainActivity : Activity() {
         sidebar = buildSidebar()
         rootFrame.addView(
             sidebar,
-            FrameLayout.LayoutParams(dp(322), -1).apply { gravity = Gravity.START }
+            FrameLayout.LayoutParams(dp(318), -1).apply { gravity = Gravity.START }
         )
         sidebar.visibility = View.GONE
         return rootFrame
     }
-
     private fun buildSidebar(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1689,10 +1693,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun neonPanel(fill: Int, stroke: Int): GradientDrawable =
+    private fun neonPanel(fill: Int, stroke: Int, radiusDp: Int = 14): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
-            cornerRadius = dp(13).toFloat()
+            cornerRadius = dp(radiusDp).toFloat()
             setStroke(dp(1), stroke)
         }
 
