@@ -371,45 +371,9 @@ class Deep33GenerationService : Service() {
             } catch (e: Deep33ApiException) {
                 lastError = e
 
-                // When the Activity goes to the background, do not depend on a long-lived
-                // SSE socket. The same request/idempotency key is completed through the
-                // non-streaming endpoint, whose result is durable and can be recovered
-                // when the Activity returns.
-                if (backgroundMode && isRecoverableTransportError(e.kind)) {
-                    try {
-                        val direct = Deep33Api.generate(
-                            payload,
-                            pending.sessionId,
-                            personality.key,
-                            requestId = pending.requestId,
-                            idempotencyKey = pending.idempotencyKey,
-                        )
-                        val directText = direct
-                            .optJSONObject("result")
-                            ?.optString("text")
-                            .orEmpty()
-                            .trim()
-                        if (directText.isNotBlank()) {
-                            store.saveGenerationState(
-                                status = GenerationStatus.RUNNING,
-                                requestId = requestId,
-                                sessionId = pending.sessionId,
-                                personality = personality.key,
-                                partialOutput = directText,
-                                error = "Continuando en segundo plano."
-                            )
-                            return directText
-                        }
-                    } catch (fallbackError: Exception) {
-                        lastError = when (fallbackError) {
-                            is Deep33ApiException -> fallbackError
-                            else -> Deep33ApiException(
-                                Deep33ApiException.Kind.NETWORK,
-                                cause = fallbackError
-                            )
-                        }
-                    }
-                }
+                // Transport recovery uses the single stream path below. Do not start a
+                // parallel non-stream generation here: doing so could create a second
+                // provider inference while the original request is still completing.
 
                 if (!isRecoverableTransportError(e.kind) || attempt == MAX_STREAM_RECOVERY_RETRIES) {
                     throw e
