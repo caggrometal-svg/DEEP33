@@ -428,9 +428,7 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(8), dp(14), dp(8))
         }
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val header = FrameLayout(this).apply {
             setPadding(0, dp(4), 0, dp(16))
         }
 
@@ -439,7 +437,7 @@ class MainActivity : Activity() {
             contentDescription = "Abrir menú"
             styleIconButton(this, Deep33Theme.TEXT_MUTED, Color.TRANSPARENT, Deep33Theme.LINE_SOFT)
             setOnClickListener { toggleSidebar() }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.START or Gravity.CENTER_VERTICAL))
 
         statusView = TextView(this).apply {
             text = "PROCESANDO · DEEP33"
@@ -475,7 +473,11 @@ class MainActivity : Activity() {
 
         header.addView(
             titleGroup,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
         )
         statusView = TextView(this).apply {
             text = "● CONECTANDO"
@@ -488,7 +490,10 @@ class MainActivity : Activity() {
             setHeaderStatusStyle(this, ConnectionState.CONNECTING)
             contentDescription = "Estado de conexión de DEEP33"
         }
-        header.addView(statusView, LinearLayout.LayoutParams(dp(104), dp(34)))
+        header.addView(
+            statusView,
+            FrameLayout.LayoutParams(dp(104), dp(34), Gravity.END or Gravity.CENTER_VERTICAL)
+        )
 
         main.addView(header, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -857,7 +862,7 @@ class MainActivity : Activity() {
 
         cancelButton = ImageButton(this).apply {
             contentDescription = "Detener generación"
-            visibility = View.GONE
+            visibility = View.INVISIBLE
             setOnClickListener { cancelGeneration() }
         }
         applyStopButtonTheme(Personality.fromKey(store.personality))
@@ -1318,24 +1323,29 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                // /health only proves that an HTTP endpoint answered. ONLINE must prove
-                // a real end-to-end AI inference through the active DEEP33 Edge.
-                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
-                val online = inference.optString("status") == "PASS" &&
-                    inference.optBoolean("text_ok", false)
-                val provider = inference.optString("provider", "")
-                val model = inference.optString("model", "")
+                val ready = Deep33Api.get("/ready", store.sessionId)
+                val online = ready.optString("status") == "PASS" &&
+                    ready.optBoolean("ready", false)
+                val checks = ready.optJSONObject("checks")
+                val backend = checks?.optString("BACKEND", "").orEmpty()
+                val model = checks?.optString("MODEL", "").orEmpty()
+                val chat = checks?.optString("CHAT", "").orEmpty()
+                val provider = ready.optJSONObject("inference")?.optString("provider", "").orEmpty()
+                val resolvedOnline = online &&
+                    backend == "PASS" &&
+                    model == "PASS" &&
+                    chat == "PASS"
                 runOnUiThread {
                     if (generationActive) {
                         updateConnection(ConnectionState.CONNECTING)
                     } else {
-                        updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
+                        updateConnection(if (resolvedOnline) ConnectionState.ONLINE else ConnectionState.OFFLINE)
                     }
                     if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
-                        diagnosticsView.text = if (online) {
-                            "ONLINE\nEDGE: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nPROVIDER: $provider\nMODEL: $model"
+                        diagnosticsView.text = if (resolvedOnline) {
+                            "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}"
                         } else {
-                            "OFFLINE\nLa inferencia real de DEEP33 no pudo ser verificada."
+                            "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
                         }
                     }
                 }
@@ -1516,7 +1526,7 @@ class MainActivity : Activity() {
             sendButton.isEnabled = true
             input.isEnabled = true
             micButton.isEnabled = true
-            cancelButton.visibility = View.GONE
+            cancelButton.visibility = View.INVISIBLE
             updateConnection(ConnectionState.OFFLINE)
             return
         }
@@ -2052,10 +2062,11 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             gravity = if (isAssistant) Gravity.START else Gravity.END
+            val horizontalInset = dp(10)
             setMargins(
-                if (isAssistant) dp(2) else dp(46),
+                horizontalInset,
                 0,
-                if (isAssistant) dp(8) else dp(2),
+                horizontalInset,
                 dp(10)
             )
         }
