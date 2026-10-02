@@ -114,22 +114,54 @@ class Deep33FailoverPolicyTest {
     }
 
     @Test
-    fun authRateLimitBadResponseAndCancelNeverFailOver() {
-        val blocked = listOf(
-            Deep33ApiException.Kind.AUTH,
-            Deep33ApiException.Kind.RATE_LIMIT,
-            Deep33ApiException.Kind.BAD_RESPONSE,
-            Deep33ApiException.Kind.CANCELLED
-        )
-        blocked.forEach { kind ->
-            assertFalse(
-                kind.toString(),
-                Deep33FailoverPolicy.canFailover(
-                    method = "GET",
-                    requestBodyStarted = false,
-                    error = kind
-                )
+    fun authAndBadResponseCanFailOverForGetButRateLimitAndCancelCannot() {
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "GET",
+                requestBodyStarted = false,
+                error = Deep33ApiException.Kind.AUTH
             )
-        }
+        )
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "GET",
+                requestBodyStarted = false,
+                error = Deep33ApiException.Kind.BAD_RESPONSE
+            )
+        )
+        assertFalse(
+            Deep33FailoverPolicy.canFailover(
+                method = "GET",
+                requestBodyStarted = false,
+                error = Deep33ApiException.Kind.RATE_LIMIT
+            )
+        )
+        assertFalse(
+            Deep33FailoverPolicy.canFailover(
+                method = "GET",
+                requestBodyStarted = false,
+                error = Deep33ApiException.Kind.CANCELLED
+            )
+        )
+    }
+
+    @Test
+    fun authAndBadResponseCanFailOverAfterIdempotentPostBodyStarted() {
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = Deep33ApiException.Kind.AUTH,
+                idempotentRequest = true
+            )
+        )
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = Deep33ApiException.Kind.BAD_RESPONSE,
+                idempotentRequest = true
+            )
+        )
     }
 }
