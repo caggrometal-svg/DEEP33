@@ -172,7 +172,7 @@ jobs:
             echo "PRIMARY_DEPLOY_ATTEMPT=$attempt expected=$GITHUB_SHA"
             body="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/health" || true)"
             echo "$body"
-            if printf "%s" "$body" | jq -e --arg sha "$GITHUB_SHA" '.status=="PASS" and .service=="DEEP33 Backend" and .git_sha==$sha' >/dev/null 2>&1; then
+            if printf "%s" "$body" | jq -e --arg sha "$GITHUB_SHA" '.status=="PASS" and .service=="DEEP33 Edge Gateway" and .git_sha==$sha' >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -191,7 +191,7 @@ jobs:
           for attempt in $(seq 1 6); do
             echo "EDGE_AUDIT_ATTEMPT=$attempt"
             if curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" >/tmp/health.json &&
-              jq -e '.status=="PASS" and .service=="DEEP33 Backend"' /tmp/health.json >/dev/null &&
+              jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"' /tmp/health.json >/dev/null &&
               curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" >/tmp/audit.json &&
               jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null; then
               audit_ok=1
