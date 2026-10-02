@@ -1730,6 +1730,9 @@ Deno.serve(async (req) => {
         status: "PASS",
         service: "DEEP33 Edge Gateway",
         runtime: "supabase-edge",
+        canonical_runtime: "edge-direct",
+        transport: "https",
+        failover_supported: true,
         timestamp: new Date().toISOString(),
       });
     }
