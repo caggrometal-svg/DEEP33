@@ -1615,6 +1615,25 @@ class MainActivity : Activity() {
                 }
                 return
             }
+            GenerationStatus.RETRYABLE -> {
+                val message = state.error.ifBlank { "La conexión con DEEP33 no pudo recuperarse. Pulsa reintentar." }
+                activeBubble?.let {
+                    it.tag = message
+                    renderMarkdown(it, message)
+                }
+                generationActive = false
+                activeRequestId = null
+                activeIdempotencyKey = null
+                sendButton.isEnabled = true
+                input.isEnabled = true
+                micButton.isEnabled = true
+                cancelButton.visibility = View.GONE
+                updateConnection(ConnectionState.OFFLINE)
+                setVoiceState(AvatarState.IDLE)
+                if (!voiceModeActive) setVoiceModeUi(false)
+                return
+            }
+
             GenerationStatus.FAILED, GenerationStatus.CANCELLED -> {
                 val message = state.error.ifBlank {
                     if (state.status == GenerationStatus.CANCELLED) {
