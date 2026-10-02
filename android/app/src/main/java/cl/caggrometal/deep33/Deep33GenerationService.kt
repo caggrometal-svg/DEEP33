@@ -326,8 +326,10 @@ class Deep33GenerationService : Service() {
 
         fun persistCheckpoint(force: Boolean = false) {
             val now = System.nanoTime()
-            val dueByBytes = checkpoint.length - lastPersistedLength >= 256
-            val dueByTime = now - lastCheckpointAt >= 100_000_000L
+            // Durable recovery does not need a disk write for every small token burst.
+            // Checkpoint less often while keeping sub-second recovery visibility.
+            val dueByBytes = checkpoint.length - lastPersistedLength >= 1_024
+            val dueByTime = now - lastCheckpointAt >= 300_000_000L
             if (!force && !dueByBytes && !dueByTime) return
 
             store.saveGenerationState(
@@ -414,6 +416,9 @@ class Deep33GenerationService : Service() {
                 // A retry starts from the durable request, not from a partial stream.
                 // The backend receives the same idempotency key and can replay the exact
                 // completed answer if the first transport died after inference completed.
+                checkpoint.setLength(0)
+                lastPersistedLength = 0
+                lastCheckpointAt = System.nanoTime()
                 store.saveGenerationState(
                     status = GenerationStatus.RUNNING,
                     requestId = requestId,
