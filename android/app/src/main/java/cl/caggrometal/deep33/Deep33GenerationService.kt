@@ -36,8 +36,10 @@ class Deep33GenerationService : Service() {
                 if (requestId.isNullOrBlank() || requestId == runningRequestId) {
                     SessionStore(this).appBackgrounded = true
                     backgroundMode = true
+                    // Backgrounding the Activity must not terminate the transport. The
+                    // foreground service owns the generation and keeps the active stream
+                    // alive while the UI is temporarily invisible.
                     updateForegroundNotification("DEEP33 continúa generando en segundo plano…")
-                    Deep33Api.cancelActiveStream()
                 }
                 return START_REDELIVER_INTENT
             }
