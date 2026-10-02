@@ -1728,7 +1728,7 @@ Deno.serve(async (req) => {
     if (path === "/health" && req.method === "GET") {
       return json({
         status: "PASS",
-        service: "DEEP33 Backend",
+        service: "DEEP33 Edge Gateway",
         runtime: "supabase-edge",
         timestamp: new Date().toISOString(),
       });
