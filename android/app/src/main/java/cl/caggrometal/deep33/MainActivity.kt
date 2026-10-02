@@ -36,6 +36,7 @@ import android.widget.Toast
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.math.roundToInt
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
@@ -186,6 +187,7 @@ class MainActivity : Activity() {
     private var activeIdempotencyKey: String? = null
     private var connectivityManager: ConnectivityManager? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
+    private var scheduledHealthCheck: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -327,6 +329,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         generationHandler.removeCallbacks(generationMonitor)
+        scheduledHealthCheck?.let { window.decorView.removeCallbacks(it) }
+        scheduledHealthCheck = null
         stopVoiceInput()
         interruptAssistantSpeech(resumeListening = false)
         executor.shutdownNow()
@@ -1344,7 +1348,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!activityVisible || generationActive) return@runOnUiThread
                     updateConnection(ConnectionState.CONNECTING)
-                    window.decorView.postDelayed({ checkHealthFast() }, 250L)
+                    scheduleHealthCheck(250L)
                 }
             }
 
@@ -1364,7 +1368,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!activityVisible || generationActive) return@runOnUiThread
                     updateConnection(ConnectionState.CONNECTING)
-                    window.decorView.postDelayed({ checkHealthFast() }, 150L)
+                    scheduleHealthCheck(150L)
                 }
             }
 
@@ -1379,11 +1383,7 @@ class MainActivity : Activity() {
                         return@runOnUiThread
                     }
                     updateConnection(ConnectionState.CONNECTING)
-                    window.decorView.postDelayed({
-                        if (activityVisible && !generationActive && store.loadPendingTurn() == null) {
-                            checkHealthFast()
-                        }
-                    }, 500L)
+                    scheduleHealthCheck(500L)
                 }
             }
         }
@@ -1396,10 +1396,24 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun scheduleHealthCheck(delayMs: Long) {
+        scheduledHealthCheck?.let { window.decorView.removeCallbacks(it) }
+        val runnable = Runnable {
+            scheduledHealthCheck = null
+            if (activityVisible && !isDestroyed) {
+                checkHealthFast()
+            }
+        }
+        scheduledHealthCheck = runnable
+        window.decorView.postDelayed(runnable, delayMs)
+    }
+
     private fun checkHealthFast() {
+        if (isFinishing || isDestroyed) return
         updateConnection(ConnectionState.CONNECTING)
-        executor.submit {
-            try {
+        try {
+            executor.execute {
+                try {
                 // Do not gate the real DEEP33 probe on Android's NET_CAPABILITY_VALIDATED.
                 // The backend is the authoritative test of application-level connectivity.
                 val osNetworkValidated = hasValidatedInternet()
@@ -1443,6 +1457,8 @@ class MainActivity : Activity() {
                     }
                 }
             }
+        } catch (_: RejectedExecutionException) {
+            return
         }
     }
 
@@ -1473,7 +1489,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     // Connectivity probes must not overwrite a live generation state
                     // while the user has temporarily left and returned to the Activity.
-                    if (generationActive) {
+                    if (generationActive || store.loadPendingTurn() != null) {
                         updateConnection(ConnectionState.CONNECTING)
                     } else {
                         updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
