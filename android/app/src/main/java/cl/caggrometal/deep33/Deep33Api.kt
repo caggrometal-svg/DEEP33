@@ -6,6 +6,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.HttpsURLConnection
 
 class Deep33ApiException(
@@ -69,8 +70,9 @@ object Deep33Api {
     }
 
 
-    @Volatile
-    private var activeStreamConnection: HttpsURLConnection? = null
+    // One transport registry per request. A global single connection can cancel or
+    // disconnect the wrong generation when a stale lifecycle callback arrives.
+    private val activeStreamConnections = ConcurrentHashMap<String, HttpsURLConnection>()
 
     fun get(path: String, sessionId: String): JSONObject =
         request("GET", path, null, sessionId)
@@ -178,7 +180,7 @@ object Deep33Api {
                 if (remainingMs <= 3_000L) break
 
                 val connection = URL(endpoint + "/v1/chat/stream").openConnection() as HttpsURLConnection
-                activeStreamConnection = connection
+                activeStreamConnections[requestId] = connection
                 val output = StringBuilder()
                 var emitted = false
                 var requestBodyStarted = false
@@ -318,7 +320,7 @@ object Deep33Api {
                     }
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } finally {
-                    if (activeStreamConnection === connection) activeStreamConnection = null
+                    activeStreamConnections.remove(requestId, connection)
                     connection.disconnect()
                 }
             }
@@ -327,8 +329,10 @@ object Deep33Api {
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
 
-    fun cancelActiveStream() {
-        activeStreamConnection?.disconnect()
+    fun cancelActiveStream(requestId: String?) {
+        val key = requestId?.trim().orEmpty()
+        if (key.isBlank()) return
+        activeStreamConnections.remove(key)?.disconnect()
     }
 
     private fun mapStreamError(data: String): Deep33ApiException {
