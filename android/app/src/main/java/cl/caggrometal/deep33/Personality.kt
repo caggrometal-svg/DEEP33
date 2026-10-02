@@ -14,7 +14,7 @@ enum class Personality(
         0xFFFF1744.toInt(),
         "Directo, impaciente, sarcástico y confrontacional.",
         0.052f,
-        "ORBITAL"
+        "ROUND_GLOW"
     ),
     NEUTRO(
         "NEUTRO",
@@ -22,7 +22,7 @@ enum class Personality(
         0xFFB8C0CC.toInt(),
         "Analítico, formal, objetivo y basado en datos.",
         0.035f,
-        "ORBITAL"
+        "ROUND_FOCUS"
     ),
     COMICO(
         "COMICO",
@@ -30,7 +30,7 @@ enum class Personality(
         0xFFD2A264.toInt(),
         "Irreverente, ingenioso, sarcástico y de humor oscuro, sin perder precisión.",
         0.044f,
-        "ORBITAL"
+        "ROUND_SOFT"
     ),
     CONSPIRANOICO(
         "CONSPIRANOICO",
@@ -38,7 +38,7 @@ enum class Personality(
         0xFF9278C1.toInt(),
         "Teorías, agendas ocultas y anomalías; distingue hechos de hipótesis.",
         0.021f,
-        "ORBITAL"
+        "ROUND_TIGHT"
     );
 
     companion object {
