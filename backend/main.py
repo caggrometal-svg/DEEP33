@@ -1010,6 +1010,7 @@ async def _enforce_web_originality(
     working: list[dict],
     evidence: list[str],
     model: str,
+    max_tokens: int,
     request_id: str,
     idempotency_key: str,
     deadline: float | None,
