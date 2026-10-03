@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_URL: https://deep33-backend.onrender.com
+  PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
 
 jobs:
   warmup:
