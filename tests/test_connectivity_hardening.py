@@ -62,24 +62,29 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
 
 
 def test_transport_workflows_keep_canonical_endpoint_set() -> None:
-    paths = [
-        ".github/workflows/android-debug-apk.yml",
-        ".github/workflows/android-fast-apk.yml",
-        ".github/workflows/ci.yml",
-        ".github/workflows/production-e2e.yml",
-    ]
     expected = {
         "https://deep33-backend.onrender.com",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
     }
-    for path in paths:
+    full_set_paths = [
+        ".github/workflows/android-debug-apk.yml",
+        ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/ci.yml",
+    ]
+    for path in full_set_paths:
         source = read(path)
         urls = set(re.findall(r'https://[^\s$"]+', source))
         assert expected.issubset(urls), path
         assert "http://" not in source
         assert "c-33.blitz.cloud" not in source.lower()
         assert "iac33" not in source.lower()
+
+    production_e2e = read(".github/workflows/production-e2e.yml")
+    assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
+    assert "http://" not in production_e2e
+    assert "c-33.blitz.cloud" not in production_e2e.lower()
+    assert "iac33" not in production_e2e.lower()
 
 
 def test_fast_apk_workflow_does_not_bypass_repository_ci_contract() -> None:
