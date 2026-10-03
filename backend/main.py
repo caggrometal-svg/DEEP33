@@ -1236,7 +1236,7 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     value = re.sub(
         r"(?ims)(?:^|\n)\s*(?:#{0,6}\s*)?"
         r"(?:fuentes?|sources?(?: consulted| used)?|"
-        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$).*\Z",
+        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:.*\Z",
         "",
         value,
     )
