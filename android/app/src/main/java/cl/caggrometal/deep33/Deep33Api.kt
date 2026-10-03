@@ -61,20 +61,29 @@ object Deep33Api {
     // therefore performs one attempt per configured endpoint; no nested transport retry.
     private const val ENDPOINT_ATTEMPTS = 1
 
-    private fun validateEndpoint(raw: String): String? {
+    private fun validateEndpoint(
+        raw: String,
+        allowIsolatedTestEndpoint: Boolean = false,
+    ): String? {
         val candidate = raw.trim().trimEnd('/')
         if (candidate.isBlank()) return null
         return runCatching {
             val uri = URI(candidate)
             val scheme = uri.scheme?.lowercase()
             val host = uri.host?.trim().orEmpty()
+            val testOnlyHost = allowIsolatedTestEndpoint && BuildConfig.DEBUG && (
+                host == "127.0.0.1" ||
+                    host == "::1" ||
+                    host.endsWith(".invalid")
+                )
             if (
                 scheme != "https" ||
                 host.isBlank() ||
                 uri.userInfo != null ||
                 uri.query != null ||
                 uri.fragment != null ||
-                (uri.port != -1 && uri.port != 443)
+                (!testOnlyHost && uri.port != -1 && uri.port != 443) ||
+                !testOnlyHost && host != host.lowercase()
             ) {
                 null
             } else {
@@ -93,16 +102,25 @@ object Deep33Api {
         val canonical = canonicalEndpoints()
         if (overrides == null) return canonical
 
-        // Endpoint overrides are accepted only as a subset of the immutable canonical
-        // transport set. Arbitrary HTTPS destinations are rejected instead of becoming
-        // a hidden runtime route.
+        // Production/release transport can never be redirected to an arbitrary HTTPS host.
+        // Debug instrumentation may inject only isolated loopback/.invalid endpoints to
+        // simulate transport loss; these cannot become real external destinations.
         val requested = overrides.asSequence()
-            .mapNotNull(::validateEndpoint)
+            .mapNotNull { raw ->
+                validateEndpoint(raw) ?: validateEndpoint(raw, allowIsolatedTestEndpoint = true)
+            }
             .distinct()
             .toList()
         if (requested.isEmpty() || requested.size != overrides.distinct().size) return emptyList()
-        if (requested.any { it !in canonical }) return emptyList()
-        return canonical.filter { it in requested }
+
+        val nonCanonical = requested.filter { it !in canonical }
+        if (nonCanonical.isNotEmpty()) {
+            if (!BuildConfig.DEBUG) return emptyList()
+            if (nonCanonical.any { validateEndpoint(it, allowIsolatedTestEndpoint = true) == null }) {
+                return emptyList()
+            }
+        }
+        return requested
     }
 
 

@@ -21,6 +21,9 @@ def test_android_transport_is_https_and_deadline_bounded() -> None:
     assert 'uri.userInfo != null' in source
     assert 'uri.query != null' in source
     assert 'uri.fragment != null' in source
+    assert 'allowIsolatedTestEndpoint' in source
+    assert 'BuildConfig.DEBUG' in source
+    assert 'host.endsWith(".invalid")' in source
     assert 'responseContentType.contains("json", ignoreCase = true)' in source
 
 
