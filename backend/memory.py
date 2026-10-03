@@ -46,6 +46,20 @@ class MemoryClient:
             5.0, min(300.0, float(os.getenv("MEMORY_CONTEXT_CACHE_TTL_SECONDS", "45")))
         )
         self._context_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds),
+                follow_redirects=True,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     def _refresh_config(self) -> None:
         if not self._explicit_function_url:
@@ -96,8 +110,12 @@ class MemoryClient:
 
         for attempt in range(self.max_retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                    response = await client.post(self.function_url, json=body, headers=headers)
+                response = await self._client().post(
+                    self.function_url,
+                    json=body,
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                )
             except httpx.TimeoutException as exc:
                 if attempt < self.max_retries:
                     await asyncio.sleep(0.25 * (2**attempt) + random.uniform(0, 0.2))
