@@ -115,8 +115,14 @@ class GatewayConfig:
                     )
                 )
 
+        secure_providers = tuple(
+            provider
+            for provider in providers
+            if cls._provider_url_is_secure(provider.url)
+            and cls._provider_url_is_secure(provider.health_url)
+        )
         return cls(
-            providers=tuple(provider for provider in providers if provider.url),
+            providers=secure_providers,
             timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75"))),
             provider_timeout_seconds=max(
                 3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "18"))
@@ -228,7 +234,7 @@ class AIGateway:
         if self._http_client is None or self._http_loop is not loop:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.config.timeout_seconds),
-                follow_redirects=True,
+                follow_redirects=False,
                 limits=httpx.Limits(
                     max_connections=20,
                     max_keepalive_connections=10,
@@ -277,6 +283,13 @@ class AIGateway:
         if remaining <= 0:
             raise GatewayTimeoutError
         return max(0.5, min(default, remaining))
+
+    @staticmethod
+    def _provider_url_is_secure(value: str) -> bool:
+        try:
+            return value.strip().lower().startswith("https://") and bool(value.strip()[8:].split("/", 1)[0])
+        except Exception:
+            return False
 
     @staticmethod
     def _provider_payload(payload: dict, provider: GatewayProvider) -> dict:
