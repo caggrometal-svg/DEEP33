@@ -286,3 +286,47 @@ def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: p
 
     assert result["choices"][0]["message"]["content"] == "Respuesta sintetizada."
     assert sources
+
+
+def test_stream_gateway_forwards_provider_chunks_before_stream_completion(monkeypatch):
+    observed = []
+
+    async def fake_stream(payload, **kwargs):
+        observed.append("provider-start")
+        yield b'data: {"choices":[{"delta":{"content":"Hola"}}]}\n\n'
+        observed.append("provider-before-second")
+        yield b'data: {"choices":[{"delta":{"content":" mundo"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+        observed.append("provider-finished")
+
+    class NoMemory:
+        enabled = False
+
+    monkeypatch.setattr(main.gateway, "stream", fake_stream)
+    monkeypatch.setattr(main, "memory", NoMemory())
+
+    async def exercise():
+        generator = main.stream_gateway(
+            {"messages": [{"role": "user", "content": "hola"}], "model": "test"},
+            "session",
+            "NEUTRO",
+            request_id="stream-regression",
+            idempotency_key="stream-regression",
+            request_hash="stream-regression",
+            lease_token="lease",
+        )
+        first = await generator.__anext__()
+        assert b'"content": "Hola"' in first
+        assert observed == ["provider-start"]
+
+        second = await generator.__anext__()
+        assert b'"content": " mundo"' in second
+        assert observed == ["provider-start", "provider-before-second"]
+
+        third = await generator.__anext__()
+        assert third == b"data: [DONE]\n\n"
+        with pytest.raises(StopAsyncIteration):
+            await generator.__anext__()
+        assert observed[-1] == "provider-finished"
+
+    asyncio.run(exercise())
