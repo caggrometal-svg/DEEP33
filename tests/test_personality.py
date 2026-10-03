@@ -148,7 +148,7 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
 
     for name, signature in expected_signatures.items():
         prompt = main.personality_prompt(name)
-        assert "DEEP33 IDENTITY CORE v4" in prompt
+        assert "DEEP33 IDENTITY CORE v5" in prompt
         assert "DEEP33 is the identity of the AI itself" in prompt
         assert "Claro" in prompt
         assert "Como IA" in prompt
