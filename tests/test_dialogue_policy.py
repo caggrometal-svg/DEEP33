@@ -45,7 +45,7 @@ def test_real_dialogue_protocol_requires_web_first_and_logical_continuation() ->
 
     assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
     assert "busca primero información pública relevante en Internet" in prompt
-    assert "respuesta debe ser una síntesis breve y original" in prompt
+    assert "respuesta final debe ser una síntesis breve y original" in prompt
     assert "Cuando haya una continuación lógica, debes formularla" in prompt
     assert "Haz como máximo una pregunta por turno" in prompt
 
