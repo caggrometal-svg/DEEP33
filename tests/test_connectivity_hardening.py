@@ -96,6 +96,14 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     assert "c-33.blitz.cloud" not in production_e2e.lower()
 
 
+def test_release_gate_dispatches_certified_apk_workflows() -> None:
+    source = read(".github/workflows/ci.yml")
+    assert "actions: write" in source
+    assert "gh workflow run android-debug-apk.yml --ref production-pass" in source
+    assert "gh workflow run android-fast-apk.yml --ref production-pass" in source
+    assert "gh workflow run android-package.yml --ref production-pass" in source
+
+
 def test_apk_workflows_require_certified_production_pass() -> None:
     for path in (
         ".github/workflows/android-fast-apk.yml",
