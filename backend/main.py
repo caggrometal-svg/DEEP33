@@ -843,6 +843,18 @@ WEB_TOOL_DEFINITIONS = [
     },
 ]
 
+# Most streaming chunks are ordinary prose. Full source/citation sanitization is
+# expensive because it rescans the complete accumulated answer. Only switch to
+# full sanitization when a chunk contains a marker that can actually need cleanup.
+_STREAM_SANITIZE_HINT_RE = re.compile(
+    r"(https?://|turn\d+(?:search|news|reddit|fetch|image|product|business)\d+|"
+    r"(?:cite|url)|【\d{1,3}】|\[(?:fuente|source|ref|citation|cita)\s*:|"
+    r"<a\b|\b(?:fuentes consultadas|references?|retrieved from|consultado en|"
+    r"recuperado de)\b)",
+    re.IGNORECASE,
+)
+
+
 WEB_TRIGGER_TERMS = (
     "busca en internet","buscar en internet","navega en internet","navega por internet",
     "internet","web","online","actual","actualmente","hoy","ayer","mañana","último",
@@ -2306,6 +2318,7 @@ async def stream_gateway(
     first_output_at: float | None = None
     frame_buffer = bytearray()
     streamed_safe_text = ""
+    stream_sanitize_active = False
 
     try:
         async for chunk in gateway.stream(
@@ -2330,11 +2343,21 @@ async def stream_gateway(
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
                                 if isinstance(content_value, str):
-                                    candidate_safe = sanitize_assistant_text(
-                                        streamed_safe_text + content_value
-                                    )
-                                    delta["content"] = candidate_safe[len(streamed_safe_text):]
-                                    streamed_safe_text = candidate_safe
+                                    # Keep TTFT untouched for ordinary chunks. After the first
+                                    # suspicious marker appears, fall back to the full sanitizer
+                                    # for the remainder of the stream to preserve source filtering.
+                                    if not stream_sanitize_active and (
+                                        not streamed_safe_text
+                                        or not _STREAM_SANITIZE_HINT_RE.search(content_value)
+                                    ):
+                                        streamed_safe_text += content_value
+                                    else:
+                                        stream_sanitize_active = True
+                                        candidate_safe = sanitize_assistant_text(
+                                            streamed_safe_text + content_value
+                                        )
+                                        delta["content"] = candidate_safe[len(streamed_safe_text):]
+                                        streamed_safe_text = candidate_safe
                             outbound_frame = (
                                 b"data: "
                                 + json.dumps(
