@@ -2175,6 +2175,7 @@ async def stream_gateway(
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     stream_started = time.perf_counter()
+    frame_buffer = bytearray()
 
     try:
         async for chunk in gateway.stream(
@@ -2184,7 +2185,16 @@ async def stream_gateway(
             deadline=deadline,
         ):
             collected.extend(chunk)
-            yield chunk
+            frame_buffer.extend(chunk)
+            while b"\n\n" in frame_buffer:
+                frame, _, remainder = frame_buffer.partition(b"\n\n")
+                frame_buffer = bytearray(remainder)
+                if b"data: [DONE]" in frame:
+                    continue
+                if frame.strip():
+                    yield frame + b"\n\n"
+        if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
+            yield bytes(frame_buffer) + b"\n\n"
     except GatewayTimeoutError:
         yield _sse_error("AI_GATEWAY_TIMEOUT")
         return
