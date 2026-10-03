@@ -8,16 +8,16 @@ class Deep33FailoverRoutingTest {
     @Test
     fun primaryEndpointIsConfigured() {
         assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
+            "https://deep33-backend.onrender.com",
             BuildConfig.DEEP33_PRIMARY_URL
         )
         assertTrue(BuildConfig.DEEP33_PRIMARY_URL.isNotBlank())
     }
 
     @Test
-    fun secondaryEndpointUsesCanonicalDeep33TertiaryRoute() {
+    fun secondaryEndpointUsesCanonicalDeep33ProxyRoute() {
         assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
+            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
             BuildConfig.DEEP33_SECONDARY_URL
         )
         assertTrue(BuildConfig.DEEP33_SECONDARY_URL.isNotBlank())
