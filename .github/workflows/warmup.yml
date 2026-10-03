@@ -12,15 +12,24 @@ permissions:
 
 env:
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  TERTIARY_URL: https://deep33-backend.onrender.com
 
 jobs:
   warmup:
     runs-on: ubuntu-latest
     steps:
-      - name: Keep DEEP33 edge warm
+      - name: Keep every DEEP33 transport node warm
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS"' >/dev/null
+          entries=("PRIMARY|$PRIMARY_URL" "SECONDARY|$SECONDARY_URL" "TERTIARY|$TERTIARY_URL")
+          for entry in "${entries[@]}"; do
+            name="${entry%%|*}"
+            url="${entry#*|}"
+            curl -fsS --connect-timeout 8 --max-time 30 "$url/health" | jq -e '.status=="PASS"' >/dev/null
+            curl -fsS --connect-timeout 8 --max-time 45 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            echo "${name}_WARM_PASS"
+          done
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
           echo "DEEP33_WARM_PASS"
 
