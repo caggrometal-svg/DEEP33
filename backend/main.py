@@ -1113,7 +1113,8 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
                 deadline=deadline,
             )
 
-        # Streaming and normal web responses use one synthesis pass; originality is enforced by prompt contract.\n        return data, list(sources.values())
+        # Streaming and normal web responses use one synthesis pass; originality is enforced by prompt contract.
+        return data, list(sources.values())
 
     for round_index in range(MAX_WEB_TOOL_ROUNDS):
         data=await call_gateway(
