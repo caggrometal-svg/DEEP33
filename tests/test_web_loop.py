@@ -159,30 +159,18 @@ def test_sanitize_generation_output_clears_source_metadata() -> None:
     assert "example.com" not in sanitized["response"]["choices"][0]["message"]["content"]
 
 
-def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPatch):
+def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
     calls = {"gateway": 0}
 
     async def fake_gateway(payload, **kwargs):
         calls["gateway"] += 1
-        if calls["gateway"] == 1:
-            return {
-                "model": "test",
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
-                        }
-                    }
-                ],
-            }
         return {
             "model": "test",
             "choices": [
                 {
                     "message": {
                         "role": "assistant",
-                        "content": "DEEP33 resume el punto: los paneles usan materiales semiconductores para transformar la radiación solar en energía eléctrica.",
+                        "content": "Síntesis original basada en la evidencia.",
                     }
                 }
             ],
@@ -195,7 +183,7 @@ def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPa
                 {
                     "title": "Solar",
                     "url": "https://example.com/solar",
-                    "snippet": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
+                    "snippet": "Fuente de evidencia.",
                 }
             ],
         }
@@ -206,7 +194,7 @@ def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPa
             "url": url,
             "final_url": url,
             "title": "Solar",
-            "text": "La energía solar fotovoltaica convierte directamente la luz del sol en electricidad mediante semiconductores.",
+            "text": "Texto de evidencia.",
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
@@ -215,19 +203,17 @@ def test_web_loop_rewrites_near_verbatim_web_output(monkeypatch: pytest.MonkeyPa
 
     result, _ = asyncio.run(
         main.run_web_tool_loop(
-            [{"role": "system", "content": "web"}, {"role": "user", "content": "busca energía solar"}],
+            [{"role": "user", "content": "busca energía solar"}],
             model="test",
-            request_id="r-originality",
-            idempotency_key="i-originality",
+            request_id="r-single",
+            idempotency_key="i-single",
             force_web=True,
             personality="NEUTRO",
         )
     )
 
-    assert calls["gateway"] == 2
-    assert result["choices"][0]["message"]["content"] == (
-        "DEEP33 resume el punto: los paneles usan materiales semiconductores para transformar la radiación solar en energía eléctrica."
-    )
+    assert calls["gateway"] == 1
+    assert result["choices"][0]["message"]["content"] == "Síntesis original basada en la evidencia."
 
 
 def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: pytest.MonkeyPatch):
