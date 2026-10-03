@@ -2405,14 +2405,14 @@ async def stream_gateway(
 
                     if first_output_at is None and has_visible_content:
                         first_output_at = time.perf_counter()
-                            performance.mark(request_id, "T7_FIRST_TOKEN")
-                            ttft_ms = (first_output_at - stream_started) * 1000
-                            _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
-                            logger.info(
-                                "stream_ttft request_id=%s ttft_ms=%.2f",
-                                request_id,
-                                ttft_ms,
-                            )
+                        performance.mark(request_id, "T7_FIRST_TOKEN")
+                        ttft_ms = (first_output_at - stream_started) * 1000
+                        _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+                        logger.info(
+                            "stream_ttft request_id=%s ttft_ms=%.2f",
+                            request_id,
+                            ttft_ms,
+                        )
                     yield outbound_frame + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
