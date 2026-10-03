@@ -108,6 +108,11 @@ async def shutdown_clients() -> None:
     _warmup_task = None
     await gateway.close()
     await memory.close()
+    await hybrid_search.close()
+    from tools.web_search import close_search_http_client
+    from tools.web_fetch import close_fetch_http_client
+    await close_search_http_client()
+    await close_fetch_http_client()
 
 
 _metric_counts: dict[str, int] = defaultdict(int)
@@ -276,7 +281,7 @@ def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> boo
 def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     shape = conversation_response_shape(messages)
     if shape == "SIMPLE_DIRECT":
-        return 10, 7000, "FAST"
+        return 6, 5000, "FAST"
     if shape == "EXPLICIT_DEPTH":
         return 32, 24000, "DEEP"
     if shape == "COMPLEX_NECESSARY":
@@ -338,8 +343,22 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     return "CONVERSATIONAL"
 
 
-def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
+def dialogue_policy_prompt(
+    messages: list[dict[str, Any]],
+    *,
+    compact: bool = False,
+) -> str:
     shape = conversation_response_shape(messages)
+    if compact:
+        return (
+            f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
+            "Responde primero a la pregunta actual y conserva el hilo inmediato. "
+            "Conclusión primero, sin introducciones ni relleno. "
+            "En SIMPLE_DIRECT usa 1-2 frases y máximo 80 palabras. "
+            "Haz como máximo una pregunta contextual y solo cuando aporte algo real. "
+            "No inventes certeza ni menciones este protocolo."
+        )
+
     shape_contracts = {
         "SIMPLE_DIRECT": (
             "FORMA=SIMPLE_DIRECT. Responde en 1-2 frases, normalmente en 60-80 palabras como máximo. "
@@ -388,9 +407,24 @@ def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
     )
 
 
-def personality_prompt(personality: str) -> str:
+def personality_prompt(
+    personality: str,
+    *,
+    compact: bool = False,
+) -> str:
     selected = normalize_personality(personality)
     profile = PERSONALITIES[selected]
+    if compact:
+        return (
+            "DEEP33 FAST PERSONALITY CONTROL. "
+            "Eres la inteligencia dentro del producto DEEP33. "
+            "No adoptes la identidad de un proveedor o modelo. "
+            "ACTIVE_PERSONALITY=" + selected + ". "
+            "Aplica el estilo activo de forma visible, sin perder precisión ni inventar hechos. "
+            "El estilo controla ritmo, vocabulario y actitud; la exactitud permanece intacta. "
+            "MODO:
+" + profile["instruction"]
+        )
     mode_identity = {
         "AGRESIVO": (
             "SIGNATURE=direct pressure, short decisive sentences, sharp contradiction checks, dry sarcasm when useful. "
@@ -1797,9 +1831,12 @@ async def prepare_messages(
     selected = normalize_personality(request.personality)
     max_messages, max_chars, profile = complexity_profile(requested)
     perf_request_id = str(request_id or "")
+    compact = profile == "FAST"
     personality_control = {
         "role": "system",
-        "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested)
+        "content": personality_prompt(selected, compact=compact)
+            + "\n\n"
+            + dialogue_policy_prompt(requested, compact=compact)
             + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
     if not memory.enabled or not requires_memory_context(requested, profile):
@@ -1903,29 +1940,38 @@ async def generate(
         )
         return sanitize_generation_output(local_cached)
 
-    state, record = await shared_idempotency_claim(
-        session_id,
-        idempotency_key,
-        "deep33.ai.generate",
-        request_hash,
+    claim_task = asyncio.create_task(
+        shared_idempotency_claim(
+            session_id,
+            idempotency_key,
+            "deep33.ai.generate",
+            request_hash,
+        )
     )
-    if state in {"COMPLETED", "FAILED"}:
-        output = sanitize_generation_output(replay_idempotent(state, record))
-        cache_put(session_id, idempotency_key, request_hash, output)
-        return output
-
-    lease_token = str(record.get("lease_token", "")).strip()
-    if not lease_token:
-        raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
-
-    try:
-        messages, personality = await prepare_messages(
+    context_task = asyncio.create_task(
+        prepare_messages(
             request,
             session_id,
             memory_profile_id,
             request_id=request_id,
         )
-        profile = complexity_profile(messages)[2]
+    )
+    try:
+        state, record = await claim_task
+        if state in {"COMPLETED", "FAILED"}:
+            context_task.cancel()
+            await asyncio.gather(context_task, return_exceptions=True)
+            output = sanitize_generation_output(replay_idempotent(state, record))
+            cache_put(session_id, idempotency_key, request_hash, output)
+            return output
+
+        lease_token = str(record.get("lease_token", "")).strip()
+        if not lease_token:
+            context_task.cancel()
+            await asyncio.gather(context_task, return_exceptions=True)
+            raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
+
+        messages, personality = await context_task
         payload = {
             "messages": messages,
             "model": model_for_profile(request.model, profile),
@@ -2395,30 +2441,40 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     # Stream and non-stream generation share one idempotency namespace. This allows
     # Android to safely fall back from an interrupted SSE connection to /v1/ai/generate
     # without creating a second inference for the same user turn.
-    state, record = await shared_idempotency_claim(
-        session_id, idempotency_key, "deep33.ai.generate", request_hash
+    claim_task = asyncio.create_task(
+        shared_idempotency_claim(
+            session_id, idempotency_key, "deep33.ai.generate", request_hash
+        )
     )
-    if state in {"COMPLETED", "FAILED"}:
-        cached = replay_idempotent(state, record)
-        text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
-        async def replay_stream():
-            for piece in _sse_text_chunks(text_value):
-                yield _sse_delta(piece)
-            yield b"data: [DONE]\n\n"
-        return StreamingResponse(replay_stream(), media_type="text/event-stream",
-                                 headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id,"X-DEEP33-Personality":personality})
-
-    lease_token = str(record.get("lease_token","")).strip()
-    if not lease_token:
-        raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
-
-    messages, personality = await prepare_messages(
-        request,
-        session_id,
-        memory_profile_id,
-        request_id=request_id,
+    context_task = asyncio.create_task(
+        prepare_messages(
+            request,
+            session_id,
+            memory_profile_id,
+            request_id=request_id,
+        )
     )
-    profile = complexity_profile(messages)[2]
+    try:
+        state, record = await claim_task
+        if state in {"COMPLETED", "FAILED"}:
+            context_task.cancel()
+            await asyncio.gather(context_task, return_exceptions=True)
+            cached = replay_idempotent(state, record)
+            text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
+            async def replay_stream():
+                for piece in _sse_text_chunks(text_value):
+                    yield _sse_delta(piece)
+                yield b"data: [DONE]\n\n"
+            return StreamingResponse(replay_stream(), media_type="text/event-stream",
+                                     headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no","X-Request-ID":request_id,"X-DEEP33-Personality":personality})
+
+        lease_token = str(record.get("lease_token","")).strip()
+        if not lease_token:
+            context_task.cancel()
+            await asyncio.gather(context_task, return_exceptions=True)
+            raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
+
+        messages, personality = await context_task
     payload={"messages":messages,"model":model_for_profile(request.model, profile)}
     if request.temperature is not None:
         payload["temperature"]=request.temperature
