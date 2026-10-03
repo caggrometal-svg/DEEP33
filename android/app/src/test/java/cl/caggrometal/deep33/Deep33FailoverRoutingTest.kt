@@ -8,7 +8,7 @@ class Deep33FailoverRoutingTest {
     @Test
     fun primaryEndpointIsConfigured() {
         assertEquals(
-            "https://deep33-backend.onrender.com",
+            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
             BuildConfig.DEEP33_PRIMARY_URL
         )
         assertTrue(BuildConfig.DEEP33_PRIMARY_URL.isNotBlank())
@@ -27,8 +27,7 @@ class Deep33FailoverRoutingTest {
     fun tertiaryEndpointIsBlankOrUsesConfiguredDeep33TertiaryRoute() {
         val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
         assertTrue(
-            tertiary.isBlank() ||
-                tertiary == "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+            tertiary == "https://deep33-backend.onrender.com"
         )
     }
 }
