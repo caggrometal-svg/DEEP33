@@ -163,10 +163,12 @@ def test_standard_search_falls_through_on_weak_primary_results(monkeypatch):
 
 def test_standard_search_parallel_provider_short_circuits(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_PROVIDER_PARALLEL", "true")
-
     async def fake_bing(query, timeout_seconds, max_results):
-        return [{"title": "Enough", "url": "https://bing.example/1", "snippet": query}]
+        return [
+            {"title": "Enough 1", "url": "https://bing.example/1", "snippet": query},
+            {"title": "Enough 2", "url": "https://bing.example/2", "snippet": query},
+            {"title": "Enough 3", "url": "https://bing.example/3", "snippet": query},
+        ]
 
     async def fail_ddg(query, timeout_seconds, max_results):
         raise AssertionError("DDG should be cancelled once sufficient results arrive")
