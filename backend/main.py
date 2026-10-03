@@ -1806,13 +1806,6 @@ async def generate(
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
-        await persist_messages(
-            session_id,
-            [message for message in messages if message.get("role") != "system"],
-            personality=personality,
-            memory_profile_id=memory_profile_id,
-        )
-
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
         if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and should_force_web(messages):
