@@ -6,7 +6,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 // The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
 // an old environment variable still exists in the project.
-const UPSTREAM = /^https?:\/\//i.test(RAW_UPSTREAM) &&
+const UPSTREAM = /^https:\/\/[^\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM) &&
     !/(render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza)/i.test(RAW_UPSTREAM)
   ? RAW_UPSTREAM
   : "";
@@ -64,7 +64,7 @@ async function fetchUpstream(
   return fetch(UPSTREAM + path, {
     ...init,
     headers,
-    redirect: "follow",
+    redirect: "error",
   });
 }
 
