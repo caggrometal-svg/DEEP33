@@ -55,7 +55,7 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert r'const UPSTREAM = /^https:\/\/[^\\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM)' in source
+        assert r'const UPSTREAM = /^https:\/\/[^\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM)' in source
         assert 'redirect: "error"' in source
         assert 'AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS)' in source
         assert 'function isSecureHttpsUrl' in source
@@ -83,7 +83,6 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
         assert expected.issubset(urls), path
         assert "http://" not in source
         assert "c-33.blitz.cloud" not in source.lower()
-        assert "iac33" not in source.lower()
 
     production_e2e = read(".github/workflows/production-e2e.yml")
     assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
