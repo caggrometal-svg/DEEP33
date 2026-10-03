@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 30
     env:
       PRIMARY_URL: https://deep33-backend.onrender.com
-      EXPECTED_SHA: 1908be4af77083601ee7c09ebfa95e731ddeed74
+      EXPECTED_SHA: 922b95ca79d4b24bb8b1d56f743697b58c2de0f8
       SAMPLES: "5"
     steps:
       - name: Wait for exact production commit
