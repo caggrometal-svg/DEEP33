@@ -73,6 +73,14 @@ android {
         ?.takeIf { it.isNotBlank() }
         ?: "https://deep33-backend.onrender.com"
 
+    val canonicalEndpoints = listOf(primaryUrl, secondaryUrl, tertiaryUrl)
+    require(canonicalEndpoints.all { it.startsWith("https://") && !it.endsWith("/") }) {
+        "DEEP33 endpoints must be HTTPS URLs without trailing slash"
+    }
+    require(canonicalEndpoints.distinct().size == canonicalEndpoints.size) {
+        "DEEP33 endpoints must be distinct for transport redundancy"
+    }
+
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
