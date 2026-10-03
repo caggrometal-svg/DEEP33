@@ -176,31 +176,7 @@ def test_chat_contract(monkeypatch) -> None:
 def test_stream_contract_hides_sources(monkeypatch) -> None:
     patch_memory(monkeypatch)
 
-    async def fake_web_loop(*_args, **_kwargs):
-        return (
-            {
-                "id": "stream-test",
-                "model": "test-model",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": (
-                                "Respuesta propia de DEEP33.\\n\\n"
-                                "Fuentes:\\n- Example https://example.com\\n"
-                                "citeturn1search1【1】"
-                            ),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "_deep33_gateway": {"provider": "test", "model": "test-model"},
-            },
-            [{"title": "Example", "url": "https://example.com"}],
-        )
-
-    monkeypatch.setattr(main, "prepare_web_evidence", lambda messages: fake_prepare_web_evidence(messages))
+    monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
 
     async def fake_prepare_web_evidence(messages):
         return (
