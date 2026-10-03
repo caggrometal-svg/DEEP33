@@ -6,29 +6,40 @@ import org.junit.Test
 
 class Deep33FailoverRoutingTest {
     @Test
-    fun primaryEndpointIsConfigured() {
+    fun primaryEndpointIsCanonicalDeep33EdgeRoute() {
         assertEquals(
-            "https://deep33-backend.onrender.com",
+            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
             BuildConfig.DEEP33_PRIMARY_URL
         )
         assertTrue(BuildConfig.DEEP33_PRIMARY_URL.isNotBlank())
     }
 
     @Test
-    fun secondaryEndpointUsesCanonicalDeep33ProxyRoute() {
+    fun secondaryEndpointUsesIndependentDeep33TertiaryRoute() {
         assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
+            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
             BuildConfig.DEEP33_SECONDARY_URL
         )
         assertTrue(BuildConfig.DEEP33_SECONDARY_URL.isNotBlank())
     }
 
     @Test
-    fun tertiaryEndpointIsBlankOrUsesConfiguredDeep33TertiaryRoute() {
-        val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
-        assertTrue(
-            tertiary.isBlank() ||
-                tertiary == "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+    fun tertiaryEndpointUsesRenderAsFinalFallback() {
+        assertEquals(
+            "https://deep33-backend.onrender.com",
+            BuildConfig.DEEP33_TERTIARY_URL
         )
+        assertTrue(BuildConfig.DEEP33_TERTIARY_URL.isNotBlank())
+    }
+
+    @Test
+    fun allTransportEndpointsAreDistinctHttpsRoutes() {
+        val endpoints = listOf(
+            BuildConfig.DEEP33_PRIMARY_URL,
+            BuildConfig.DEEP33_SECONDARY_URL,
+            BuildConfig.DEEP33_TERTIARY_URL
+        )
+        assertEquals(3, endpoints.distinct().size)
+        assertTrue(endpoints.all { it.startsWith("https://") })
     }
 }
