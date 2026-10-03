@@ -156,7 +156,6 @@ class MainActivity : Activity() {
     private val conversation = mutableListOf<UiMessage>()
     private var generationActive = false
     private var activeBubble: TextView? = null
-    private val generationHandler = Handler(Looper.getMainLooper())
     private var activityVisible = false
     private val generationStateListener: (GenerationState) -> Unit = { state ->
         runOnUiThread { handleGenerationState(state) }
@@ -1703,7 +1702,6 @@ class MainActivity : Activity() {
     }
 
     private fun startGenerationMonitor() {
-        generationHandler.removeCallbacks(generationMonitor)
         if (generationActive || store.loadPendingTurn() != null) {
             monitorGeneration()
         }
