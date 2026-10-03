@@ -38,7 +38,8 @@ def test_personality_protocol_is_machine_readable_and_explicit() -> None:
     assert "ACTIVE_PERSONALITY=COMICO" in prompt
     assert "per-turn runtime control" in prompt
     assert "Do not silently fall back to NEUTRO" in prompt
-    assert "not as a generic assistant" in prompt
+    assert "DEEP33 is the identity of the AI itself" in prompt
+    assert "not merely a UI container" in prompt
 
 
 def test_prepare_messages_keeps_current_personality_as_final_system_instruction(monkeypatch) -> None:
@@ -147,8 +148,8 @@ def test_personality_contract_has_distinct_deep33_identity() -> None:
 
     for name, signature in expected_signatures.items():
         prompt = main.personality_prompt(name)
-        assert "DEEP33 IDENTITY CORE v3" in prompt
-        assert "not as a generic assistant" in prompt
+        assert "DEEP33 IDENTITY CORE v4" in prompt
+        assert "DEEP33 is the identity of the AI itself" in prompt
         assert "Claro" in prompt
         assert "Como IA" in prompt
         assert f"SIGNATURE={signature}" in prompt
