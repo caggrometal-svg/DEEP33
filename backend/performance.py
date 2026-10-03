@@ -116,6 +116,16 @@ def _series_snapshot(values: deque[float] | list[float]) -> dict[str, float | in
     }
 
 
+def _trace_series(start_stage: str, end_stage: str) -> dict[str, float | int | None]:
+    with _lock:
+        values = [
+            (trace[end_stage] - trace[start_stage]) * 1000
+            for trace in _traces.values()
+            if start_stage in trace and end_stage in trace
+        ]
+    return _series_snapshot(values)
+
+
 def snapshot() -> dict:
     with _lock:
         series = {
@@ -130,12 +140,17 @@ def snapshot() -> dict:
         "ttft_ms": "T6_INFERENCE_STARTED_TO_T7_FIRST_TOKEN",
         "stream_ms": "T7_FIRST_TOKEN_TO_T8_STREAM_FINISHED",
         "persistence_ms": "T8_STREAM_FINISHED_TO_T9_PERSISTENCE_FINISHED",
-        "backend_total_ms": "T2_BACKEND_RECEIVED_TO_T9_PERSISTENCE_FINISHED",
+        "backend_total_ms": "__TRACE_AGGREGATE__",
     }
-    summary = {
-        name: series.get(transition, _series_snapshot([]))
-        for name, transition in transition_aliases.items()
-    }
+    summary = {}
+    for name, transition in transition_aliases.items():
+        if transition == "__TRACE_AGGREGATE__":
+            summary[name] = _trace_series(
+                "T2_BACKEND_RECEIVED",
+                "T9_PERSISTENCE_FINISHED",
+            )
+        else:
+            summary[name] = series.get(transition, _series_snapshot([]))
 
     with _lock:
         active_traces = len(_traces)
