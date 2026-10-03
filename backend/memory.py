@@ -52,7 +52,12 @@ class MemoryClient:
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout_seconds),
-                follow_redirects=True,
+                follow_redirects=False,
+                limits=httpx.Limits(
+                    max_connections=8,
+                    max_keepalive_connections=4,
+                    keepalive_expiry=30.0,
+                ),
             )
         return self._http_client
 
@@ -79,7 +84,11 @@ class MemoryClient:
     @property
     def enabled(self) -> bool:
         self._refresh_config()
-        return bool(self.function_url and self.api_key)
+        return bool(
+            self.function_url
+            and self.api_key
+            and self.function_url.lower().startswith("https://")
+        )
 
     async def _call(
         self,
