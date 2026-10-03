@@ -1301,6 +1301,11 @@ def sanitize_stream_delta(text: str) -> str:
         "",
         value,
     )
+    value = re.sub(
+        r"(?im)^\s*(?:fuentes?(?: consultadas)?|sources?|referencias?|references?)\s*:\s*",
+        "",
+        value,
+    )
     return value
 
 
