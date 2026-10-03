@@ -283,10 +283,10 @@ def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     if shape == "SIMPLE_DIRECT":
         return 6, 5000, "FAST"
     if shape == "EXPLICIT_DEPTH":
-        return 32, 24000, "DEEP"
+        return 24, 18000, "DEEP"
     if shape == "COMPLEX_NECESSARY":
-        return 24, 18000, "BALANCED"
-    return 16, 12000, "BALANCED"
+        return 16, 12000, "BALANCED"
+    return 12, 8000, "BALANCED"
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
@@ -300,6 +300,25 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
         "DEEP": os.getenv("AI_GATEWAY_MODEL_DEEP", "").strip(),
     }
     return configured.get(normalized, "") or AI_GATEWAY_MODEL
+
+
+def output_token_limit(profile: str) -> int:
+    defaults = {
+        "FAST": 128,
+        "BALANCED": 512,
+        "DEEP": 1200,
+    }
+    normalized = str(profile or "BALANCED").strip().upper()
+    configured = {
+        "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
+        "BALANCED": os.getenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "").strip(),
+        "DEEP": os.getenv("AI_DEEP_MAX_OUTPUT_TOKENS", "").strip(),
+    }
+    try:
+        value = int(configured.get(normalized) or defaults.get(normalized, 512))
+    except ValueError:
+        value = defaults.get(normalized, 512)
+    return max(32, min(4096, value))
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
@@ -1987,6 +2006,7 @@ async def generate(
         payload = {
             "messages": messages,
             "model": model_for_profile(request.model, profile),
+            "max_tokens": output_token_limit(profile),
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -2519,7 +2539,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise
 
     profile = complexity_profile(messages)[2]
-    payload={"messages":messages,"model":model_for_profile(request.model, profile)}
+    payload={
+        "messages": messages,
+        "model": model_for_profile(request.model, profile),
+        "max_tokens": output_token_limit(profile),
+    }
     if request.temperature is not None:
         payload["temperature"]=request.temperature
 
