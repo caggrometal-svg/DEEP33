@@ -143,6 +143,20 @@ class AIGateway:
     def __init__(self, config: GatewayConfig | None = None) -> None:
         self.config = config or GatewayConfig.from_env()
         self._circuits = {provider.name: ProviderCircuit() for provider in self.config.providers}
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.config.timeout_seconds),
+                follow_redirects=True,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     @staticmethod
     def _headers(
@@ -210,13 +224,11 @@ class AIGateway:
         for index, provider in enumerate(self.config.providers):
             try:
                 timeout = self.config.provider_timeout_seconds
-                async with httpx.AsyncClient(
-                    timeout=timeout, follow_redirects=True
-                ) as client:
-                    response = await client.get(
-                        provider.health_url,
-                        headers=self._headers(provider),
-                    )
+                response = await self._client().get(
+                    provider.health_url,
+                    headers=self._headers(provider),
+                    timeout=timeout,
+                )
 
                 if 200 <= response.status_code < 300:
                     return {
@@ -278,12 +290,12 @@ class AIGateway:
                         deadline, self.config.provider_timeout_seconds
                     )
                     body = self._provider_payload(payload, provider)
-                    async with httpx.AsyncClient(timeout=timeout) as client:
-                        response = await client.post(
-                            provider.url,
-                            json=body,
-                            headers=self._headers(provider, request_id, idempotency_key),
-                        )
+                    response = await self._client().post(
+                        provider.url,
+                        json=body,
+                        headers=self._headers(provider, request_id, idempotency_key),
+                        timeout=timeout,
+                    )
 
                     if response.status_code >= 400:
                         status = response.status_code
@@ -453,13 +465,13 @@ class AIGateway:
                         deadline, self.config.provider_timeout_seconds
                     )
                     body = {**self._provider_payload(payload, provider), "stream": True}
-                    async with httpx.AsyncClient(timeout=timeout) as client:
-                        async with client.stream(
-                            "POST",
-                            provider.url,
-                            json=body,
-                            headers=self._headers(provider, request_id, idempotency_key),
-                        ) as response:
+                    async with self._client().stream(
+                        "POST",
+                        provider.url,
+                        json=body,
+                        headers=self._headers(provider, request_id, idempotency_key),
+                        timeout=timeout,
+                    ) as response:
                             if response.status_code >= 400:
                                 status = response.status_code
                                 error_class = self._classify_http_status(status)
