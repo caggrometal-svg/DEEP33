@@ -275,8 +275,8 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
         timeout=timeout_seconds,
     )
     if response.status_code >= 400:
-            raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
-        data = response.json()
+        raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
+    data = response.json()
     raw = data.get("results")
     if not isinstance(raw, list):
         raise WebSearchError("WEB_SEARCH_TAVILY_INVALID_RESPONSE")
