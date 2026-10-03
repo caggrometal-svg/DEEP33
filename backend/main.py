@@ -2234,6 +2234,7 @@ async def stream_gateway(
     stream_started = time.perf_counter()
     first_output_at: float | None = None
     frame_buffer = bytearray()
+    streamed_safe_text = ""
 
     try:
         async for chunk in gateway.stream(
@@ -2250,17 +2251,63 @@ async def stream_gateway(
                 if b"data: [DONE]" in frame:
                     continue
                 if frame.strip():
-                    if first_output_at is None and b"data:" in frame and b'"content"' in frame:
-                        first_output_at = time.perf_counter()
-                        performance.mark(request_id, "T7_FIRST_TOKEN")
-                        ttft_ms = (first_output_at - stream_started) * 1000
-                        _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
-                        logger.info(
-                            "stream_ttft request_id=%s ttft_ms=%.2f",
-                            request_id,
-                            ttft_ms,
-                        )
-                    yield bytes(frame) + b"\n\n"
+                    outbound_frame = bytes(frame)
+                    if b"data:" in frame and b'"content"' in frame:
+                        try:
+                            frame_json = json.loads(frame[len(b"data:"):].strip())
+                            for choice in frame_json.get("choices", []):
+                                delta = choice.get("delta") or {}
+                                content_value = delta.get("content")
+                                if isinstance(content_value, str):
+                                    candidate_safe = sanitize_assistant_text(
+                                        streamed_safe_text + content_value
+                                    )
+                                    delta["content"] = candidate_safe[len(streamed_safe_text):]
+                                    streamed_safe_text = candidate_safe
+                            outbound_frame = (
+                                b"data: "
+                                + json.dumps(
+                                    frame_json,
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ).encode("utf-8")
+                            )
+                        except (
+                            json.JSONDecodeError,
+                            UnicodeDecodeError,
+                            TypeError,
+                            ValueError,
+                        ):
+                            outbound_frame = bytes(frame)
+
+                    if first_output_at is None and b"data:" in outbound_frame and b'"content"' in outbound_frame:
+                        try:
+                            parsed_outbound = json.loads(
+                                outbound_frame[len(b"data:"):].strip()
+                            )
+                            has_visible_content = any(
+                                isinstance((choice.get("delta") or {}).get("content"), str)
+                                and (choice.get("delta") or {}).get("content")
+                                for choice in parsed_outbound.get("choices", [])
+                            )
+                        except (
+                            json.JSONDecodeError,
+                            UnicodeDecodeError,
+                            TypeError,
+                            ValueError,
+                        ):
+                            has_visible_content = False
+                        if has_visible_content:
+                            first_output_at = time.perf_counter()
+                            performance.mark(request_id, "T7_FIRST_TOKEN")
+                            ttft_ms = (first_output_at - stream_started) * 1000
+                            _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+                            logger.info(
+                                "stream_ttft request_id=%s ttft_ms=%.2f",
+                                request_id,
+                                ttft_ms,
+                            )
+                    yield outbound_frame + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
         performance.mark(request_id, "T8_STREAM_FINISHED")
