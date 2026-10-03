@@ -751,9 +751,21 @@ def latest_user_query(messages: list[dict[str, Any]]) -> str:
     return ""
 
 def should_force_web(messages):
-    # Real dialogue is web-first by design: every non-empty user turn gets a
-    # server-side web search before synthesis. Connectivity/transport is unchanged.
-    return bool(latest_user_query(messages))
+    query = latest_user_query(messages).lower()
+    if not query:
+        return False
+    if any(term in query for term in WEB_TRIGGER_TERMS):
+        return True
+    if re.search(r"\b(ahora|actualizado|vigente|reciente|esta semana|este mes|2026)\b", query):
+        return True
+    if re.search(
+        r"\b(cu[aá]nto cuesta|cu[aá]l es el precio|horario|apertura|cerrado|disponible|"
+        r"cotiza|tipo de cambio|d[oó]lar|euro|clima|tiempo|temperatura|evento|"
+        r"partido|elecci[oó]n|presidente|ministro)\b",
+        query,
+    ):
+        return True
+    return False
 
 def _choice_message(data):
     choices=data.get("choices")
@@ -1803,14 +1815,14 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools:
-            logger.info("real_dialogue_web_first request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
+        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and should_force_web(messages):
+            logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
                 request_id=request_id,
                 idempotency_key=idempotency_key,
-                force_web=should_force_web(messages),
+                force_web=True,
                 deadline=deadline,
                 personality=personality,
             )
