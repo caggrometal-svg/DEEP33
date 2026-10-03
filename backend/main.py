@@ -17,6 +17,7 @@ from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
 from backend.gateway import (
@@ -2215,6 +2216,7 @@ async def stream_gateway(
     idempotency_key: str,
     request_hash: str,
     lease_token: str,
+    completion_state: dict[str, str] | None = None,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
@@ -2274,18 +2276,8 @@ async def stream_gateway(
         len(collected),
         (time.perf_counter() - stream_started) * 1000,
     )
-    asyncio.create_task(
-        _finalize_stream(
-            payload=payload,
-            session_id=session_id,
-            personality=personality,
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            lease_token=lease_token,
-            assistant_text=assistant_text,
-        )
-    )
+    if completion_state is not None:
+        completion_state["assistant_text"] = assistant_text
     yield b"data: [DONE]\n\n"
 
 
@@ -2357,6 +2349,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             if request.temperature is not None:
                 payload["temperature"] = request.temperature
 
+        completion_state: dict[str, str] = {}
         body = stream_gateway(
             payload,
             session_id,
@@ -2365,10 +2358,28 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             idempotency_key=idempotency_key,
             request_hash=request_hash,
             lease_token=lease_token,
+            completion_state=completion_state,
         )
+
+        async def finalize_success() -> None:
+            assistant_text = completion_state.get("assistant_text", "")
+            if not assistant_text:
+                return
+            await _finalize_stream(
+                payload=payload,
+                session_id=session_id,
+                personality=personality,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                lease_token=lease_token,
+                assistant_text=assistant_text,
+            )
+
         return StreamingResponse(
             body,
             media_type="text/event-stream",
+            background=BackgroundTask(finalize_success),
             headers={
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",

@@ -33,7 +33,9 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     async def ddg(*args,**kwargs): return [{"title":"DDG","url":"https://example.com/","snippet":"Fallback"}]
     monkeypatch.setattr("tools.web_search._tavily_search",failing)
     monkeypatch.setattr("tools.web_search._duckduckgo_search",ddg)
-    result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
+    import tools.web_search as module
+    module._SEARCH_CACHE.clear()
+    result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
     assert result["provider"]=="duckduckgo"
 
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):

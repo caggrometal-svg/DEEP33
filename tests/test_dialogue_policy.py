@@ -50,10 +50,10 @@ def test_real_dialogue_protocol_requires_web_first_and_logical_continuation() ->
     assert "Haz como máximo una pregunta por turno" in prompt
 
 
-def test_every_non_empty_user_turn_is_web_first() -> None:
+def test_fast_conversation_turn_avoids_forced_web_search() -> None:
     assert main.should_force_web([
         {"role": "user", "content": "Hola, hablemos de energía."}
-    ]) is True
+    ]) is False
     assert main.should_force_web([
         {"role": "user", "content": " "}
     ]) is False
