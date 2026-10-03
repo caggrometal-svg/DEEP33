@@ -2,16 +2,14 @@ name: DEEP33 Android Debug APK v0.4.3
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
 env:
-  DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-  DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  DEEP33_TERTIARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
 
 jobs:
   build:
