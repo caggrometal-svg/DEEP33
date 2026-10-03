@@ -2374,6 +2374,7 @@ async def _finalize_stream(
     request_hash: str,
     lease_token: str,
     assistant_text: str,
+    memory_profile_id: str | None = None,
 ) -> None:
     output = {
         "request_id": request_id,
@@ -2399,7 +2400,7 @@ async def _finalize_stream(
     await persist_deep33_self_name(
         session_id,
         extract_deep33_self_name(assistant_text),
-        memory_profile_id=payload.get("memory_profile_id"),
+        memory_profile_id=memory_profile_id,
     )
     performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
@@ -2657,6 +2658,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 request_hash=request_hash,
                 lease_token=lease_token,
                 assistant_text=assistant_text,
+                memory_profile_id=memory_profile_id,
             )
 
         return StreamingResponse(
