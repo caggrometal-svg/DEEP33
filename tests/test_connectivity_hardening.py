@@ -39,6 +39,8 @@ def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
+    assert 'Transport contract is immutable by build environment' in source
+    assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
     assert 'http://' not in source
 
@@ -51,7 +53,10 @@ def test_backend_provider_and_memory_clients_are_redirect_strict() -> None:
     assert 'follow_redirects=False' in memory
     assert 'follow_redirects=False' in main
     assert '_provider_url_is_secure' in gateway
-    assert 'startswith("https://")' in memory
+    assert 'from urllib.parse import urlsplit' in gateway
+    assert 'parsed.username is not None' in gateway
+    assert 'from urllib.parse import urlsplit' in memory
+    assert 'parsed.password is not None' in memory
     assert 'NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204")' in main
 
 
@@ -61,10 +66,15 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert r'const UPSTREAM = /^https:\/\/[^\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM)' in source
+        assert 'const UPSTREAM = isSecureHttpsUrl(RAW_UPSTREAM)' in source
+        assert 'url.port === "" || url.port === "443"' in source
         assert 'redirect: "error"' in source
         assert 'AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS)' in source
         assert 'function isSecureHttpsUrl' in source
+        assert '!url.username' in source
+        assert '!url.password' in source
+        assert '!url.search' in source
+        assert '!url.hash' in source
         assert 'isSecureHttpsUrl(EDGE_AI_URL)' in source
         assert '!isSecureHttpsUrl(url)' in source
         assert '!isSecureHttpsUrl(MEMORY_FUNCTION_URL)' in source

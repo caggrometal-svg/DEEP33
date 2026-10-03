@@ -58,28 +58,45 @@ android {
 
     // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
     // Render backend as final transport fallback.
-    val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
+    // Transport contract is immutable by build environment. The three URLs below are
+    // the only DEEP33 application routes; CI may repeat them for verification, but may
+    // never replace them silently.
+    val canonicalPrimaryUrl =
+        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
+    val canonicalSecondaryUrl =
+        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+    val canonicalTertiaryUrl = "https://deep33-backend.onrender.com"
 
-    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
-
-    val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-backend.onrender.com"
-
-    val canonicalEndpoints = listOf(primaryUrl, secondaryUrl, tertiaryUrl)
+    val suppliedEndpoints = listOf(
+        "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
+        "DEEP33_SECONDARY_URL" to System.getenv("DEEP33_SECONDARY_URL")?.trim().orEmpty(),
+        "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
+    )
+    val canonicalEndpoints = listOf(
+        canonicalPrimaryUrl,
+        canonicalSecondaryUrl,
+        canonicalTertiaryUrl,
+    )
+    val endpointByName = canonicalEndpoints.withIndex().associate { (index, value) ->
+        suppliedEndpoints[index].first to value
+    }
+    val unexpectedOverrides = suppliedEndpoints.filter { (name, value) ->
+        value.isNotBlank() && value != endpointByName[name]
+    }.map { it.first }
+    require(unexpectedOverrides.isEmpty()) {
+        "DEEP33 transport endpoints are immutable; rejected overrides: " +
+            unexpectedOverrides.joinToString(",")
+    }
     require(canonicalEndpoints.all { it.startsWith("https://") && !it.endsWith("/") }) {
         "DEEP33 endpoints must be HTTPS URLs without trailing slash"
     }
     require(canonicalEndpoints.distinct().size == canonicalEndpoints.size) {
         "DEEP33 endpoints must be distinct for transport redundancy"
     }
+
+    val primaryUrl = canonicalPrimaryUrl
+    val secondaryUrl = canonicalSecondaryUrl
+    val tertiaryUrl = canonicalTertiaryUrl
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))

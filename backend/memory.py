@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 import httpx
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +85,21 @@ class MemoryClient:
     @property
     def enabled(self) -> bool:
         self._refresh_config()
-        return bool(
-            self.function_url
-            and self.api_key
-            and self.function_url.lower().startswith("https://")
-        )
+        if not self.function_url or not self.api_key:
+            return False
+        try:
+            parsed = urlsplit(self.function_url)
+            if parsed.scheme.lower() != "https" or not parsed.hostname:
+                return False
+            if parsed.username is not None or parsed.password is not None:
+                return False
+            if parsed.query or parsed.fragment:
+                return False
+            if parsed.port not in (None, 443):
+                return False
+        except (TypeError, ValueError):
+            return False
+        return True
 
     async def _call(
         self,

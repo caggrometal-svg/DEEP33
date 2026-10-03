@@ -6,7 +6,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 // The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
 // an old environment variable still exists in the project.
-const UPSTREAM = /^https:\/\/[^\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM) &&
+const UPSTREAM = isSecureHttpsUrl(RAW_UPSTREAM) &&
     !/(render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza)/i.test(RAW_UPSTREAM)
   ? RAW_UPSTREAM
   : "";
@@ -96,7 +96,14 @@ const EDGE_CIRCUIT_COOLDOWN_MS = 15000;
 function isSecureHttpsUrl(value: string): boolean {
   try {
     const url = new URL(value.trim());
-    return url.protocol === "https:" && Boolean(url.hostname);
+    const portOk = url.port === "" || url.port === "443";
+    return url.protocol === "https:" &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      portOk;
   } catch {
     return false;
   }

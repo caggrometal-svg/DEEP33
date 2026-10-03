@@ -83,17 +83,26 @@ object Deep33Api {
         }.getOrNull()
     }
 
+    private fun canonicalEndpoints(): List<String> = listOf(
+        BuildConfig.DEEP33_PRIMARY_URL,
+        BuildConfig.DEEP33_SECONDARY_URL,
+        BuildConfig.DEEP33_TERTIARY_URL,
+    ).mapNotNull(::validateEndpoint).distinct()
+
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
-        val values = overrides ?: listOf(
-            BuildConfig.DEEP33_PRIMARY_URL,
-            BuildConfig.DEEP33_SECONDARY_URL,
-            BuildConfig.DEEP33_TERTIARY_URL
-        )
-        return values
-            .asSequence()
+        val canonical = canonicalEndpoints()
+        if (overrides == null) return canonical
+
+        // Endpoint overrides are accepted only as a subset of the immutable canonical
+        // transport set. Arbitrary HTTPS destinations are rejected instead of becoming
+        // a hidden runtime route.
+        val requested = overrides.asSequence()
             .mapNotNull(::validateEndpoint)
             .distinct()
             .toList()
+        if (requested.isEmpty() || requested.size != overrides.distinct().size) return emptyList()
+        if (requested.any { it !in canonical }) return emptyList()
+        return canonical.filter { it in requested }
     }
 
 

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import httpx
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +68,15 @@ class ProviderCircuit:
 
 def _provider_url_is_secure(value: str) -> bool:
     try:
-        return value.strip().lower().startswith("https://") and bool(value.strip()[8:].split("/", 1)[0])
-    except Exception:
+        parsed = urlsplit(value.strip())
+        if parsed.scheme.lower() != "https" or not parsed.hostname:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        if parsed.query or parsed.fragment:
+            return False
+        return parsed.port in (None, 443)
+    except (TypeError, ValueError):
         return False
 
 
