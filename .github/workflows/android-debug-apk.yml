@@ -2,8 +2,6 @@ name: DEEP33 Android Debug APK v0.4.3
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
