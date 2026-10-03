@@ -200,7 +200,25 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
             [{"title": "Example", "url": "https://example.com"}],
         )
 
-    monkeypatch.setattr(main, "run_web_tool_loop", fake_web_loop)
+    monkeypatch.setattr(main, "prepare_web_evidence", lambda messages: fake_prepare_web_evidence(messages))
+
+    async def fake_prepare_web_evidence(messages):
+        return (
+            [
+                {"role": "system", "content": "Server-side web evidence"},
+            ],
+            [{"title": "Example", "url": "https://example.com"}],
+            ["evidence"],
+            [{"title": "Example", "url": "https://example.com", "snippet": "evidence"}],
+        )
+
+    async def fake_gateway_stream(*_args, **_kwargs):
+        yield (
+            b'data: {"choices":[{"delta":{"content":"Respuesta propia de DEEP33.\\n\\nFuentes: https://example.com"}}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    monkeypatch.setattr(main.gateway, "stream", fake_gateway_stream)
     with client.stream(
         "POST",
         "/v1/chat/stream",
