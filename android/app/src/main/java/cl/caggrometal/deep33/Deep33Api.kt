@@ -4,6 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.SocketTimeoutException
+import java.net.URI
 import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -60,6 +61,28 @@ object Deep33Api {
     // therefore performs one attempt per configured endpoint; no nested transport retry.
     private const val ENDPOINT_ATTEMPTS = 1
 
+    private fun validateEndpoint(raw: String): String? {
+        val candidate = raw.trim().trimEnd('/')
+        if (candidate.isBlank()) return null
+        return runCatching {
+            val uri = URI(candidate)
+            val scheme = uri.scheme?.lowercase()
+            val host = uri.host?.trim().orEmpty()
+            if (
+                scheme != "https" ||
+                host.isBlank() ||
+                uri.userInfo != null ||
+                uri.query != null ||
+                uri.fragment != null ||
+                (uri.port != -1 && uri.port != 443)
+            ) {
+                null
+            } else {
+                candidate
+            }
+        }.getOrNull()
+    }
+
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val values = overrides ?: listOf(
             BuildConfig.DEEP33_PRIMARY_URL,
@@ -68,8 +91,7 @@ object Deep33Api {
         )
         return values
             .asSequence()
-            .map { it.trim().trimEnd('/') }
-            .filter { it.isNotBlank() && it.startsWith("https://") }
+            .mapNotNull(::validateEndpoint)
             .distinct()
             .toList()
     }
