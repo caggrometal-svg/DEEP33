@@ -216,6 +216,43 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
     assert "Fuentes:" not in body
 
 
+def test_stream_gateway_emits_first_delta_before_completion(monkeypatch) -> None:
+    import asyncio
+
+    async def fake_gateway_stream(*_args, **_kwargs):
+        yield b'data: {"choices":[{"delta":{"content":"Primer token"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":" final"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    monkeypatch.setattr(main.gateway, "stream", fake_gateway_stream)
+
+    async def run() -> None:
+        request_id = "phase1-first-delta"
+        completion_state: dict[str, str] = {}
+        stream = main.stream_gateway(
+            {"messages": [{"role": "user", "content": "Hola"}], "model": "test-model"},
+            "phase1-session",
+            "NEUTRO",
+            request_id=request_id,
+            idempotency_key="phase1-key",
+            request_hash="phase1-hash",
+            lease_token="phase1-lease",
+            completion_state=completion_state,
+        )
+
+        first = await stream.__anext__()
+        assert b"Primer token" in first
+        assert completion_state == {}
+        assert main.performance.trace_snapshot(request_id)["stages"].get("T7_FIRST_TOKEN") is not None
+
+        second = await stream.__anext__()
+        assert b"final" in second
+        await stream.__anext__()
+        assert completion_state["assistant_text"] == "Primer token final"
+
+    asyncio.run(run())
+
+
 def test_generate_contract(monkeypatch) -> None:
     patch_memory(monkeypatch)
     monkeypatch.setattr(main, "call_gateway", fake_call_gateway)
