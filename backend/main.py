@@ -1388,10 +1388,10 @@ def sanitize_stream_delta(text: str) -> str:
 
 
 _UPSTREAM_IDENTITY_BRANDS = re.compile(
-    r"(?i)\\b(?:gemma(?:\\s+\\d+(?:\\.\\d+)?)?|gemini|google(?:\\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\\b"
+    r"(?i)\b(?:gemma(?:\s+\d+(?:\.\d+)?)?|gemini|google(?:\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\b"
 )
 _POSITIVE_SELF_IDENTITY = re.compile(
-    r"(?i)\\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\\b"
+    r"(?i)\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\b"
 )
 
 
