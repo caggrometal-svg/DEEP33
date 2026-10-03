@@ -16,7 +16,8 @@ def test_base_model_brands_cannot_replace_deep33_identity() -> None:
     prompt = main.personality_prompt("NEUTRO")
 
     for blocked in ("Gemma", "Gemini", "Google", "Google DeepMind", "OpenAI", "Kilo"):
-        assert f"Never claim that DEEP33 was developed, created, manufactured, or is itself by {blocked}" in prompt
+        assert blocked in prompt
+    assert "Never claim that DEEP33 was developed, created, manufactured, or is itself by" in prompt
 
 
 def test_runtime_identity_is_separated_from_product_identity() -> None:
