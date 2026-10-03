@@ -1142,7 +1142,17 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     return working, list(sources.values()), evidence_fragments, compact_search_results
 
 
-async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_web=False,deadline=None,personality=DEFAULT_PERSONALITY):
+async def run_web_tool_loop(
+    messages,
+    *,
+    model,
+    max_tokens,
+    request_id,
+    idempotency_key,
+    force_web=False,
+    deadline=None,
+    personality=DEFAULT_PERSONALITY,
+):
     working=_append_web_system_context(messages)
     sources={}
     evidence_fragments: list[str] = []
@@ -1158,7 +1168,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
         try:
             working.append(_web_personality_lock(personality))
             data = await call_gateway(
-                {"messages": working, "model": model},
+                {"messages": working, "model": model, "max_tokens": max_tokens},
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:web:evidence",
                 deadline=deadline,
@@ -1179,7 +1189,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
             })
             compact_working.append(_web_personality_lock(personality))
             data = await call_gateway(
-                {"messages": compact_working, "model": model},
+                {"messages": compact_working, "model": model, "max_tokens": max_tokens},
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:web:evidence:compact",
                 deadline=deadline,
@@ -1193,6 +1203,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
             {
                 "messages":working,
                 "model":model,
+                "max_tokens":max_tokens,
                 "tools":WEB_TOOL_DEFINITIONS,
                 "tool_choice":"required" if force_web and round_index==0 else "auto",
             },
@@ -1255,7 +1266,13 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
     })
     working.append(_web_personality_lock(personality))
     data=await call_gateway(
-        {"messages":working,"model":model,"tools":WEB_TOOL_DEFINITIONS,"tool_choice":"none"},
+        {
+            "messages": working,
+            "model": model,
+            "max_tokens": max_tokens,
+            "tools": WEB_TOOL_DEFINITIONS,
+            "tool_choice": "none",
+        },
         request_id=request_id,
         idempotency_key=f"{idempotency_key}:web:final",
         deadline=deadline,
@@ -1265,6 +1282,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
         working=working,
         evidence=evidence_fragments,
         model=model,
+        max_tokens=max_tokens,
         request_id=request_id,
         idempotency_key=idempotency_key,
         deadline=deadline,
@@ -2002,6 +2020,7 @@ async def generate(
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
+                max_tokens=payload["max_tokens"],
                 request_id=request_id,
                 idempotency_key=idempotency_key,
                 force_web=True,
@@ -2515,7 +2534,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 request_id=request_id,
             )
             working.append(_web_personality_lock(personality))
-            payload = {"messages": working, "model": payload["model"]}
+            payload = {
+                "messages": working,
+                "model": payload["model"],
+                "max_tokens": payload["max_tokens"],
+            }
             if request.temperature is not None:
                 payload["temperature"] = request.temperature
 
