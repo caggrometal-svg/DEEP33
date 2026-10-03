@@ -1236,8 +1236,8 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     # because source metadata is an internal retrieval concern, not user-facing prose.
     value = re.sub(
         r"(?ims)(?:^|\n)\s*(?:#{0,6}\s*)?"
-        r"(?:fuentes?|sources?(?: consulted| used)?|"
-        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$).*\Z",
+        r"(?:fuentes?(?: consultadas| utilizadas)?|sources?(?: consulted| used)?|"
+        r"referencias?|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*.*\Z",
         "",
         value,
     )
