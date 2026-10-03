@@ -1538,6 +1538,7 @@ async def connectivity_audit() -> dict:
             "DEEP33",
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
+            fast=True,
         )
     except Exception as exc:
         logger.warning(
