@@ -31,10 +31,16 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun backendHealthIsPass() {
+    fun edgeHealthIsPass() {
         val json = Deep33Api.get("/health", sessionId)
-        assertTrue(json.optString("status") == "PASS")
-        assertTrue(json.optString("version") == "0.2.0")
+        assertTrue("edge health: " + json, json.optString("status") == "PASS")
+        assertTrue("edge service: " + json, json.optString("service") == "DEEP33 Edge Gateway")
+        assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
+        assertTrue("edge transport: " + json, json.optString("transport") == "https")
+        assertTrue(
+            "edge failover support: " + json,
+            json.optBoolean("failover_supported", false)
+        )
     }
 
     @Test
