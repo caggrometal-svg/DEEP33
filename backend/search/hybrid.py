@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from datetime import datetime, timezone
@@ -133,6 +134,8 @@ class HybridSearchClient:
                 ),
             ),
         )
+        self._http_client: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
         self.dimensions = max(
             1,
             int(
@@ -141,6 +144,22 @@ class HybridSearchClient:
                 else os.getenv("DEEP33_VECTOR_DIMENSIONS", "1536")
             ),
         )
+
+    async def _client(self) -> httpx.AsyncClient:
+        loop = asyncio.get_running_loop()
+        if self._http_client is None or self._http_loop is not loop:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout_seconds),
+                follow_redirects=True,
+            )
+            self._http_loop = loop
+        return self._http_client
+
+    async def close(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+        self._http_client = None
+        self._http_loop = None
 
     @property
     def enabled(self) -> bool:
@@ -209,8 +228,13 @@ class HybridSearchClient:
             )
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(self.base_url, json=body, headers=self._headers())
+            client = await self._client()
+            response = await client.post(
+                self.base_url,
+                json=body,
+                headers=self._headers(),
+                timeout=self.timeout_seconds,
+            )
         except httpx.HTTPError as exc:
             raise HybridSearchUnavailableError(type(exc).__name__) from exc
         if not 200 <= response.status_code < 300:
