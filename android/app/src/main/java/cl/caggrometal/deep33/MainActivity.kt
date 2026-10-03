@@ -171,6 +171,8 @@ class MainActivity : Activity() {
     private var activeSpeechUtteranceId: String? = null
     private var activeSpeechText = ""
     private var recentSpokenText = ""
+    private var streamingSpeechCursor = 0
+    private var streamingSpeechRequestId: String? = null
     private var recentSpeechEndedAt = 0L
     private var edgeSwipeTracking = false
     private var edgeDownX = 0f
@@ -228,7 +230,7 @@ class MainActivity : Activity() {
                     activeSpeechText = ""
                     stopBargeInMonitoring()
                     setVoiceState(AvatarState.IDLE)
-                    if (voiceModeActive) {
+                    if (voiceModeActive && !generationActive) {
                         setVoiceModeUi(true)
                         scheduleNextVoiceTurn(700L)
                     } else {
@@ -248,7 +250,7 @@ class MainActivity : Activity() {
                     setVoiceState(AvatarState.IDLE)
                     if (!voiceModeActive) {
                         setVoiceModeUi(false)
-                    } else {
+                    } else if (!generationActive) {
                         setVoiceModeUi(true)
                         scheduleNextVoiceTurn(450L)
                     }
@@ -1613,6 +1615,8 @@ class MainActivity : Activity() {
             )
         )
         lastRenderedGenerationOutput = ""
+        streamingSpeechCursor = 0
+        streamingSpeechRequestId = requestId
         launchGeneration(payload, sessionId, requestPersonality, requestId, idempotencyKey)
     }
 
@@ -1741,6 +1745,7 @@ class MainActivity : Activity() {
                     }
                     lastRenderedGenerationOutput = output
                     setVoiceState(AvatarState.SPEAKING)
+                    speakStreamingSentences(output, Personality.fromKey(state.personality))
                 }
             }
             GenerationStatus.DONE -> {
@@ -1756,8 +1761,13 @@ class MainActivity : Activity() {
                 cleanupGeneration(true)
                 refreshSidebarHistory()
                 if (activityVisible && finalText.isNotBlank()) {
-                    speakAssistant(finalText, Personality.fromKey(state.personality))
+                    val remainder = finalText.drop(streamingSpeechCursor).trim()
+                    if (remainder.isNotBlank()) {
+                        speakAssistant(remainder, Personality.fromKey(state.personality), queue = streamingSpeechCursor > 0)
+                    }
                 }
+                streamingSpeechCursor = 0
+                streamingSpeechRequestId = null
             }
             GenerationStatus.RETRYABLE -> {
                 val message = state.error.ifBlank { "La conexión con DEEP33 no pudo recuperarse. Pulsa reintentar." }
@@ -2022,9 +2032,48 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun speakStreamingSentences(
+        text: String,
+        personality: Personality
+    ) {
+        if (!store.voiceEnabled && !voiceModeActive) return
+        val requestId = activeRequestId ?: return
+        if (streamingSpeechRequestId != requestId) {
+            streamingSpeechRequestId = requestId
+            streamingSpeechCursor = 0
+        }
+        if (text.length <= streamingSpeechCursor) return
+
+        val tail = text.substring(streamingSpeechCursor)
+        val boundary = Regex("(?s)^.*?[.!?…](?:\\s+|$)").find(tail)?.value ?: return
+        val consumed = boundary.length
+        val phrase = VoiceConversationPolicy.compactForSpeech(boundary)
+        if (phrase.isBlank()) {
+            streamingSpeechCursor += consumed
+            return
+        }
+
+        val utteranceId = "deep33-stream-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
+        streamingSpeechCursor += consumed
+        activeSpeechUtteranceId = utteranceId
+        activeSpeechText = phrase
+        applyVoiceTone(personality)
+        if (voiceModeActive) {
+            setVoiceModeUi(true)
+            setVoiceState(AvatarState.SPEAKING)
+        }
+        textToSpeech?.speak(
+            phrase,
+            TextToSpeech.QUEUE_ADD,
+            null,
+            utteranceId
+        )
+    }
+
     private fun speakAssistant(
         text: String,
-        personality: Personality = Personality.fromKey(store.personality)
+        personality: Personality = Personality.fromKey(store.personality),
+        queue: Boolean = false
     ) {
         if ((!store.voiceEnabled && !voiceModeActive) || text.isBlank()) return
         if (voiceModeActive) {
@@ -2041,7 +2090,7 @@ class MainActivity : Activity() {
         activeSpeechText = speech
         textToSpeech?.speak(
             speech,
-            TextToSpeech.QUEUE_FLUSH,
+            if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH,
             null,
             utteranceId
         )
