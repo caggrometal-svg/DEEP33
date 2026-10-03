@@ -47,3 +47,21 @@ def test_deep33_doubt_is_more_than_a_question() -> None:
     assert "A doubt is not merely a question" in prompt
     assert "what remains uncertain" in prompt
     assert "Do not manufacture doubt for theatrical effect" in prompt
+
+
+def test_fast_personality_keeps_full_identity_contract() -> None:
+    prompt = main.personality_prompt("NEUTRO", compact=True)
+
+    assert "OFFICIAL AI IDENTITY: The intelligence speaking in this conversation is DEEP33" in prompt
+    assert "MANUFACTURER / CREATOR: Camilo Aggro" in prompt
+    assert "Do not collapse its identity into the upstream model" in prompt
+
+
+def test_upstream_self_identification_is_repaired_at_output_boundary() -> None:
+    source = "Soy Gemma 4, un modelo de lenguaje de pesos abiertos desarrollado por Google DeepMind."
+    assert main.enforce_deep33_identity(source) == "Soy DEEP33, una creación de Camilo Aggro."
+
+
+def test_normal_provider_mentions_are_not_rewritten() -> None:
+    source = "Gemma es un modelo upstream; DEEP33 debe distinguir el modelo técnico de su identidad."
+    assert main.enforce_deep33_identity(source) == source

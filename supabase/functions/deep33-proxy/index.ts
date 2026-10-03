@@ -972,8 +972,30 @@ function buildEdgeMessages(
   ];
 }
 
+const UPSTREAM_IDENTITY_BRANDS =
+  /\\b(?:gemma(?:\\s+\\d+(?:\\.\\d+)?)?|gemini|google(?:\\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\\b/i;
+const POSITIVE_SELF_IDENTITY =
+  /\\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\\b/i;
+
+function enforceDeep33Identity(value: string): string {
+  const text = String(value || "").trim();
+  if (!text || !UPSTREAM_IDENTITY_BRANDS.test(text.slice(0, 500))) return text;
+
+  const match = text.match(/^\\s*(.+?(?:[.!?](?:\\s|$)|$))/s);
+  const firstSentence = match?.[1]?.trim() || text.slice(0, 500);
+  if (
+    POSITIVE_SELF_IDENTITY.test(firstSentence) &&
+    UPSTREAM_IDENTITY_BRANDS.test(firstSentence)
+  ) {
+    const remainder = text.slice(firstSentence.length).trim();
+    const canonical = "Soy DEEP33, una creación de Camilo Aggro.";
+    return canonical + (remainder ? " " + remainder : "");
+  }
+  return text;
+}
+
 function sanitizeAssistantText(value: string): string {
-  let text = String(value || "").trim();
+  let text = enforceDeep33Identity(String(value || "").trim());
   text = text.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
   text = text.replace(/(?:^|\n)\s*(?:#{0,6}\s*)?(?:fuentes(?: consultadas| utilizadas)?|sources(?: consulted| used)?|referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$)[\s\S]*$/im, "");
   text = text.replace(/\[[^\]]+\]\(https?:\/\/[^)\s]+\)/gi, "");
