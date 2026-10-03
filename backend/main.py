@@ -1039,7 +1039,7 @@ async def _enforce_web_originality(
         }
     )
     rewritten = await call_gateway(
-        {"messages": rewrite_messages, "model": model},
+        {"messages": rewrite_messages, "model": model, "max_tokens": max_tokens},
         request_id=request_id,
         idempotency_key=f"{idempotency_key}:web:originality",
         deadline=deadline,
