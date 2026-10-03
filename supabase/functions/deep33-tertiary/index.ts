@@ -65,6 +65,7 @@ async function fetchUpstream(
     ...init,
     headers,
     redirect: "error",
+    signal: init.signal ?? AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS),
   });
 }
 
@@ -92,11 +93,20 @@ const edgeCircuit = new Map<string, { failures: number; openUntil: number }>();
 const EDGE_CIRCUIT_THRESHOLD = 3;
 const EDGE_CIRCUIT_COOLDOWN_MS = 15000;
 
+function isSecureHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 type EdgeAIProvider = { name: string; url: string; api_key: string; model: string; requires_auth: boolean };
 
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
-  if (EDGE_AI_URL && (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY)) {
+  if (isSecureHttpsUrl(EDGE_AI_URL) && (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY)) {
     providers.push({
       name: EDGE_AI_PROVIDER,
       url: EDGE_AI_URL,
@@ -116,7 +126,7 @@ function edgeProviders(): EdgeAIProvider[] {
           const url = String(value.url || "").trim();
           const api_key = String(value.api_key || "").trim();
           const requires_auth = Boolean(value.requires_auth ?? api_key);
-          if (!url || (requires_auth && !api_key)) continue;
+          if (!isSecureHttpsUrl(url) || (requires_auth && !api_key)) continue;
           providers.push({
             name: String(value.name || "fallback").trim() || "fallback",
             url,
@@ -1010,7 +1020,7 @@ async function memoryCall(
   sessionId: string,
   payload: Record<string, unknown> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  if (!MEMORY_FUNCTION_URL || !SUPABASE_SECRET_KEY) {
+  if (!isSecureHttpsUrl(MEMORY_FUNCTION_URL) || !SUPABASE_SECRET_KEY) {
     throw new Error("DEEP33_MEMORY_EDGE_NOT_CONFIGURED");
   }
 
@@ -1066,7 +1076,7 @@ async function hybridCall(
   action: string,
   payload: Record<string, unknown> = {},
 ): Promise<unknown> {
-  if (!HYBRID_FUNCTION_URL || !SUPABASE_SECRET_KEY) {
+  if (!isSecureHttpsUrl(HYBRID_FUNCTION_URL) || !SUPABASE_SECRET_KEY) {
     throw new Error("DEEP33_HYBRID_EDGE_NOT_CONFIGURED");
   }
 
