@@ -2373,6 +2373,7 @@ async def stream_gateway(
                     continue
                 if frame.strip():
                     outbound_frame = bytes(frame)
+                    has_visible_content = False
                     if b"data:" in frame and b'"content"' in frame:
                         try:
                             frame_json = json.loads(frame[len(b"data:"):].strip())
@@ -2384,6 +2385,8 @@ async def stream_gateway(
                                     safe_delta = sanitize_stream_delta(content_value)
                                     if safe_delta != content_value:
                                         delta["content"] = safe_delta
+                                    if safe_delta:
+                                        has_visible_content = True
                             outbound_frame = (
                                 b"data: "
                                 + json.dumps(
@@ -2400,25 +2403,8 @@ async def stream_gateway(
                         ):
                             outbound_frame = bytes(frame)
 
-                    if first_output_at is None and b"data:" in outbound_frame and b'"content"' in outbound_frame:
-                        try:
-                            parsed_outbound = json.loads(
-                                outbound_frame[len(b"data:"):].strip()
-                            )
-                            has_visible_content = any(
-                                isinstance((choice.get("delta") or {}).get("content"), str)
-                                and (choice.get("delta") or {}).get("content")
-                                for choice in parsed_outbound.get("choices", [])
-                            )
-                        except (
-                            json.JSONDecodeError,
-                            UnicodeDecodeError,
-                            TypeError,
-                            ValueError,
-                        ):
-                            has_visible_content = False
-                        if has_visible_content:
-                            first_output_at = time.perf_counter()
+                    if first_output_at is None and has_visible_content:
+                        first_output_at = time.perf_counter()
                             performance.mark(request_id, "T7_FIRST_TOKEN")
                             ttft_ms = (first_output_at - stream_started) * 1000
                             _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
