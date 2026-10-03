@@ -11,8 +11,8 @@ class GenerationPerformancePolicyTest {
 
         val selected = GenerationPerformancePolicy.selectModelContext(input)
 
-        assertEquals(GenerationPerformancePolicy.MODEL_CONTEXT_MAX_MESSAGES, selected.size)
-        assertEquals("message-17", selected.first().content)
+        assertEquals(GenerationPerformancePolicy.FAST_MAX_MESSAGES, selected.size)
+        assertEquals("message-31", selected.first().content)
         assertEquals("message-40", selected.last().content)
     }
 
@@ -24,7 +24,7 @@ class GenerationPerformancePolicyTest {
 
         assertTrue(selected.size < 24)
         assertEquals("x".repeat(1_000) + "-30", selected.last().content)
-        assertTrue(selected.sumOf { it.content.length } <= GenerationPerformancePolicy.MODEL_CONTEXT_MAX_CHARS)
+        assertTrue(selected.sumOf { it.content.length } <= GenerationPerformancePolicy.FAST_MAX_CHARS)
     }
 
     @Test
