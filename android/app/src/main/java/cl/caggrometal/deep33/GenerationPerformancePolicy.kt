@@ -16,7 +16,7 @@ object GenerationPerformancePolicy {
         if (conversation.isEmpty()) return emptyList()
         val latest = conversation.lastOrNull { it.role == "user" }?.content.orEmpty()
         val lowered = latest.lowercase()
-        val deep = Regex("\b(en profundidad|a fondo|muy detallado|paso a paso|explica todo|desarrolla|profundiza|investiga|analiza|compara|evidencia)\b")
+        val deep = Regex("\\b(en profundidad|a fondo|muy detallado|paso a paso|explica todo|desarrolla|profundiza|investiga|analiza|compara|evidencia)\\b")
             .containsMatchIn(lowered)
         val complex = deep || latest.length > 700 || latest.count { it == '?' } >= 3
 
