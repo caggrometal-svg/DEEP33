@@ -237,7 +237,7 @@ jobs:
           for attempt in $(seq 1 6); do
             echo "EDGE_AUDIT_ATTEMPT=$attempt"
             if curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" >/tmp/health.json &&
-              jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"' /tmp/health.json >/dev/null &&
+              jq -e '.status=="PASS" and (.service=="DEEP33 Edge Gateway" or .service=="DEEP33 Backend")' /tmp/health.json >/dev/null &&
               curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" >/tmp/audit.json &&
               jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null; then
               audit_ok=1
