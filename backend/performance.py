@@ -18,6 +18,7 @@ STAGES = (
 _ORDER = {stage: index for index, stage in enumerate(STAGES)}
 _lock = Lock()
 _traces: dict[str, dict[str, float]] = {}
+_trace_order: deque[str] = deque(maxlen=500)
 _durations: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=500))
 
 
@@ -29,6 +30,11 @@ def mark(request_id: str, stage: str) -> None:
     now = time.perf_counter()
     with _lock:
         trace = _traces.setdefault(request_id, {})
+        if request_id not in _trace_order:
+            if len(_trace_order) == _trace_order.maxlen:
+                oldest = _trace_order[0]
+                _traces.pop(oldest, None)
+            _trace_order.append(request_id)
         if stage in trace:
             return
         previous_index = _ORDER[stage] - 1
