@@ -333,6 +333,7 @@ class AIGateway:
 
             for attempt in range(self.config.max_retries + 1):
                 try:
+                    started_request = time.perf_counter()
                     timeout = self._remaining(
                         deadline, self.config.provider_timeout_seconds
                     )
@@ -392,7 +393,7 @@ class AIGateway:
                         )
                         break
 
-                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    elapsed_ms = (time.perf_counter() - started_request) * 1000
                     self._record_latency(provider, elapsed_ms)
                     result = dict(data)
                     result["_deep33_gateway"] = {
