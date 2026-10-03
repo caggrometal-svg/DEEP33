@@ -26,6 +26,8 @@ _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
 MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "3"))))
 PROVIDER_RETRIES = max(0, min(2, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "1"))))
 RETRY_BACKOFF_SECONDS = max(0.0, min(2.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.35"))))
+PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().lower() == "true"
+PARALLEL_QUERIES = os.getenv("WEB_SEARCH_PARALLEL_QUERIES", "true").strip().lower() == "true"
 
 
 @dataclass(frozen=True)
@@ -330,6 +332,24 @@ class SearchEngine:
                     successful.append((name, results))
             return successful, errors, attempted
 
+        if PARALLEL_PROVIDERS and len(providers) > 1:
+            tasks = [asyncio.create_task(call(name)) for name in providers]
+            try:
+                for task in asyncio.as_completed(tasks):
+                    name, results, provider_errors = await task
+                    attempted.append(name)
+                    errors.extend(provider_errors)
+                    if results:
+                        successful.append((name, results))
+                        if len(results) >= MIN_FALLBACK_RESULTS:
+                            for other in tasks:
+                                if not other.done():
+                                    other.cancel()
+                            break
+            finally:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            return successful, errors, attempted
+
         for name in providers:
             attempted.append(name)
             results, provider_errors = await self._provider_search_with_retry(
@@ -362,14 +382,23 @@ class SearchEngine:
         errors: list[str] = []
         providers_attempted: list[str] = []
 
-        for planned_query in plan.queries:
-            batch, batch_errors, attempted = await self._run_query(
+        async def run_planned(planned_query: str):
+            return planned_query, await self._run_query(
                 providers,
                 planned_query,
                 plan_depth=plan.depth,
                 timeout_seconds=timeout_seconds,
                 api_key=api_key,
             )
+
+        if PARALLEL_QUERIES and plan.depth == "deep" and len(plan.queries) > 1:
+            planned_batches = await asyncio.gather(*(run_planned(q) for q in plan.queries))
+        else:
+            planned_batches = []
+            for q in plan.queries:
+                planned_batches.append(await run_planned(q))
+
+        for planned_query, (batch, batch_errors, attempted) in planned_batches:
             errors.extend(batch_errors)
             for provider_used in attempted:
                 if provider_used not in providers_attempted:
