@@ -29,7 +29,8 @@ jobs:
           set -euo pipefail
           git fetch origin refs/tags/production-pass --force
           certified="$(git rev-parse refs/tags/production-pass^{commit})"
-          test "$certified" = "$GITHUB_SHA" || {
+          current="$(git rev-parse HEAD)"
+          test "$certified" = "$current" || {
             echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$GITHUB_SHA"
             exit 1
           }
