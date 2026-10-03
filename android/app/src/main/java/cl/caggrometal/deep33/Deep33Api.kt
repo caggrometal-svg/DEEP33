@@ -69,7 +69,11 @@ object Deep33Api {
         return values
             .asSequence()
             .map { it.trim().trimEnd('/') }
-            .filter { it.isNotBlank() && it.startsWith("https://") }
+            .filter { value ->
+                value.isNotBlank() &&
+                    value.lowercase().startsWith("https://") &&
+                    runCatching { URL(value).host.isNotBlank() }.getOrDefault(false)
+            }
             .distinct()
             .toList()
     }
@@ -181,8 +185,8 @@ object Deep33Api {
             var attempt = 0
             while (attempt < ENDPOINT_ATTEMPTS) {
                 attempt++
-                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
-                if (remainingMs <= 3_000L) break
+                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L)
+                if (remainingMs <= 250L) break
 
                 val connection = URL(endpoint + "/v1/chat/stream").openConnection() as HttpsURLConnection
                 activeStreamConnections[requestId] = connection
@@ -201,6 +205,8 @@ object Deep33Api {
                     connection.doOutput = true
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "text/event-stream")
+                    connection.setRequestProperty("Accept-Encoding", "identity")
+                    connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
                     if (!memoryProfileId.isNullOrBlank()) connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
@@ -382,8 +388,8 @@ object Deep33Api {
             var attempt = 0
             while (attempt < ENDPOINT_ATTEMPTS) {
                 attempt++
-                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(3_000L)
-                if (remainingMs <= 3_000L) break
+                val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L)
+                if (remainingMs <= 250L) break
 
                 val url = URL(endpoint + path)
                 var requestBodyStarted = false
