@@ -44,3 +44,9 @@ def test_android_stream_checkpoint_is_throttled():
     ).read_text(encoding="utf-8")
     assert "now - lastCheckpointAt >= 500L" in source
     assert "checkpoint.length - lastCheckpointChars >= 1200" in source
+
+
+def test_fast_turn_skips_remote_memory_unless_memory_is_requested():
+    assert main.requires_memory_context([{"role": "user", "content": "2x2?"}], "FAST") is False
+    assert main.requires_memory_context([{"role": "user", "content": "¿Qué sabes de mí?"}], "FAST") is True
+    assert main.requires_memory_context([{"role": "user", "content": "2x2?"}], "BALANCED") is True
