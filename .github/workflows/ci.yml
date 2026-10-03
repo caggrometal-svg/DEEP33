@@ -659,6 +659,7 @@ jobs:
     if: ${{ github.event_name == 'push' && success() }}
     permissions:
       contents: write
+      actions: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -673,5 +674,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa production-pass "$GITHUB_SHA" -m "DEEP33 certified production release $GITHUB_SHA"
           git push origin refs/tags/production-pass --force
+          gh workflow run android-debug-apk.yml --ref production-pass
+          gh workflow run android-fast-apk.yml --ref production-pass
+          gh workflow run android-package.yml --ref production-pass
           echo "DEEP33_CRITICAL_GATES_PASS $GITHUB_SHA"
+          echo "DEEP33_CERTIFIED_APK_DISPATCH_PASS $GITHUB_SHA"
 # Full certification trigger
