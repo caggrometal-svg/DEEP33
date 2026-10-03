@@ -2346,11 +2346,23 @@ async def stream_gateway(
                                     # Keep TTFT untouched for ordinary chunks. After the first
                                     # suspicious marker appears, fall back to the full sanitizer
                                     # for the remainder of the stream to preserve source filtering.
-                                    if not stream_sanitize_active and (
-                                        not streamed_safe_text
-                                        or not _STREAM_SANITIZE_HINT_RE.search(content_value)
+                                    if (
+                                        not stream_sanitize_active
+                                        and streamed_safe_text
+                                        and not _STREAM_SANITIZE_HINT_RE.search(content_value)
                                     ):
                                         streamed_safe_text += content_value
+                                    elif not streamed_safe_text:
+                                        candidate_safe = sanitize_assistant_text(content_value)
+                                        delta["content"] = candidate_safe
+                                        streamed_safe_text = candidate_safe
+                                    else:
+                                        stream_sanitize_active = True
+                                        candidate_safe = sanitize_assistant_text(
+                                            streamed_safe_text + content_value
+                                        )
+                                        delta["content"] = candidate_safe[len(streamed_safe_text):]
+                                        streamed_safe_text = candidate_safe
                                     else:
                                         stream_sanitize_active = True
                                         candidate_safe = sanitize_assistant_text(
