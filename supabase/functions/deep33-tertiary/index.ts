@@ -973,9 +973,9 @@ function buildEdgeMessages(
 }
 
 const UPSTREAM_IDENTITY_BRANDS =
-  /\\b(?:gemma(?:\\s+\\d+(?:\\.\\d+)?)?|gemini|google(?:\\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\\b/i;
+  /\b(?:gemma(?:\s+\d+(?:\.\d+)?)?|gemini|google(?:\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\b/i;
 const POSITIVE_SELF_IDENTITY =
-  /\\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\\b/i;
+  /\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\b/i;
 
 function enforceDeep33Identity(value: string): string {
   const text = String(value || "").trim();
