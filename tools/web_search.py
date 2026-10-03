@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import html
 import os
 import re
+import time
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -17,6 +20,25 @@ BING_URL = "https://www.bing.com/search"
 DEFAULT_TIMEOUT_SECONDS = 8.0
 DEFAULT_MAX_RESULTS = 5
 MAX_QUERY_CHARS = 1000
+SEARCH_CACHE_TTL_SECONDS = max(
+    5.0, min(300.0, float(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS", "90")))
+)
+_SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _search_cache_key(
+    query: str,
+    provider: str,
+    api_key: str,
+    timeout_seconds: float,
+    max_results: int,
+) -> str:
+    raw = "\x1f".join(
+        [query, provider, "configured" if api_key else "anonymous", str(timeout_seconds), str(max_results)]
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 
 
 class WebSearchError(RuntimeError):
@@ -354,6 +376,14 @@ async def search_web(
             1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3")))
         ),
     )
+    cache_key = _search_cache_key(
+        cleaned, selected_provider, key, timeout_seconds, max_results
+    )
+    now = time.monotonic()
+    cached = _SEARCH_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return copy.deepcopy(cached[1])
+
     result = await engine.search(
         cleaned,
         provider=selected_provider,
@@ -365,6 +395,7 @@ async def search_web(
         raise WebSearchError(
             "WEB_SEARCH_FAILED:" + ",".join(result.get("errors") or ["NO_RESULTS"])
         )
+    _SEARCH_CACHE[cache_key] = (time.monotonic() + SEARCH_CACHE_TTL_SECONDS, copy.deepcopy(result))
     return result
 
 
