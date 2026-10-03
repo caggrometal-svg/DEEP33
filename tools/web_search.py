@@ -13,8 +13,6 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
-from tools.web_fetch import validate_public_url
-
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
@@ -220,6 +218,20 @@ def _unwrap_bing_url(value):
     return ""
 
 
+def _safe_search_result_url(value: str) -> str:
+    candidate = value.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise WebSearchError("WEB_SEARCH_URL_SCHEME_BLOCKED")
+    if parsed.username or parsed.password:
+        raise WebSearchError("WEB_SEARCH_URL_CREDENTIALS_BLOCKED")
+    if not parsed.hostname:
+        raise WebSearchError("WEB_SEARCH_URL_HOST_REQUIRED")
+    if parsed.port not in (None, 80, 443):
+        raise WebSearchError("WEB_SEARCH_URL_PORT_BLOCKED")
+    return candidate
+
+
 def _normalise_results(results, limit):
     out = []
     seen = set()
@@ -232,7 +244,7 @@ def _normalise_results(results, limit):
         if not title or not url:
             continue
         try:
-            url = validate_public_url(url)
+            url = _safe_search_result_url(url)
         except Exception:
             continue
         if url in seen:
