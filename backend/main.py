@@ -283,10 +283,10 @@ def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     if shape == "SIMPLE_DIRECT":
         return 6, 5000, "FAST"
     if shape == "EXPLICIT_DEPTH":
-        return 24, 18000, "DEEP"
+        return 32, 24000, "DEEP"
     if shape == "COMPLEX_NECESSARY":
-        return 16, 12000, "BALANCED"
-    return 12, 8000, "BALANCED"
+        return 24, 18000, "BALANCED"
+    return 16, 12000, "BALANCED"
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
@@ -300,25 +300,6 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
         "DEEP": os.getenv("AI_GATEWAY_MODEL_DEEP", "").strip(),
     }
     return configured.get(normalized, "") or AI_GATEWAY_MODEL
-
-
-def output_token_limit(profile: str) -> int:
-    defaults = {
-        "FAST": 128,
-        "BALANCED": 512,
-        "DEEP": 1200,
-    }
-    normalized = str(profile or "BALANCED").strip().upper()
-    configured = {
-        "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
-        "BALANCED": os.getenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "").strip(),
-        "DEEP": os.getenv("AI_DEEP_MAX_OUTPUT_TOKENS", "").strip(),
-    }
-    try:
-        value = int(configured.get(normalized) or defaults.get(normalized, 512))
-    except ValueError:
-        value = defaults.get(normalized, 512)
-    return max(32, min(4096, value))
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
@@ -861,18 +842,6 @@ WEB_TOOL_DEFINITIONS = [
         },
     },
 ]
-
-# Most streaming chunks are ordinary prose. Full source/citation sanitization is
-# expensive because it rescans the complete accumulated answer. Only switch to
-# full sanitization when a chunk contains a marker that can actually need cleanup.
-_STREAM_SANITIZE_HINT_RE = re.compile(
-    r"(https?://|turn\d+(?:search|news|reddit|fetch|image|product|business)\d+|"
-    r"(?:cite|url)|【\d{1,3}】|\[(?:fuente|source|ref|citation|cita)\s*:|"
-    r"<a\b|\b(?:fuentes consultadas|references?|retrieved from|consultado en|"
-    r"recuperado de)\b)",
-    re.IGNORECASE,
-)
-
 
 WEB_TRIGGER_TERMS = (
     "busca en internet","buscar en internet","navega en internet","navega por internet",
@@ -2006,7 +1975,6 @@ async def generate(
         payload = {
             "messages": messages,
             "model": model_for_profile(request.model, profile),
-            "max_tokens": output_token_limit(profile),
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
@@ -2338,7 +2306,6 @@ async def stream_gateway(
     first_output_at: float | None = None
     frame_buffer = bytearray()
     streamed_safe_text = ""
-    stream_sanitize_active = False
 
     try:
         async for chunk in gateway.stream(
@@ -2363,26 +2330,11 @@ async def stream_gateway(
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
                                 if isinstance(content_value, str):
-                                    # Keep TTFT untouched for ordinary chunks. After the first
-                                    # suspicious marker appears, fall back to the full sanitizer
-                                    # for the remainder of the stream to preserve source filtering.
-                                    if (
-                                        not stream_sanitize_active
-                                        and streamed_safe_text
-                                        and not _STREAM_SANITIZE_HINT_RE.search(content_value)
-                                    ):
-                                        streamed_safe_text += content_value
-                                    elif not streamed_safe_text:
-                                        candidate_safe = sanitize_assistant_text(content_value)
-                                        delta["content"] = candidate_safe
-                                        streamed_safe_text = candidate_safe
-                                    else:
-                                        stream_sanitize_active = True
-                                        candidate_safe = sanitize_assistant_text(
-                                            streamed_safe_text + content_value
-                                        )
-                                        delta["content"] = candidate_safe[len(streamed_safe_text):]
-                                        streamed_safe_text = candidate_safe
+                                    candidate_safe = sanitize_assistant_text(
+                                        streamed_safe_text + content_value
+                                    )
+                                    delta["content"] = candidate_safe[len(streamed_safe_text):]
+                                    streamed_safe_text = candidate_safe
                             outbound_frame = (
                                 b"data: "
                                 + json.dumps(
@@ -2532,11 +2484,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise
 
     profile = complexity_profile(messages)[2]
-    payload={
-        "messages": messages,
-        "model": model_for_profile(request.model, profile),
-        "max_tokens": output_token_limit(profile),
-    }
+    payload={"messages":messages,"model":model_for_profile(request.model, profile)}
     if request.temperature is not None:
         payload["temperature"]=request.temperature
 
