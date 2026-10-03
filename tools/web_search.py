@@ -13,6 +13,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
+from tools.web_fetch import validate_public_url
+
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
