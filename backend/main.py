@@ -220,6 +220,17 @@ DEEP33_IDENTITY_CORE = (
 )
 
 
+def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
+    shape = conversation_response_shape(messages)
+    if shape == "SIMPLE_DIRECT":
+        return 10, 7000, "FAST"
+    if shape == "EXPLICIT_DEPTH":
+        return 32, 24000, "DEEP"
+    if shape == "COMPLEX_NECESSARY":
+        return 24, 18000, "BALANCED"
+    return 16, 12000, "BALANCED"
+
+
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     """Classify the latest user turn for the shared dialogue contract; never alters transport."""
     latest_user = next(
@@ -1700,17 +1711,31 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
         if message.role in {"user", "assistant"}
     ]
     selected = normalize_personality(request.personality)
+    max_messages, max_chars, profile = complexity_profile(requested)
     personality_control = {
         "role": "system",
-        "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested),
+        "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested)
+            + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
     if not memory.enabled:
-        return [personality_control, *requested[-49:]], selected
+        selected_messages = requested[-max_messages:]
+        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
+            selected_messages.pop(0)
+        return [personality_control, *selected_messages], selected
 
     try:
         context = await memory.context(session_id, memory_profile_id=memory_profile_id)
         remote = extract_context_messages(context)
-        merged = merge_messages(remote, requested, limit=49)
+        merged = merge_messages(remote, requested, limit=max_messages)
+        merged_chars = 0
+        bounded: list[dict[str, str]] = []
+        for item in reversed(merged):
+            next_chars = merged_chars + len(item.get("content", ""))
+            if bounded and next_chars > max_chars:
+                break
+            bounded.append(item)
+            merged_chars = next_chars
+        merged = list(reversed(bounded))
         system_context = extract_context_system_message(context)
         if system_context:
             # Keep memory as a separate system message. The current personality
@@ -1724,7 +1749,10 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
         return [personality_control, *merged], selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
-        return [personality_control, *requested[-49:]], selected
+        selected_messages = requested[-max_messages:]
+        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
+            selected_messages.pop(0)
+        return [personality_control, *selected_messages], selected
 
 
 async def persist_messages(
