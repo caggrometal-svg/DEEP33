@@ -1925,9 +1925,10 @@ async def generate(
             memory_profile_id,
             request_id=request_id,
         )
+        profile = complexity_profile(messages)[2]
         payload = {
             "messages": messages,
-            "model": request.model or AI_GATEWAY_MODEL,
+            "model": model_for_profile(request.model, profile),
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
