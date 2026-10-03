@@ -158,10 +158,8 @@ class MainActivity : Activity() {
     private var activeBubble: TextView? = null
     private val generationHandler = Handler(Looper.getMainLooper())
     private var activityVisible = false
-    private val generationMonitor = object : Runnable {
-        override fun run() {
-            monitorGeneration()
-        }
+    private val generationStateListener: (GenerationState) -> Unit = { state ->
+        runOnUiThread { handleGenerationState(state) }
     }
     private var textToSpeech: TextToSpeech? = null
     private var speechRecognizer: SpeechRecognizer? = null
@@ -278,6 +276,7 @@ class MainActivity : Activity() {
         }
 
         setContentView(buildRoot())
+        store.addGenerationStateListener(generationStateListener)
         registerConnectivityMonitor()
         showTab(Tab.CHAT)
         renderConversation()
@@ -328,6 +327,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        store.removeGenerationStateListener(generationStateListener)
         generationHandler.removeCallbacks(generationMonitor)
         scheduledHealthCheck?.let { window.decorView.removeCallbacks(it) }
         scheduledHealthCheck = null
@@ -1702,7 +1702,7 @@ class MainActivity : Activity() {
     private fun startGenerationMonitor() {
         generationHandler.removeCallbacks(generationMonitor)
         if (generationActive || store.loadPendingTurn() != null) {
-            generationHandler.post(generationMonitor)
+            monitorGeneration()
         }
     }
 
@@ -1727,33 +1727,20 @@ class MainActivity : Activity() {
 
     private fun monitorGeneration() {
         if (!generationActive) return
+        store.loadGenerationState()?.let { handleGenerationState(it) }
+    }
 
-        val state = store.loadGenerationState()
-        if (state == null || state.requestId != activeRequestId) {
-            if (store.loadPendingTurn() == null) {
-                generationActive = false
-                activeRequestId = null
-                activeIdempotencyKey = null
-                cleanupGeneration(false)
-                return
-            }
-            generationHandler.postDelayed(generationMonitor, 150L)
-            return
-        }
-
+    private fun handleGenerationState(state: GenerationState) {
+        if (!generationActive || state.requestId != activeRequestId) return
         when (state.status) {
             GenerationStatus.RUNNING -> {
                 val output = state.partialOutput.trim()
-                if (output.isNotBlank()) {
-                    if (output != lastRenderedGenerationOutput) {
-                        activeBubble?.let {
-                            it.tag = output
-                            // Streaming text is assistant content too: apply the same
-                            // source/citation sanitizer used by the final answer.
-                            renderMarkdown(it, output, isAssistant = true)
-                        }
-                        lastRenderedGenerationOutput = output
+                if (output.isNotBlank() && output != lastRenderedGenerationOutput) {
+                    activeBubble?.let {
+                        it.tag = output
+                        renderMarkdown(it, output, isAssistant = true)
                     }
+                    lastRenderedGenerationOutput = output
                     setVoiceState(AvatarState.SPEAKING)
                 }
             }
@@ -1772,7 +1759,6 @@ class MainActivity : Activity() {
                 if (activityVisible && finalText.isNotBlank()) {
                     speakAssistant(finalText, Personality.fromKey(state.personality))
                 }
-                return
             }
             GenerationStatus.RETRYABLE -> {
                 val message = state.error.ifBlank { "La conexión con DEEP33 no pudo recuperarse. Pulsa reintentar." }
@@ -1790,16 +1776,11 @@ class MainActivity : Activity() {
                 updateConnection(ConnectionState.OFFLINE)
                 setVoiceState(AvatarState.IDLE)
                 if (!voiceModeActive) setVoiceModeUi(false)
-                return
             }
-
             GenerationStatus.FAILED, GenerationStatus.CANCELLED -> {
                 val message = state.error.ifBlank {
-                    if (state.status == GenerationStatus.CANCELLED) {
-                        "Generación cancelada."
-                    } else {
-                        "Error de comunicación con DEEP33."
-                    }
+                    if (state.status == GenerationStatus.CANCELLED) "Generación cancelada."
+                    else "Error de comunicación con DEEP33."
                 }
                 activeBubble?.let {
                     it.tag = message
@@ -1810,10 +1791,8 @@ class MainActivity : Activity() {
                 activeRequestId = null
                 activeIdempotencyKey = null
                 cleanupGeneration(false)
-                return
             }
         }
-        generationHandler.postDelayed(generationMonitor, 150L)
     }
 
     private fun launchGeneration(
