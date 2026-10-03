@@ -39,6 +39,35 @@ def test_explicit_depth_overrides_normal_brevity() -> None:
     ]) == "EXPLICIT_DEPTH"
 
 
+def test_real_dialogue_protocol_requires_web_first_and_logical_continuation() -> None:
+    messages = [{"role": "user", "content": "¿Qué pasó hoy con la tecnología de baterías?"}]
+    prompt = main.dialogue_policy_prompt(messages)
+
+    assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
+    assert "busca primero información pública relevante en Internet" in prompt
+    assert "respuesta debe ser una síntesis breve y original" in prompt
+    assert "Cuando haya una continuación lógica, debes formularla" in prompt
+    assert "Haz como máximo una pregunta por turno" in prompt
+
+
+def test_every_non_empty_user_turn_is_web_first() -> None:
+    assert main.should_force_web([
+        {"role": "user", "content": "Hola, hablemos de energía."}
+    ]) is True
+    assert main.should_force_web([
+        {"role": "user", "content": " "}
+    ]) is False
+
+
+def test_web_search_uses_latest_user_turn_only() -> None:
+    messages = [
+        {"role": "user", "content": "Tema anterior sobre astronomía"},
+        {"role": "assistant", "content": "Respuesta anterior"},
+        {"role": "user", "content": "¿Qué novedades hay sobre baterías?"}
+    ]
+    assert main.latest_user_query(messages) == "¿Qué novedades hay sobre baterías?"
+
+
 def test_policy_requires_real_contextual_questions_and_rejects_filler() -> None:
     prompt = main.dialogue_policy_prompt([
         {"role": "user", "content": "Estoy pensando en cambiar de trabajo."}
