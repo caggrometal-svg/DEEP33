@@ -92,8 +92,18 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     assert "iac33" not in production_e2e.lower()
 
 
-def test_fast_apk_workflow_does_not_bypass_repository_ci_contract() -> None:
-    source = read(".github/workflows/android-fast-apk.yml")
-    assert "gradle :app:assembleDebug --no-daemon" in source
-    assert "DEEP33_PRIMARY_URL" in source
-    assert "DEEP33_SECONDARY_URL" in source
+def test_apk_workflows_require_certified_production_pass() -> None:
+    for path in (
+        ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-debug-apk.yml",
+    ):
+        source = read(path)
+        assert "workflow_dispatch:" in source
+        assert 'push:\n    tags: [production-pass]' in source
+        assert "push:\n    branches: [main]" not in source
+        assert "Require certified production-pass" in source
+        assert "APK_CERTIFICATION_GATE_PASS" in source
+        assert "DEEP33_PRIMARY_URL" in source
+
+    package = read(".github/workflows/android-package.yml")
+    assert '- "production-pass"' in package
