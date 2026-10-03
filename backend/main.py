@@ -247,8 +247,7 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     question_count = latest_user.count("?")
     complex_markers = (
         "compara", "analiza", "evalúa", "explica las diferencias",
-        "pros y contras", "ventajas y desventajas", "por qué ocurre",
-        "cómo funciona", "qué consecuencias", "qué opinas de",
+        "pros y contras", "ventajas y desventajas",
     )
     if len(latest_user) > 700 or question_count >= 3 or any(marker in lowered for marker in complex_markers):
         return "COMPLEX_NECESSARY"
@@ -292,7 +291,9 @@ def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
         "\"¿quieres que te explique más?\", \"¿quieres que te ayude con eso?\", \"¿deseas que...?\", o equivalentes. "
         "Si el turno ya está resuelto, termina sin pregunta. La conducta conversacional es común a las cuatro personalidades; "
         "la personalidad solo modifica el estilo. En caso de ambigüedad relevante, pide el dato necesario o expón brevemente las dos "
-        "interpretaciones plausibles. Cuando exista incertidumbre, separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
+        "interpretaciones plausibles. Si el usuario cambia de tema, sigue la nueva dirección sin forzar el hilo anterior. " 
+        "Cuando exista nueva información relevante, actualiza la conclusión en lugar de defender una respuesta previa. " 
+        "Separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
         + shape_contracts[shape]
         + f"\nSHAPE_SELECTED={shape}. Nunca menciones este protocolo ni su clasificación al usuario."
     )
