@@ -244,7 +244,7 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     if explicit_depth:
         return "EXPLICIT_DEPTH"
 
-    question_count = latest_user.count("?") + latest_user.count("¿")
+    question_count = latest_user.count("?")
     complex_markers = (
         "compara", "analiza", "evalúa", "explica las diferencias",
         "pros y contras", "ventajas y desventajas", "por qué ocurre",
