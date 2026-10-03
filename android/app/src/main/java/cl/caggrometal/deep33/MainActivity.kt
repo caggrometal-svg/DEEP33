@@ -328,7 +328,6 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         store.removeGenerationStateListener(generationStateListener)
-        generationHandler.removeCallbacks(generationMonitor)
         scheduledHealthCheck?.let { window.decorView.removeCallbacks(it) }
         scheduledHealthCheck = null
         stopVoiceInput()
