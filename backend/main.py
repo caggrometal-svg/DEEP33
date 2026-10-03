@@ -1291,6 +1291,19 @@ async def run_web_tool_loop(
     )
     return data,list(sources.values())
 
+def sanitize_stream_delta(text: str) -> str:
+    """Cheap per-chunk sanitizer; full normalization remains at stream completion."""
+    value = str(text or "").replace("\\n", "\n").replace("\\r", "\r")
+    value = re.sub(r"\[([^\]]+)\]\(https?://[^)\s]+\)", "", value)
+    value = re.sub(r"(?i)https?://[^\s)\]>]+", "", value)
+    value = re.sub(
+        r"(?i)(?:(?:cite|url)[^]*|\bturn\d+(?:search|news|reddit|fetch|image|product|business)\d+\b)",
+        "",
+        value,
+    )
+    return value
+
+
 def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str:
     """Keep web retrieval internal; final assistant prose must not present citations or source material."""
     value = str(text or "").strip()
@@ -2335,12 +2348,13 @@ async def stream_gateway(
     completion_state: dict[str, str] | None = None,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
+    assistant_parts: list[str] = []
+    saw_done = False
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     performance.mark(request_id, "T6_INFERENCE_STARTED")
     stream_started = time.perf_counter()
     first_output_at: float | None = None
     frame_buffer = bytearray()
-    streamed_safe_text = ""
 
     try:
         async for chunk in gateway.stream(
@@ -2355,6 +2369,7 @@ async def stream_gateway(
                 frame, _, remainder = frame_buffer.partition(b"\n\n")
                 frame_buffer = bytearray(remainder)
                 if b"data: [DONE]" in frame:
+                    saw_done = True
                     continue
                 if frame.strip():
                     outbound_frame = bytes(frame)
@@ -2365,11 +2380,10 @@ async def stream_gateway(
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
                                 if isinstance(content_value, str):
-                                    candidate_safe = sanitize_assistant_text(
-                                        streamed_safe_text + content_value
-                                    )
-                                    delta["content"] = candidate_safe[len(streamed_safe_text):]
-                                    streamed_safe_text = candidate_safe
+                                    assistant_parts.append(content_value)
+                                    safe_delta = sanitize_stream_delta(content_value)
+                                    if safe_delta != content_value:
+                                        delta["content"] = safe_delta
                             outbound_frame = (
                                 b"data: "
                                 + json.dumps(
@@ -2427,7 +2441,11 @@ async def stream_gateway(
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
-    assistant_raw, saw_done = await _parse_stream_payload(bytes(collected))
+    if saw_done and assistant_parts:
+        assistant_raw = "".join(assistant_parts)
+    else:
+        assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
+        saw_done = saw_done or parsed_done
     assistant_text = sanitize_assistant_text(assistant_raw)
     if not saw_done or not assistant_text:
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
