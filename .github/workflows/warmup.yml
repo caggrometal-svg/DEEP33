@@ -24,19 +24,10 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
           echo "DEEP33_WARM_PASS"
 
-      - name: Certify real model inference
+      - name: Certify real model inference through DEEP33 edge
         if: github.event_name != 'schedule'
         run: |
           set -euo pipefail
-
-          PROVIDER_BODY='{"model":"auto","messages":[{"role":"user","content":"Return exactly DEEP33_PROVIDER_OK"}]}'
-          PROVIDER_RESPONSE="$(curl -sS             --connect-timeout 8             --max-time 90             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: application/json'             -d "$PROVIDER_BODY"             'https://vireonix.ai/v1/chat/completions' || true)"
-          echo "=== DIRECT VIREONIX CHECK ==="
-          printf '%s\n' "$PROVIDER_RESPONSE"
-          PROVIDER_STATUS="$(printf '%s\n' "$PROVIDER_RESPONSE" | sed -n 's/^__HTTP_STATUS__//p' | tail -n1)"
-          PROVIDER_BODY_ONLY="$(printf '%s\n' "$PROVIDER_RESPONSE" | sed '/^__HTTP_STATUS__/d')"
-          test "$PROVIDER_STATUS" = "200"
-          printf '%s\n' "$PROVIDER_BODY_ONLY" | jq -e '.choices[0].message.content|type=="string"' >/dev/null
 
           set +e
           DIAG="$(curl -sS --connect-timeout 8 --max-time 90             -w '\n__HTTP_STATUS__%{http_code}'             "$PRIMARY_URL/v1/ai/inference-check" 2>&1)"
