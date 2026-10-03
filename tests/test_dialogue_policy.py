@@ -73,13 +73,13 @@ def test_policy_requires_real_contextual_questions_and_rejects_filler() -> None:
         {"role": "user", "content": "Estoy pensando en cambiar de trabajo."}
     ])
 
-    assert "interlocutor activo" in prompt
+    assert "diálogo real" in prompt
     assert "preguntas deben surgir del contenido real" in prompt
     assert "como máximo una pregunta" in prompt
     assert "No conviertas cada intervención en interrogatorio" in prompt
     assert "¿quieres que te explique más?" in prompt
     assert "¿quieres que te ayude con eso?" in prompt
-    assert "No uses preguntas de cierre" not in prompt
+    assert "nunca inventes una pregunta" in prompt
 
 
 def test_policy_for_simple_question_prohibits_unneeded_follow_up() -> None:
@@ -88,8 +88,8 @@ def test_policy_for_simple_question_prohibits_unneeded_follow_up() -> None:
     ])
 
     assert "FORMA=SIMPLE_DIRECT" in prompt
-    assert "No añadas contexto irrelevante" in prompt
-    assert "si la respuesta ya resuelve el turno" in prompt
+    assert "respuesta abreviada" in prompt
+    assert "una sola pregunta breve y específica" in prompt
 
 
 def test_policy_for_conversation_keeps_one_contextual_question_limit() -> None:
@@ -99,8 +99,8 @@ def test_policy_for_conversation_keeps_one_contextual_question_limit() -> None:
 
     assert "FORMA=CONVERSATIONAL" in prompt
     assert "Reacciona primero a lo que acaba de decir el usuario" in prompt
-    assert "una sola pregunta" in prompt
-    assert "no debes terminar cada turno con una pregunta" in prompt
+    assert "una sola pregunta contextual" in prompt
+    assert "real dialogue" not in prompt
 
 
 def test_policy_for_complex_topic_expands_only_as_needed() -> None:
@@ -110,7 +110,8 @@ def test_policy_for_complex_topic_expands_only_as_needed() -> None:
 
     assert "FORMA=COMPLEX_NECESSARY" in prompt
     assert "Amplía solo lo necesario" in prompt
-    assert "evita descargar información" in prompt
+    assert "Resume primero la conclusión" in prompt
+    assert "pregunta lógica" in prompt
 
 
 def test_dialogue_policy_is_common_to_all_personalities() -> None:
@@ -119,8 +120,8 @@ def test_dialogue_policy_is_common_to_all_personalities() -> None:
 
     for personality in main.PERSONALITIES:
         prompt = main.personality_prompt(personality) + "\n\n" + policy
-        assert "interlocutor activo" in prompt
-        assert "la personalidad solo modifica el estilo" in prompt
+        assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
+        assert "la personalidad modifica el estilo" in prompt
 
 
 def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypatch) -> None:
