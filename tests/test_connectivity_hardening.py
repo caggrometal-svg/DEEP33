@@ -58,6 +58,11 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert 'const UPSTREAM = /^https:\/\/[^\\s/]+(?:\/.*)?$/i.test(RAW_UPSTREAM)' in source
         assert 'redirect: "error"' in source
         assert 'AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS)' in source
+        assert 'function isSecureHttpsUrl' in source
+        assert 'isSecureHttpsUrl(EDGE_AI_URL)' in source
+        assert '!isSecureHttpsUrl(url)' in source
+        assert '!isSecureHttpsUrl(MEMORY_FUNCTION_URL)' in source
+        assert '!isSecureHttpsUrl(HYBRID_FUNCTION_URL)' in source
         assert 'render\\.com|railway\\.app|iac33|guqevsjbjyapqjjtutza' in source
 
 
