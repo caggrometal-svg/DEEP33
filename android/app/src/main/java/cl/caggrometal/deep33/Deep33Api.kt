@@ -444,6 +444,10 @@ object Deep33Api {
 
                     val code = connection.responseCode
                     if (code !in 200..299) throw mapError(code)
+                    val responseContentType = connection.contentType.orEmpty()
+                    if (!responseContentType.contains("json", ignoreCase = true)) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
+                    }
 
                     val payload = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                     val json = try {
