@@ -303,6 +303,15 @@ class SessionStore(
         error: String = "",
         durable: Boolean = false
     ) {
+        val state = GenerationState(
+            status = status,
+            requestId = requestId,
+            sessionId = sessionId,
+            personality = personality,
+            partialOutput = partialOutput,
+            finalText = finalText,
+            error = error
+        )
         synchronized(STORE_LOCK) {
             val json = JSONObject()
                 .put("status", status.name)
@@ -320,6 +329,17 @@ class SessionStore(
                 edit.apply()
             }
         }
+        generationStateListeners.forEach { listener ->
+            runCatching { listener(state) }
+        }
+    }
+
+    fun addGenerationStateListener(listener: (GenerationState) -> Unit) {
+        generationStateListeners.add(listener)
+    }
+
+    fun removeGenerationStateListener(listener: (GenerationState) -> Unit) {
+        generationStateListeners.remove(listener)
     }
 
     fun loadGenerationState(): GenerationState? {
@@ -451,5 +471,6 @@ class SessionStore(
         private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
         private const val MAX_PENDING_MEMORY_SYNCS = 10
+        private val generationStateListeners = java.util.concurrent.CopyOnWriteArrayList<(GenerationState) -> Unit>()
     }
 }
