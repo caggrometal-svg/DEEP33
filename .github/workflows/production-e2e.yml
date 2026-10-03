@@ -12,12 +12,32 @@ permissions:
 
 env:
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  TERTIARY_URL: https://deep33-backend.onrender.com
 
 jobs:
   production-e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify every production transport node
+        run: |
+          set -euo pipefail
+          entries=("PRIMARY|$PRIMARY_URL" "SECONDARY|$SECONDARY_URL" "TERTIARY|$TERTIARY_URL")
+          for entry in "${entries[@]}"; do
+            name="${entry%%|*}"
+            url="${entry#*|}"
+            health="$(curl -fsS --connect-timeout 8 --max-time 30 "$url/health")"
+            ready="$(curl -fsS --connect-timeout 8 --max-time 45 "$url/ready")"
+            printf '%s' "$health" | jq -e '.status=="PASS"' >/dev/null
+            printf '%s' "$ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            echo "${name}_PRODUCTION_NODE_PASS"
+          done
+          test "$PRIMARY_URL" != "$SECONDARY_URL"
+          test "$PRIMARY_URL" != "$TERTIARY_URL"
+          test "$SECONDARY_URL" != "$TERTIARY_URL"
+          echo "DEEP33_PRODUCTION_REDUNDANCY_PASS"
+
       - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
