@@ -22,9 +22,9 @@ class GenerationPerformancePolicyTest {
 
         val selected = GenerationPerformancePolicy.selectModelContext(input)
 
-        assertTrue(selected.size < 24)
+        assertEquals(GenerationPerformancePolicy.BALANCED_MAX_MESSAGES, selected.size)
         assertEquals("x".repeat(1_000) + "-30", selected.last().content)
-        assertTrue(selected.sumOf { it.content.length } <= GenerationPerformancePolicy.FAST_MAX_CHARS)
+        assertTrue(selected.sumOf { it.content.length } <= GenerationPerformancePolicy.BALANCED_MAX_CHARS)
     }
 
     @Test
