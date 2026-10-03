@@ -283,6 +283,19 @@ def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     return 16, 12000, "BALANCED"
 
 
+def model_for_profile(requested_model: str | None, profile: str) -> str:
+    explicit = str(requested_model or "").strip()
+    if explicit:
+        return explicit
+    normalized = str(profile or "BALANCED").strip().upper()
+    configured = {
+        "FAST": os.getenv("AI_GATEWAY_MODEL_FAST", "").strip(),
+        "BALANCED": os.getenv("AI_GATEWAY_MODEL_BALANCED", "").strip(),
+        "DEEP": os.getenv("AI_GATEWAY_MODEL_DEEP", "").strip(),
+    }
+    return configured.get(normalized, "") or AI_GATEWAY_MODEL
+
+
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     """Classify the latest user turn for the shared dialogue contract; never alters transport."""
     latest_user = next(
@@ -989,8 +1002,10 @@ async def _enforce_web_originality(
     return rewritten
 
 
-async def prepare_web_evidence(messages, request_id: str | None = None):
+async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
+    if deep is None:
+        deep = complexity_profile(messages)[2] == "DEEP"
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     try:
         search_result = await execute_web_tool("web_search", {"query": query})
@@ -1009,7 +1024,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None):
 
     candidates = list(sources.values())[:2]
     fetched_pages = []
-    if candidates:
+    snippet_lengths = [
+        len(str(item.get("snippet") or "").strip())
+        for item in compact_search_results
+    ]
+    snippets_sufficient = (
+        len(compact_search_results) >= 2
+        and sum(1 for length in snippet_lengths if length >= 120) >= 2
+    )
+    if candidates and (deep or not snippets_sufficient):
         results = await asyncio.gather(
             *(execute_web_tool("web_fetch", {"url": source["url"]}) for source in candidates),
             return_exceptions=True,
@@ -2393,14 +2416,18 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         memory_profile_id,
         request_id=request_id,
     )
-    payload={"messages":messages,"model":request.model or AI_GATEWAY_MODEL}
+    profile = complexity_profile(messages)[2]
+    payload={"messages":messages,"model":model_for_profile(request.model, profile)}
     if request.temperature is not None:
         payload["temperature"]=request.temperature
 
     try:
         if DEEP33_WEB_TOOLS_ENABLED and should_force_web(messages):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(messages)
+            working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
+                messages,
+                request_id=request_id,
+            )
             working.append(_web_personality_lock(personality))
             payload = {"messages": working, "model": payload["model"]}
             if request.temperature is not None:

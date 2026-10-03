@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -145,6 +146,43 @@ class AIGateway:
         self._circuits = {provider.name: ProviderCircuit() for provider in self.config.providers}
         self._http_client: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
+        self._latency_samples: dict[str, deque[float]] = {
+            provider.name: deque(maxlen=20) for provider in self.config.providers
+        }
+        self._http_loop: asyncio.AbstractEventLoop | None = None
+
+    def _record_latency(self, provider: GatewayProvider, elapsed_ms: float) -> None:
+        self._latency_samples.setdefault(provider.name, deque(maxlen=20)).append(elapsed_ms)
+
+    def _ordered_providers(self) -> list[GatewayProvider]:
+        providers = list(self.config.providers)
+        if any(len(self._latency_samples.get(provider.name, ())) < 3 for provider in providers):
+            return providers
+        return sorted(
+            providers,
+            key=lambda provider: (
+                sum(self._latency_samples.get(provider.name, ()))
+                / max(1, len(self._latency_samples.get(provider.name, ()))),
+                self.config.providers.index(provider),
+            ),
+        )
+
+    def latency_snapshot(self) -> dict[str, dict[str, float | int | None]]:
+        output = {}
+        for provider in self.config.providers:
+            samples = list(self._latency_samples.get(provider.name, ()))
+            if not samples:
+                output[provider.name] = {"samples": 0, "p50_ms": None, "p95_ms": None}
+                continue
+            ordered = sorted(samples)
+            p50 = ordered[min(len(ordered) - 1, int(round(0.50 * (len(ordered) - 1))))]
+            p95 = ordered[min(len(ordered) - 1, int(round(0.95 * (len(ordered) - 1))))]
+            output[provider.name] = {
+                "samples": len(ordered),
+                "p50_ms": round(p50, 2),
+                "p95_ms": round(p95, 2),
+            }
+        return output
 
     def _client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
@@ -280,7 +318,7 @@ class AIGateway:
         saw_http_error = False
         saw_invalid_response = False
 
-        for provider in self.config.providers:
+        for provider in self._ordered_providers():
             circuit = self._circuit(provider)
             now = time.monotonic()
             if not circuit.available(now):
@@ -354,6 +392,8 @@ class AIGateway:
                         )
                         break
 
+                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    self._record_latency(provider, elapsed_ms)
                     result = dict(data)
                     result["_deep33_gateway"] = {
                         "provider": provider.name,
@@ -497,11 +537,16 @@ class AIGateway:
                                 if 500 <= status <= 599:
                                     raise GatewayHTTPError
                             else:
+                                request_completed_at = time.perf_counter()
                                 async for chunk in response.aiter_bytes():
                                     if chunk:
                                         started_output = True
                                         yield chunk
                                 provider_succeeded = True
+                                self._record_latency(
+                                    provider,
+                                    (time.perf_counter() - started_output if started_output else time.perf_counter() - request_completed_at) * 1000,
+                                )
                                 circuit.success()
                                 return
 

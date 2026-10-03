@@ -83,3 +83,39 @@ def test_android_emits_all_visible_latency_markers():
     assert "PERF T0_INPUT" in activity
     assert "PERF T10_FIRST_VISIBLE" in activity
     assert "PERF T11_FIRST_SPOKEN" in activity
+
+
+def test_model_router_respects_complexity_profiles():
+    assert main.model_for_profile(None, "FAST") == (main.os.getenv("AI_GATEWAY_MODEL_FAST", "") or main.AI_GATEWAY_MODEL)
+    assert main.model_for_profile(None, "BALANCED") == (main.os.getenv("AI_GATEWAY_MODEL_BALANCED", "") or main.AI_GATEWAY_MODEL)
+    assert main.model_for_profile("explicit-model", "DEEP") == "explicit-model"
+
+
+def test_web_fetch_is_optional_when_snippets_are_sufficient(monkeypatch):
+    async def fake_search(query, **kwargs):
+        return {
+            "ok": True,
+            "results": [
+                {"title": "A", "url": "https://a.example/", "snippet": "A" * 140},
+                {"title": "B", "url": "https://b.example/", "snippet": "B" * 140},
+            ],
+        }
+
+    async def forbidden_fetch(*_args, **_kwargs):
+        raise AssertionError("fetch should not run when snippets are sufficient")
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", forbidden_fetch)
+
+    import asyncio
+    working, sources, evidence, results = asyncio.run(
+        main.prepare_web_evidence(
+            [{"role": "user", "content": "¿Cuál es la situación actual?"}],
+            request_id="fetch-optional",
+            deep=False,
+        )
+    )
+    assert len(sources) == 2
+    assert len(results) == 2
+    assert evidence
+    assert any("Server-side web evidence" in str(item.get("content")) for item in working)
