@@ -25,6 +25,7 @@ from backend.gateway import (
     GatewayInvalidResponseError,
     GatewayTimeoutError,
 )
+from backend import performance
 from backend.memory import (
     MemoryClient,
     MemoryUnavailableError,
@@ -117,6 +118,7 @@ async def request_metrics(request: Request, call_next):
     incoming = request.headers.get("X-Request-ID", "").strip()
     request_id = incoming[:128] if incoming else str(uuid.uuid4())
     request.state.request_id = request_id
+    performance.mark(request_id, "T2_BACKEND_RECEIVED")
     status = 500
     try:
         response = await call_next(request)
@@ -150,7 +152,12 @@ async def metrics() -> dict:
             "p95_ms": _percentile(snapshot, 95),
             "p99_ms": _percentile(snapshot, 99),
         }
-    return {"counters": dict(_metric_counts), "endpoints": endpoints, "timestamp": utc_now()}
+    return {
+        "counters": dict(_metric_counts),
+        "endpoints": endpoints,
+        "performance": performance.snapshot(),
+        "timestamp": utc_now(),
+    }
 
 PERSONALITIES: dict[str, dict[str, str]] = {
     "AGRESIVO": {
@@ -972,8 +979,9 @@ async def _enforce_web_originality(
     return rewritten
 
 
-async def prepare_web_evidence(messages):
+async def prepare_web_evidence(messages, request_id: str | None = None):
     query = latest_user_query(messages)
+    performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     try:
         search_result = await execute_web_tool("web_search", {"query": query})
     except Exception:
@@ -1037,6 +1045,7 @@ async def prepare_web_evidence(messages):
         "search_results": compact_search_results,
         "fetched_pages": compact_fetched_pages,
     }
+    performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
     working = _append_web_system_context(messages)
     working.append({
         "role": "system",
@@ -1061,7 +1070,7 @@ async def run_web_tool_loop(messages,*,model,request_id,idempotency_key,force_we
     # search/fetch server-side first, then send the retrieved evidence to the
     # model as untrusted context using a normal chat request.
     if force_web:
-        working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(messages)
+        working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(messages, request_id=request_id)
         sources.update({str(item.get("url")): item for item in prepared_sources if item.get("url")})
         evidence_fragments.extend(prepared_evidence)
         try:
@@ -1739,7 +1748,12 @@ def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) ->
     }
 
 
-async def prepare_messages(request: ChatRequest, session_id: str, memory_profile_id: str | None = None) -> tuple[list[dict[str, str]], str]:
+async def prepare_messages(
+    request: ChatRequest,
+    session_id: str,
+    memory_profile_id: str | None = None,
+    request_id: str | None = None,
+) -> tuple[list[dict[str, str]], str]:
     requested = [
         message.model_dump()
         for message in request.messages
@@ -1747,6 +1761,7 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
     ]
     selected = normalize_personality(request.personality)
     max_messages, max_chars, profile = complexity_profile(requested)
+    perf_request_id = str(request_id or "")
     personality_control = {
         "role": "system",
         "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested)
@@ -1756,7 +1771,9 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
-        return [personality_control, *selected_messages], selected
+        result = [personality_control, *selected_messages]
+        performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
+        return result, selected
 
     try:
         context = await memory.context(session_id, memory_profile_id=memory_profile_id)
@@ -1776,18 +1793,24 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
             # Keep memory as a separate system message. The current personality
             # contract is the final system instruction before conversation history,
             # so stale remembered personality text cannot dilute the active mode.
-            return [
+            result = [
                 {"role": "system", "content": system_context},
                 personality_control,
                 *merged,
-            ], selected
-        return [personality_control, *merged], selected
+            ]
+            performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
+            return result, selected
+        result = [personality_control, *merged]
+        performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
+        return result, selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
-        return [personality_control, *selected_messages], selected
+        result = [personality_control, *selected_messages]
+        performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
+        return result, selected
 
 
 async def persist_messages(
@@ -1861,7 +1884,12 @@ async def generate(
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
     try:
-        messages, personality = await prepare_messages(request, session_id, memory_profile_id)
+        messages, personality = await prepare_messages(
+            request,
+            session_id,
+            memory_profile_id,
+            request_id=request_id,
+        )
         payload = {
             "messages": messages,
             "model": request.model or AI_GATEWAY_MODEL,
@@ -1871,6 +1899,7 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+        performance.mark(request_id, "T6_INFERENCE_STARTED")
         if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and should_force_web(messages):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
             data, sources = await run_web_tool_loop(
@@ -1890,6 +1919,8 @@ async def generate(
                 deadline=deadline,
             )
             sources = []
+        performance.mark(request_id, "T7_FIRST_TOKEN")
+        performance.mark(request_id, "T8_STREAM_FINISHED")
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         result = normalized_generation(data, personality)
         result["text"] = sanitize_assistant_text(result["text"], sources)
@@ -1901,6 +1932,7 @@ async def generate(
             personality=personality,
             memory_profile_id=memory_profile_id,
         )
+        performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
 
         output = {
             "request_id": request_id,
@@ -2154,6 +2186,7 @@ async def _finalize_stream(
         + [{"role": "assistant", "content": assistant_text}],
         personality=personality,
     )
+    performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
     if memory.enabled:
         try:
@@ -2185,6 +2218,7 @@ async def stream_gateway(
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+    performance.mark(request_id, "T6_INFERENCE_STARTED")
     stream_started = time.perf_counter()
     first_output_at: float | None = None
     frame_buffer = bytearray()
@@ -2204,8 +2238,9 @@ async def stream_gateway(
                 if b"data: [DONE]" in frame:
                     continue
                 if frame.strip():
-                    if first_output_at is None and b"data:" in frame:
+                    if first_output_at is None and b"data:" in frame and b'"content"' in frame:
                         first_output_at = time.perf_counter()
+                        performance.mark(request_id, "T7_FIRST_TOKEN")
                         ttft_ms = (first_output_at - stream_started) * 1000
                         _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
                         logger.info(
@@ -2216,6 +2251,7 @@ async def stream_gateway(
                     yield frame + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
+        performance.mark(request_id, "T8_STREAM_FINISHED")
     except GatewayTimeoutError:
         yield _sse_error("AI_GATEWAY_TIMEOUT")
         return
@@ -2302,7 +2338,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     if not lease_token:
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
-    messages, personality = await prepare_messages(request, session_id, memory_profile_id)
+    messages, personality = await prepare_messages(
+        request,
+        session_id,
+        memory_profile_id,
+        request_id=request_id,
+    )
     payload={"messages":messages,"model":request.model or AI_GATEWAY_MODEL}
     if request.temperature is not None:
         payload["temperature"]=request.temperature

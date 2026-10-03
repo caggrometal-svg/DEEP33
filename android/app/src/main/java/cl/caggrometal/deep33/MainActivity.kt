@@ -1561,6 +1561,7 @@ class MainActivity : Activity() {
 
     private fun sendMessage(textOverride: String? = null) {
         val text = (textOverride ?: input.text.toString()).trim()
+        Log.i("DEEP33_PERF", "PERF T0_INPUT text_length=0")
         if (text.isEmpty() || generationActive) return
 
         // Never overwrite a durable request that is waiting for recovery. The pending
@@ -1736,6 +1737,12 @@ class MainActivity : Activity() {
         when (state.status) {
             GenerationStatus.RUNNING -> {
                 val output = state.partialOutput.trim()
+                if (output.isNotBlank() && lastRenderedGenerationOutput.isBlank()) {
+                    Log.i(
+                        "DEEP33_PERF",
+                        "PERF T10_FIRST_VISIBLE request_id=" + state.requestId
+                    )
+                }
                 if (output.isNotBlank() && output != lastRenderedGenerationOutput) {
                     activeBubble?.let {
                         it.tag = output
@@ -2052,6 +2059,12 @@ class MainActivity : Activity() {
         }
 
         val utteranceId = "deep33-stream-" + System.currentTimeMillis() + "-" + (++ttsTurnGeneration)
+        if (streamingSpeechCursor == 0) {
+            Log.i(
+                "DEEP33_PERF",
+                "PERF T11_FIRST_SPOKEN request_id=" + requestId
+            )
+        }
         streamingSpeechCursor += consumed
         activeSpeechUtteranceId = utteranceId
         activeSpeechText = phrase

@@ -297,6 +297,12 @@ class Deep33GenerationService : Service() {
             }
 
             try {
+                if (attempt == 0) {
+                    android.util.Log.i(
+                        "DEEP33_PERF",
+                        "PERF T1_REQUEST_SENT request_id=$requestId"
+                    )
+                }
                 val result = Deep33Api.stream(
                     payload,
                     pending.sessionId,

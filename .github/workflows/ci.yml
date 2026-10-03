@@ -87,6 +87,11 @@ jobs:
             exit 1
           fi
           echo "TRANSPORT_ENDPOINT_SCOPE_PASS"
+      - name: Phase 11 performance trace certification
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_performance_contract.py -q
+          echo "DEEP33_PHASE_11_TRACE_PASS"
       - name: Static performance invariants
         run: |
           set -euo pipefail

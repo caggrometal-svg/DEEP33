@@ -150,6 +150,11 @@ class AIGateway:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.config.timeout_seconds),
                 follow_redirects=True,
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30.0,
+                ),
             )
         return self._http_client
 
