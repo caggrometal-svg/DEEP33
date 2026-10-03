@@ -1503,7 +1503,7 @@ async def network_probe() -> dict:
             import httpx
 
             async with httpx.AsyncClient(
-                timeout=NETWORK_TIMEOUT, follow_redirects=True
+                timeout=NETWORK_TIMEOUT, follow_redirects=False
             ) as client:
                 response = await client.get(NETWORK_CHECK_URL)
                 https_ok = 200 <= response.status_code < 400
