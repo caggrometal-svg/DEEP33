@@ -24,6 +24,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Install certification test runtime
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.13"
+
       - name: Require certified production-pass
         run: |
           set -euo pipefail
@@ -34,6 +39,7 @@ jobs:
             echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$GITHUB_SHA"
             exit 1
           }
+          python -m pip install --disable-pip-version-check --no-input pytest==8.4.1
           python -m pytest tests/test_connectivity_hardening.py -q
           echo "APK_CERTIFICATION_GATE_PASS"
 
