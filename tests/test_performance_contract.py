@@ -163,15 +163,14 @@ def test_gateway_latency_snapshot_reports_learned_ttft_and_throughput():
         GatewayProvider("p2", "https://p2.example", "https://p2.example/health", "", "m2"),
     )
     gateway_instance = AIGateway(GatewayConfig(providers=providers, timeout_seconds=5.0))
-    gateway_instance._record_latency(providers[0], 100.0)
-    gateway_instance._record_latency(providers[0], 110.0)
-    gateway_instance._record_latency(providers[0], 90.0)
-    gateway_instance._record_ttft(providers[0], 20.0)
-    gateway_instance._record_ttft(providers[0], 25.0)
-    gateway_instance._record_ttft(providers[0], 30.0)
-    gateway_instance._record_throughput(providers[0], 20.0)
-    gateway_instance._record_throughput(providers[0], 22.0)
-    gateway_instance._record_throughput(providers[0], 24.0)
+    for value in (100.0, 110.0, 90.0):
+        gateway_instance._record_latency(providers[0], value)
+    for value in (300.0, 310.0, 290.0):
+        gateway_instance._record_latency(providers[1], value)
+    for value in (20.0, 25.0, 30.0):
+        gateway_instance._record_ttft(providers[0], value)
+    for value in (20.0, 22.0, 24.0):
+        gateway_instance._record_throughput(providers[0], value)
 
     snapshot = gateway_instance.latency_snapshot()
     assert snapshot["p1"]["p50_ms"] is not None
