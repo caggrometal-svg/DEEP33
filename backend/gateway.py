@@ -65,6 +65,13 @@ class ProviderCircuit:
             self.opened_until = time.monotonic() + cooldown_seconds
 
 
+def _provider_url_is_secure(value: str) -> bool:
+    try:
+        return value.strip().lower().startswith("https://") and bool(value.strip()[8:].split("/", 1)[0])
+    except Exception:
+        return False
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
@@ -118,8 +125,8 @@ class GatewayConfig:
         secure_providers = tuple(
             provider
             for provider in providers
-            if cls._provider_url_is_secure(provider.url)
-            and cls._provider_url_is_secure(provider.health_url)
+            if _provider_url_is_secure(provider.url)
+            and _provider_url_is_secure(provider.health_url)
         )
         return cls(
             providers=secure_providers,
