@@ -2383,13 +2383,6 @@ async def stream_gateway(
                                         )
                                         delta["content"] = candidate_safe[len(streamed_safe_text):]
                                         streamed_safe_text = candidate_safe
-                                    else:
-                                        stream_sanitize_active = True
-                                        candidate_safe = sanitize_assistant_text(
-                                            streamed_safe_text + content_value
-                                        )
-                                        delta["content"] = candidate_safe[len(streamed_safe_text):]
-                                        streamed_safe_text = candidate_safe
                             outbound_frame = (
                                 b"data: "
                                 + json.dumps(
