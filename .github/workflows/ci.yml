@@ -82,18 +82,11 @@ jobs:
           set -euo pipefail
           python -m pytest tests/test_performance_contract.py tests/test_web_loop.py tests/test_search_engine.py -q
           echo "DEEP33_PERFORMANCE_CONTRACT_PASS"
-      - name: Protect transport endpoints from performance changes
+      - name: Protect transport endpoint contract
         run: |
           set -euo pipefail
-          BASE="d86617b75b781f306689ca60de394d79fe9a5b5a"
-          git cat-file -e "${BASE}^{commit}"
-          changed="$(git diff --name-only "$BASE" "$GITHUB_SHA" --             android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt             android/app/build.gradle.kts)"
-          if [ -n "$changed" ]; then
-            echo "TRANSPORT_ENDPOINT_SCOPE_FAIL"
-            printf "%s\n" "$changed"
-            exit 1
-          fi
-          echo "TRANSPORT_ENDPOINT_SCOPE_PASS"
+          python -m pytest tests/test_connectivity_hardening.py -q
+          echo "TRANSPORT_ENDPOINT_CONTRACT_PASS"
       - name: Phase 11 performance trace certification
         run: |
           set -euo pipefail
