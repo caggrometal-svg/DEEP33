@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import ipaddress
 import os
 import socket
+import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
@@ -19,6 +22,12 @@ def _max_response_bytes() -> int:
 MAX_TEXT_CHARS=50_000
 DEFAULT_TIMEOUT_SECONDS=8.0
 DEFAULT_USER_AGENT="DEEP33-WebFetcher/1.0"
+FETCH_CACHE_TTL_SECONDS = max(
+    30.0, min(600.0, float(os.getenv("WEB_FETCH_CACHE_TTL_SECONDS", "300")))
+)
+_FETCH_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 BLOCKED_HOSTNAMES={"localhost","localhost.localdomain","ip6-localhost","ip6-loopback","metadata","metadata.google.internal","instance-data","instance-data.ec2.internal","169.254.169.254","100.100.100.200"}
 REDIRECT_STATUSES={301,302,303,307,308}
 ALLOWED_CONTENT_TYPES={"text/html","application/xhtml+xml","text/plain"}
@@ -118,6 +127,12 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
     if not 1<=max_redirects<=MAX_REDIRECTS: raise ValueError("max_redirects must be between 1 and 3")
     timeout_seconds=max(1.0,min(8.0,timeout_seconds)); max_text_chars=max(1000,min(MAX_TEXT_CHARS,max_text_chars))
     original_url=url.strip(); current_url=validate_public_url(original_url); redirects=[]
+    cache_key=hashlib.sha256(
+        f"{current_url}\x1f{max_redirects}\x1f{max_text_chars}\x1f{user_agent}".encode("utf-8")
+    ).hexdigest()
+    cached=_FETCH_CACHE.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return copy.deepcopy(cached[1])
     timeout=httpx.Timeout(connect=min(timeout_seconds,5.0),read=timeout_seconds,write=timeout_seconds,pool=timeout_seconds)
     async with httpx.AsyncClient(timeout=timeout,follow_redirects=False,headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}) as client:
         for hop in range(max_redirects+1):
@@ -141,7 +156,9 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
                     content=await _read_limited(response,_max_response_bytes())
                 title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
                 if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
-                return {"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects)}
+                result={"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects)}
+                _FETCH_CACHE[cache_key]=(time.monotonic()+FETCH_CACHE_TTL_SECONDS,copy.deepcopy(result))
+                return result
             except httpx.TimeoutException as exc: raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
             except httpx.HTTPError as exc: raise WebFetchError("WEB_FETCH_NETWORK_ERROR") from exc
     raise WebFetchError("WEB_FETCH_REDIRECT_LIMIT")
