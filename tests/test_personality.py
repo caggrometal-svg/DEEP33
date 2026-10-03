@@ -162,7 +162,7 @@ def test_personality_contract_keeps_fact_hypothesis_boundary() -> None:
 
     for name in main.PERSONALITIES:
         prompt = main.personality_prompt(name)
-        assert "Separate facts, inferences, hypotheses, and unknowns" in prompt
+        assert "Separate facts, inferences, hypotheses, doubts, and unknowns" in prompt
         assert "Do not manufacture confidence" in prompt
 
 
