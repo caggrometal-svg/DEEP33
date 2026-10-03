@@ -157,5 +157,32 @@ def test_standard_search_falls_through_on_weak_primary_results(monkeypatch):
             fallback_ddg=True,
         )
     )
-    assert result["providers"] == ["bing", "duckduckgo"]
+    assert set(result["providers"]) == {"bing", "duckduckgo"}
     assert len(result["results"]) == 4
+
+
+def test_standard_search_parallel_provider_short_circuits(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_PROVIDER_PARALLEL", "true")
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        return [{"title": "Enough", "url": "https://bing.example/1", "snippet": query}]
+
+    async def fail_ddg(query, timeout_seconds, max_results):
+        raise AssertionError("DDG should be cancelled once sufficient results arrive")
+
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", fail_ddg)
+
+    # The search module defaults to parallel provider acquisition; a sufficient
+    # primary result must not force a sequential fallback request.
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "DEEP33",
+            provider="bing",
+            api_key="",
+            timeout_seconds=8,
+            fallback_ddg=True,
+        )
+    )
+    assert result["ok"] is True
