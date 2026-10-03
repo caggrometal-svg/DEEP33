@@ -63,6 +63,42 @@ jobs:
       - name: Android lint and build
         run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
+  performance_gate:
+    needs: [backend_unit, android_validation]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Performance architecture contract
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_performance_contract.py tests/test_web_loop.py tests/test_search_engine.py -q
+          echo "DEEP33_PERFORMANCE_CONTRACT_PASS"
+      - name: Protect transport endpoints from performance changes
+        run: |
+          set -euo pipefail
+          BASE="d86617b75b781f306689ca60de394d79fe9a5b5a"
+          git cat-file -e "${BASE}^{commit}"
+          changed="$(git diff --name-only "$BASE" "$GITHUB_SHA" --             android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt             android/app/build.gradle.kts)"
+          if [ -n "$changed" ]; then
+            echo "TRANSPORT_ENDPOINT_SCOPE_FAIL"
+            printf "%s\n" "$changed"
+            exit 1
+          fi
+          echo "TRANSPORT_ENDPOINT_SCOPE_PASS"
+      - name: Static performance invariants
+        run: |
+          set -euo pipefail
+          grep -q 'body = stream_gateway(' backend/main.py
+          ! grep -q '_sse_text_chunks(result\["text"\])' backend/main.py
+          grep -q 'PARALLEL_PROVIDERS' backend/search/engine.py
+          grep -q 'SEARCH_CACHE_TTL_SECONDS' tools/web_search.py
+          grep -q 'generationStateListeners' android/app/src/main/java/cl/caggrometal/deep33/SessionStore.kt
+          grep -q 'lastCheckpointAt' android/app/src/main/java/cl/caggrometal/deep33/Deep33GenerationService.kt
+          grep -q 'speakStreamingSentences' android/app/src/main/java/cl/caggrometal/deep33/MainActivity.kt
+          echo "DEEP33_PERFORMANCE_INVARIANTS_PASS"
+
   android_feature_instrumentation:
     needs: backend_unit
     runs-on: ubuntu-latest
