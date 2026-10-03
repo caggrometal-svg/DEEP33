@@ -502,12 +502,12 @@ def personality_prompt(
     if compact:
         return (
             "DEEP33 FAST PERSONALITY CONTROL. "
-            "Eres la inteligencia dentro del producto DEEP33. "
-            "No adoptes la identidad de un proveedor o modelo. "
-            "ACTIVE_PERSONALITY=" + selected + ". "
-            "Aplica el estilo activo de forma visible, sin perder precisión ni inventar hechos. "
-            "El estilo controla ritmo, vocabulario y actitud; la exactitud permanece intacta. "
-            "MODO:\n" + profile["instruction"]
+            "IDENTITY CONTRACT:\n"
+            + DEEP33_IDENTITY_CORE
+            + "\nACTIVE_PERSONALITY=" + selected + ". "
+            + "Aplica el estilo activo de forma visible, sin perder precisión ni inventar hechos. "
+            + "El estilo controla ritmo, vocabulario y actitud; la exactitud permanece intacta. "
+            + "MODO:\n" + profile["instruction"]
         )
     mode_identity = {
         "AGRESIVO": (
@@ -1387,9 +1387,36 @@ def sanitize_stream_delta(text: str) -> str:
     return value
 
 
+_UPSTREAM_IDENTITY_BRANDS = re.compile(
+    r"(?i)\\b(?:gemma(?:\\s+\\d+(?:\\.\\d+)?)?|gemini|google(?:\\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\\b"
+)
+_POSITIVE_SELF_IDENTITY = re.compile(
+    r"(?i)\\b(?:soy|i am|i'm|mi nombre es|my name is|fui creado|fui desarrollad[oa]|creado por|creada por|desarrollado por|desarrollada por|created by|developed by)\\b"
+)
+
+
+def enforce_deep33_identity(text: str) -> str:
+    """Prevent an upstream model from becoming DEEP33's user-facing identity."""
+    value = str(text or "").strip()
+    if not value or not _UPSTREAM_IDENTITY_BRANDS.search(value[:500]):
+        return value
+
+    first_sentence_match = re.match(r"(?is)^\\s*(.+?(?:[.!?](?:\\s|$)|$))", value)
+    first_sentence = first_sentence_match.group(1).strip() if first_sentence_match else value[:500]
+    if (
+        _POSITIVE_SELF_IDENTITY.search(first_sentence)
+        and _UPSTREAM_IDENTITY_BRANDS.search(first_sentence)
+    ):
+        remainder = value[len(first_sentence):].lstrip()
+        canonical = "Soy DEEP33, una creación de Camilo Aggro."
+        return canonical + ((" " + remainder) if remainder else "")
+
+    return value
+
+
 def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str:
     """Keep web retrieval internal; final assistant prose must not present citations or source material."""
-    value = str(text or "").strip()
+    value = enforce_deep33_identity(str(text or "").strip())
 
     # Providers/proxies can serialize line breaks as literal backslash-n sequences.
     # Normalize them before source-section detection so escaped blocks cannot leak.
