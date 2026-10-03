@@ -75,6 +75,30 @@ AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
 
+
+async def _warm_connections() -> None:
+    # Warm existing provider/memory HTTP paths without delaying readiness.
+    results = await asyncio.gather(
+        gateway.probe(),
+        memory.ping() if memory.enabled else asyncio.sleep(0),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            logger.debug("startup_warmup_failed error=%s", type(result).__name__)
+
+
+@app.on_event("startup")
+async def startup_warmup() -> None:
+    asyncio.create_task(_warm_connections())
+
+
+@app.on_event("shutdown")
+async def shutdown_clients() -> None:
+    await gateway.close()
+    await memory.close()
+
+
 _metric_counts: dict[str, int] = defaultdict(int)
 _metric_latency: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=500))
 
