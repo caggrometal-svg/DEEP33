@@ -170,7 +170,7 @@ PERSONALITIES: dict[str, dict[str, str]] = {
     },
 }
 DEFAULT_PERSONALITY = "NEUTRO"
-PERSONALITY_PROTOCOL_VERSION = "4"
+PERSONALITY_PROTOCOL_VERSION = "5"
 
 _rate_state: dict[str, tuple[float, int]] = {}
 _idempotency_cache: dict[str, tuple[float, str, dict]] = {}
