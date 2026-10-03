@@ -1,0 +1,77 @@
+name: DEEP33 Speed Benchmark Post-Cap
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PRIMARY_URL: https://deep33-backend.onrender.com
+      EXPECTED_SHA: 1908be4af77083601ee7c09ebfa95e731ddeed74
+      SAMPLES: "5"
+    steps:
+      - name: Wait for exact production commit
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 24); do
+            body="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/health" || true)"
+            sha="$(printf '%s' "$body" | jq -r '.git_sha // empty')"
+            echo "attempt=$i sha=$sha"
+            if [ "$sha" = "$EXPECTED_SHA" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "BENCHMARK_TARGET_NOT_READY"
+          exit 1
+      - name: Run controlled speed benchmark
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/deep33-speed
+          mkdir -p /tmp/deep33-speed
+          run_stream() {
+            local name="$1" payload="$2" max_time="$3"
+            for i in $(seq 1 "$SAMPLES"); do
+              id="bench-$name-$GITHUB_RUN_ID-$i"
+              curl -sS -N --connect-timeout 8 --max-time "$max_time" -o /dev/null \
+                -H 'Content-Type: application/json' -H 'Accept: text/event-stream' \
+                -H "X-DEEP33-Session-Id: $id" -H "X-Request-ID: $id" -H "X-Idempotency-Key: $id" \
+                -w '%{time_starttransfer} %{time_total}\n' -d "$payload" "$PRIMARY_URL/v1/chat/stream" > "/tmp/deep33-speed/$name.$i"
+              cat "/tmp/deep33-speed/$name.$i"
+            done
+          }
+          run_search() {
+            for i in $(seq 1 "$SAMPLES"); do
+              id="bench-search-$GITHUB_RUN_ID-$i"
+              curl -sS --connect-timeout 8 --max-time 60 -o /dev/null \
+                -H "X-DEEP33-Session-Id: $id" -w '%{time_starttransfer} %{time_total}\n' \
+                --get --data-urlencode 'q=DEEP33 inteligencia artificial' "$PRIMARY_URL/v1/web/search" > "/tmp/deep33-speed/search.$i"
+              cat "/tmp/deep33-speed/search.$i"
+            done
+          }
+          run_stream fast '{"messages":[{"role":"user","content":"2x2?"}],"personality":"NEUTRO"}' 45
+          run_stream balanced '{"messages":[{"role":"user","content":"Compara HTTP/2 y HTTP/3 en una explicación clara."}],"personality":"NEUTRO"}' 75
+          run_stream web '{"messages":[{"role":"user","content":"Busca en internet información actual sobre DEEP33 y resume el resultado."}],"personality":"NEUTRO"}' 90
+          run_stream deep '{"messages":[{"role":"user","content":"Explica todo paso a paso y en profundidad: cómo funciona el streaming de respuestas en un asistente de IA."}],"personality":"NEUTRO"}' 90
+          run_search
+      - name: Summarize
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root=Path("/tmp/deep33-speed")
+          print("DEEP33_SPEED_BENCHMARK_POST_CAP")
+          for name in ["fast","balanced","web","deep","search"]:
+              vals=[]
+              for p in sorted(root.glob(f"{name}.*")):
+                  parts=p.read_text().strip().split()
+                  if len(parts)==2: vals.append(tuple(float(x)*1000 for x in parts))
+              if not vals:
+                  print(name,"NO_DATA"); continue
+              t=sorted(x[0] for x in vals); total=sorted(x[1] for x in vals)
+              pct=lambda a,q:a[min(len(a)-1,round(q*(len(a)-1)))]
+              print(f"{name}: n={len(vals)} ttfb_p50_ms={pct(t,.5):.1f} ttfb_p95_ms={pct(t,.95):.1f} total_p50_ms={pct(total,.5):.1f} total_p95_ms={pct(total,.95):.1f} min_total_ms={min(total):.1f} max_total_ms={max(total):.1f}")
+          PY
