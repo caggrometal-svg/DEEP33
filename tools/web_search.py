@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import hashlib
@@ -24,6 +25,28 @@ SEARCH_CACHE_TTL_SECONDS = max(
     5.0, min(300.0, float(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS", "90")))
 )
 _SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
+_SEARCH_HTTP_CLIENT: httpx.AsyncClient | None = None
+_SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+async def _search_http_client() -> httpx.AsyncClient:
+    global _SEARCH_HTTP_CLIENT, _SEARCH_HTTP_LOOP
+    loop = asyncio.get_running_loop()
+    if _SEARCH_HTTP_CLIENT is None or _SEARCH_HTTP_LOOP is not loop:
+        _SEARCH_HTTP_CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS),
+            follow_redirects=True,
+        )
+        _SEARCH_HTTP_LOOP = loop
+    return _SEARCH_HTTP_CLIENT
+
+
+async def close_search_http_client() -> None:
+    global _SEARCH_HTTP_CLIENT, _SEARCH_HTTP_LOOP
+    if _SEARCH_HTTP_CLIENT is not None:
+        await _SEARCH_HTTP_CLIENT.aclose()
+    _SEARCH_HTTP_CLIENT = None
+    _SEARCH_HTTP_LOOP = None
 
 
 def _search_cache_key(
@@ -240,19 +263,17 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
         "include_images": False,
         "safe_search": False,
     }
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout_seconds),
-        follow_redirects=True,
+    client = await _search_http_client()
+    response = await client.post(
+        os.getenv("WEB_SEARCH_API_URL", DEFAULT_TAVILY_URL),
+        json=payload,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "User-Agent": "DEEP33-WebSearch/1.0",
         },
-    ) as client:
-        response = await client.post(
-            os.getenv("WEB_SEARCH_API_URL", DEFAULT_TAVILY_URL),
-            json=payload,
-        )
+        timeout=timeout_seconds,
+    )
         if response.status_code >= 400:
             raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
         data = response.json()
@@ -263,22 +284,20 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
 
 
 async def _duckduckgo_search(query, timeout_seconds, max_results):
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout_seconds),
-        follow_redirects=True,
+    client = await _search_http_client()
+    response = await client.get(
+        DUCKDUCKGO_URL,
+        params={"q": query, "kl": "wt-wt"},
         headers={
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
         },
-    ) as client:
-        response = await client.get(
-            DUCKDUCKGO_URL,
-            params={"q": query, "kl": "wt-wt"},
-        )
-        if response.status_code >= 400:
-            raise WebSearchError(f"WEB_SEARCH_DDG_HTTP_{response.status_code}")
-        if len(response.content) > 2 * 1024 * 1024:
-            raise WebSearchError("WEB_SEARCH_DDG_RESPONSE_TOO_LARGE")
+        timeout=timeout_seconds,
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_DDG_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_DDG_RESPONSE_TOO_LARGE")
     parser = DuckDuckGoParser()
     parser.feed(response.text)
     parser.close()
@@ -306,20 +325,18 @@ async def _parse_bing_rss(response, max_results):
 
 
 async def _bing_search(query, timeout_seconds, max_results):
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout_seconds),
-        follow_redirects=True,
-        headers={
-            "User-Agent": "DEEP33-WebSearch/1.0",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-    ) as client:
-        html_error = None
-        try:
-            response = await client.get(
-                os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-                params={"q": query, "setlang": "es", "cc": "cl"},
-            )
+    client = await _search_http_client()
+    html_error = None
+    try:
+        response = await client.get(
+            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+            params={"q": query, "setlang": "es", "cc": "cl"},
+            headers={
+                "User-Agent": "DEEP33-WebSearch/1.0",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=timeout_seconds,
+        )
             if response.status_code >= 400:
                 raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
             if len(response.content) > 3 * 1024 * 1024:
@@ -330,19 +347,24 @@ async def _bing_search(query, timeout_seconds, max_results):
             results = _normalise_results(parser.results, max_results)
             if results:
                 return results
-        except Exception as exc:
-            html_error = exc
+    except Exception as exc:
+        html_error = exc
 
-        rss = await client.get(
-            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
-        )
-        try:
-            return await _parse_bing_rss(rss, max_results)
-        except Exception as rss_error:
-            if html_error is not None:
-                raise WebSearchError(f"{html_error};{rss_error}") from rss_error
-            raise
+    rss = await client.get(
+        os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+        params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        timeout=timeout_seconds,
+    )
+    try:
+        return await _parse_bing_rss(rss, max_results)
+    except Exception as rss_error:
+        if html_error is not None:
+            raise WebSearchError(f"{html_error};{rss_error}") from rss_error
+        raise
 
 
 async def search_web(
