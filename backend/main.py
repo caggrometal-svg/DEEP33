@@ -422,8 +422,7 @@ def personality_prompt(
             "ACTIVE_PERSONALITY=" + selected + ". "
             "Aplica el estilo activo de forma visible, sin perder precisión ni inventar hechos. "
             "El estilo controla ritmo, vocabulario y actitud; la exactitud permanece intacta. "
-            "MODO:
-" + profile["instruction"]
+            "MODO:\n" + profile["instruction"]
         )
     mode_identity = {
         "AGRESIVO": (
@@ -1972,6 +1971,7 @@ async def generate(
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
+        profile = complexity_profile(messages)[2]
         payload = {
             "messages": messages,
             "model": model_for_profile(request.model, profile),
@@ -2475,8 +2475,16 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
-    payload={"messages":messages,"model":model_for_profile(request.model, profile)}
-    if request.temperature is not None:
+    except Exception:
+        if not claim_task.done():
+            claim_task.cancel()
+        if not context_task.done():
+            context_task.cancel()
+        await asyncio.gather(claim_task, context_task, return_exceptions=True)
+        raise
+
+    profile = complexity_profile(messages)[2]
+    payload={"messages":messages,"model":model_for_profile(request.model, profile)}    if request.temperature is not None:
         payload["temperature"]=request.temperature
 
     try:
