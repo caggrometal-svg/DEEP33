@@ -176,9 +176,7 @@ def test_chat_contract(monkeypatch) -> None:
 def test_stream_contract_hides_sources(monkeypatch) -> None:
     patch_memory(monkeypatch)
 
-    monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
-
-    async def fake_prepare_web_evidence(messages):
+    async def fake_prepare_web_evidence(messages, request_id=None):
         return (
             [
                 {"role": "system", "content": "Server-side web evidence"},
@@ -187,6 +185,8 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
             ["evidence"],
             [{"title": "Example", "url": "https://example.com", "snippet": "evidence"}],
         )
+
+    monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
 
     async def fake_gateway_stream(*_args, **_kwargs):
         yield (
