@@ -56,22 +56,30 @@ android {
     fun quoteBuildConfig(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    // Canonical DEEP33 runtime. The historical IAC33 Supabase project is not a
-    // client endpoint. Keep an independent Edge route as the default failover.
+    // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
+    // Render backend as the final transport fallback. All routes are HTTPS.
     val primaryUrl = System.getenv("DEEP33_PRIMARY_URL")
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: "https://deep33-backend.onrender.com"
-
-    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
         ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
 
+    val secondaryUrl = System.getenv("DEEP33_SECONDARY_URL")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
+
     val tertiaryUrl = System.getenv("DEEP33_TERTIARY_URL")
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: ""
+        ?: "https://deep33-backend.onrender.com"
+
+    val canonicalEndpoints = listOf(primaryUrl, secondaryUrl, tertiaryUrl)
+    require(canonicalEndpoints.all { it.startsWith("https://") && !it.endsWith("/") }) {
+        "DEEP33 endpoints must be HTTPS URLs without trailing slash"
+    }
+    require(canonicalEndpoints.distinct().size == canonicalEndpoints.size) {
+        "DEEP33 endpoints must be distinct for transport redundancy"
+    }
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
