@@ -244,6 +244,17 @@ DEEP33_IDENTITY_CORE = (
 )
 
 
+def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> bool:
+    if profile != "FAST":
+        return True
+    query = latest_user_query(messages).lower()
+    return bool(re.search(
+        r"\b(memoria|recuerdo|recuerda|recordar|te dije|te conté|mi nombre|mi proyecto|anterior|antes|"
+        r"que sabes de mí|qué sabes de mí|mi preferencia|preferencias)\b",
+        query,
+    ))
+
+
 def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     shape = conversation_response_shape(messages)
     if shape == "SIMPLE_DIRECT":
@@ -1741,7 +1752,7 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
         "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested)
             + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
-    if not memory.enabled:
+    if not memory.enabled or not requires_memory_context(requested, profile):
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
