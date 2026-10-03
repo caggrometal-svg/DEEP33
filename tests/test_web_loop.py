@@ -316,11 +316,11 @@ def test_stream_gateway_forwards_provider_chunks_before_stream_completion(monkey
             lease_token="lease",
         )
         first = await generator.__anext__()
-        assert b'"content": "Hola"' in first
+        assert b'"content":"Hola"' in first
         assert observed == ["provider-start"]
 
         second = await generator.__anext__()
-        assert b'"content": " mundo"' in second
+        assert b'"content":" mundo"' in second
         assert observed == ["provider-start", "provider-before-second"]
 
         third = await generator.__anext__()
