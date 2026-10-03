@@ -144,9 +144,11 @@ class AIGateway:
         self.config = config or GatewayConfig.from_env()
         self._circuits = {provider.name: ProviderCircuit() for provider in self.config.providers}
         self._http_client: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
 
     def _client(self) -> httpx.AsyncClient:
-        if self._http_client is None:
+        loop = asyncio.get_running_loop()
+        if self._http_client is None or self._http_loop is not loop:
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.config.timeout_seconds),
                 follow_redirects=True,
@@ -156,12 +158,14 @@ class AIGateway:
                     keepalive_expiry=30.0,
                 ),
             )
+            self._http_loop = loop
         return self._http_client
 
     async def close(self) -> None:
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
+            self._http_loop = None
 
     @staticmethod
     def _headers(
