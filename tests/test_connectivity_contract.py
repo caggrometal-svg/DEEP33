@@ -90,3 +90,13 @@ def test_web_fetch_keeps_ssrf_and_redirect_controls() -> None:
     assert "ipaddress.ip_address(value).is_global" in text
     assert "follow_redirects=False" in text
     assert "WEB_FETCH_CONTENT_TYPE_BLOCKED" in text
+
+
+def test_ci_routes_transport_changes_through_production_recovery_gate() -> None:
+    text = _read(".github/workflows/ci.yml")
+    assert "android/app/build.gradle.kts" in text
+    assert "android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt" in text
+    assert "android/deep33-real-connectivity-e2e.sh" in text
+    assert "name: Connectivity hardening contract" in text
+    assert "name: Publish only post-gate APK" in text
+    assert "needs: recovery_gate" in text
