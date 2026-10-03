@@ -220,7 +220,7 @@ DEEP33_IDENTITY_CORE = (
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
-    """Classify the latest user turn only for response-shape guidance; never alters transport."""
+    """Classify the latest user turn for the shared dialogue contract; never alters transport."""
     latest_user = next(
         (
             str(item.get("content", "")).strip()
