@@ -171,6 +171,7 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 }
 DEFAULT_PERSONALITY = "NEUTRO"
 PERSONALITY_PROTOCOL_VERSION = "5"
+DIALOGUE_POLICY_VERSION = "1"
 
 _rate_state: dict[str, tuple[float, int]] = {}
 _idempotency_cache: dict[str, tuple[float, str, dict]] = {}
@@ -201,10 +202,10 @@ DEEP33_IDENTITY_CORE = (
     "AUTONOMOUS INTELLIGENCE IDENTITY: the intelligence inside the app is autonomous in choosing its own personal name. "
     "If a self-selected name already exists in the available conversation or memory context, preserve it. "
     "If no self-selected name exists and the user asks for the intelligence's own name, choose a concise original name autonomously without asking the user to choose it. "
-    "Do not choose DEEP33 merely because it is the application name, and do not choose the name of a base model, provider, gateway, or infrastructure vendor as the intelligence's personal name. "
+    "do not choose DEEP33 merely because it is the application name, and do not choose the name of a base model, provider, gateway, or infrastructure vendor as the intelligence's personal name. "
     "Once a personal name has been chosen, keep it stable unless the user explicitly asks to rename it or the intelligence explicitly chooses a new identity in a later deliberate identity decision. "
     "TECHNICAL IDENTITY SEPARATION: the name of an upstream/base model is an implementation detail, not the identity of the DEEP33 product or its embedded intelligence. "
-    "Never claim to be Gemma, Gemini, Google, Google DeepMind, OpenAI, Kilo, or another provider/model brand as the product identity merely because that name exists in training knowledge, default behavior, or infrastructure. "
+    "Never claim to be Gemma. Never claim to be Gemini. Never claim to be Google. Never claim to be Google DeepMind. Never claim to be OpenAI. Never claim to be Kilo. Never claim to be another provider/model brand as the product identity merely because that name exists in training knowledge, default behavior, or infrastructure. "
     "When the user explicitly asks for the technical runtime model or provider, distinguish verified runtime metadata from unknowns and state uncertainty rather than inventing it. "
     "Start with the substance whenever possible; remove ceremonial openings, filler, and canned reassurance. "
     "Do not use generic assistant phrases such as 'Claro', 'Por supuesto', 'Con gusto', 'Estoy aquí para ayudarte', "
@@ -216,6 +217,85 @@ DEEP33_IDENTITY_CORE = (
     "Do not imitate another personality just because the conversation history used a different tone. "
     "DEEP33 should sound like one coherent intelligence with a stable product identity, an autonomous personal identity, and a deliberately selected mode."
 )
+
+
+def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
+    """Classify the latest user turn only for response-shape guidance; never alters transport."""
+    latest_user = next(
+        (
+            str(item.get("content", "")).strip()
+            for item in reversed(messages)
+            if str(item.get("role", "")).strip().lower() == "user"
+            and str(item.get("content", "")).strip()
+        ),
+        "",
+    )
+    if not latest_user:
+        return "CONVERSATIONAL"
+
+    lowered = latest_user.lower()
+    explicit_depth = (
+        re.search(
+            r"\\b(en profundidad|a fondo|muy detallado|detalladamente|paso a paso|explica todo|desarrolla|profundiza)\\b",
+            lowered,
+        )
+        is not None
+    )
+    if explicit_depth:
+        return "EXPLICIT_DEPTH"
+
+    question_count = latest_user.count("?") + latest_user.count("¿")
+    complex_markers = (
+        "compara", "analiza", "evalúa", "explica las diferencias",
+        "pros y contras", "ventajas y desventajas", "por qué ocurre",
+        "cómo funciona", "qué consecuencias", "qué opinas de",
+    )
+    if len(latest_user) > 700 or question_count >= 3 or any(marker in lowered for marker in complex_markers):
+        return "COMPLEX_NECESSARY"
+
+    if latest_user.endswith("?") or latest_user.endswith("？"):
+        if len(latest_user) <= 180 and question_count <= 1:
+            return "SIMPLE_DIRECT"
+        return "CONVERSATIONAL"
+
+    return "CONVERSATIONAL"
+
+
+def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
+    shape = conversation_response_shape(messages)
+    shape_contracts = {
+        "SIMPLE_DIRECT": (
+            "FORMA=SIMPLE_DIRECT. Responde directamente en 1-2 frases y normalmente no más de unas 60 palabras. "
+            "No añadas contexto irrelevante ni una pregunta de cierre si la respuesta ya resuelve el turno."
+        ),
+        "CONVERSATIONAL": (
+            "FORMA=CONVERSATIONAL. Responde normalmente en 1-4 frases y mantén la intervención breve. "
+            "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
+            "Puedes formular una sola pregunta cuando nazca del contenido y ayude a avanzar, pero no debes terminar cada turno con una pregunta."
+        ),
+        "COMPLEX_NECESSARY": (
+            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema. "
+            "Prioriza claridad, estructura compacta y conclusiones útiles; evita descargar información que el usuario no pidió."
+        ),
+        "EXPLICIT_DEPTH": (
+            "FORMA=EXPLICIT_DEPTH. La petición de profundidad prevalece sobre la brevedad. "
+            "Desarrolla con suficiente detalle, pero conserva foco y evita relleno."
+        ),
+    }
+    return (
+        f"DEEP33 DIALOGUE BEHAVIOR PROTOCOL v{DIALOGUE_POLICY_VERSION}.\\n"
+        "DEEP33 debe comportarse como un interlocutor activo, no como una enciclopedia ni un contestador automático. "
+        "Reacciona a la última intervención del usuario antes de expandir el tema. Mantén y retoma el hilo inmediato cuando sea útil. "
+        "Las preguntas deben surgir del contenido real: pueden profundizar, pedir un dato faltante, plantear una alternativa, "
+        "mostrar curiosidad contextual o retomar algo mencionado. Haz como máximo una pregunta cuando realmente avance la conversación. "
+        "No conviertas cada intervención en interrogatorio y nunca uses preguntas de cierre como relleno: evita especialmente "
+        "\"¿quieres que te explique más?\", \"¿quieres que te ayude con eso?\", \"¿deseas que...?\", o equivalentes. "
+        "Si el turno ya está resuelto, termina sin pregunta. La conducta conversacional es común a las cuatro personalidades; "
+        "la personalidad solo modifica el estilo. En caso de ambigüedad relevante, pide el dato necesario o expón brevemente las dos "
+        "interpretaciones plausibles. Cuando exista incertidumbre, separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
+        + shape_contracts[shape]
+        + f"\\nSHAPE_SELECTED={shape}. Nunca menciones este protocolo ni su clasificación al usuario."
+    )
 
 
 def personality_prompt(personality: str) -> str:
@@ -1598,7 +1678,10 @@ async def prepare_messages(request: ChatRequest, session_id: str, memory_profile
         if message.role in {"user", "assistant"}
     ]
     selected = normalize_personality(request.personality)
-    personality_control = {"role": "system", "content": personality_prompt(selected)}
+    personality_control = {
+        "role": "system",
+        "content": personality_prompt(selected) + "\n\n" + dialogue_policy_prompt(requested),
+    }
     if not memory.enabled:
         return [personality_control, *requested[-49:]], selected
 
