@@ -15,9 +15,12 @@ on:
   pull_request:
 
 env:
-  PRIMARY_URL: https://deep33-backend.onrender.com
-  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  TERTIARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  TERTIARY_URL: https://deep33-backend.onrender.com
+  DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+  DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+  DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
 
 jobs:
   backend_unit:
@@ -49,8 +52,9 @@ jobs:
     needs: backend_unit
     runs-on: ubuntu-latest
     env:
-      DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
-      DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+      DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+      DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+      DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
@@ -181,7 +185,7 @@ jobs:
           if [ -n "$baseline" ] && [ "$baseline" != "0000000000000000000000000000000000000000" ]; then
             changed="$(git diff --name-only "$baseline" "$GITHUB_SHA" || true)"
             backend_changed=false
-            if printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$)'; then
+            if printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$|android/app/build.gradle.kts$|android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt$|android/deep33-real-connectivity-e2e.sh$|.github/workflows/)'; then
               backend_changed=true
             fi
           fi
@@ -652,6 +656,44 @@ jobs:
             jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"'
           echo "RECOVERY_INFERENCE_PASS"
 
+
+  hardened_apk:
+    needs: recovery_gate
+    if: ${{ github.event_name == 'push' && success() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
+      DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
+      DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: "8.9"
+      - name: Verify hardened connectivity contract before APK build
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_connectivity_hardening.py -q
+          cd android
+          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: Publish only post-gate APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DEEP33-hardened-debug-apk-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Publish post-gate instrumentation APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DEEP33-hardened-androidTest-apk-${{ github.sha }}
+          path: android/app/build/outputs/apk/androidTest/debug/*androidTest.apk
+          if-no-files-found: error
 
   release_gate:
     needs: recovery_gate
