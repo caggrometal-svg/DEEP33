@@ -175,10 +175,18 @@ jobs:
       - id: scope
         run: |
           set -euo pipefail
-          before="${{ github.event.before }}"
+          baseline=""
+          if git rev-parse --verify refs/tags/production-pass^{commit} >/dev/null 2>&1; then
+            baseline="$(git rev-parse refs/tags/production-pass^{commit})"
+            echo "SCOPE_BASELINE=production-pass:$baseline"
+          else
+            baseline="${{ github.event.before }}"
+            echo "SCOPE_BASELINE=event-before:$baseline"
+          fi
+
           backend_changed=true
-          if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
-            changed="$(git diff --name-only "$before" "$GITHUB_SHA" || true)"
+          if [ -n "$baseline" ] && [ "$baseline" != "0000000000000000000000000000000000000000" ]; then
+            changed="$(git diff --name-only "$baseline" "$GITHUB_SHA" || true)"
             backend_changed=false
             if printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$)'; then
               backend_changed=true
@@ -199,19 +207,8 @@ jobs:
       - name: Validate PRIMARY deployment when backend changed
         run: |
           set -euo pipefail
-          BEFORE_SHA="${{ github.event.before }}"
-          backend_changed=1
-          if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
-            changed="$(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" || true)"
-            echo "CHANGED_FILES_BEGIN"
-            printf "%s\n" "$changed"
-            echo "CHANGED_FILES_END"
-            if ! printf "%s\n" "$changed" | grep -Eq '^(backend/|supabase/|render.yaml$|Dockerfile$)'; then
-              backend_changed=0
-            fi
-          fi
-
-          if [ "$backend_changed" = "0" ]; then
+          echo "PRODUCTION_SCOPE_BACKEND_CHANGED=${{ needs.change_scope.outputs.backend_changed }}"
+          if [ "${{ needs.change_scope.outputs.backend_changed }}" != "true" ]; then
             echo "PRIMARY_DEPLOY_SHA_CHECK_SKIPPED_BACKEND_UNCHANGED"
             exit 0
           fi
