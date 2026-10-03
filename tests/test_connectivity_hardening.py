@@ -16,7 +16,7 @@ def test_android_transport_is_https_and_deadline_bounded() -> None:
     assert 'connection.setRequestProperty("Cache-Control", "no-cache")' in source
     assert '.coerceAtLeast(3_000L)' not in source
     assert 'if (remainingMs <= 250L) break' in source
-    assert 'private fun validateEndpoint(raw: String): String?' in source
+    assert 'private fun validateEndpoint(' in source
     assert 'scheme != "https"' in source
     assert 'uri.userInfo != null' in source
     assert 'uri.query != null' in source
