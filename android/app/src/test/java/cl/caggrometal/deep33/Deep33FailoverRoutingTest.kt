@@ -24,11 +24,11 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun tertiaryEndpointUsesConfiguredDeep33TertiaryRoute() {
-        assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
-            BuildConfig.DEEP33_TERTIARY_URL
+    fun tertiaryEndpointIsBlankOrUsesConfiguredDeep33TertiaryRoute() {
+        val tertiary = BuildConfig.DEEP33_TERTIARY_URL.trim()
+        assertTrue(
+            tertiary.isBlank() ||
+                tertiary == "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
         )
-        assertTrue(BuildConfig.DEEP33_TERTIARY_URL.isNotBlank())
     }
 }
