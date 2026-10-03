@@ -337,16 +337,16 @@ async def _bing_search(query, timeout_seconds, max_results):
             },
             timeout=timeout_seconds,
         )
-            if response.status_code >= 400:
-                raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
-            if len(response.content) > 3 * 1024 * 1024:
-                raise WebSearchError("WEB_SEARCH_BING_RESPONSE_TOO_LARGE")
-            parser = BingParser()
-            parser.feed(response.text)
-            parser.close()
-            results = _normalise_results(parser.results, max_results)
-            if results:
-                return results
+        if response.status_code >= 400:
+            raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
+        if len(response.content) > 3 * 1024 * 1024:
+            raise WebSearchError("WEB_SEARCH_BING_RESPONSE_TOO_LARGE")
+        parser = BingParser()
+        parser.feed(response.text)
+        parser.close()
+        results = _normalise_results(parser.results, max_results)
+        if results:
+            return results
     except Exception as exc:
         html_error = exc
 
