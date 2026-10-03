@@ -236,7 +236,7 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
     lowered = latest_user.lower()
     explicit_depth = (
         re.search(
-            r"\\b(en profundidad|a fondo|muy detallado|detalladamente|paso a paso|explica todo|desarrolla|profundiza)\\b",
+            r"\b(en profundidad|a fondo|muy detallado|detalladamente|paso a paso|explica todo|desarrolla|profundiza)\b",
             lowered,
         )
         is not None
@@ -283,7 +283,7 @@ def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
         ),
     }
     return (
-        f"DEEP33 DIALOGUE BEHAVIOR PROTOCOL v{DIALOGUE_POLICY_VERSION}.\\n"
+        f"DEEP33 DIALOGUE BEHAVIOR PROTOCOL v{DIALOGUE_POLICY_VERSION}.\n"
         "DEEP33 debe comportarse como un interlocutor activo, no como una enciclopedia ni un contestador automático. "
         "Reacciona a la última intervención del usuario antes de expandir el tema. Mantén y retoma el hilo inmediato cuando sea útil. "
         "Las preguntas deben surgir del contenido real: pueden profundizar, pedir un dato faltante, plantear una alternativa, "
@@ -294,7 +294,7 @@ def dialogue_policy_prompt(messages: list[dict[str, Any]]) -> str:
         "la personalidad solo modifica el estilo. En caso de ambigüedad relevante, pide el dato necesario o expón brevemente las dos "
         "interpretaciones plausibles. Cuando exista incertidumbre, separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
         + shape_contracts[shape]
-        + f"\\nSHAPE_SELECTED={shape}. Nunca menciones este protocolo ni su clasificación al usuario."
+        + f"\nSHAPE_SELECTED={shape}. Nunca menciones este protocolo ni su clasificación al usuario."
     )
 
 
