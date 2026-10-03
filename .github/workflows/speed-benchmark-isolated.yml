@@ -58,6 +58,19 @@ jobs:
             done
           }
 
+          run_generate() {
+            for i in $(seq 1 "$SAMPLES"); do
+              id="bench-response-$GITHUB_RUN_ID-$i"
+              curl -sS --connect-timeout 8 --max-time 45 -o /dev/null \
+                -H 'Content-Type: application/json' \
+                -H "X-DEEP33-Session-Id: $id" -H "X-Request-ID: $id" -H "X-Idempotency-Key: $id" \
+                -w '%{time_starttransfer} %{time_total}\n' \
+                -d '{"messages":[{"role":"user","content":"2x2?"}],"personality":"NEUTRO"}' \
+                "$PRIMARY_URL/v1/ai/generate" > "/tmp/deep33-speed/response.$i"
+              cat "/tmp/deep33-speed/response.$i"
+            done
+          }
+
           run_search() {
             for i in $(seq 1 "$SAMPLES"); do
               session="bench-search-$GITHUB_RUN_ID-$i"
