@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import time
 from typing import Any
 
 import httpx
@@ -41,6 +42,10 @@ class MemoryClient:
         ).strip()
         self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
         self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
+        self.context_cache_ttl_seconds = max(
+            5.0, min(300.0, float(os.getenv("MEMORY_CONTEXT_CACHE_TTL_SECONDS", "45")))
+        )
+        self._context_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 
     def _refresh_config(self) -> None:
         if not self._explicit_function_url:
@@ -134,7 +139,18 @@ class MemoryClient:
         return await self._call("ping", "deep33-health")
 
     async def context(self, session_id: str, memory_profile_id: str | None = None) -> dict:
-        return await self._call("context", session_id, memory_profile_id=memory_profile_id)
+        key = (session_id, memory_profile_id or "")
+        now = time.monotonic()
+        cached = self._context_cache.get(key)
+        if cached and cached[0] > now:
+            return json.loads(json.dumps(cached[1], ensure_ascii=False))
+
+        result = await self._call("context", session_id, memory_profile_id=memory_profile_id)
+        self._context_cache[key] = (
+            time.monotonic() + self.context_cache_ttl_seconds,
+            json.loads(json.dumps(result, ensure_ascii=False)),
+        )
+        return result
 
     async def sync(
         self,
@@ -150,7 +166,7 @@ class MemoryClient:
         if preferences is not None:
             payload["preferences"] = preferences
         request_hash = self._request_hash("sync", session_id, payload)
-        return await self._call(
+        result = await self._call(
             "sync",
             session_id,
             idempotency_key=f"memory:sync:{request_hash}",
@@ -158,6 +174,8 @@ class MemoryClient:
             memory_profile_id=memory_profile_id,
             **payload,
         )
+        self._context_cache.pop((session_id, memory_profile_id or ""), None)
+        return result
 
     async def remember(self, session_id: str, kind: str, content: str, memory_profile_id: str | None = None) -> dict:
         payload = {"kind": kind, "content": content}
