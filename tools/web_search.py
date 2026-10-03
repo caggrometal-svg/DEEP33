@@ -424,7 +424,7 @@ def web_search_status():
             "WEB_SEARCH_FALLBACK_DDG", "true"
         ).lower() == "true",
         "parallel_providers": os.getenv(
-            "WEB_SEARCH_PARALLEL_PROVIDERS", "false"
+            "WEB_SEARCH_PARALLEL_PROVIDERS", "true"
         ).lower() == "true",
         "max_queries": max(
             1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3")))
