@@ -2484,7 +2484,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise
 
     profile = complexity_profile(messages)[2]
-    payload={"messages":messages,"model":model_for_profile(request.model, profile)}    if request.temperature is not None:
+    payload={"messages":messages,"model":model_for_profile(request.model, profile)}
+    if request.temperature is not None:
         payload["temperature"]=request.temperature
 
     try:
