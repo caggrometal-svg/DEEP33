@@ -33,7 +33,8 @@ def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
     source = read("android/app/build.gradle.kts")
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
-    assert '?: ""' in source
+    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
+    assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
     assert 'http://' not in source
 
 
