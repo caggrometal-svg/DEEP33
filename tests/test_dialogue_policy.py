@@ -118,11 +118,11 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
     assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v1" in messages[0]["content"]
     assert "SHAPE_SELECTED=CONVERSATIONAL" in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
-    assert messages[-4:] == [
+    assert messages[1:] == [
         {"role": "user", "content": "Me ofrecieron otro trabajo."},
         {"role": "assistant", "content": "Eso cambia bastante el panorama."},
         {"role": "user", "content": "Estoy pensando en cambiarme."},
-    ][-4:]
+    ]
 
 
 def test_latest_user_turn_controls_response_shape_not_old_history() -> None:
