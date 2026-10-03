@@ -119,3 +119,37 @@ def test_web_fetch_is_optional_when_snippets_are_sufficient(monkeypatch):
     assert len(results) == 2
     assert evidence
     assert any("Server-side web evidence" in str(item.get("content")) for item in working)
+
+def test_full_end_to_end_trace_contract_has_all_markers():
+    expected = (
+        "T0_INPUT",
+        "T1_REQUEST_SENT",
+        "T2_BACKEND_RECEIVED",
+        "T3_CONTEXT_PREPARED",
+        "T4_SEARCH_STARTED",
+        "T5_SEARCH_FINISHED",
+        "T6_INFERENCE_STARTED",
+        "T7_FIRST_TOKEN",
+        "T8_STREAM_FINISHED",
+        "T9_PERSISTENCE_FINISHED",
+        "T10_FIRST_VISIBLE",
+        "T11_FIRST_SPOKEN",
+    )
+    assert main.performance.STAGES == expected
+
+
+def test_performance_trace_exposes_backend_latency_metrics():
+    request_id = "phase0-contract"
+    for stage in main.performance.STAGES[2:10]:
+        main.performance.mark(request_id, stage)
+
+    trace = main.performance.trace_snapshot(request_id)
+    snapshot = main.performance.snapshot()
+
+    assert trace["completed_stage_count"] == 8
+    assert trace["expected_stage_count"] == 12
+    assert "ttft_ms" in snapshot["summary"]
+    assert "backend_total_ms" in snapshot["summary"]
+    assert "p50_ms" in snapshot["summary"]["backend_total_ms"]
+    assert "p95_ms" in snapshot["summary"]["backend_total_ms"]
+
