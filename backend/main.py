@@ -90,13 +90,22 @@ async def _warm_connections() -> None:
             logger.debug("startup_warmup_failed error=%s", type(result).__name__)
 
 
+_warmup_task: asyncio.Task | None = None
+
+
 @app.on_event("startup")
 async def startup_warmup() -> None:
-    asyncio.create_task(_warm_connections())
+    global _warmup_task
+    _warmup_task = asyncio.create_task(_warm_connections())
 
 
 @app.on_event("shutdown")
 async def shutdown_clients() -> None:
+    global _warmup_task
+    if _warmup_task is not None and not _warmup_task.done():
+        _warmup_task.cancel()
+        await asyncio.gather(_warmup_task, return_exceptions=True)
+    _warmup_task = None
     await gateway.close()
     await memory.close()
 
