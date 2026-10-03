@@ -87,6 +87,7 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 8000;
 const EDGE_AI_RETRY_COUNT = Math.max(0, Math.min(2, Number(Deno.env.get("AI_PROVIDER_RETRY_COUNT") || "0")));
 const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(2000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "250")));
+const EDGE_INTERNAL_FETCH_TIMEOUT_MS = Math.max(3000, Math.min(15000, Number(Deno.env.get("DEEP33_EDGE_INTERNAL_TIMEOUT_MS") || "10000")));
 const edgeCircuit = new Map<string, { failures: number; openUntil: number }>();
 const EDGE_CIRCUIT_THRESHOLD = 3;
 const EDGE_CIRCUIT_COOLDOWN_MS = 15000;
@@ -1036,6 +1037,7 @@ async function memoryCall(
       Accept: "application/json",
     },
     body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS),
   });
 
   const body = await readJson(response);
@@ -1077,6 +1079,7 @@ async function hybridCall(
       Accept: "application/json",
     },
     body: JSON.stringify({ action, ...payload }),
+    signal: AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS),
   });
 
   const body = await readJson(response);
