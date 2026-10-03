@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - "v*"
+      - "production-pass"
 
 permissions:
   contents: read
