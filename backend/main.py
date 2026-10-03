@@ -1147,7 +1147,7 @@ async def run_web_tool_loop(
     messages,
     *,
     model,
-    max_tokens,
+    max_tokens=384,
     request_id,
     idempotency_key,
     force_web=False,
