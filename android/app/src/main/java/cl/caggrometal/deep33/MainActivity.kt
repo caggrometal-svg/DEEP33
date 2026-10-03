@@ -1962,6 +1962,10 @@ class MainActivity : Activity() {
     }
 
     private fun armBargeInMonitoring(delayMs: Long = 120L) {
+        // Never start barge-in recognition while streaming a generated answer.
+        // The recognizer can hear the assistant's own TTS output and falsely
+        // interrupt speech, producing audible silence mid-response.
+        if (generationActive || streamingSpeechRequestId != null) return
         if (speechRecognizer == null ||
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
             activeSpeechUtteranceId == null ||
@@ -2569,9 +2573,9 @@ class MainActivity : Activity() {
                 val recentStop = VoiceConversationPolicy.isStopCommand(recognized) &&
                     (activeSpeechUtteranceId != null || System.currentTimeMillis() - recentSpeechEndedAt <= 1200L)
                 if (recognized.isNotBlank() &&
-                    (recentStop || VoiceConversationPolicy.isStopCommand(recognized) ||
-                        !VoiceConversationPolicy.looksLikeTtsEcho(recognized, activeSpeechText))
+                    (recentStop || VoiceConversationPolicy.isStopCommand(recognized))
                 ) {
+                    Log.i("DEEP33_VOICE", "BARGE_IN_EXPLICIT_STOP")
                     interruptAssistantSpeech(resumeListening = voiceModeActive)
                 } else if (textToSpeech?.isSpeaking == true && activeSpeechUtteranceId != null) {
                     armBargeInMonitoring(120L)
@@ -2605,16 +2609,14 @@ class MainActivity : Activity() {
             if (bargeInMonitoring) {
                 if (partial.isBlank()) return
 
+                // Only an explicit stop command may interrupt TTS.
+                // Never use “not an echo” as an interrupt condition because
+                // Android speech recognition can mistranscribe the assistant
+                // audio and otherwise cut the response off.
                 val isExplicitStop = VoiceConversationPolicy.isStopCommand(partial)
-                val isLikelyEcho = VoiceConversationPolicy.looksLikeTtsEcho(partial, activeSpeechText)
-                if (isExplicitStop || !isLikelyEcho) {
-                    if (bargeInCandidateSince == 0L) {
-                        bargeInCandidateSince = System.currentTimeMillis()
-                    }
-                    val elapsed = System.currentTimeMillis() - bargeInCandidateSince
-                    if (isExplicitStop || elapsed >= 250L) {
-                        interruptAssistantSpeech(resumeListening = voiceModeActive)
-                    }
+                if (isExplicitStop) {
+                    Log.i("DEEP33_VOICE", "BARGE_IN_EXPLICIT_STOP_PARTIAL")
+                    interruptAssistantSpeech(resumeListening = voiceModeActive)
                 } else {
                     bargeInCandidateSince = 0L
                 }
