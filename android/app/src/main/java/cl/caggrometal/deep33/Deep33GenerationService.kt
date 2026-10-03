@@ -269,10 +269,16 @@ class Deep33GenerationService : Service() {
     ): String {
         var lastError: Deep33ApiException? = null
         val checkpoint = StringBuilder()
-        fun persistCheckpoint() {
-            // Every received stream chunk becomes a durable recovery checkpoint. The
-            // persisted text is never the source of truth for final delivery: the same
-            // idempotency key replays the completed server result after transport loss.
+        var lastCheckpointAt = 0L
+        var lastCheckpointChars = 0
+
+        fun persistCheckpoint(force: Boolean = false) {
+            // Recovery checkpoints are throttled. Final delivery remains idempotent and
+            // durable; streaming UI state is carried in-memory/event-driven.
+            val now = android.os.SystemClock.elapsedRealtime()
+            val enoughTime = now - lastCheckpointAt >= 500L
+            val enoughText = checkpoint.length - lastCheckpointChars >= 1200
+            if (!force && !enoughTime && !enoughText) return
             store.saveGenerationState(
                 status = GenerationStatus.RUNNING,
                 requestId = requestId,
@@ -281,6 +287,8 @@ class Deep33GenerationService : Service() {
                 partialOutput = checkpoint.toString(),
                 durable = true
             )
+            lastCheckpointAt = now
+            lastCheckpointChars = checkpoint.length
         }
 
         for (attempt in 0..MAX_STREAM_RECOVERY_RETRIES) {
@@ -304,7 +312,7 @@ class Deep33GenerationService : Service() {
                         persistCheckpoint()
                     }
                 )
-                persistCheckpoint()
+                persistCheckpoint(force = true)
                 return result
             } catch (e: Deep33ApiException) {
                 lastError = e
