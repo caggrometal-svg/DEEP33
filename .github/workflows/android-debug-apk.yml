@@ -3,7 +3,7 @@ name: DEEP33 Android Debug APK v0.4.3
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    tags: [production-pass]
 
 permissions:
   contents: read
@@ -18,6 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Require certified production-pass
+        run: |
+          set -euo pipefail
+          git fetch origin refs/tags/production-pass --force
+          certified="$(git rev-parse refs/tags/production-pass^{commit})"
+          test "$certified" = "$GITHUB_SHA" || {
+            echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$GITHUB_SHA"
+            exit 1
+          }
+          python -m pytest tests/test_connectivity_hardening.py -q
+          echo "APK_CERTIFICATION_GATE_PASS"
+
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
           distribution: temurin
