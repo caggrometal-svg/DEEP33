@@ -11,6 +11,12 @@ def test_simple_question_gets_direct_shape() -> None:
     ]) == "SIMPLE_DIRECT"
 
 
+def test_simple_how_question_stays_direct() -> None:
+    assert main.conversation_response_shape([
+        {"role": "user", "content": "¿Cómo funciona HTTP?"}
+    ]) == "SIMPLE_DIRECT"
+
+
 def test_statement_gets_conversational_shape() -> None:
     assert main.conversation_response_shape([
         {"role": "user", "content": "Estoy pensando en cambiar de trabajo."}
@@ -143,3 +149,4 @@ def test_policy_keeps_uncertainty_boundaries() -> None:
 
     assert "HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO" in prompt
     assert "sin inventar seguridad" in prompt
+    assert "actualiza la conclusión" in prompt
