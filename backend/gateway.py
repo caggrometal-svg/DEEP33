@@ -510,6 +510,7 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 started_output = False
                 try:
+                    started_request = time.perf_counter()
                     timeout = self._remaining(
                         deadline, self.config.provider_timeout_seconds
                     )
@@ -537,7 +538,6 @@ class AIGateway:
                                 if 500 <= status <= 599:
                                     raise GatewayHTTPError
                             else:
-                                request_completed_at = time.perf_counter()
                                 async for chunk in response.aiter_bytes():
                                     if chunk:
                                         started_output = True
@@ -545,7 +545,7 @@ class AIGateway:
                                 provider_succeeded = True
                                 self._record_latency(
                                     provider,
-                                    (time.perf_counter() - started_output if started_output else time.perf_counter() - request_completed_at) * 1000,
+                                    (time.perf_counter() - started_request) * 1000,
                                 )
                                 circuit.success()
                                 return
