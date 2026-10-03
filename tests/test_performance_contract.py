@@ -153,3 +153,28 @@ def test_performance_trace_exposes_backend_latency_metrics():
     assert "p50_ms" in snapshot["summary"]["backend_total_ms"]
     assert "p95_ms" in snapshot["summary"]["backend_total_ms"]
 
+
+
+def test_gateway_latency_snapshot_reports_learned_ttft_and_throughput():
+    from backend.gateway import AIGateway, GatewayConfig, GatewayProvider
+
+    providers = (
+        GatewayProvider("p1", "https://p1.example", "https://p1.example/health", "", "m1"),
+        GatewayProvider("p2", "https://p2.example", "https://p2.example/health", "", "m2"),
+    )
+    gateway_instance = AIGateway(GatewayConfig(providers=providers, timeout_seconds=5.0))
+    gateway_instance._record_latency(providers[0], 100.0)
+    gateway_instance._record_latency(providers[0], 110.0)
+    gateway_instance._record_latency(providers[0], 90.0)
+    gateway_instance._record_ttft(providers[0], 20.0)
+    gateway_instance._record_ttft(providers[0], 25.0)
+    gateway_instance._record_ttft(providers[0], 30.0)
+    gateway_instance._record_throughput(providers[0], 20.0)
+    gateway_instance._record_throughput(providers[0], 22.0)
+    gateway_instance._record_throughput(providers[0], 24.0)
+
+    snapshot = gateway_instance.latency_snapshot()
+    assert snapshot["p1"]["p50_ms"] is not None
+    assert snapshot["p1"]["ttft_p50_ms"] is not None
+    assert snapshot["p1"]["tokens_per_second_p50"] is not None
+    assert gateway_instance._ordered_providers()[0].name == "p1"

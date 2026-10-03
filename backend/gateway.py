@@ -149,10 +149,21 @@ class AIGateway:
         self._latency_samples: dict[str, deque[float]] = {
             provider.name: deque(maxlen=20) for provider in self.config.providers
         }
-        self._http_loop: asyncio.AbstractEventLoop | None = None
+        self._ttft_samples: dict[str, deque[float]] = {
+            provider.name: deque(maxlen=20) for provider in self.config.providers
+        }
+        self._throughput_samples: dict[str, deque[float]] = {
+            provider.name: deque(maxlen=20) for provider in self.config.providers
+        }
 
     def _record_latency(self, provider: GatewayProvider, elapsed_ms: float) -> None:
         self._latency_samples.setdefault(provider.name, deque(maxlen=20)).append(elapsed_ms)
+
+    def _record_ttft(self, provider: GatewayProvider, elapsed_ms: float) -> None:
+        self._ttft_samples.setdefault(provider.name, deque(maxlen=20)).append(elapsed_ms)
+
+    def _record_throughput(self, provider: GatewayProvider, tokens_per_second: float) -> None:
+        self._throughput_samples.setdefault(provider.name, deque(maxlen=20)).append(tokens_per_second)
 
     def _ordered_providers(self) -> list[GatewayProvider]:
         providers = list(self.config.providers)
@@ -172,15 +183,27 @@ class AIGateway:
         for provider in self.config.providers:
             samples = list(self._latency_samples.get(provider.name, ()))
             if not samples:
-                output[provider.name] = {"samples": 0, "p50_ms": None, "p95_ms": None}
+                output[provider.name] = {
+                "samples": 0,
+                "p50_ms": None,
+                "p95_ms": None,
+                "ttft_p50_ms": None,
+                "ttft_p95_ms": None,
+                "tokens_per_second_p50": None,
+            }
                 continue
             ordered = sorted(samples)
             p50 = ordered[min(len(ordered) - 1, int(round(0.50 * (len(ordered) - 1))))]
             p95 = ordered[min(len(ordered) - 1, int(round(0.95 * (len(ordered) - 1))))]
+            ttft = sorted(self._ttft_samples.get(provider.name, ()))
+            throughput = sorted(self._throughput_samples.get(provider.name, ()))
             output[provider.name] = {
                 "samples": len(ordered),
                 "p50_ms": round(p50, 2),
                 "p95_ms": round(p95, 2),
+                "ttft_p50_ms": round(ttft[min(len(ttft) - 1, int(round(0.50 * (len(ttft) - 1))))], 2) if ttft else None,
+                "ttft_p95_ms": round(ttft[min(len(ttft) - 1, int(round(0.95 * (len(ttft) - 1))))], 2) if ttft else None,
+                "tokens_per_second_p50": round(throughput[min(len(throughput) - 1, int(round(0.50 * (len(throughput) - 1))))], 2) if throughput else None,
             }
         return output
 
@@ -395,6 +418,13 @@ class AIGateway:
 
                     elapsed_ms = (time.perf_counter() - started_request) * 1000
                     self._record_latency(provider, elapsed_ms)
+                    usage = data.get("usage") or {}
+                    completion_tokens = usage.get("completion_tokens")
+                    if isinstance(completion_tokens, (int, float)) and completion_tokens > 0:
+                        self._record_throughput(
+                            provider,
+                            float(completion_tokens) / max(0.001, elapsed_ms / 1000.0),
+                        )
                     result = dict(data)
                     result["_deep33_gateway"] = {
                         "provider": provider.name,
@@ -510,6 +540,8 @@ class AIGateway:
 
             for attempt in range(self.config.max_retries + 1):
                 started_output = False
+                first_chunk_at: float | None = None
+                stream_completion_tokens: float | None = None
                 try:
                     started_request = time.perf_counter()
                     timeout = self._remaining(
@@ -541,13 +573,33 @@ class AIGateway:
                             else:
                                 async for chunk in response.aiter_bytes():
                                     if chunk:
+                                        if first_chunk_at is None:
+                                            first_chunk_at = time.perf_counter()
+                                            self._record_ttft(
+                                                provider,
+                                                (first_chunk_at - started_request) * 1000,
+                                            )
+                                        if b'"completion_tokens"' in chunk:
+                                            try:
+                                                for line in chunk.splitlines():
+                                                    if line.startswith(b"data: "):
+                                                        item = json.loads(line[6:].strip())
+                                                        usage = item.get("usage") or {}
+                                                        value = usage.get("completion_tokens")
+                                                        if isinstance(value, (int, float)) and value > 0:
+                                                            stream_completion_tokens = float(value)
+                                            except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+                                                pass
                                         started_output = True
                                         yield chunk
                                 provider_succeeded = True
-                                self._record_latency(
-                                    provider,
-                                    (time.perf_counter() - started_request) * 1000,
-                                )
+                                elapsed_ms = (time.perf_counter() - started_request) * 1000
+                                self._record_latency(provider, elapsed_ms)
+                                if stream_completion_tokens and stream_completion_tokens > 0:
+                                    self._record_throughput(
+                                        provider,
+                                        stream_completion_tokens / max(0.001, elapsed_ms / 1000.0),
+                                    )
                                 circuit.success()
                                 return
 

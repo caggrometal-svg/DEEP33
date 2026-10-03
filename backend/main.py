@@ -166,6 +166,7 @@ async def metrics() -> dict:
         "counters": dict(_metric_counts),
         "endpoints": endpoints,
         "performance": performance.snapshot(),
+        "gateway_latency": gateway.latency_snapshot(),
         "timestamp": utc_now(),
     }
 
@@ -1236,7 +1237,7 @@ def sanitize_assistant_text(text: str, sources: list[dict] | None = None) -> str
     value = re.sub(
         r"(?ims)(?:^|\n)\s*(?:#{0,6}\s*)?"
         r"(?:fuentes?|sources?(?: consulted| used)?|"
-        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:.*\Z",
+        r"referencias|references|citations?|enlaces|links|bibliografia|bibliography)\s*:?\s*(?:\n|$).*\Z",
         "",
         value,
     )
