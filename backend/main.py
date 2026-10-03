@@ -1024,6 +1024,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     candidates = list(sources.values())[:2]
     fetched_pages = []
+    compact_search_results = [
+        {
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "snippet": str(item.get("snippet") or "")[:900],
+            "published_at": item.get("published_at"),
+        }
+        for item in list(search_result.get("results") or [])[:5]
+        if isinstance(item, dict)
+    ]
     snippet_lengths = [
         len(str(item.get("snippet") or "").strip())
         for item in compact_search_results
@@ -1046,16 +1056,6 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "text": str(result.get("text") or result.get("snippet") or "")[:3500],
             })
 
-    compact_search_results = [
-        {
-            "title": item.get("title"),
-            "url": item.get("url"),
-            "snippet": str(item.get("snippet") or "")[:900],
-            "published_at": item.get("published_at"),
-        }
-        for item in list(search_result.get("results") or [])[:5]
-        if isinstance(item, dict)
-    ]
     compact_fetched_pages = [
         {
             "title": item.get("title"),
