@@ -45,7 +45,7 @@ jobs:
           printf '%s\n' "$DIAG"
 
           BODY='{"messages":[{"role":"user","content":"Return exactly DEEP33_E2E_OK"}],"personality":"NEUTRO"}'
-          STREAM="$(curl -sS             --connect-timeout 8             --max-time 120             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: text/event-stream'             -H 'X-Request-ID: DEEP33-WARMUP-STREAM'             -H 'X-Idempotency-Key: DEEP33-WARMUP-STREAM'             -d "$BODY"             "$PRIMARY_URL/v1/chat/stream" || true)"
+          STREAM="$(curl -sS             --connect-timeout 8             --max-time 120             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: text/event-stream'             -H 'X-DEEP33-Session-Id: DEEP33-WARMUP-STREAM'             -H 'X-Request-ID: DEEP33-WARMUP-STREAM'             -H 'X-Idempotency-Key: DEEP33-WARMUP-STREAM'             -d "$BODY"             "$PRIMARY_URL/v1/chat/stream" || true)"
 
           echo "=== EDGE SSE INFERENCE ==="
           printf '%s\n' "$STREAM"
