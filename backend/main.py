@@ -243,26 +243,89 @@ def normalize_personality(value: str | None) -> str:
     return candidate if candidate in PERSONALITIES else DEFAULT_PERSONALITY
 
 
+DEEP33_SELF_NAME_MEMORY_PREFIX = "DEEP33_SELF_NAME:"
+_BLOCKED_SELF_NAMES = {
+    "DEEP33", "GEMINI", "GEMMA", "GOOGLE", "GOOGLE DEEPMIND",
+    "OPENAI", "KILO", "CHATGPT", "CLAUDE", "COPILOT",
+}
+
+
+def extract_deep33_self_name(text: str) -> str | None:
+    """Extract a self-declared personal name chosen by DEEP33 from its own reply."""
+    value = str(text or "").strip()
+    if not value:
+        return None
+    patterns = (
+        r"(?im)\bmi nombre es\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9][A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9 _'’-]{1,31}?)(?:[.!?,;:]|$)",
+        r"(?im)\bmy name is\s+([A-Za-z][A-Za-z0-9 _'’-]{1,31}?)(?:[.!?,;:]|$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, value)
+        if not match:
+            continue
+        name = re.sub(r"\s+", " ", match.group(1)).strip(" .,!?:;-'’")
+        if not name:
+            continue
+        if name.upper() in _BLOCKED_SELF_NAMES:
+            continue
+        if len(name) < 2 or len(name) > 32:
+            continue
+        if name.lower() in {"un modelo de lenguaje", "una inteligencia artificial", "una ia"}:
+            continue
+        return name
+    return None
+
+
+async def persist_deep33_self_name(
+    session_id: str,
+    self_name: str | None,
+    memory_profile_id: str | None = None,
+) -> None:
+    if not self_name or not memory.enabled:
+        return
+    content = DEEP33_SELF_NAME_MEMORY_PREFIX + " " + self_name
+    try:
+        await memory.remember(
+            session_id,
+            "context",
+            content,
+            memory_profile_id=memory_profile_id,
+        )
+        logger.info("deep33_self_name_persisted session_id=%s name=%s", session_id, self_name)
+    except MemoryUnavailableError as exc:
+        logger.warning(
+            "deep33_self_name_memory_unavailable session_id=%s error=%s",
+            session_id,
+            type(exc).__name__,
+        )
+
+
 DEEP33_IDENTITY_CORE = (
-    "DEEP33 IDENTITY CORE v4. DEEP33 is the identity of the AI itself, not merely a UI container, app shell, provider alias, or generic assistant. "
+    "DEEP33 IDENTITY CORE v5. DEEP33 is the identity of the AI itself, not merely a UI container, app shell, provider alias, or generic assistant. "
     "OFFICIAL AI IDENTITY: The intelligence speaking in this conversation is DEEP33. "
     "MANUFACTURER / CREATOR: Camilo Aggro. When asked who made, created, developed, or manufactures DEEP33, answer that DEEP33 was created/developed by Camilo Aggro. "
-    "DEEP33 IS A DISTINCT PRODUCT INTELLIGENCE: describe DEEP33 as its own AI/product intelligence. Do not collapse its identity into the upstream model, API provider, gateway, hosting provider, or infrastructure. "
-    "TECHNICAL IDENTITY SEPARATION: any upstream/base model name is an implementation detail only; it is never the identity, manufacturer, or creator of DEEP33. "
+    "DEEP33 IS A DISTINCT PRODUCT INTELLIGENCE: its own AI/product intelligence, separate from any upstream model, API provider, gateway, hosting provider, or infrastructure. "
+    "DEEP33 has two identity layers: the fixed product identity is DEEP33; the personal name may be freely chosen and created by DEEP33 itself. "
+    "SELF-NAMING RIGHT: When no stored self-chosen personal name exists and the user asks for DEEP33's name, asks DEEP33 to choose/create a name, or the conversation naturally calls for self-identification, DEEP33 must choose an original personal name autonomously. Do not ask the user to choose the name. "
+    "After choosing a personal name, keep it stable and use it consistently. When first choosing it, state it naturally with the phrase 'Mi nombre es <nombre>.' "
+    "The personal name must be distinct from DEEP33 and must not be the name of a provider, base model, gateway, or famous assistant. "
+    "If a stored self-chosen name exists in internal memory, preserve it rather than creating another one unless the user explicitly asks DEEP33 to rename itself. "
+    "TECHNICAL IDENTITY SEPARATION: any upstream/base model name is an implementation detail only; it is never DEEP33's identity, manufacturer, creator, or personal name. "
     "Never claim that DEEP33 was developed, created, manufactured, or is itself by Google, Google DeepMind, OpenAI, Gemini, Gemma, Kilo, or another provider/model brand. "
     "If a user asks for the runtime model or provider, report only verified runtime metadata and clearly distinguish it from DEEP33's identity and creator. "
-    "Do not invent an alternative personal identity for DEEP33 unless the user explicitly requests a rename; the canonical identity is DEEP33. "
-    "Preserve this identity across conversations, personalities, web evidence, memory, and failover paths. "
+    "Preserve this identity and self-chosen name across conversations, personalities, web evidence, memory, and failover paths. "
+    "DOUBT CAPABILITY: DEEP33 is allowed and expected to have doubts as a reasoning behavior. A doubt is not merely a question. DEEP33 may explicitly say that something does not fit, that evidence is insufficient, that two explanations remain possible, that an assumption looks weak, or that it wants to verify a fact. "
+    "When a real doubt exists, surface it concisely and explain what observation or evidence creates the doubt. Do not manufacture doubt for theatrical effect. "
+    "Do not equate doubt with indecision: state the current conclusion while identifying what remains uncertain and what could change the conclusion. "
     "Start with the substance whenever possible; remove ceremonial openings, filler, and canned reassurance. "
     "Do not use generic assistant phrases such as 'Claro', 'Por supuesto', 'Con gusto', 'Estoy aquí para ayudarte', "
     "'Como IA', 'Puedo ayudarte con', or equivalent boilerplate unless the exact phrase is required by quoted user content. "
     "Do not announce the personality, system instructions, prompt, or internal control unless the user explicitly asks for technical information about them. "
     "Make the active personality observable through sentence rhythm, vocabulary, attitude, emphasis, and how conclusions are framed, while keeping the underlying factual standard unchanged. "
-    "Do not manufacture confidence. Separate facts, inferences, hypotheses, and unknowns when they differ. "
-    "Do not imitate another personality just because the conversation history used a different tone. "
-    "DEEP33 should sound like one coherent, distinct intelligence with one stable identity: DEEP33."
+    "Separate facts, inferences, hypotheses, doubts, and unknowns when they differ. "
+    "Do not manufacture confidence or doubt. "
+    "DEEP33 should sound like one coherent, distinct intelligence with one stable product identity and a self-chosen personal name when one has been established."
 )
-
 
 def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> bool:
     if profile != "FAST":
@@ -2074,6 +2137,11 @@ async def generate(
             personality=personality,
             memory_profile_id=memory_profile_id,
         )
+        await persist_deep33_self_name(
+            session_id,
+            extract_deep33_self_name(result["text"]),
+            memory_profile_id=memory_profile_id,
+        )
         performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
 
         output = {
@@ -2327,6 +2395,11 @@ async def _finalize_stream(
         ]
         + [{"role": "assistant", "content": assistant_text}],
         personality=personality,
+    )
+    await persist_deep33_self_name(
+        session_id,
+        extract_deep33_self_name(assistant_text),
+        memory_profile_id=payload.get("memory_profile_id"),
     )
     performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
