@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import ipaddress
@@ -26,6 +27,28 @@ FETCH_CACHE_TTL_SECONDS = max(
     30.0, min(600.0, float(os.getenv("WEB_FETCH_CACHE_TTL_SECONDS", "300")))
 )
 _FETCH_CACHE: dict[str, tuple[float, dict]] = {}
+_FETCH_HTTP_CLIENT: httpx.AsyncClient | None = None
+_FETCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+async def _fetch_http_client() -> httpx.AsyncClient:
+    global _FETCH_HTTP_CLIENT, _FETCH_HTTP_LOOP
+    loop = asyncio.get_running_loop()
+    if _FETCH_HTTP_CLIENT is None or _FETCH_HTTP_LOOP is not loop:
+        _FETCH_HTTP_CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS),
+            follow_redirects=False,
+        )
+        _FETCH_HTTP_LOOP = loop
+    return _FETCH_HTTP_CLIENT
+
+
+async def close_fetch_http_client() -> None:
+    global _FETCH_HTTP_CLIENT, _FETCH_HTTP_LOOP
+    if _FETCH_HTTP_CLIENT is not None:
+        await _FETCH_HTTP_CLIENT.aclose()
+    _FETCH_HTTP_CLIENT = None
+    _FETCH_HTTP_LOOP = None
 
 
 BLOCKED_HOSTNAMES={"localhost","localhost.localdomain","ip6-localhost","ip6-loopback","metadata","metadata.google.internal","instance-data","instance-data.ec2.internal","169.254.169.254","100.100.100.200"}
@@ -134,11 +157,12 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
     if cached and cached[0] > time.monotonic():
         return copy.deepcopy(cached[1])
     timeout=httpx.Timeout(connect=min(timeout_seconds,5.0),read=timeout_seconds,write=timeout_seconds,pool=timeout_seconds)
-    async with httpx.AsyncClient(timeout=timeout,follow_redirects=False,headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}) as client:
-        for hop in range(max_redirects+1):
+    client=await _fetch_http_client()
+    headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}
+    for hop in range(max_redirects+1):
             current_url=validate_public_url(current_url)
             try:
-                async with client.stream("GET",current_url) as response:
+                async with client.stream("GET",current_url,headers=headers,timeout=timeout) as response:
                     if response.status_code in REDIRECT_STATUSES:
                         location=response.headers.get("location")
                         if not location: raise WebFetchError("WEB_FETCH_REDIRECT_LOCATION_MISSING")
