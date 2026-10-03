@@ -181,3 +181,26 @@ def test_complete_fails_over_after_primary_rate_limit() -> None:
 
     assert result["choices"][0]["message"]["content"] == "RATE_LIMIT_FALLBACK_PASS"
     assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
+
+
+def test_stream_provider_order_prefers_ttft_after_learning():
+    primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
+    fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
+    gateway_instance = AIGateway(
+        GatewayConfig(
+            providers=(primary, fallback),
+            timeout_seconds=2,
+        )
+    )
+
+    for value in (100.0, 110.0, 90.0):
+        gateway_instance._record_latency(primary, value)
+    for value in (200.0, 210.0, 190.0):
+        gateway_instance._record_latency(fallback, value)
+
+    for value in (120.0, 130.0, 110.0):
+        gateway_instance._record_ttft(primary, value)
+    for value in (20.0, 25.0, 30.0):
+        gateway_instance._record_ttft(fallback, value)
+
+    assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "fallback"

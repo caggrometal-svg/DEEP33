@@ -165,8 +165,24 @@ class AIGateway:
     def _record_throughput(self, provider: GatewayProvider, tokens_per_second: float) -> None:
         self._throughput_samples.setdefault(provider.name, deque(maxlen=20)).append(tokens_per_second)
 
-    def _ordered_providers(self) -> list[GatewayProvider]:
+    def _ordered_providers(self, *, prefer_ttft: bool = False) -> list[GatewayProvider]:
         providers = list(self.config.providers)
+        ttft_ready = prefer_ttft and all(
+            len(self._ttft_samples.get(provider.name, ())) >= 3
+            for provider in providers
+        )
+        if ttft_ready:
+            return sorted(
+                providers,
+                key=lambda provider: (
+                    sum(self._ttft_samples.get(provider.name, ()))
+                    / max(1, len(self._ttft_samples.get(provider.name, ()))),
+                    sum(self._latency_samples.get(provider.name, ()))
+                    / max(1, len(self._latency_samples.get(provider.name, ()))),
+                    self.config.providers.index(provider),
+                ),
+            )
+
         if any(len(self._latency_samples.get(provider.name, ())) < 3 for provider in providers):
             return providers
         return sorted(
@@ -530,7 +546,7 @@ class AIGateway:
         saw_http_error = False
         saw_invalid_response = False
 
-        for provider in self.config.providers:
+        for provider in self._ordered_providers(prefer_ttft=True):
             circuit = self._circuit(provider)
             if not circuit.available(time.monotonic()):
                 continue

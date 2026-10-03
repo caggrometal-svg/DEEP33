@@ -259,9 +259,11 @@ class SearchEngine:
         *,
         timeout_seconds: float,
         api_key: str,
+        fast_mode: bool = False,
     ) -> tuple[list[dict], list[str]]:
         errors: list[str] = []
-        for attempt in range(PROVIDER_RETRIES + 1):
+        max_attempts = 1 if fast_mode else PROVIDER_RETRIES + 1
+        for attempt in range(max_attempts):
             try:
                 result = await asyncio.wait_for(
                     self._provider_search(
@@ -275,7 +277,11 @@ class SearchEngine:
                 return result, errors
             except Exception as exc:
                 errors.append(f"{provider}:{type(exc).__name__}:attempt={attempt + 1}")
-                if attempt < PROVIDER_RETRIES and RETRY_BACKOFF_SECONDS:
+                if (
+                    not fast_mode
+                    and attempt < max_attempts - 1
+                    and RETRY_BACKOFF_SECONDS
+                ):
                     await asyncio.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
         return [], errors
 
@@ -309,6 +315,7 @@ class SearchEngine:
         plan_depth: str,
         timeout_seconds: float,
         api_key: str,
+        fast_mode: bool = False,
     ) -> tuple[list[tuple[str, list[dict]]], list[str], list[str]]:
         successful: list[tuple[str, list[dict]]] = []
         errors: list[str] = []
@@ -320,8 +327,39 @@ class SearchEngine:
                 planned_query,
                 timeout_seconds=timeout_seconds,
                 api_key=api_key,
+                fast_mode=fast_mode,
             )
             return name, results, provider_errors
+
+        if fast_mode and len(providers) > 1:
+            # Race providers and return as soon as one has enough usable results.
+            # Fast mode deliberately omits retries and deep query fan-out.
+            required_results = min(self.max_results, MIN_FALLBACK_RESULTS)
+            tasks = [asyncio.create_task(call(name)) for name in providers]
+            try:
+                for task in asyncio.as_completed(tasks):
+                    name, results, provider_errors = await task
+                    attempted.append(name)
+                    errors.extend(provider_errors)
+                    if results:
+                        successful.append((name, results))
+                        if len(results) >= required_results:
+                            for other in tasks:
+                                if not other.done():
+                                    other.cancel()
+                            break
+            finally:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            return successful, errors, attempted
+
+        if fast_mode:
+            name, results, provider_errors = await call(providers[0]) if providers else ("", [], [])
+            if name:
+                attempted.append(name)
+                errors.extend(provider_errors)
+                if results:
+                    successful.append((name, results))
+            return successful, errors, attempted
 
         if plan_depth == "deep":
             gathered = await asyncio.gather(*(call(name) for name in providers))
@@ -373,6 +411,7 @@ class SearchEngine:
         api_key: str,
         timeout_seconds: float,
         fallback_ddg: bool,
+        fast_mode: bool = False,
     ) -> dict:
         plan = self.plan(query)
         provider_name = provider.strip().lower() or "auto"
@@ -382,6 +421,8 @@ class SearchEngine:
         errors: list[str] = []
         providers_attempted: list[str] = []
 
+        planned_queries = plan.queries[:1] if fast_mode else plan.queries
+
         async def run_planned(planned_query: str):
             return planned_query, await self._run_query(
                 providers,
@@ -389,13 +430,19 @@ class SearchEngine:
                 plan_depth=plan.depth,
                 timeout_seconds=timeout_seconds,
                 api_key=api_key,
+                fast_mode=fast_mode,
             )
 
-        if PARALLEL_QUERIES and plan.depth == "deep" and len(plan.queries) > 1:
-            planned_batches = await asyncio.gather(*(run_planned(q) for q in plan.queries))
+        if (
+            not fast_mode
+            and PARALLEL_QUERIES
+            and plan.depth == "deep"
+            and len(planned_queries) > 1
+        ):
+            planned_batches = await asyncio.gather(*(run_planned(q) for q in planned_queries))
         else:
             planned_batches = []
-            for q in plan.queries:
+            for q in planned_queries:
                 planned_batches.append(await run_planned(q))
 
         for planned_query, (batch, batch_errors, attempted) in planned_batches:
@@ -406,7 +453,7 @@ class SearchEngine:
             for provider_used, items in batch:
                 successful.append((planned_query, provider_used, items))
 
-        executed_queries = list(plan.queries)
+        executed_queries = list(planned_queries)
         if not successful:
             tokens = _tokens(plan.original_query)
             rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
@@ -418,6 +465,7 @@ class SearchEngine:
                     plan_depth="standard",
                     timeout_seconds=timeout_seconds,
                     api_key=api_key,
+                    fast_mode=fast_mode,
                 )
                 errors.extend(batch_errors)
                 for provider_used in attempted:

@@ -922,6 +922,7 @@ async def execute_web_tool(name,arguments):
                 query,
                 timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","8")),
                 max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","5")),
+                fast=True,
             )
         except Exception as exc:
             logger.warning("web_search_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
@@ -1058,7 +1059,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         deep = complexity_profile(messages)[2] == "DEEP"
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     try:
-        search_result = await execute_web_tool("web_search", {"query": query})
+        search_result = await search_web(
+            query,
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
+            fast=True,
+        )
     except Exception:
         search_result = {"ok": False, "results": []}
 
@@ -1164,6 +1170,7 @@ async def run_web_tool_loop(
     # model as untrusted context using a normal chat request.
     if force_web:
         working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(messages, request_id=request_id)
+        performance.mark(request_id, "T6_INFERENCE_STARTED")
         sources.update({str(item.get("url")): item for item in prepared_sources if item.get("url")})
         evidence_fragments.extend(prepared_evidence)
         try:
@@ -1199,6 +1206,7 @@ async def run_web_tool_loop(
         # Streaming and normal web responses use one synthesis pass; originality is enforced by prompt contract.
         return data, list(sources.values())
 
+    performance.mark(request_id, "T6_INFERENCE_STARTED")
     for round_index in range(MAX_WEB_TOOL_ROUNDS):
         data=await call_gateway(
             {
@@ -2027,13 +2035,13 @@ async def generate(
         payload = {
             "messages": messages,
             "model": model_for_profile(request.model, profile),
+            "max_tokens": output_token_limit(profile),
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        performance.mark(request_id, "T6_INFERENCE_STARTED")
         if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and should_force_web(messages):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
             data, sources = await run_web_tool_loop(
@@ -2047,6 +2055,7 @@ async def generate(
                 personality=personality,
             )
         else:
+            performance.mark(request_id, "T6_INFERENCE_STARTED")
             data = await call_gateway(
                 payload,
                 request_id=request_id,

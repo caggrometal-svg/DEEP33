@@ -388,6 +388,7 @@ async def search_web(
     max_results=DEFAULT_MAX_RESULTS,
     provider=None,
     api_key=None,
+    fast: bool = False,
 ):
     cleaned = " ".join(query.split()).strip()
     if not cleaned:
@@ -408,8 +409,10 @@ async def search_web(
 
     engine = SearchEngine(
         max_results=max_results,
-        max_queries=max(
-            1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3")))
+        max_queries=(
+            1
+            if fast
+            else max(1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3"))))
         ),
     )
     cache_key = _search_cache_key(
@@ -426,6 +429,7 @@ async def search_web(
         api_key=key,
         timeout_seconds=timeout_seconds,
         fallback_ddg=os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() == "true",
+        fast_mode=fast,
     )
     if not result["ok"]:
         raise WebSearchError(
