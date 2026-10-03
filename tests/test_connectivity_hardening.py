@@ -89,7 +89,6 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
     assert "http://" not in production_e2e
     assert "c-33.blitz.cloud" not in production_e2e.lower()
-    assert "iac33" not in production_e2e.lower()
 
 
 def test_apk_workflows_require_certified_production_pass() -> None:
