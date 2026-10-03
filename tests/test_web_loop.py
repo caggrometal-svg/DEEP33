@@ -330,3 +330,13 @@ def test_stream_gateway_forwards_provider_chunks_before_stream_completion(monkey
         assert observed[-1] == "provider-finished"
 
     asyncio.run(exercise())
+
+
+def test_web_routing_skips_stable_chat_and_uses_fresh_external_signals():
+    stable_messages = [{"role": "user", "content": "2x2?"}]
+    current_messages = [{"role": "user", "content": "¿Cuál es el precio actual del dólar?"}]
+    explicit_messages = [{"role": "user", "content": "busca en internet DEEP33"}]
+
+    assert main.should_force_web(stable_messages) is False
+    assert main.should_force_web(current_messages) is True
+    assert main.should_force_web(explicit_messages) is True
