@@ -2186,6 +2186,7 @@ async def stream_gateway(
     collected = bytearray()
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     stream_started = time.perf_counter()
+    first_output_at: float | None = None
     frame_buffer = bytearray()
 
     try:
@@ -2203,6 +2204,15 @@ async def stream_gateway(
                 if b"data: [DONE]" in frame:
                     continue
                 if frame.strip():
+                    if first_output_at is None and b"data:" in frame:
+                        first_output_at = time.perf_counter()
+                        ttft_ms = (first_output_at - stream_started) * 1000
+                        _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+                        logger.info(
+                            "stream_ttft request_id=%s ttft_ms=%.2f",
+                            request_id,
+                            ttft_ms,
+                        )
                     yield frame + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
