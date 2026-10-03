@@ -16,7 +16,12 @@ def test_android_transport_is_https_and_deadline_bounded() -> None:
     assert 'connection.setRequestProperty("Cache-Control", "no-cache")' in source
     assert '.coerceAtLeast(3_000L)' not in source
     assert 'if (remainingMs <= 250L) break' in source
-    assert 'value.lowercase().startsWith("https://")' in source
+    assert 'private fun validateEndpoint(raw: String): String?' in source
+    assert 'scheme != "https"' in source
+    assert 'uri.userInfo != null' in source
+    assert 'uri.query != null' in source
+    assert 'uri.fragment != null' in source
+    assert 'responseContentType.contains("json", ignoreCase = true)' in source
 
 
 def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -> None:
@@ -33,7 +38,8 @@ def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
     source = read("android/app/build.gradle.kts")
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
-    assert '?: ""' in source
+    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
+    assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
     assert 'http://' not in source
 
 
