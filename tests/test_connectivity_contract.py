@@ -47,7 +47,7 @@ def test_transport_source_rejects_unsafe_endpoints_and_wrong_response_types() ->
     assert "uri.fragment != null" in text
     assert "instanceFollowRedirects = false" in text
     assert 'connection.contentType.orEmpty().contains("text/event-stream"' in text
-    assert 'contentType.contains("json", ignoreCase = true)' in text
+    assert 'responseContentType.contains("json", ignoreCase = true)' in text
     assert "activeStreamConnections[requestId]" in text
 
 
