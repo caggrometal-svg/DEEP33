@@ -2234,7 +2234,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     try:
         if DEEP33_WEB_TOOLS_ENABLED and should_force_web(messages):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            working, _sources = await prepare_web_evidence(messages)
+            working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(messages)
             working.append(_web_personality_lock(personality))
             payload = {"messages": working, "model": payload["model"]}
             if request.temperature is not None:
