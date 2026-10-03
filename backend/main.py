@@ -2260,7 +2260,7 @@ async def stream_gateway(
                             request_id,
                             ttft_ms,
                         )
-                    yield frame + b"\n\n"
+                    yield bytes(frame) + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
         performance.mark(request_id, "T8_STREAM_FINISHED")
