@@ -151,7 +151,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
 
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
-    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v2" in messages[0]["content"]
+    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v3" in messages[0]["content"]
     assert "SHAPE_SELECTED=CONVERSATIONAL" in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
     assert messages[1:] == [
@@ -242,3 +242,22 @@ def test_uncertainty_retry_uses_deep_web() -> None:
     assert main.response_needs_web_retry({
         "choices": [{"message": {"content": "No puedo determinarlo con la información disponible."}}]
     }) is True
+
+
+
+def test_policy_prefers_integrated_conversation_over_labeled_analysis_blocks() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "Quiero entender una teoría controvertida."}
+    ])
+
+    assert "La respuesta debe leerse como una conversación inteligente, no como un informe" in prompt
+    assert "Patrón" in prompt and "Hipótesis" in prompt and "Especulación" in prompt
+    assert "no los conviertas en secciones o etiquetas" in prompt
+    assert "deja espacio útil para que la conversación pueda continuar" in prompt
+
+
+def test_conspiranoico_does_not_require_labeled_reasoning_sections() -> None:
+    prompt = main.personality_prompt("CONSPIRANOICO")
+
+    assert "Do not present the response as labeled blocks" in prompt
+    assert "EVIDENCE, HYPOTHESIS, SPECULATION, or VERDICT" in prompt
