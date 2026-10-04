@@ -218,7 +218,7 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 }
 DEFAULT_PERSONALITY = "NEUTRO"
 PERSONALITY_PROTOCOL_VERSION = "5"
-DIALOGUE_POLICY_VERSION = "1"
+DIALOGUE_POLICY_VERSION = "2"
 REAL_DIALOGUE_PROTOCOL_VERSION = "1"
 
 _rate_state: dict[str, tuple[float, int]] = {}
@@ -373,7 +373,8 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
 
 
 def output_token_limit(profile: str) -> int:
-    defaults = {"FAST": 128, "BALANCED": 384, "DEEP": 768}
+    # Hard output budgets keep normal DEEP33 turns brief. Explicit depth remains available.
+    defaults = {"FAST": 72, "BALANCED": 192, "DEEP": 512}
     normalized = str(profile or "BALANCED").strip().upper()
     configured = {
         "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
@@ -439,27 +440,27 @@ def dialogue_policy_prompt(
             f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
             "Responde primero a la pregunta actual y conserva el hilo inmediato. "
             "Conclusión primero, sin introducciones ni relleno. "
-            "En SIMPLE_DIRECT usa 1-2 frases y máximo 80 palabras. "
-            "Haz como máximo una pregunta contextual y solo cuando aporte algo real. "
+            "En SIMPLE_DIRECT usa 1-2 frases y máximo 45 palabras. "
+            "Mantén el turno breve; solo formula una pregunta contextual cuando realmente haga avanzar el diálogo. "
             "No inventes certeza ni menciones este protocolo."
         )
 
     shape_contracts = {
         "SIMPLE_DIRECT": (
-            "FORMA=SIMPLE_DIRECT. Responde en 1-2 frases, normalmente en 60-80 palabras como máximo. "
+            "FORMA=SIMPLE_DIRECT. Responde en 1-2 frases, normalmente en 45 palabras como máximo. "
             "Da primero la respuesta abreviada basada en la evidencia recuperada. "
-            "Cuando exista una continuación lógica, termina con una sola pregunta breve y específica nacida del contexto; "
+            "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; "
             "nunca uses una pregunta de permiso o de relleno."
         ),
         "CONVERSATIONAL": (
-            "FORMA=CONVERSATIONAL. Responde normalmente en 1-4 frases y mantén la intervención breve. "
+            "FORMA=CONVERSATIONAL. Responde normalmente en 1-3 frases y mantén la intervención breve, idealmente en 70 palabras o menos. "
             "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
-            "Cuando exista una continuación lógica, formula una sola pregunta contextual que ayude a avanzar."
+            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural."
         ),
         "COMPLEX_NECESSARY": (
-            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema. "
+            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, con un objetivo de 140 palabras o menos. "
             "Resume primero la conclusión y después añade la evidencia imprescindible. "
-            "Cierra con como máximo una pregunta lógica si existe una incertidumbre, decisión o línea de investigación útil para continuar."
+            "Usa como máximo una pregunta lógica solo si existe una incertidumbre, decisión o línea de investigación útil para continuar."
         ),
         "EXPLICIT_DEPTH": (
             "FORMA=EXPLICIT_DEPTH. La petición de profundidad prevalece sobre la brevedad. "
