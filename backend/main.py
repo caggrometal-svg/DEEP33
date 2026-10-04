@@ -458,7 +458,8 @@ def dialogue_policy_prompt(
             "FORMA=CONVERSATIONAL. Responde con naturalidad y en proporción a lo que acaba de decir el usuario. "
             "Puede ser una intervención breve o más desarrollada cuando el contenido lo requiera; no cortes una explicación necesaria por un límite de palabras. "
             "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
-            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural; no debe aparecer por obligación."
+            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural; no debe aparecer por obligación. "
+            "Es decir: una sola pregunta contextual debe ser usada solo cuando aporte una continuación natural."
         ),
         "COMPLEX_NECESSARY": (
             "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. "
