@@ -3,7 +3,6 @@ package cl.caggrometal.deep33
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
 
 data class UiMessage(
     val role: String,
@@ -50,12 +49,12 @@ class SessionStore(
 ) {
     private val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
 
-    /** Stable device/profile identity. Conversation session IDs can change; this one must not. */
+    /** Stable per-installation user identity. Conversation session IDs can change; this one must not. */
     val memoryProfileId: String
         get() = synchronized(STORE_LOCK) {
             val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
             if (!existing.isNullOrBlank()) return@synchronized existing
-            val created = "profile-" + UUID.randomUUID().toString()
+            val created = MultiUserIdentity.newProfileId()
             prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).commit()
             created
         }
@@ -64,7 +63,7 @@ class SessionStore(
         get() = synchronized(STORE_LOCK) {
             val existing = prefs.getString(KEY_SESSION_ID, null)
             if (!existing.isNullOrBlank()) return@synchronized existing
-            val created = UUID.randomUUID().toString()
+            val created = MultiUserIdentity.newSessionId()
             prefs.edit()
                 .putString(KEY_SESSION_ID, created)
                 .putString(messagesKey(created), "[]")
