@@ -177,8 +177,8 @@ def test_policy_keeps_uncertainty_boundaries() -> None:
         {"role": "user", "content": "No sé si esto pasó por el cambio de red."}
     ])
 
-    assert "HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO" in prompt
-    assert "sin inventar seguridad" in prompt
+    assert "Distingue hechos, inferencias, posibilidades y desconocidos cuando sea necesario" in prompt
+    assert "no los conviertas en secciones o etiquetas" in prompt
     assert "actualiza la conclusión" in prompt
 
 
