@@ -41,6 +41,6 @@ def test_web_final_style_lock_reasserts_conversation_policy() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert (
-            'dialoguePolicyInstruction(enrichedMessages) +
-            " This conversation-control block is authoritative for response shape."'
+            'dialoguePolicyInstruction(enrichedMessages) +\n'
+            '            " This conversation-control block is authoritative for response shape."'
         ) in source
