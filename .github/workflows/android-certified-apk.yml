@@ -32,7 +32,7 @@ jobs:
           python -m pytest tests -q
 
       - name: Android toolchain
-        uses: actions/setup-java@cf277c60eac1a0b0b6dd0b02a70ac22fe1a7e6d5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
