@@ -182,10 +182,10 @@ def test_policy_keeps_uncertainty_boundaries() -> None:
     assert "actualiza la conclusión" in prompt
 
 
-def test_default_output_budgets_are_strictly_bounded() -> None:
-    assert main.output_token_limit("FAST") == 72
-    assert main.output_token_limit("BALANCED") == 192
-    assert main.output_token_limit("DEEP") == 512
+def test_default_output_budgets_are_useful_ceilings() -> None:
+    assert main.output_token_limit("FAST") == 256
+    assert main.output_token_limit("BALANCED") == 768
+    assert main.output_token_limit("DEEP") == 2048
 
 
 def test_output_budget_cannot_be_inflated_by_environment(monkeypatch) -> None:
@@ -203,3 +203,30 @@ def test_conversational_mode_does_not_force_a_follow_up_question() -> None:
         {"role": "user", "content": "Estoy pensando en cambiar de trabajo."}
     ])
     assert "Una sola pregunta contextual es opcional" in prompt
+
+def test_response_policy_does_not_impose_artificial_shortness() -> None:
+    simple = main.dialogue_policy_prompt([
+        {"role": "user", "content": "¿Qué es HTTP?"}
+    ])
+    complex_prompt = main.dialogue_policy_prompt([
+        {
+            "role": "user",
+            "content": "Analiza este problema y explica las causas, consecuencias y alternativas con suficiente detalle.",
+        }
+    ])
+
+    assert "no recortes una precisión o explicación necesaria" in simple
+    assert "nunca omitas información material" in simple
+    assert "sin un límite artificial de palabras" in complex_prompt
+
+
+def test_response_needs_web_retry_only_on_strong_knowledge_gap() -> None:
+    assert main.response_needs_web_retry({
+        "choices": [{"message": {"content": "No lo sé con certeza."}}]
+    }) is True
+    assert main.response_needs_web_retry({
+        "choices": [{"message": {"content": "La respuesta es 4."}}]
+    }) is False
+    assert main.response_needs_web_retry({
+        "choices": [{"message": {"content": "Es posible que ocurra mañana."}}]
+    }) is False

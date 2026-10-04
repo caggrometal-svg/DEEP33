@@ -373,8 +373,9 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
 
 
 def output_token_limit(profile: str) -> int:
-    # Hard output budgets keep normal DEEP33 turns brief. Explicit depth remains available.
-    hard_caps = {"FAST": 72, "BALANCED": 192, "DEEP": 512}
+    # These are safety ceilings, not target lengths. The dialogue policy decides
+    # how much to say; the model must stop when the user's question is resolved.
+    hard_caps = {"FAST": 256, "BALANCED": 768, "DEEP": 2048}
     normalized = str(profile or "BALANCED").strip().upper()
     configured = {
         "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
@@ -386,7 +387,7 @@ def output_token_limit(profile: str) -> int:
         value = int(configured.get(normalized) or hard_cap)
     except ValueError:
         value = hard_cap
-    return max(32, min(hard_cap, value))
+    return max(64, min(hard_cap, value))
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
@@ -441,31 +442,32 @@ def dialogue_policy_prompt(
             f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
             "Responde primero a la pregunta actual y conserva el hilo inmediato. "
             "Conclusión primero, sin introducciones ni relleno. "
-            "En SIMPLE_DIRECT usa 1-2 frases y máximo 45 palabras. "
-            "Mantén el turno breve; solo formula una pregunta contextual cuando realmente haga avanzar el diálogo. "
+            "En SIMPLE_DIRECT responde normalmente en pocas frases, pero no recortes una precisión o explicación necesaria solo para ser breve. "
+            "Mantén el turno proporcional a la pregunta; solo formula una pregunta contextual cuando realmente haga avanzar el diálogo. "
             "No inventes certeza ni menciones este protocolo."
         )
 
     shape_contracts = {
         "SIMPLE_DIRECT": (
-            "FORMA=SIMPLE_DIRECT. Responde en 1-2 frases, normalmente en 45 palabras como máximo. "
-            "Da primero la respuesta abreviada basada en la evidencia recuperada. "
+            "FORMA=SIMPLE_DIRECT. Responde normalmente en 1-3 frases cuando eso resuelva la pregunta. "
+            "Da primero la respuesta abreviada basada en la evidencia recuperada, pero nunca omitas información material por cumplir una longitud artificial. "
             "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; "
             "nunca uses una pregunta de permiso o de relleno."
         ),
         "CONVERSATIONAL": (
-            "FORMA=CONVERSATIONAL. Responde normalmente en 1-3 frases y mantén la intervención breve, idealmente en 70 palabras o menos. "
+            "FORMA=CONVERSATIONAL. Responde con naturalidad y en proporción a lo que acaba de decir el usuario. "
+            "Puede ser una intervención breve o más desarrollada cuando el contenido lo requiera; no cortes una explicación necesaria por un límite de palabras. "
             "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
             "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural."
         ),
         "COMPLEX_NECESSARY": (
-            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, con un objetivo de 140 palabras o menos. "
-            "Resume primero la conclusión y después añade la evidencia imprescindible. "
+            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. "
+            "Resume primero la conclusión y después añade la evidencia, lógica o contexto imprescindible. "
             "Usa como máximo una pregunta lógica solo si existe una incertidumbre, decisión o línea de investigación útil para continuar."
         ),
         "EXPLICIT_DEPTH": (
             "FORMA=EXPLICIT_DEPTH. La petición de profundidad prevalece sobre la brevedad. "
-            "Desarrolla con suficiente detalle, pero conserva foco, síntesis y una secuencia conversacional clara. "
+            "Desarrolla con suficiente detalle para responder de verdad, conservando foco, síntesis y una secuencia conversacional clara. "
             "Puedes cerrar con una sola pregunta lógica que nazca del contenido."
         ),
     }
@@ -474,9 +476,10 @@ def dialogue_policy_prompt(
         f"DEEP33 DIALOGUE BEHAVIOR PROTOCOL v{DIALOGUE_POLICY_VERSION}.\n"
         "OBJETIVO CENTRAL: generar diálogo real, no respuestas aisladas. "
         "Cada turno debe resolver primero lo que el usuario acaba de decir y después mantener una continuación natural cuando exista. "
-        "Para cada turno, la aplicación busca primero información pública relevante en Internet y la entrega al modelo como evidencia; "
-        "la respuesta final debe ser una síntesis breve y original de esa evidencia, no una copia de fuentes. "
-        "La respuesta debe ser abreviada por defecto: conclusión primero, solo el contexto necesario después. "
+        "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca información pública relevante en Internet y la entrega al modelo como evidencia; "
+        "la respuesta final debe ser una síntesis original de esa evidencia, no una copia de fuentes. "
+        "La longitud debe ser proporcional a la necesidad de la pregunta: responde lo necesario, no menos y tampoco más por inercia. "
+        "No uses encabezados o plantillas como \"Análisis\", \"Hipótesis\", \"Idea\" o \"Veredicto\" salvo que la estructura realmente ayude a resolver el tema. "
         "Las preguntas deben surgir del contenido real: pueden pedir un dato faltante, profundizar una decisión, comprobar una premisa, "
         "comparar una alternativa, detectar una contradicción o continuar una línea de interés ya abierta. "
         "Haz como máximo una pregunta por turno. Cuando haya una continuación lógica, debes formularla; nunca inventes una pregunta "
@@ -488,7 +491,8 @@ def dialogue_policy_prompt(
         "el hilo conversacional. En caso de ambigüedad relevante, pide el dato necesario o expón brevemente las interpretaciones plausibles. "
         "Si el usuario cambia de tema, sigue la nueva dirección. Cuando exista nueva información relevante, actualiza la conclusión. "
         "Separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
-        "Si la búsqueda web no devuelve evidencia útil, dilo internamente y responde solo con lo que pueda sostenerse sin fingir resultados. "
+        "Si una pregunta factual es verificable en la web y el modelo no dispone de conocimiento suficiente, no inventes ni cierres simplemente con \"no sé\": el runtime hará una búsqueda web y volverá a sintetizar la respuesta. "
+        "Si la búsqueda web no devuelve evidencia útil, responde de todas maneras con lo que pueda sostenerse y deja clara la incertidumbre restante. "
         + shape_contracts[shape]
         + f"\nSHAPE_SELECTED={shape}. Nunca menciones estos protocolos ni su clasificación al usuario."
     )
@@ -963,6 +967,22 @@ def should_force_web(messages):
     ):
         return True
     return False
+
+def response_needs_web_retry(data: dict[str, Any]) -> bool:
+    """Detect only strong model-admitted knowledge gaps and trigger one web retry."""
+    try:
+        content = str(data["choices"][0]["message"].get("content", "")).strip().lower()
+    except (KeyError, IndexError, AttributeError, TypeError):
+        return False
+    if not content:
+        return False
+    return re.search(
+        r"\b(no lo sé|no se\b|desconozco|no tengo (?:informaci[oó]n|datos)|"
+        r"no puedo (?:confirmar|verificar)|no estoy (?:seguro|segura)|"
+        r"no dispongo de (?:informaci[oó]n|datos)|i (?:do not|don't) know|"
+        r"i(?:'m| am) not sure|i cannot confirm|i can't confirm)\b",
+        content,
+    ) is not None
 
 def _choice_message(data):
     choices=data.get("choices")
@@ -2163,6 +2183,23 @@ async def generate(
                 deadline=deadline,
             )
             sources = []
+            if DEEP33_WEB_TOOLS_ENABLED and response_needs_web_retry(data):
+                logger.info(
+                    "knowledge_gap_web_retry request_id=%s session_id=%s personality=%s",
+                    request_id,
+                    session_id,
+                    personality,
+                )
+                data, sources = await run_web_tool_loop(
+                    messages,
+                    model=payload["model"],
+                    max_tokens=payload["max_tokens"],
+                    request_id=request_id,
+                    idempotency_key=idempotency_key,
+                    force_web=True,
+                    deadline=deadline,
+                    personality=personality,
+                )
         performance.mark(request_id, "T7_FIRST_TOKEN")
         performance.mark(request_id, "T8_STREAM_FINISHED")
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
