@@ -82,6 +82,25 @@ def test_policy_requires_real_contextual_questions_and_rejects_filler() -> None:
     assert "nunca inventes una pregunta" in prompt
 
 
+def test_policy_for_simple_question_has_explicit_stop_rule() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "¿Cuántos planetas con vida inteligente conocemos?"}
+    ])
+
+    assert "detente cuando la pregunta quede realmente resuelta" in prompt
+    assert "Una pregunta final está prohibida" in prompt
+    assert "No conviertas una pregunta simple o factual en un informe" in prompt
+
+
+def test_policy_does_not_require_continuation_after_closed_answer() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "¿Cuánto es 2x2?"}
+    ])
+
+    assert "Una respuesta factual, cerrada y autosuficiente normalmente termina sin pregunta" in prompt
+    assert "Nunca añadas una pregunta únicamente para mantener artificialmente la conversación" in prompt
+
+
 def test_policy_for_simple_question_prohibits_unneeded_follow_up() -> None:
     prompt = main.dialogue_policy_prompt([
         {"role": "user", "content": "¿Qué es HTTP?"}
