@@ -34,7 +34,7 @@ def test_edge_runtime_places_conversation_control_in_final_system_message() -> N
 
         assert "const conversationControl = dialoguePolicyInstruction(messages);" in build
         assert 'return [\n    ...personalitySystem,' in build
-        assert "+ "\\n" + conversationControl" in build
+        assert '+"\\n" + conversationControl' in build
 
 
 def test_web_final_style_lock_reasserts_conversation_policy() -> None:
