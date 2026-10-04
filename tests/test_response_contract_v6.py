@@ -5,7 +5,7 @@ import backend.main as main
 
 def test_no_artificial_output_length_rules_in_dialogue_policy():
     prompt = main.dialogue_policy_prompt([{"role": "user", "content": "¿Qué es HTTP?"}])
-    assert "no uses un número fijo de frases, palabras o caracteres" in prompt
+    assert "no uses un número fijo de frases, palabras o caracteres" in prompt.lower()
     assert "no recortes una precisión o explicación necesaria" in prompt
 
 
