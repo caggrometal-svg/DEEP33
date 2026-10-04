@@ -40,6 +40,7 @@ function headerSubset(req: Request) {
     "content-type",
     "accept",
     "x-deep33-session-id",
+    "x-deep33-memory-profile-id",
     "x-request-id",
     "x-idempotency-key",
   ]) {
@@ -1524,9 +1525,14 @@ async function handleMemoryRequest(
   req: Request,
   path: string,
   sessionId: string,
+  memoryProfileId?: string,
 ): Promise<Response> {
+  const profileScope = memoryProfileId?.trim()
+    ? { memory_profile_id: memoryProfileId.trim().slice(0, 128) }
+    : {};
+
   if (path === "/v1/memory/context" && req.method === "GET") {
-    const result = await memoryCall("context", sessionId);
+    const result = await memoryCall("context", sessionId, profileScope);
     return json(result.body, result.status);
   }
 
@@ -1535,6 +1541,7 @@ async function handleMemoryRequest(
     const result = await memoryCall("remember", sessionId, {
       kind: payload.kind,
       content: payload.content,
+      ...profileScope,
     });
     return json(result.body, result.status);
   }
@@ -1544,6 +1551,7 @@ async function handleMemoryRequest(
     const result = await memoryCall("preferences", sessionId, {
       personality: payload.personality,
       preferences: payload.preferences,
+      ...profileScope,
     });
     return json(result.body, result.status);
   }
@@ -1554,6 +1562,7 @@ async function handleMemoryRequest(
       messages: Array.isArray(payload.messages) ? payload.messages : [],
       personality: payload.personality,
       preferences: payload.preferences,
+      ...profileScope,
     });
     return json(result.body, result.status);
   }
@@ -1952,7 +1961,7 @@ Deno.serve(async (req) => {
       path.startsWith("/v1/memory/") &&
       ["GET", "POST", "PUT"].includes(req.method)
     ) {
-      return await handleMemoryRequest(req, path, sessionId);
+      return await handleMemoryRequest(req, path, sessionId, memoryProfileId);
     }
 
     if (path === "/v1/connectivity/audit" && req.method === "GET") {
