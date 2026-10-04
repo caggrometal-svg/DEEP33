@@ -193,9 +193,9 @@ def test_output_budget_cannot_be_inflated_by_environment(monkeypatch) -> None:
     monkeypatch.setenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "4096")
     monkeypatch.setenv("AI_DEEP_MAX_OUTPUT_TOKENS", "4096")
 
-    assert main.output_token_limit("FAST") == 72
-    assert main.output_token_limit("BALANCED") == 192
-    assert main.output_token_limit("DEEP") == 512
+    assert main.output_token_limit("FAST") == 256
+    assert main.output_token_limit("BALANCED") == 768
+    assert main.output_token_limit("DEEP") == 2048
 
 
 def test_conversational_mode_does_not_force_a_follow_up_question() -> None:

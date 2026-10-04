@@ -442,7 +442,7 @@ def dialogue_policy_prompt(
             f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
             "Responde primero a la pregunta actual y conserva el hilo inmediato. "
             "Conclusión primero, sin introducciones ni relleno. "
-            "En SIMPLE_DIRECT responde normalmente en pocas frases, pero no recortes una precisión o explicación necesaria solo para ser breve. "
+            "En SIMPLE_DIRECT responde normalmente en pocas frases, pero no recortes una precisión o explicación necesaria solo para ser breve. Si hace falta continuar, usa una sola pregunta breve y específica y solo cuando sea necesaria. "
             "Mantén el turno proporcional a la pregunta; solo formula una pregunta contextual cuando realmente haga avanzar el diálogo. "
             "No inventes certeza ni menciones este protocolo."
         )
@@ -458,7 +458,7 @@ def dialogue_policy_prompt(
             "FORMA=CONVERSATIONAL. Responde con naturalidad y en proporción a lo que acaba de decir el usuario. "
             "Puede ser una intervención breve o más desarrollada cuando el contenido lo requiera; no cortes una explicación necesaria por un límite de palabras. "
             "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
-            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural."
+            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural; no debe aparecer por obligación."
         ),
         "COMPLEX_NECESSARY": (
             "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. "
@@ -476,7 +476,7 @@ def dialogue_policy_prompt(
         f"DEEP33 DIALOGUE BEHAVIOR PROTOCOL v{DIALOGUE_POLICY_VERSION}.\n"
         "OBJETIVO CENTRAL: generar diálogo real, no respuestas aisladas. "
         "Cada turno debe resolver primero lo que el usuario acaba de decir y después mantener una continuación natural cuando exista. "
-        "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca información pública relevante en Internet y la entrega al modelo como evidencia; "
+        "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca primero información pública relevante en Internet y la entrega al modelo como evidencia; "
         "la respuesta final debe ser una síntesis original de esa evidencia, no una copia de fuentes. "
         "La longitud debe ser proporcional a la necesidad de la pregunta: responde lo necesario, no menos y tampoco más por inercia. "
         "No uses encabezados o plantillas como \"Análisis\", \"Hipótesis\", \"Idea\" o \"Veredicto\" salvo que la estructura realmente ayude a resolver el tema. "
@@ -977,7 +977,7 @@ def response_needs_web_retry(data: dict[str, Any]) -> bool:
     if not content:
         return False
     return re.search(
-        r"\b(no lo sé|no se\b|desconozco|no tengo (?:informaci[oó]n|datos)|"
+        r"\b(no lo sé|no lo se|no sé|no se con (?:certeza|seguridad)|desconozco|no tengo (?:informaci[oó]n|datos)|"
         r"no puedo (?:confirmar|verificar)|no estoy (?:seguro|segura)|"
         r"no dispongo de (?:informaci[oó]n|datos)|i (?:do not|don't) know|"
         r"i(?:'m| am) not sure|i cannot confirm|i can't confirm)\b",
