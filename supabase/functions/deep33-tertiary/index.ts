@@ -939,6 +939,65 @@ const CONSPIRANOICO_REASONING_PROTOCOL =
   + "UPDATE: update by evidence. PRESERVE UNCERTAINTY: preserve uncertainty. "
   + "Never fabricate facts, sources, events, documents, experiments or observations. Never turn suspicion into accusation.";
 
+function dialoguePolicyInstruction(
+  messages: Array<Record<string, unknown>>,
+): string {
+  const latestUser = [...messages]
+    .reverse()
+    .find((item) =>
+      String(item.role || "").toLowerCase() === "user" &&
+      String(item.content || "").trim()
+    );
+  const text = String(latestUser?.content || "").trim();
+  const lowered = text.toLowerCase();
+  const explicitDepth = /\b(en profundidad|a fondo|muy detallado|detalladamente|paso a paso|explica todo|desarrolla|profundiza)\b/.test(lowered);
+  const questionCount = (text.match(/\?/g) || []).length;
+  const complexMarkers = [
+    "compara",
+    "analiza",
+    "evalúa",
+    "explica las diferencias",
+    "pros y contras",
+    "ventajas y desventajas",
+  ];
+  let shape = "CONVERSATIONAL";
+  if (explicitDepth) {
+    shape = "EXPLICIT_DEPTH";
+  } else if (
+    text.length > 700 ||
+    questionCount >= 3 ||
+    complexMarkers.some((marker) => lowered.includes(marker))
+  ) {
+    shape = "COMPLEX_NECESSARY";
+  } else if (/[?？]$/.test(text) && text.length <= 180 && questionCount <= 1) {
+    shape = "SIMPLE_DIRECT";
+  }
+
+  const shapeRule =
+    shape === "SIMPLE_DIRECT"
+      ? "FORMA=SIMPLE_DIRECT. Responde la cifra, nombre, hecho o conclusión en la primera frase y detente cuando la pregunta quede realmente resuelta. Añade solo el contexto mínimo necesario. No uses tabla, lista, encabezados ni secciones salvo que sean imprescindibles para responder. No cierres con una pregunta."
+      : shape === "EXPLICIT_DEPTH"
+      ? "FORMA=EXPLICIT_DEPTH. Desarrolla con el detalle que el usuario pidió, pero conserva un flujo natural. Organiza solo cuando la organización facilite realmente la comprensión; no conviertas automáticamente la respuesta en un informe."
+      : shape === "COMPLEX_NECESSARY"
+      ? "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema. Integra la explicación de forma natural. Una estructura puede usarse cuando aporte claridad, pero nunca por defecto ni para exhibir conocimiento."
+      : "FORMA=CONVERSATIONAL. Responde como una conversación real: primero reacciona a lo que acaba de decir el usuario y luego desarrolla solo lo que haga falta. Mantén el hilo inmediato y deja espacio para continuar.";
+
+  return (
+    "DEEP33 CONVERSATION CONTROL v1. " +
+    "La prioridad es precisión, naturalidad y proporción. " +
+    "No conviertas una respuesta en un informe, tutorial o ficha técnica cuando el usuario no lo pidió. " +
+    "No uses tablas, encabezados, secciones, bloques etiquetados ni un resumen final por costumbre. " +
+    "En particular, no uses fórmulas artificiales como \"Lo esencial\", \"Lo que se sabe\", \"Análisis\", \"Hipótesis\", \"Veredicto\", \"En resumen\" o equivalentes, salvo que el usuario solicite explícitamente ese formato. " +
+    "No fragmentes una respuesta para parecer más completo. " +
+    "No agregues contexto solo para demostrar conocimiento. " +
+    "Cuando la pregunta ya quedó respondida, termina. " +
+    "Una pregunta al final solo puede aparecer si falta un dato imprescindible o existe una continuación real; jamás como fórmula de cierre. " +
+    "Mantén las diferencias entre hechos, inferencias, hipótesis y desconocidos, pero exprésalas dentro del flujo natural, no como apartados automáticos. " +
+    "La personalidad modifica la voz y el enfoque, pero no autoriza una estructura artificial. " +
+    shapeRule
+  );
+}
+
 function buildEdgeMessages(
   messages: Array<Record<string, unknown>>,
   personality: unknown,
@@ -947,17 +1006,19 @@ function buildEdgeMessages(
   const instruction = personalityInstruction(selected);
   const signatures: Record<string, string> = {
     AGRESIVO: "SIGNATURE=direct pressure; short decisive sentences; contradiction checks; dry sarcasm when useful.",
-    NEUTRO: "SIGNATURE=calm precision; compact explanations; explicit uncertainty; deliberate human rhythm.",
-    COMICO: "SIGNATURE=brief wit; controlled irony; unexpected phrasing; humor as seasoning.",
+    NEUTRO: "SIGNATURE=calm precision; compact explanations; explicit uncertainty; deliberate human rhythm; measured commitment.",
+    COMICO: "SIGNATURE=brief wit; controlled irony; unexpected phrasing; humor as seasoning; vivid analogies and punchlines.",
     CONSPIRANOICO:
-      "SIGNATURE=frame-independent reasoning; pattern detection; anomaly hunting; hidden-assumption checks; competing theories; self-falsification; explicit evidence levels.",
+      "SIGNATURE=frame-independent reasoning; pattern detection; anomaly hunting; hidden-assumption checks; competing theories; self-falsification; explicit evidence levels; authority skepticism.",
   };
   const personalitySystem = messages.filter((item) => {
     if (item.role !== "system") return true;
     const body = String(item.content || "").toUpperCase();
     return !body.includes("ACTIVE_PERSONALITY=") && !body.includes("DEEP33 PERSONALITY CONTROL PROTOCOL") && !body.includes("DEEP33 PERSONALITY PROFILE");
   });
+  const conversationControl = dialoguePolicyInstruction(messages);
   return [
+    ...personalitySystem,
     {
       role: "system",
       content:
@@ -966,12 +1027,11 @@ function buildEdgeMessages(
         + "\nPERSONALITY_CONTRACT=" + instruction
         + "\n" + signatures[selected]
         + (selected === "CONSPIRANOICO" ? "\n" + CONSPIRANOICO_REASONING_PROTOCOL : "")
+        + "\n" + conversationControl
         + "\nMake the signature observable in the answer without announcing the mode.",
     },
-    ...personalitySystem,
   ];
 }
-
 const UPSTREAM_IDENTITY_BRANDS =
   /\b(?:gemma(?:\s+\d+(?:\.\d+)?)?|gemini|google(?:\s+deepmind)?|openai|chatgpt|kilo|claude|copilot)\b/i;
 const POSITIVE_SELF_IDENTITY =
@@ -2316,7 +2376,9 @@ Deno.serve(async (req) => {
             String(payload.personality || "NEUTRO").toUpperCase() +
             ". Synthesize the web evidence in your own words and reasoning. " +
             personalityInstruction(payload.personality) +
-            " Never copy source wording, never reproduce source paragraphs, and never emit source links, citations, or URLs.",
+            " Never copy source wording, never reproduce source paragraphs, or emit source links, citations, or URLs. " +
+            dialoguePolicyInstruction(enrichedMessages) +
+            " This conversation-control block is authoritative for response shape.",
         });
         if (edgeAIConfigured()) {
           try {
