@@ -450,15 +450,15 @@ def dialogue_policy_prompt(
     shape_contracts = {
         "SIMPLE_DIRECT": (
             "FORMA=SIMPLE_DIRECT. Responde normalmente en 1-3 frases cuando eso resuelva la pregunta. "
-            "Da primero la respuesta abreviada basada en la evidencia recuperada, pero nunca omitas información material por cumplir una longitud artificial. "
-            "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; "
+            "Da primero la respuesta abreviada basada en la evidencia recuperada, pero no recortes una precisión o explicación necesaria y nunca omitas información material por cumplir una longitud artificial. "
+            "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; una sola pregunta breve y específica como máximo, nunca uses una pregunta de permiso o de relleno. "
             "nunca uses una pregunta de permiso o de relleno."
         ),
         "CONVERSATIONAL": (
             "FORMA=CONVERSATIONAL. Responde con naturalidad y en proporción a lo que acaba de decir el usuario. "
             "Puede ser una intervención breve o más desarrollada cuando el contenido lo requiera; no cortes una explicación necesaria por un límite de palabras. "
             "Reacciona primero a lo que acaba de decir el usuario y conserva el hilo inmediato. "
-            "Una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural; no debe aparecer por obligación."
+            "una sola pregunta contextual es opcional y solo debe aparecer cuando aporte una continuación natural; no debe aparecer por obligación."
         ),
         "COMPLEX_NECESSARY": (
             "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. "
@@ -477,7 +477,7 @@ def dialogue_policy_prompt(
         "OBJETIVO CENTRAL: generar diálogo real, no respuestas aisladas. "
         "Cada turno debe resolver primero lo que el usuario acaba de decir y después mantener una continuación natural cuando exista. "
         "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca primero información pública relevante en Internet y la entrega al modelo como evidencia; "
-        "la respuesta final debe ser una síntesis original de esa evidencia, no una copia de fuentes. "
+        "la respuesta final debe ser una síntesis breve y original de esa evidencia cuando el asunto sea sencillo, y más desarrollada cuando el contenido lo requiera; nunca una copia de fuentes. "
         "La longitud debe ser proporcional a la necesidad de la pregunta: responde lo necesario, no menos y tampoco más por inercia. "
         "No uses encabezados o plantillas como \"Análisis\", \"Hipótesis\", \"Idea\" o \"Veredicto\" salvo que la estructura realmente ayude a resolver el tema. "
         "Las preguntas deben surgir del contenido real: pueden pedir un dato faltante, profundizar una decisión, comprobar una premisa, "
