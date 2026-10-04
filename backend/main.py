@@ -374,18 +374,19 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
 
 def output_token_limit(profile: str) -> int:
     # Hard output budgets keep normal DEEP33 turns brief. Explicit depth remains available.
-    defaults = {"FAST": 72, "BALANCED": 192, "DEEP": 512}
+    hard_caps = {"FAST": 72, "BALANCED": 192, "DEEP": 512}
     normalized = str(profile or "BALANCED").strip().upper()
     configured = {
         "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
         "BALANCED": os.getenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "").strip(),
         "DEEP": os.getenv("AI_DEEP_MAX_OUTPUT_TOKENS", "").strip(),
     }
+    hard_cap = hard_caps.get(normalized, hard_caps["BALANCED"])
     try:
-        value = int(configured.get(normalized) or defaults.get(normalized, 384))
+        value = int(configured.get(normalized) or hard_cap)
     except ValueError:
-        value = defaults.get(normalized, 384)
-    return max(32, min(4096, value))
+        value = hard_cap
+    return max(32, min(hard_cap, value))
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
