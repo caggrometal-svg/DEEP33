@@ -90,6 +90,7 @@ def test_policy_for_simple_question_has_explicit_stop_rule() -> None:
     assert "detente cuando la pregunta quede realmente resuelta" in prompt
     assert "Una pregunta final está prohibida" in prompt
     assert "no conviertas una pregunta simple o factual en un informe" in prompt.lower()
+    assert "esa respuesta debe aparecer en la primera frase" in prompt
 
 
 def test_policy_does_not_require_continuation_after_closed_answer() -> None:
