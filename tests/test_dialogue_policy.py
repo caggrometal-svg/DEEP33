@@ -151,7 +151,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
 
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
-    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v1" in messages[0]["content"]
+    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v2" in messages[0]["content"]
     assert "SHAPE_SELECTED=CONVERSATIONAL" in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
     assert messages[1:] == [
@@ -180,3 +180,26 @@ def test_policy_keeps_uncertainty_boundaries() -> None:
     assert "HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO" in prompt
     assert "sin inventar seguridad" in prompt
     assert "actualiza la conclusión" in prompt
+
+
+def test_default_output_budgets_are_strictly_bounded() -> None:
+    assert main.output_token_limit("FAST") == 72
+    assert main.output_token_limit("BALANCED") == 192
+    assert main.output_token_limit("DEEP") == 512
+
+
+def test_output_budget_cannot_be_inflated_by_environment(monkeypatch) -> None:
+    monkeypatch.setenv("AI_FAST_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "4096")
+    monkeypatch.setenv("AI_DEEP_MAX_OUTPUT_TOKENS", "4096")
+
+    assert main.output_token_limit("FAST") == 72
+    assert main.output_token_limit("BALANCED") == 192
+    assert main.output_token_limit("DEEP") == 512
+
+
+def test_conversational_mode_does_not_force_a_follow_up_question() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "Estoy pensando en cambiar de trabajo."}
+    ])
+    assert "Una sola pregunta contextual es opcional" in prompt
