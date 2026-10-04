@@ -72,7 +72,7 @@ class SessionStore(
         }
 
     fun resetSession() = synchronized(STORE_LOCK) {
-        val created = UUID.randomUUID().toString()
+        val created = MultiUserIdentity.newSessionId()
         // Starting a fresh conversation must also invalidate any generation recovery
         // markers belonging to the previous conversation. Otherwise Activity startup
         // can consume an old DONE/RUNNING state before seeing the new pending turn.
