@@ -14,7 +14,7 @@ def test_edge_runtime_contains_real_dialogue_policy() -> None:
         "No conviertas una respuesta en un informe",
         "No uses tablas, encabezados, secciones",
         "En particular, no uses fórmulas artificiales",
-        '"En resumen"',
+        "En resumen",
         "Cuando la pregunta ya quedó respondida, termina.",
         "DEEP33 CONVERSATION CONTROL v1.",
     )
