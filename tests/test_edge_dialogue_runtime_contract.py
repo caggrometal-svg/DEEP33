@@ -13,7 +13,7 @@ def test_edge_runtime_contains_real_dialogue_policy() -> None:
         "function dialoguePolicyInstruction(",
         "No conviertas una respuesta en un informe",
         "No uses tablas, encabezados, secciones",
-        "No uses fórmulas artificiales como",
+        "En particular, no uses fórmulas artificiales",
         '"En resumen"',
         "Cuando la pregunta ya quedó respondida, termina.",
         "DEEP33 CONVERSATION CONTROL v1.",
@@ -34,7 +34,7 @@ def test_edge_runtime_places_conversation_control_in_final_system_message() -> N
 
         assert "const conversationControl = dialoguePolicyInstruction(messages);" in build
         assert 'return [\n    ...personalitySystem,' in build
-        assert '+"\\n" + conversationControl' in build
+        assert '+ "\\n" + conversationControl' in build
 
 
 def test_web_final_style_lock_reasserts_conversation_policy() -> None:
