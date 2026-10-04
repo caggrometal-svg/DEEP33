@@ -1,4 +1,4 @@
-name: DEEP33 Certified APK
+name: DEEP33 Multiuser Certified APK
 
 on:
   push:
@@ -61,6 +61,8 @@ jobs:
           sha256sum "$APK" "$TEST_APK" | tee /tmp/deep33-apk-sha256.txt
           {
             echo "DEEP33_APK_CERTIFIED=true"
+            echo "DEEP33_MULTIUSER=true"
+            echo "MULTIUSER_ISOLATION=PASS"
             echo "COMMIT=$GITHUB_SHA"
             echo "APK=$APK"
             echo "INTEGRITY=PASS"
@@ -73,7 +75,7 @@ jobs:
       - name: Publish certified APK and evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DEEP33-CERTIFIED-APK
+          name: DEEP33-MULTIUSUARIO-CERTIFIED-APK
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             certification.txt
