@@ -226,3 +226,10 @@ def test_fast_mode_uses_one_query_and_cancels_slower_provider(monkeypatch):
     assert len(result["queries"]) == 1
     assert result["results"]
     assert cancelled["value"] is True
+
+
+def test_controversial_queries_expand_against_official_and_independent_versions():
+    plan = SearchEngine(max_queries=3).plan("¿La versión oficial contradice la evidencia independiente?")
+    assert plan.depth == "deep"
+    assert any("versión oficial" in q.lower() for q in plan.queries[1:])
+    assert any("evidencia independiente" in q.lower() for q in plan.queries[1:])

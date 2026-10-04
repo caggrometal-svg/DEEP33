@@ -460,7 +460,7 @@ def dialogue_policy_prompt(
     shape_contracts = {
         "SIMPLE_DIRECT": (
             "FORMA=SIMPLE_DIRECT. Da primero la respuesta directa y complétala hasta que la pregunta quede realmente resuelta. "
-            "No uses un número fijo de frases, palabras o caracteres y nunca omitas información material por una regla de brevedad. "
+            "No uses un número fijo de frases, palabras o caracteres; no recortes una precisión o explicación necesaria y nunca omitas información material por una regla de brevedad. "
             "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; una sola pregunta breve y específica como máximo, nunca uses una pregunta de permiso o de relleno. "
             "nunca uses una pregunta de permiso o de relleno."
         ),
@@ -948,11 +948,19 @@ WEB_TOOL_DEFINITIONS = [
     },
 ]
 
+CONTROVERSY_TERMS = (
+    "teoría de la conspiración","teoría conspirativa","conspiración","encubrimiento","ocultan","ocultaron",
+    "ocultando","versión oficial","comunicado oficial","narrativa oficial","evidencia independiente",
+    "contradicciones","anomalía","anomalías","agenda","intereses","manipulación","fraude","engaño",
+    "desinformación","falso","es cierto","es verdad","hay pruebas","pruebas de que","evidencia de que",
+    "realmente pasó","realmente ocurrió","hipótesis alternativa"
+)
+
 WEB_TRIGGER_TERMS = (
     "busca en internet","buscar en internet","navega en internet","navega por internet",
     "internet","web","online","actual","actualmente","hoy","ayer","mañana","último",
     "última","últimos","últimas","noticia","noticias","fuentes","verifica","verificar",
-    "comprueba","comprobar","precio","cotización",
+    "comprueba","comprobar","precio","cotización","investiga","investigación","evidencia","contrasta","contrastar","analiza","fact-check","fact check",
 )
 
 MAX_WEB_TOOL_ROUNDS = max(1, min(4, int(os.getenv("DEEP33_WEB_MAX_TOOL_ROUNDS", "2"))))
@@ -1012,7 +1020,7 @@ def response_needs_web_retry(data: dict[str, Any]) -> bool:
         return False
     return re.search(
         r"\b(no lo sé|no lo se|no sé|no se con (?:certeza|seguridad)|desconozco|no tengo (?:informaci[oó]n|datos)|"
-        r"no puedo (?:confirmar|verificar|determinar)|no estoy (?:seguro|segura)|"
+        r"no puedo (?:confirmar|verificar|determinar)(?:lo)?|no estoy (?:seguro|segura)|"
         r"no dispongo de (?:informaci[oó]n|datos)|no puedo saberlo|es imposible saberlo|i (?:do not|don't) know|"
         r"i(?:'m| am) not sure|i cannot confirm|i can't confirm)\b",
         content,

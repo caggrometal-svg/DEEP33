@@ -188,14 +188,14 @@ def test_output_has_no_artificial_token_ceiling() -> None:
     assert main.output_token_limit("DEEP") is None
 
 
-def test_output_budget_cannot_be_inflated_by_environment(monkeypatch) -> None:
+def test_output_ceiling_environment_cannot_reintroduce_truncation(monkeypatch) -> None:
     monkeypatch.setenv("AI_FAST_MAX_OUTPUT_TOKENS", "4096")
     monkeypatch.setenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "4096")
     monkeypatch.setenv("AI_DEEP_MAX_OUTPUT_TOKENS", "4096")
 
-    assert main.output_token_limit("FAST") == 256
-    assert main.output_token_limit("BALANCED") == 768
-    assert main.output_token_limit("DEEP") == 2048
+    assert main.output_token_limit("FAST") is None
+    assert main.output_token_limit("BALANCED") is None
+    assert main.output_token_limit("DEEP") is None
 
 
 def test_conversational_mode_does_not_force_a_follow_up_question() -> None:
