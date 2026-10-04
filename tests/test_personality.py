@@ -162,7 +162,8 @@ def test_personality_contract_keeps_fact_hypothesis_boundary() -> None:
 
     for name in main.PERSONALITIES:
         prompt = main.personality_prompt(name)
-        assert "Separate facts, inferences, hypotheses, and unknowns" in prompt
+        assert "Distinguish facts, inferences, hypotheses, doubts, and unknowns" in prompt
+        assert "rather than as labeled blocks" in prompt
         assert "Do not manufacture confidence" in prompt
 
 
@@ -174,7 +175,7 @@ def test_personality_contract_has_distinct_response_shapes() -> None:
         "AGRESIVO": "Open with the conclusion or the flaw.",
         "NEUTRO": "Lead with the answer, then the necessary evidence or logic.",
         "COMICO": "Prefer a clean answer followed by one well-placed comic turn.",
-        "CONSPIRANOICO": "Lead with the observable anomaly",
+        "CONSPIRANOICO": "Lead with the most relevant observation or contradiction",
     }
 
     for name, signature in expected.items():
