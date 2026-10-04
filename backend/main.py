@@ -463,6 +463,7 @@ def dialogue_policy_prompt(
     shape_contracts = {
         "SIMPLE_DIRECT": (
             "FORMA=SIMPLE_DIRECT. Da primero la respuesta directa y detente cuando la pregunta quede realmente resuelta. "
+            "Si existe una cifra, nombre, hecho o conclusión concreta que responda la pregunta, esa respuesta debe aparecer en la primera frase. "
             "Añade solo el contexto mínimo necesario para evitar una respuesta incompleta o engañosa. "
             "No uses un número fijo de frases, palabras o caracteres; no recortes una precisión o explicación necesaria y nunca omitas información material por una regla de brevedad. "
             "Una pregunta final está prohibida salvo que falte un dato imprescindible o el usuario haya dejado explícitamente abierta una decisión. "
