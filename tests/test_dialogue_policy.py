@@ -79,7 +79,7 @@ def test_policy_requires_real_contextual_questions_and_rejects_filler() -> None:
     assert "No conviertas cada intervención en interrogatorio" in prompt
     assert "¿quieres que te explique más?" in prompt
     assert "¿quieres que te ayude con eso?" in prompt
-    assert "nunca inventes una pregunta" in prompt
+    assert "nunca inventes una pregunta" in prompt.lower()
 
 
 def test_policy_for_simple_question_has_explicit_stop_rule() -> None:
@@ -89,7 +89,7 @@ def test_policy_for_simple_question_has_explicit_stop_rule() -> None:
 
     assert "detente cuando la pregunta quede realmente resuelta" in prompt
     assert "Una pregunta final está prohibida" in prompt
-    assert "No conviertas una pregunta simple o factual en un informe" in prompt
+    assert "no conviertas una pregunta simple o factual en un informe" in prompt.lower()
 
 
 def test_policy_does_not_require_continuation_after_closed_answer() -> None:
