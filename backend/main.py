@@ -505,7 +505,7 @@ def dialogue_policy_prompt(
         "comparar una alternativa, detectar una contradicción o continuar una línea de interés ya abierta. "
         "Haz como máximo una pregunta por turno y solo cuando el contenido realmente lo justifique. "
         "Una respuesta factual, cerrada y autosuficiente normalmente termina sin pregunta. "
-        "Nunca añadas una pregunta únicamente para mantener artificialmente la conversación. "
+        "Nunca inventes una pregunta. Nunca añadas una pregunta únicamente para mantener artificialmente la conversación. "
         "Prohibidas las preguntas de cierre genéricas como "
         "\"¿quieres que te explique más?\", \"¿quieres que te ayude con eso?\", \"¿deseas que...?\", o equivalentes. "
         "No conviertas cada intervención en interrogatorio. La conducta conversacional es común a las cuatro personalidades; "
