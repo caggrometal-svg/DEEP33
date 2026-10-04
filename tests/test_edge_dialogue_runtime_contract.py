@@ -1,0 +1,46 @@
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EDGE_FILES = (
+    REPO_ROOT / "supabase/functions/deep33-proxy/index.ts",
+    REPO_ROOT / "supabase/functions/deep33-tertiary/index.ts",
+)
+
+
+def test_edge_runtime_contains_real_dialogue_policy() -> None:
+    required = (
+        "function dialoguePolicyInstruction(",
+        "No conviertas una respuesta en un informe",
+        "No uses tablas, encabezados, secciones",
+        "No uses fórmulas artificiales como",
+        '"En resumen"',
+        "Cuando la pregunta ya quedó respondida, termina.",
+        "DEEP33 CONVERSATION CONTROL v1.",
+    )
+
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        for fragment in required:
+            assert fragment in source, f"{fragment!r} missing from {path}"
+
+
+def test_edge_runtime_places_conversation_control_in_final_system_message() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        build_start = source.index("function buildEdgeMessages(")
+        build_end = source.index("\nconst UPSTREAM_IDENTITY_BRANDS", build_start)
+        build = source[build_start:build_end]
+
+        assert "const conversationControl = dialoguePolicyInstruction(messages);" in build
+        assert 'return [\n    ...personalitySystem,' in build
+        assert "+ "\\n" + conversationControl" in build
+
+
+def test_web_final_style_lock_reasserts_conversation_policy() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert (
+            'dialoguePolicyInstruction(enrichedMessages) +
+            " This conversation-control block is authoritative for response shape."'
+        ) in source
