@@ -14,9 +14,20 @@ DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",
     "compara", "contrasta", "verifica", "verificar", "evidencia",
     "fuentes", "en profundidad", "deep", "research", "fact check",
-    "fact-check",
+    "fact-check", "conspiración", "conspirativa", "encubrimiento",
+    "versión oficial", "narrativa oficial", "anomalía", "hipótesis alternativa",
+    "intereses", "manipulación", "contradicciones",
 )
-QUERY_VARIANTS = ("fuente oficial", "noticias recientes")
+QUERY_VARIANTS = ("fuente oficial", "evidencia independiente")
+
+CONTROVERSIAL_TERMS = (
+    "conspiración", "conspirativa", "encubrimiento", "ocultan", "ocultaron",
+    "versión oficial", "narrativa oficial", "comunicado oficial", "evidencia independiente",
+    "contradicción", "contradicciones", "anomalía", "anomalías", "agenda", "intereses",
+    "manipulación", "fraude", "engaño", "desinformación", "hipótesis alternativa",
+    "es verdad", "es cierto", "hay pruebas", "realmente ocurrió", "realmente pasó",
+)
+
 
 _STOPWORDS = {
     "para", "como", "que", "qué", "una", "uno", "los", "las", "del", "con",
@@ -228,7 +239,9 @@ class SearchEngine:
         depth = "deep" if deep_signal else "standard"
         queries = [cleaned]
         if depth == "deep":
-            for variant in QUERY_VARIANTS:
+            controversial = any(term in lowered for term in CONTROVERSIAL_TERMS)
+            variant_pool = ("versión oficial", "evidencia independiente") if controversial else QUERY_VARIANTS
+            for variant in variant_pool:
                 candidate = f"{cleaned} {variant}".strip()
                 if candidate.lower() != cleaned.lower() and len(queries) < self.max_queries:
                     queries.append(candidate)

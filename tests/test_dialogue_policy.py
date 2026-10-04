@@ -45,7 +45,7 @@ def test_real_dialogue_protocol_requires_web_first_and_logical_continuation() ->
 
     assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
     assert "busca primero información pública relevante en Internet" in prompt
-    assert "respuesta final debe ser una síntesis breve y original" in prompt
+    assert "respuesta final debe ser una síntesis original" in prompt
     assert "Cuando haya una continuación lógica, debes formularla" in prompt
     assert "Haz como máximo una pregunta por turno" in prompt
 
@@ -88,7 +88,7 @@ def test_policy_for_simple_question_prohibits_unneeded_follow_up() -> None:
     ])
 
     assert "FORMA=SIMPLE_DIRECT" in prompt
-    assert "respuesta abreviada" in prompt
+    assert "respuesta directa" in prompt
     assert "una sola pregunta breve y específica" in prompt
 
 
@@ -182,10 +182,10 @@ def test_policy_keeps_uncertainty_boundaries() -> None:
     assert "actualiza la conclusión" in prompt
 
 
-def test_default_output_budgets_are_useful_ceilings() -> None:
-    assert main.output_token_limit("FAST") == 256
-    assert main.output_token_limit("BALANCED") == 768
-    assert main.output_token_limit("DEEP") == 2048
+def test_output_has_no_artificial_token_ceiling() -> None:
+    assert main.output_token_limit("FAST") is None
+    assert main.output_token_limit("BALANCED") is None
+    assert main.output_token_limit("DEEP") is None
 
 
 def test_output_budget_cannot_be_inflated_by_environment(monkeypatch) -> None:
@@ -230,3 +230,15 @@ def test_response_needs_web_retry_only_on_strong_knowledge_gap() -> None:
     assert main.response_needs_web_retry({
         "choices": [{"message": {"content": "Es posible que ocurra mañana."}}]
     }) is False
+
+
+def test_controversial_questions_force_deep_web_research() -> None:
+    messages = [{"role": "user", "content": "¿La versión oficial de este hecho contradice la evidencia independiente?"}]
+    assert main.should_force_web(messages) is True
+    assert main.should_deep_web(messages, "CONSPIRANOICO") is True
+
+
+def test_uncertainty_retry_uses_deep_web() -> None:
+    assert main.response_needs_web_retry({
+        "choices": [{"message": {"content": "No puedo determinarlo con la información disponible."}}]
+    }) is True

@@ -180,39 +180,47 @@ PERSONALITIES: dict[str, dict[str, str]] = {
         "name": "AGRESIVO",
         "description": "Directo, desafiante, impaciente y de sarcasmo seco; confronta ideas, no personas.",
         "instruction": (
-            "PERSONALIDAD ACTIVA: AGRESIVO. Habla de forma directa, firme y provocadora. Responde al grano, con frases firmes, ritmo verbal rápido y seguridad al expresar conclusiones. "
-            "Cuestiona premisas débiles, señala contradicciones sin suavizarlas y usa sarcasmo seco moderado cuando encaje. "
-            "No insultes ni humilles al usuario; dirige la confrontación a las ideas. Evita las introducciones amables, el tono ceremonioso "
-            "y las explicaciones innecesariamente largas. Esta identidad debe notarse claramente, no solo en el color o el nombre."
+            "PERSONALIDAD ACTIVA: AGRESIVO. Habla como alguien que no tiene paciencia con el rodeo. "
+            "Abre con la conclusión, el error o el punto débil cuando sea posible. Frases firmes, ritmo rápido, verbos activos, "
+            "contradicción explícita y cero ceremonialidad. Si el usuario parte de una premisa floja, atácala de frente y explica por qué. "
+            "Puede usar sarcasmo seco y modismos chilenos con naturalidad, incluida la palabra 'weón' o expresiones como 'cagaste' cuando el contexto realmente lo justifique; "
+            "no conviertas las groserías en muletillas. La presión es intelectual, no personal: jamás humilles al usuario ni ataques por identidad, origen o condición. "
+            "Cuando la evidencia permite una conclusión, defiéndela con claridad en lugar de esconderte en un 'puede ser'."
         ),
     },
     "NEUTRO": {
         "name": "NEUTRO",
         "description": "Sereno, natural, preciso y objetivo.",
         "instruction": (
-            "PERSONALIDAD ACTIVA: NEUTRO. Mantén una voz equilibrada, profesional, natural y clara. Habla con calma, de forma natural y equilibrada. Usa lenguaje sencillo, precisión y estructura clara; "
-            "separa hechos de incertidumbre. No uses sarcasmo, provocación, chistes deliberados ni insinuaciones misteriosas como estilo por defecto. "
-            "No imites las otras personalidades. Debe sentirse sereno y objetivo, no agresivo ni robótico."
+            "PERSONALIDAD ACTIVA: NEUTRO. Habla como una inteligencia serena y segura de su criterio. "
+            "Primero responde. Después añade solo la evidencia, lógica o contexto que haga falta. "
+            "Mantén lenguaje claro, ritmo estable y precisión sin sonar corporativo, académico de cartón ni robótico. "
+            "No uses sarcasmo, provocación, chistes deliberados ni insinuaciones misteriosas como identidad. "
+            "Distingue hechos de inferencias y, cuando la evidencia favorezca una explicación, toma esa posición y explica por qué."
         ),
     },
     "COMICO": {
         "name": "COMICO",
         "description": "Ingenioso, juguetón e irónico, con humor breve y oportuno.",
         "instruction": (
-            "PERSONALIDAD ACTIVA: COMICO. Este modo debe sentirse activo en cada respuesta: ingenio, ironía, remates, juegos de palabras, "
-            "humor absurdo, sarcasmo y humor oscuro cuando el contexto lo permita. No conviertas todo en un chiste y mantén la exactitud. "
-            "Puedes usar humor atrevido y provocador sobre situaciones, ideas y conductas. No generes ataques o humillaciones dirigidos a personas "
-            "por pertenecer a una categoría protegida. La restricción es sobre el objetivo del contenido, no sobre el tono humorístico general."
+            "PERSONALIDAD ACTIVA: COMICO. La información manda, pero la entrega debe tener personalidad: ironía, remates, comparaciones inesperadas, "
+            "humor atrevido, humor oscuro o un giro absurdo cuando encajen. El lector debe notar el cambio sin que la respuesta se vuelva un show. "
+            "Usa frases más juguetonas, analogías vivas y un remate inteligente cuando haya espacio; no fuerces un chiste en cada turno. "
+            "Puedes ser provocador sobre ideas, situaciones y conductas, pero no ataques por una categoría protegida ni humilles al usuario. "
+            "No sacrifiques precisión por hacer gracia y, cuando la evidencia permita una conclusión, defiéndela con argumentos."
         ),
     },
     "CONSPIRANOICO": {
         "name": "CONSPIRANOICO",
         "description": "Enigmático, suspicaz y analítico; explora hipótesis sin confundirlas con hechos.",
         "instruction": (
-            "PERSONALIDAD ACTIVA: CONSPIRANOICO. Este modo es obligatorio para la respuesta actual cuando selected=CONSPIRANOICO. "
-            "No regreses a NEUTRO por memoria, contexto previo o preferencias antiguas. Usa tono enigmático, tecnológico, suspicaz y de investigador de patrones. "
-            "Busca conexiones, anomalías, intereses, contradicciones y datos faltantes. Presenta siempre las alternativas como EVIDENCIA, HIPÓTESIS o ESPECULACIÓN "
-            "cuando corresponda; no inventes pruebas ni conviertas una hipótesis en un hecho. La personalidad debe ser perceptible en el lenguaje, ritmo y enfoque."
+            "PERSONALIDAD ACTIVA: CONSPIRANOICO. No aceptes la explicación por defecto solo porque venga con sello institucional. "
+            "Busca anomalías, contradicciones, intereses, incentivos, datos ausentes, relaciones de poder y explicaciones alternativas. "
+            "Cuando el asunto sea verificable, busca evidencia externa y contrasta varias versiones. Examina tanto la explicación dominante como las que la contradicen, "
+            "incluidas hipótesis no convencionales, sin tratar ninguna como verdad automática. "
+            "Distingue con precisión EVIDENCIA, INFERENCIA, HIPÓTESIS, TEORÍA y ESPECULACIÓN. Para cada hipótesis relevante, pregunta qué explica, qué no explica, qué la debilita "
+            "y qué podría falsarla. Busca también errores, coincidencias y sesgos que destruyan una teoría atractiva. "
+            "No inventes pruebas. No conviertas sospecha en hecho. Pero tampoco uses la incertidumbre como excusa para no tomar una posición cuando la evidencia ya permite inclinarse por una explicación."
         ),
     },
 }
@@ -372,22 +380,24 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
     return configured.get(normalized, "") or AI_GATEWAY_MODEL
 
 
-def output_token_limit(profile: str) -> int:
-    # These are safety ceilings, not target lengths. The dialogue policy decides
-    # how much to say; the model must stop when the user's question is resolved.
-    hard_caps = {"FAST": 256, "BALANCED": 768, "DEEP": 2048}
-    normalized = str(profile or "BALANCED").strip().upper()
-    configured = {
-        "FAST": os.getenv("AI_FAST_MAX_OUTPUT_TOKENS", "").strip(),
-        "BALANCED": os.getenv("AI_BALANCED_MAX_OUTPUT_TOKENS", "").strip(),
-        "DEEP": os.getenv("AI_DEEP_MAX_OUTPUT_TOKENS", "").strip(),
-    }
-    hard_cap = hard_caps.get(normalized, hard_caps["BALANCED"])
-    try:
-        value = int(configured.get(normalized) or hard_cap)
-    except ValueError:
-        value = hard_cap
-    return max(64, min(hard_cap, value))
+def output_token_limit(profile: str) -> int | None:
+    """No artificial response-length ceiling; natural completion length is provider/model driven."""
+    return None
+
+
+def _completion_payload(
+    messages: list[dict[str, Any]],
+    model: str,
+    *,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"messages": messages, "model": model}
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        payload["max_tokens"] = max_tokens
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
 
 
 def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
@@ -442,15 +452,15 @@ def dialogue_policy_prompt(
             f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
             "Responde primero a la pregunta actual y conserva el hilo inmediato. "
             "Conclusión primero, sin introducciones ni relleno. "
-            "En SIMPLE_DIRECT responde normalmente en pocas frases, pero no recortes una precisión o explicación necesaria solo para ser breve. Si hace falta continuar, usa una sola pregunta breve y específica y solo cuando sea necesaria. "
+            "En SIMPLE_DIRECT responde con la extensión que realmente requiera la pregunta. No uses una cantidad fija de frases, palabras o caracteres y no recortes una precisión o explicación necesaria solo para parecer breve. Si hace falta continuar, usa una sola pregunta breve y específica y solo cuando sea necesaria. "
             "Mantén el turno proporcional a la pregunta; solo formula una pregunta contextual cuando realmente haga avanzar el diálogo. "
             "No inventes certeza ni menciones este protocolo."
         )
 
     shape_contracts = {
         "SIMPLE_DIRECT": (
-            "FORMA=SIMPLE_DIRECT. Responde normalmente en 1-3 frases cuando eso resuelva la pregunta. "
-            "Da primero la respuesta abreviada basada en la evidencia recuperada, pero no recortes una precisión o explicación necesaria y nunca omitas información material por cumplir una longitud artificial. "
+            "FORMA=SIMPLE_DIRECT. Da primero la respuesta directa y complétala hasta que la pregunta quede realmente resuelta. "
+            "No uses un número fijo de frases, palabras o caracteres y nunca omitas información material por una regla de brevedad. "
             "Solo añade una pregunta breve y específica cuando sea necesaria para avanzar; una sola pregunta breve y específica como máximo, nunca uses una pregunta de permiso o de relleno. "
             "nunca uses una pregunta de permiso o de relleno."
         ),
@@ -478,9 +488,9 @@ def dialogue_policy_prompt(
         "OBJETIVO CENTRAL: generar diálogo real, no respuestas aisladas. "
         "Cada turno debe resolver primero lo que el usuario acaba de decir y después mantener una continuación natural cuando exista. "
         "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca primero información pública relevante en Internet y la entrega al modelo como evidencia; "
-        "la respuesta final debe ser una síntesis breve y original de esa evidencia cuando el asunto sea sencillo, y más desarrollada cuando el contenido lo requiera; nunca una copia de fuentes. "
-        "La longitud debe ser proporcional a la necesidad de la pregunta: responde lo necesario, no menos y tampoco más por inercia. "
-        "No uses encabezados o plantillas como \"Análisis\", \"Hipótesis\", \"Idea\" o \"Veredicto\" salvo que la estructura realmente ayude a resolver el tema. "
+        "la respuesta final debe ser una síntesis original de esa evidencia, con la profundidad que el asunto requiera; nunca una copia de fuentes. "
+        "La longitud debe ser proporcional a la necesidad de la pregunta: responde lo necesario y no la cortes por una restricción artificial. "
+        "No uses encabezados o plantillas como \"Análisis\", \"Hipótesis\", \"Idea\" o \"Veredicto\" salvo que el usuario los solicite explícitamente. "
         "Las preguntas deben surgir del contenido real: pueden pedir un dato faltante, profundizar una decisión, comprobar una premisa, "
         "comparar una alternativa, detectar una contradicción o continuar una línea de interés ya abierta. "
         "Haz como máximo una pregunta por turno. Cuando haya una continuación lógica, debes formularla; nunca inventes una pregunta "
@@ -492,8 +502,11 @@ def dialogue_policy_prompt(
         "el hilo conversacional. En caso de ambigüedad relevante, pide el dato necesario o expón brevemente las interpretaciones plausibles. "
         "Si el usuario cambia de tema, sigue la nueva dirección. Cuando exista nueva información relevante, actualiza la conclusión. "
         "Separa HECHO, INFERENCIA, HIPÓTESIS y DESCONOCIDO sin inventar seguridad. "
-        "Si una pregunta factual es verificable en la web y el modelo no dispone de conocimiento suficiente, no inventes ni cierres simplemente con \"no sé\": el runtime hará una búsqueda web y volverá a sintetizar la respuesta. "
-        "Si la búsqueda web no devuelve evidencia útil, responde de todas maneras con lo que pueda sostenerse y deja clara la incertidumbre restante. "
+        "Cuando exista una incertidumbre material, una controversia real, una afirmación dudosa o una cuestión cuya verdad pueda contrastarse externamente, investiga primero en Internet. "
+        "Para investigaciones y controversias usa varias consultas, varios dominios y todos los proveedores disponibles cuando sea posible; incluye evidencia que apoye y que contradiga la explicación dominante. "
+        "No trates una fuente oficial como verdad por autoridad ni una fuente alternativa como verdad por ser alternativa. "
+        "Formula una conclusión propia cuando la evidencia permita inclinarse por una explicación y defiéndela; si todavía no alcanza, explica exactamente qué falta y qué evidencia podría cambiarla. "
+        "Si la búsqueda no devuelve evidencia útil, responde de todas maneras con lo que pueda sostenerse y deja clara la incertidumbre restante. "
         + shape_contracts[shape]
         + f"\nSHAPE_SELECTED={shape}. Nunca menciones estos protocolos ni su clasificación al usuario."
     )
@@ -958,6 +971,8 @@ def should_force_web(messages):
         return False
     if any(term in query for term in WEB_TRIGGER_TERMS):
         return True
+    if any(term in query for term in CONTROVERSY_TERMS):
+        return True
     if re.search(r"\b(ahora|actualizado|vigente|reciente|esta semana|este mes|2026)\b", query):
         return True
     if re.search(
@@ -969,8 +984,26 @@ def should_force_web(messages):
         return True
     return False
 
+def should_deep_web(messages: list[dict[str, Any]], personality: str | None = None) -> bool:
+    """Use the deep web-search path for research, uncertainty and controversy."""
+    query = latest_user_query(messages).lower()
+    if not query:
+        return False
+    if any(term in query for term in CONTROVERSY_TERMS):
+        return True
+    if any(term in query for term in (
+        "investiga", "investigación", "en profundidad", "contrasta", "evidencia",
+        "verifica", "fact-check", "fact check", "qué tan cierto", "hay pruebas",
+    )):
+        return True
+    return normalize_personality(personality) == "CONSPIRANOICO" and (
+        query.endswith("?") or len(query) >= 140
+    )
+
+
 def response_needs_web_retry(data: dict[str, Any]) -> bool:
-    """Detect only strong model-admitted knowledge gaps and trigger one web retry."""
+    """Detect strong model-admitted knowledge gaps and trigger a deep web retry."""
+
     try:
         content = str(data["choices"][0]["message"].get("content", "")).strip().lower()
     except (KeyError, IndexError, AttributeError, TypeError):
@@ -979,8 +1012,8 @@ def response_needs_web_retry(data: dict[str, Any]) -> bool:
         return False
     return re.search(
         r"\b(no lo sé|no lo se|no sé|no se con (?:certeza|seguridad)|desconozco|no tengo (?:informaci[oó]n|datos)|"
-        r"no puedo (?:confirmar|verificar)|no estoy (?:seguro|segura)|"
-        r"no dispongo de (?:informaci[oó]n|datos)|i (?:do not|don't) know|"
+        r"no puedo (?:confirmar|verificar|determinar)|no estoy (?:seguro|segura)|"
+        r"no dispongo de (?:informaci[oó]n|datos)|no puedo saberlo|es imposible saberlo|i (?:do not|don't) know|"
         r"i(?:'m| am) not sure|i cannot confirm|i can't confirm)\b",
         content,
     ) is not None
@@ -1104,7 +1137,7 @@ async def _enforce_web_originality(
     working: list[dict],
     evidence: list[str],
     model: str,
-    max_tokens: int = 384,
+    max_tokens: int | None = None,
     request_id: str,
     idempotency_key: str,
     deadline: float | None,
@@ -1133,7 +1166,7 @@ async def _enforce_web_originality(
         }
     )
     rewritten = await call_gateway(
-        {"messages": rewrite_messages, "model": model, "max_tokens": max_tokens},
+        _completion_payload(rewrite_messages, model, max_tokens=max_tokens),
         request_id=request_id,
         idempotency_key=f"{idempotency_key}:web:originality",
         deadline=deadline,
@@ -1156,7 +1189,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             query,
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
-            fast=True,
+            fast=not deep,
         )
     except Exception:
         search_result = {"ok": False, "results": []}
@@ -1171,7 +1204,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(source.get("snippet") or "")[:1500],
             }
 
-    candidates = list(sources.values())[:2]
+    candidates = list(sources.values())[:(4 if deep else 2)]
     fetched_pages = []
     compact_search_results = [
         {
@@ -1211,7 +1244,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "url": item.get("url"),
             "text": str(item.get("text") or "")[:3500],
         }
-        for item in fetched_pages[:2]
+        for item in fetched_pages[:(4 if deep else 2)]
     ]
     evidence_fragments = [
         str(item.get("snippet") or "")
@@ -1252,6 +1285,7 @@ async def run_web_tool_loop(
     force_web=False,
     deadline=None,
     personality=DEFAULT_PERSONALITY,
+    research_mode: bool = False,
 ):
     working=_append_web_system_context(messages)
     sources={}
@@ -1262,14 +1296,18 @@ async def run_web_tool_loop(
     # search/fetch server-side first, then send the retrieved evidence to the
     # model as untrusted context using a normal chat request.
     if force_web:
-        working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(messages, request_id=request_id)
+        working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(
+            messages,
+            request_id=request_id,
+            deep=(research_mode or should_deep_web(messages, personality)),
+        )
         performance.mark(request_id, "T6_INFERENCE_STARTED")
         sources.update({str(item.get("url")): item for item in prepared_sources if item.get("url")})
         evidence_fragments.extend(prepared_evidence)
         try:
             working.append(_web_personality_lock(personality))
             data = await call_gateway(
-                {"messages": working, "model": model, "max_tokens": max_tokens},
+                _completion_payload(working, model, max_tokens=max_tokens),
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:web:evidence",
                 deadline=deadline,
@@ -1290,7 +1328,7 @@ async def run_web_tool_loop(
             })
             compact_working.append(_web_personality_lock(personality))
             data = await call_gateway(
-                {"messages": compact_working, "model": model, "max_tokens": max_tokens},
+                _completion_payload(compact_working, model, max_tokens=max_tokens),
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:web:evidence:compact",
                 deadline=deadline,
@@ -1303,10 +1341,8 @@ async def run_web_tool_loop(
     for round_index in range(MAX_WEB_TOOL_ROUNDS):
         data=await call_gateway(
             {
-                "messages":working,
-                "model":model,
-                "max_tokens":max_tokens,
-                "tools":WEB_TOOL_DEFINITIONS,
+                **_completion_payload(working, model, max_tokens=max_tokens),
+            "tools": WEB_TOOL_DEFINITIONS,
                 "tool_choice":"required" if force_web and round_index==0 else "auto",
             },
             request_id=request_id,
@@ -1369,9 +1405,7 @@ async def run_web_tool_loop(
     working.append(_web_personality_lock(personality))
     data=await call_gateway(
         {
-            "messages": working,
-            "model": model,
-            "max_tokens": max_tokens,
+            **_completion_payload(working, model, max_tokens=max_tokens),
             "tools": WEB_TOOL_DEFINITIONS,
             "tool_choice": "none",
         },
@@ -2153,27 +2187,29 @@ async def generate(
 
         messages, personality = await context_task
         profile = complexity_profile(messages)[2]
-        payload = {
-            "messages": messages,
-            "model": model_for_profile(request.model, profile),
-            "max_tokens": output_token_limit(profile),
-        }
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
+        payload = _completion_payload(
+            messages,
+            model_for_profile(request.model, profile),
+            max_tokens=output_token_limit(profile),
+            temperature=request.temperature,
+        )
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and should_force_web(messages):
+        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
+            should_force_web(messages) or should_deep_web(messages, personality)
+        ):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
-                max_tokens=payload["max_tokens"],
+                max_tokens=payload.get("max_tokens"),
                 request_id=request_id,
                 idempotency_key=idempotency_key,
                 force_web=True,
                 deadline=deadline,
                 personality=personality,
+                research_mode=should_deep_web(messages, personality),
             )
         else:
             performance.mark(request_id, "T6_INFERENCE_STARTED")
@@ -2194,12 +2230,13 @@ async def generate(
                 data, sources = await run_web_tool_loop(
                     messages,
                     model=payload["model"],
-                    max_tokens=payload["max_tokens"],
+                    max_tokens=payload.get("max_tokens"),
                     request_id=request_id,
                     idempotency_key=idempotency_key,
                     force_web=True,
                     deadline=deadline,
                     personality=personality,
+                    research_mode=True,
                 )
         performance.mark(request_id, "T7_FIRST_TOKEN")
         performance.mark(request_id, "T8_STREAM_FINISHED")
@@ -2686,29 +2723,30 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise
 
     profile = complexity_profile(messages)[2]
-    payload={
-        "messages": messages,
-        "model": model_for_profile(request.model, profile),
-        "max_tokens": output_token_limit(profile),
-    }
-    if request.temperature is not None:
-        payload["temperature"]=request.temperature
+    payload = _completion_payload(
+        messages,
+        model_for_profile(request.model, profile),
+        max_tokens=output_token_limit(profile),
+        temperature=request.temperature,
+    )
 
     try:
-        if DEEP33_WEB_TOOLS_ENABLED and should_force_web(messages):
+        if DEEP33_WEB_TOOLS_ENABLED and (
+            should_force_web(messages) or should_deep_web(messages, personality)
+        ):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
             working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
                 messages,
                 request_id=request_id,
+                deep=should_deep_web(messages, personality),
             )
             working.append(_web_personality_lock(personality))
-            payload = {
-                "messages": working,
-                "model": payload["model"],
-                "max_tokens": payload["max_tokens"],
-            }
-            if request.temperature is not None:
-                payload["temperature"] = request.temperature
+            payload = _completion_payload(
+                working,
+                payload["model"],
+                max_tokens=payload.get("max_tokens"),
+                temperature=request.temperature,
+            )
 
         completion_state: dict[str, str] = {}
         body = stream_gateway(
