@@ -5,9 +5,12 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.min
+import kotlin.math.sin
 
 enum class AvatarState { IDLE, LISTENING, THINKING, SPEAKING }
 
@@ -26,6 +29,24 @@ class VoiceAvatarView @JvmOverloads constructor(
     private var personality = Personality.NEUTRO
     private var state = AvatarState.IDLE
     private var audioLevel = 0f
+    private val animationHandler = Handler(Looper.getMainLooper())
+    private var speakingAnimationRunning = false
+    private var speakingPhase = 0f
+    private var mouthOpen = 0f
+    private val speakingAnimation = object : Runnable {
+        override fun run() {
+            if (state != AvatarState.SPEAKING) {
+                speakingAnimationRunning = false
+                mouthOpen = 0f
+                invalidate()
+                return
+            }
+            speakingPhase += 0.62f
+            mouthOpen = ((sin(speakingPhase.toDouble()) + 1.0) * 0.5).toFloat()
+            invalidate()
+            animationHandler.postDelayed(this, 90L)
+        }
+    }
 
     fun setPersonality(value: Personality) {
         personality = value
@@ -37,7 +58,26 @@ class VoiceAvatarView @JvmOverloads constructor(
         if (value != AvatarState.LISTENING) {
             audioLevel = 0f
         }
+        if (value == AvatarState.SPEAKING) {
+            if (!speakingAnimationRunning) {
+                speakingAnimationRunning = true
+                speakingPhase = 0f
+                animationHandler.removeCallbacks(speakingAnimation)
+                animationHandler.post(speakingAnimation)
+            }
+        } else {
+            speakingAnimationRunning = false
+            speakingPhase = 0f
+            mouthOpen = 0f
+            animationHandler.removeCallbacks(speakingAnimation)
+        }
         invalidate()
+    }
+
+    override fun onDetachedFromWindow() {
+        speakingAnimationRunning = false
+        animationHandler.removeCallbacks(speakingAnimation)
+        super.onDetachedFromWindow()
     }
 
     fun setAudioLevel(value: Float) {
@@ -60,7 +100,8 @@ class VoiceAvatarView @JvmOverloads constructor(
         val accent = personality.accent
 
         // One static round face, one contour, two eyes, brows and mouth.
-        // No pulse, orbit, wobble, blink, scale or audio-reactive effect.
+        // Only the mouth opens/closes while DEEP33 is speaking.
+        // No pulse, orbit, wobble, blink, scale or audio-reactive facial effect.
         fillPaint.color = 0xFF0A0A0A.toInt()
         canvas.drawCircle(centerX, centerY, radius + dp(2f), fillPaint)
 
@@ -68,7 +109,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         strokePaint.strokeWidth = dp(2f)
         canvas.drawCircle(centerX, centerY, radius + dp(2f), strokePaint)
 
-        drawStaticFace(canvas, centerX, centerY, radius, accent)
+        drawFace(canvas, centerX, centerY, radius, accent)
         drawInputMeter(canvas, centerX, centerY, radius, accent)
     }
 
@@ -112,7 +153,7 @@ class VoiceAvatarView @JvmOverloads constructor(
         }
     }
 
-    private fun drawStaticFace(
+    private fun drawFace(
         canvas: Canvas,
         cx: Float,
         cy: Float,
@@ -147,7 +188,7 @@ class VoiceAvatarView @JvmOverloads constructor(
             Personality.CONSPIRANOICO -> -0.12f
         }
 
-        drawMouth(canvas, cx, mouthY, radius * 0.25f, radius * 0.07f, expression, accent)
+        drawMouth(canvas, cx, mouthY, radius * 0.25f, radius * 0.07f, expression, accent, mouthOpen)
     }
 
     private fun drawBrow(
@@ -174,8 +215,35 @@ class VoiceAvatarView @JvmOverloads constructor(
         width: Float,
         height: Float,
         expression: Float,
-        accent: Int
+        accent: Int,
+        opening: Float
     ) {
+        if (state == AvatarState.SPEAKING) {
+            val openHeight = height * (1.0f + 4.8f * opening.coerceIn(0f, 1f))
+            fillPaint.color = 0xFF030303
+            val mouthRect = RectF(
+                cx - width,
+                cy - openHeight / 2f,
+                cx + width,
+                cy + openHeight / 2f
+            )
+            canvas.drawRoundRect(
+                mouthRect,
+                openHeight / 2f,
+                openHeight / 2f,
+                fillPaint
+            )
+            strokePaint.color = withAlpha(accent, 205)
+            strokePaint.strokeWidth = dp(1.6f)
+            canvas.drawRoundRect(
+                mouthRect,
+                openHeight / 2f,
+                openHeight / 2f,
+                strokePaint
+            )
+            return
+        }
+
         strokePaint.color = withAlpha(accent, 195)
         strokePaint.strokeWidth = dp(1.6f)
 
