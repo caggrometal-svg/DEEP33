@@ -220,7 +220,7 @@ class VoiceAvatarView @JvmOverloads constructor(
     ) {
         if (state == AvatarState.SPEAKING) {
             val openHeight = height * (1.0f + 4.8f * opening.coerceIn(0f, 1f))
-            fillPaint.color = 0xFF030303
+            fillPaint.color = 0xFF030303.toInt()
             val mouthRect = RectF(
                 cx - width,
                 cy - openHeight / 2f,
