@@ -1,0 +1,59 @@
+name: DEEP33 Delivery APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify-build:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: "8.9"
+
+      - name: Validate Android build and tests
+        run: |
+          set -euo pipefail
+          cd android
+          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon
+
+      - name: Certify APK integrity
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/tmp/deep33-apk-integrity.txt
+          unzip -l "$APK" | grep -q 'AndroidManifest.xml'
+          unzip -l "$APK" | grep -q 'classes.dex'
+          {
+            echo "DEEP33_APK_CERTIFIED=true"
+            echo "COMMIT=$GITHUB_SHA"
+            echo "APK=$APK"
+            echo "INTEGRITY=PASS"
+            echo "ANDROID_LINT=PASS"
+            echo "ANDROID_UNIT_TESTS=PASS"
+            sha256sum "$APK"
+          } | tee certification.txt
+
+      - name: Publish certified APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DEEP33-delivery-certified-apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            certification.txt
+          if-no-files-found: error
