@@ -144,6 +144,8 @@ class MainActivity : Activity() {
     private lateinit var voicePanel: LinearLayout
     private lateinit var voiceStateView: TextView
     private lateinit var avatarView: VoiceAvatarView
+    private lateinit var voiceStopButton: ImageButton
+    private lateinit var generationIndicatorView: TextView
     private lateinit var composer: LinearLayout
     private lateinit var chatScroll: ScrollView
     private var voiceModeActive = false
@@ -774,13 +776,15 @@ class MainActivity : Activity() {
         voicePanel.addView(voiceHeader)
 
         voiceStateView = TextView(this).apply {
-            text = "Modo voz"
+            text = "MODO VOZ"
             setTextColor(Personality.fromKey(store.personality).accent)
-            textSize = 13f
+            textSize = 12.5f
+            letterSpacing = 0.10f
             gravity = Gravity.CENTER
-            visibility = View.GONE
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            visibility = View.VISIBLE
         }
-        voicePanel.addView(voiceStateView, LinearLayout.LayoutParams(-1, dp(24)))
+        voicePanel.addView(voiceStateView, LinearLayout.LayoutParams(-1, dp(28)))
 
         avatarView = VoiceAvatarView(this).apply {
             setPersonality(Personality.fromKey(store.personality))
@@ -790,9 +794,47 @@ class MainActivity : Activity() {
         val maxAvatar = minOf(dp(228), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
         voicePanel.addView(avatarView, LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
             gravity = Gravity.CENTER
-            topMargin = dp(20)
-            bottomMargin = dp(12)
+            topMargin = dp(16)
+            bottomMargin = dp(10)
         })
+
+        val voiceControlLabel = TextView(this).apply {
+            text = "DETENER RESPUESTA"
+            textSize = 9.5f
+            letterSpacing = 0.12f
+            gravity = Gravity.CENTER
+            setTextColor(Personality.fromKey(store.personality).accent)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+
+        voiceStopButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_action_stop)
+            contentDescription = "Detener respuesta de DEEP33"
+            isEnabled = false
+            setOnClickListener { stopAssistantResponse() }
+        }
+        applyVoiceStopButtonTheme(Personality.fromKey(store.personality))
+
+        val voiceStopRow = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        voiceStopRow.addView(
+            voiceStopButton,
+            LinearLayout.LayoutParams(dp(52), dp(52)).apply {
+                bottomMargin = dp(4)
+            }
+        )
+        voiceStopRow.addView(
+            voiceControlLabel,
+            LinearLayout.LayoutParams(dp(180), dp(20))
+        )
+        voicePanel.addView(
+            voiceStopRow,
+            LinearLayout.LayoutParams(-1, dp(78)).apply {
+                bottomMargin = dp(8)
+            }
+        )
 
         voicePanel.addView(TextView(this).apply {
             text = "PERSONALIDAD · " + Personality.fromKey(store.personality).key
@@ -814,6 +856,22 @@ class MainActivity : Activity() {
             addView(chatContainer)
         }
         box.addView(chatScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        generationIndicatorView = TextView(this).apply {
+            text = "PENSANDO…"
+            textSize = 10.5f
+            letterSpacing = 0.10f
+            gravity = Gravity.CENTER_VERTICAL
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Personality.fromKey(store.personality).accent)
+            setPadding(dp(12), dp(3), dp(12), dp(2))
+            visibility = View.GONE
+            contentDescription = "DEEP33 está pensando la respuesta"
+        }
+        box.addView(
+            generationIndicatorView,
+            LinearLayout.LayoutParams(-1, dp(24))
+        )
 
         fun setComposerBackground(target: View, focused: Boolean) {
             target.background = GradientDrawable().apply {
@@ -1174,6 +1232,52 @@ class MainActivity : Activity() {
         cancelButton.minimumHeight = 0
     }
 
+    private fun applyVoiceStopButtonTheme(personality: Personality) {
+        if (!::voiceStopButton.isInitialized) return
+        voiceStopButton.setImageResource(R.drawable.ic_action_stop)
+        voiceStopButton.imageTintList =
+            android.content.res.ColorStateList.valueOf(personality.accent)
+        voiceStopButton.scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+        voiceStopButton.setPadding(dp(11), dp(11), dp(11), dp(11))
+        voiceStopButton.background = GradientDrawable().apply {
+            setColor(Color.rgb(31, 7, 13))
+            cornerRadius = dp(15).toFloat()
+            setStroke(dp(1), personality.accent)
+        }
+        voiceStopButton.stateListAnimator = null
+        voiceStopButton.minimumWidth = 0
+        voiceStopButton.minimumHeight = 0
+        refreshVoiceStopControl()
+    }
+
+    private fun refreshVoiceStopControl() {
+        if (!::voiceStopButton.isInitialized) return
+        val active = generationActive || textToSpeech?.isSpeaking == true || activeSpeechUtteranceId != null
+        voiceStopButton.visibility = if (voiceModeActive) View.VISIBLE else View.GONE
+        voiceStopButton.isEnabled = active
+        voiceStopButton.alpha = if (active) 1f else 0.38f
+    }
+
+    private fun setGenerationIndicator(thinking: Boolean, responding: Boolean = false) {
+        if (!::generationIndicatorView.isInitialized) return
+        val visible = thinking || responding
+        generationIndicatorView.visibility =
+            if (!voiceModeActive && visible) View.VISIBLE else View.GONE
+        generationIndicatorView.text = when {
+            thinking -> "◌  PENSANDO…"
+            responding -> "●  RESPONDIENDO…"
+            else -> ""
+        }
+        generationIndicatorView.contentDescription = when {
+            thinking -> "DEEP33 está pensando la respuesta"
+            responding -> "DEEP33 está respondiendo"
+            else -> ""
+        }
+        if (visible) {
+            generationIndicatorView.setTextColor(Personality.fromKey(store.personality).accent)
+        }
+    }
+
     private fun applyPersonalityTheme(personality: Personality) {
         currentPersonalityView.text = "PERSONALIDAD ACTIVA · " + personality.key
         currentPersonalityView.setTextColor(personality.accent)
@@ -1184,6 +1288,7 @@ class MainActivity : Activity() {
             sendButton.background = iconCircleBackground(personality.accent, personality.accent)
         }
         if (::cancelButton.isInitialized) applyStopButtonTheme(personality)
+        if (::voiceStopButton.isInitialized) applyVoiceStopButtonTheme(personality)
         if (::micButton.isInitialized) {
             micButton.imageTintList = android.content.res.ColorStateList.valueOf(personality.accent)
             micButton.background = iconCircleBackground(Deep33Theme.SURFACE_2, personality.accent)
@@ -1582,6 +1687,7 @@ class MainActivity : Activity() {
             setVoiceModeUi(true)
             setVoiceState(AvatarState.THINKING)
         }
+        setGenerationIndicator(thinking = true)
 
         conversation.add(UiMessage("user", text))
         store.saveMessages(conversation)
@@ -1590,7 +1696,8 @@ class MainActivity : Activity() {
         input.setText("")
         refreshSidebarHistory()
 
-        activeBubble = appendBubble("DEEP33", "Pensando...", Color.rgb(42, 12, 18))
+        activeBubble = appendBubble("DEEP33", "PENSANDO…", Color.rgb(42, 12, 18))
+        activeBubble?.tag = "PENSANDO…"
         sendButton.isEnabled = false
         input.isEnabled = false
         micButton.isEnabled = false
@@ -1682,10 +1789,11 @@ class MainActivity : Activity() {
         lastRenderedGenerationOutput = ""
         activeBubble = appendBubble(
             "DEEP33",
-            partial.ifBlank { "Pensando..." },
+            partial.ifBlank { "PENSANDO…" },
             Color.rgb(42, 12, 18)
         )
-        activeBubble?.tag = partial.ifBlank { "Pensando..." }
+        activeBubble?.tag = partial.ifBlank { "PENSANDO…" }
+        setGenerationIndicator(thinking = partial.isBlank())
 
         sendButton.isEnabled = false
         input.isEnabled = false
@@ -1737,6 +1845,10 @@ class MainActivity : Activity() {
         when (state.status) {
             GenerationStatus.RUNNING -> {
                 val output = state.partialOutput.trim()
+                if (output.isBlank()) {
+                    setGenerationIndicator(thinking = true)
+                    setVoiceState(AvatarState.THINKING)
+                }
                 if (output.isNotBlank() && lastRenderedGenerationOutput.isBlank()) {
                     Log.i(
                         "DEEP33_PERF",
@@ -1749,6 +1861,7 @@ class MainActivity : Activity() {
                         renderMarkdown(it, output, isAssistant = true)
                     }
                     lastRenderedGenerationOutput = output
+                    setGenerationIndicator(thinking = false, responding = true)
                     setVoiceState(AvatarState.SPEAKING)
                     speakStreamingSentences(output, Personality.fromKey(state.personality))
                 }
@@ -1759,6 +1872,7 @@ class MainActivity : Activity() {
                 conversation.addAll(store.loadMessages())
                 renderConversation()
                 store.clearGenerationState(state.requestId)
+                setGenerationIndicator(thinking = false)
                 generationActive = false
                 activeRequestId = null
                 activeIdempotencyKey = null
@@ -1787,8 +1901,10 @@ class MainActivity : Activity() {
                 input.isEnabled = true
                 micButton.isEnabled = true
                 cancelButton.visibility = View.INVISIBLE
+                setGenerationIndicator(thinking = false)
                 updateConnection(ConnectionState.OFFLINE)
                 setVoiceState(AvatarState.IDLE)
+                refreshVoiceStopControl()
                 if (!voiceModeActive) setVoiceModeUi(false)
             }
             GenerationStatus.FAILED, GenerationStatus.CANCELLED -> {
@@ -1839,9 +1955,28 @@ class MainActivity : Activity() {
         cleanupGeneration(false)
     }
 
+    private fun stopAssistantResponse() {
+        if (generationActive) {
+            cancelGeneration()
+        }
+        val hadSpeech = textToSpeech?.isSpeaking == true || activeSpeechUtteranceId != null
+        if (hadSpeech || bargeInMonitoring) {
+            interruptAssistantSpeech(resumeListening = voiceModeActive)
+        } else {
+            stopBargeInMonitoring()
+            setVoiceState(AvatarState.IDLE)
+            refreshVoiceStopControl()
+            if (voiceModeActive) {
+                setVoiceModeUi(true)
+                scheduleNextVoiceTurn(350L)
+            }
+        }
+    }
+
     private fun cleanupGeneration(success: Boolean) {
         activeBubble = null
         lastRenderedGenerationOutput = ""
+        setGenerationIndicator(thinking = false)
         activeRequestId = null
         activeIdempotencyKey = null
         sendButton.isEnabled = true
@@ -1923,7 +2058,8 @@ class MainActivity : Activity() {
             voicePanel.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             chatScroll.visibility = View.GONE
             composer.visibility = View.GONE
-            voiceStateView.visibility = View.GONE
+            generationIndicatorView.visibility = View.GONE
+            voiceStateView.visibility = View.VISIBLE
             val maxAvatar = minOf(dp(252), (resources.displayMetrics.widthPixels - dp(52)).coerceAtLeast(dp(190)))
             avatarView.layoutParams = LinearLayout.LayoutParams(maxAvatar, maxAvatar).apply {
                 gravity = Gravity.CENTER
@@ -1935,8 +2071,13 @@ class MainActivity : Activity() {
             chatScroll.visibility = View.VISIBLE
             composer.visibility = View.VISIBLE
             voiceStateView.visibility = View.GONE
+            setGenerationIndicator(
+                thinking = generationActive && lastRenderedGenerationOutput.isBlank(),
+                responding = generationActive && lastRenderedGenerationOutput.isNotBlank()
+            )
             avatarView.layoutParams = LinearLayout.LayoutParams(dp(86), dp(86))
         }
+        refreshVoiceStopControl()
     }
 
     private fun scheduleNextVoiceTurn(delayMs: Long = 250L) {
@@ -2027,6 +2168,7 @@ class MainActivity : Activity() {
         textToSpeech?.stop()
 
         setVoiceState(AvatarState.IDLE)
+        refreshVoiceStopControl()
         if (resumeListening && voiceModeActive) {
             setVoiceModeUi(true)
             window.decorView.postDelayed({
@@ -2447,11 +2589,13 @@ class MainActivity : Activity() {
         if (!::avatarView.isInitialized) return
         avatarView.setVoiceState(state)
         voiceStateView.text = when (state) {
-            AvatarState.IDLE -> "Modo voz"
-            AvatarState.LISTENING -> "Escuchando"
-            AvatarState.THINKING -> "Procesando"
-            AvatarState.SPEAKING -> "Hablando"
+            AvatarState.IDLE -> "MODO VOZ"
+            AvatarState.LISTENING -> "ESCUCHANDO"
+            AvatarState.THINKING -> "PENSANDO…"
+            AvatarState.SPEAKING -> "DEEP33 ESTÁ RESPONDIENDO…"
         }
+        voiceStateView.visibility = if (voiceModeActive) View.VISIBLE else View.GONE
+        refreshVoiceStopControl()
     }
 
     private fun toggleVoiceInput() {
