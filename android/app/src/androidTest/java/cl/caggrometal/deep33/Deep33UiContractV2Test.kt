@@ -92,6 +92,35 @@ class Deep33UiContractV2Test {
     }
 
     @Test
+    fun voiceThinkingAndStopControlsAreVisible() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            scenario.onActivity { activity: Activity ->
+                val setVoiceModeUi = activity.javaClass
+                    .getDeclaredMethod("setVoiceModeUi", Boolean::class.javaPrimitiveType!!)
+                    .apply { isAccessible = true }
+                val voiceState = privateView(activity, "voiceStateView") as TextView
+                val stop = privateView(activity, "voiceStopButton")
+
+                setVoiceModeUi.invoke(activity, true)
+
+                assertEquals(View.VISIBLE, voiceState.visibility)
+                assertTrue(voiceState.text.toString().contains("MODO VOZ"))
+                assertEquals("Detener respuesta de DEEP33", stop.contentDescription.toString())
+                assertEquals(View.VISIBLE, stop.visibility)
+
+                val setVoiceState = activity.javaClass
+                    .getDeclaredMethod("setVoiceState", AvatarState::class.java)
+                    .apply { isAccessible = true }
+                setVoiceState.invoke(activity, AvatarState.THINKING)
+                assertTrue(voiceState.text.toString().contains("PENSANDO"))
+            }
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
     fun voiceModeIsAudioOnlyInUiContract() {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
