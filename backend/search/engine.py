@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"
 TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",
@@ -19,6 +19,29 @@ DEEP_TERMS = (
     "intereses", "manipulación", "contradicciones",
 )
 QUERY_VARIANTS = ("fuente oficial", "evidencia independiente")
+
+REALTIME_TERMS = (
+    "noticia", "noticias", "última hora", "ultima hora", "actualidad", "actual",
+    "actualmente", "ahora", "ahora mismo", "hoy", "ayer", "esta semana", "esta noche",
+    "último", "últimos", "última", "últimas", "reciente", "recientes", "en desarrollo",
+    "qué pasó", "que paso", "qué está pasando", "que esta pasando", "qué ocurre", "que ocurre",
+    "clima", "tiempo", "temperatura", "pronóstico", "pronostico", "lluvia", "llover",
+    "política", "politica", "presidente", "primer ministro", "elecciones", "elección",
+    "gobierno", "congreso", "senado", "ministro", "mercado", "bolsa", "dólar", "dolar",
+    "euro", "tipo de cambio", "precio", "cotización", "cotizacion",
+    "partido", "resultados", "marcador", "clasificación", "horario", "tráfico", "trafico",
+    "vuelo", "vuelos", "alerta", "terremoto", "tsunami", "incendio", "guerra",
+)
+
+REALTIME_NEWS_TERMS = (
+    "noticia", "noticias", "última hora", "ultima hora", "actualidad", "en desarrollo",
+    "qué pasó", "que paso", "qué está pasando", "que esta pasando", "guerra",
+)
+
+REALTIME_CONTEXT_VARIANTS = (
+    "últimas noticias de hoy",
+    "última hora y actualización",
+)
 
 CONTROVERSIAL_TERMS = (
     "conspiración", "conspirativa", "encubrimiento", "ocultan", "ocultaron",
@@ -71,6 +94,38 @@ def _normalise_lookup_query(query: str) -> str:
         flags=re.IGNORECASE,
     )
     return cleaned.strip(" ?¡!.,;:")
+
+def is_realtime_query(query: str) -> bool:
+    """Return True when answering from model memory could be materially stale."""
+    lowered = " ".join(str(query or "").split()).strip().lower()
+    if not lowered:
+        return False
+    if any(term in lowered for term in REALTIME_TERMS):
+        return True
+    return bool(re.search(
+        r"\b(?:2026|fecha|día|hora|vigente|en vivo|live|breaking|latest|current|today|yesterday|"
+        r"president|election|weather|climate|temperature|news|politics|stock|exchange rate)\b",
+        lowered,
+    ))
+
+
+def _realtime_query_variants(lookup_query: str, lowered: str, local_date: str) -> list[str]:
+    variants: list[str] = []
+    is_news = any(term in lowered for term in REALTIME_NEWS_TERMS)
+    if is_news:
+        variants.append(f"{lookup_query} últimas noticias de hoy {local_date}".strip())
+        variants.append(f"{lookup_query} última hora y actualización {local_date}".strip())
+    elif any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico")):
+        variants.append(f"{lookup_query} condiciones actuales hoy {local_date}".strip())
+        variants.append(f"{lookup_query} pronóstico actualizado {local_date}".strip())
+    elif any(term in lowered for term in ("política", "politica", "presidente", "elecciones", "elección", "gobierno", "congreso", "senado", "ministro")):
+        variants.append(f"{lookup_query} actualidad política hoy {local_date}".strip())
+        variants.append(f"{lookup_query} últimas novedades y cambios {local_date}".strip())
+    else:
+        variants.append(f"{lookup_query} actualización de hoy {local_date}".strip())
+        variants.append(f"{lookup_query} información más reciente {local_date}".strip())
+    return variants
+
 
 def _tokens(text: str) -> list[str]:
     return [
@@ -261,9 +316,20 @@ class SearchEngine:
         deep_signal = exact_deep or any(
             term != "deep" and term in lowered for term in DEEP_TERMS
         )
-        depth = "deep" if deep_signal else "standard"
+        realtime_signal = is_realtime_query(cleaned)
+        if realtime_signal:
+            depth = "realtime"
+        elif deep_signal:
+            depth = "deep"
+        else:
+            depth = "standard"
         queries = [lookup_query]
-        if depth == "deep":
+        if depth == "realtime":
+            local_date = datetime.now(timezone.utc).date().isoformat()
+            for candidate in _realtime_query_variants(lookup_query, lowered, local_date):
+                if candidate.lower() != lookup_query.lower() and len(queries) < self.max_queries:
+                    queries.append(candidate)
+        elif depth == "deep":
             controversial = any(term in lowered for term in CONTROVERSIAL_TERMS)
             variant_pool = ("versión oficial", "evidencia independiente") if controversial else QUERY_VARIANTS
             for variant in variant_pool:
@@ -399,7 +465,7 @@ class SearchEngine:
                     successful.append((name, results))
             return successful, errors, attempted
 
-        if plan_depth == "deep":
+        if plan_depth in {"deep", "realtime"}:
             gathered = await asyncio.gather(*(call(name) for name in providers))
             for name, results, provider_errors in gathered:
                 attempted.append(name)
@@ -474,7 +540,7 @@ class SearchEngine:
         if (
             not fast_mode
             and PARALLEL_QUERIES
-            and plan.depth == "deep"
+            and plan.depth in {"deep", "realtime"}
             and len(planned_queries) > 1
         ):
             planned_batches = await asyncio.gather(*(run_planned(q) for q in planned_queries))
@@ -543,11 +609,14 @@ class SearchEngine:
 
         return {
             "ok": bool(selected),
+            "realtime": plan.depth == "realtime",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "engine": "DEEP33 Search Engine",
             "engine_version": ENGINE_VERSION,
             "provider_independent": True,
             "query": plan.original_query,
             "depth": plan.depth,
+            "realtime": plan.depth == "realtime",
             "queries": executed_queries,
             "providers_attempted": providers_attempted,
             "providers": providers_used,
