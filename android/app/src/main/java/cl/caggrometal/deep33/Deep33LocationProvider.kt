@@ -1,6 +1,7 @@
 package cl.caggrometal.deep33
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Address
@@ -9,6 +10,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import java.util.Locale
+import java.util.concurrent.Executors
 
 data class Deep33LocationContext(
     val latitude: Double,
@@ -34,6 +36,7 @@ object Deep33LocationProvider {
         }.getOrDefault(false)
     }
 
+    @SuppressLint("MissingPermission")
     fun resolve(context: Context, callback: (Deep33LocationContext?) -> Unit) {
         if (!hasPermission(context)) {
             callback(null)
@@ -66,7 +69,11 @@ object Deep33LocationProvider {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            requestCurrentLocation(manager, providers, 0, ::finish)
+            val callbackExecutor = Executors.newSingleThreadExecutor()
+            requestCurrentLocation(manager, providers, 0, callbackExecutor) { location ->
+                finish(location)
+                callbackExecutor.shutdown()
+            }
             return
         }
 
@@ -80,6 +87,7 @@ object Deep33LocationProvider {
         manager: LocationManager,
         providers: List<String>,
         index: Int,
+        callbackExecutor: java.util.concurrent.Executor,
         callback: (Location?) -> Unit
     ) {
         if (index >= providers.size) {
@@ -91,14 +99,14 @@ object Deep33LocationProvider {
             manager.getCurrentLocation(
                 provider,
                 null,
-                null,
+                callbackExecutor,
                 { location ->
                     if (location != null) callback(location)
-                    else requestCurrentLocation(manager, providers, index + 1, callback)
+                    else requestCurrentLocation(manager, providers, index + 1, callbackExecutor, callback)
                 }
             )
         }.onFailure {
-            requestCurrentLocation(manager, providers, index + 1, callback)
+            requestCurrentLocation(manager, providers, index + 1, callbackExecutor, callback)
         }
     }
 
