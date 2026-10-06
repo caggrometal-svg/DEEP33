@@ -25,6 +25,7 @@ SEARCH_CACHE_TTL_SECONDS = max(
     5.0, min(300.0, float(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS", "90")))
 )
 _SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
+_SEARCH_INFLIGHT: dict[str, asyncio.Task] = {}
 _SEARCH_HTTP_CLIENT: httpx.AsyncClient | None = None
 _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 
@@ -437,24 +438,43 @@ async def search_web(
         return copy.deepcopy(cached[1])
 
     started = time.perf_counter()
-    result = await engine.search(
-        cleaned,
-        provider=selected_provider,
-        api_key=key,
-        timeout_seconds=timeout_seconds,
-        fallback_ddg=os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() == "true",
-        fast_mode=fast,
-    )
-    result = {
-        **result,
-        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-    }
-    if not result["ok"]:
-        raise WebSearchError(
-            "WEB_SEARCH_FAILED:" + ",".join(result.get("errors") or ["NO_RESULTS"])
+    inflight = _SEARCH_INFLIGHT.get(cache_key)
+    if inflight is not None and not inflight.done():
+        shared = await inflight
+        return {
+            **copy.deepcopy(shared),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
+
+    task = asyncio.create_task(
+        engine.search(
+            cleaned,
+            provider=selected_provider,
+            api_key=key,
+            timeout_seconds=timeout_seconds,
+            fallback_ddg=os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() == "true",
+            fast_mode=fast,
         )
-    _SEARCH_CACHE[cache_key] = (time.monotonic() + SEARCH_CACHE_TTL_SECONDS, copy.deepcopy(result))
-    return result
+    )
+    _SEARCH_INFLIGHT[cache_key] = task
+    try:
+        result = await task
+        result = {
+            **result,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
+        if not result["ok"]:
+            raise WebSearchError(
+                "WEB_SEARCH_FAILED:" + ",".join(result.get("errors") or ["NO_RESULTS"])
+            )
+        _SEARCH_CACHE[cache_key] = (
+            time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
+            copy.deepcopy(result),
+        )
+        return copy.deepcopy(result)
+    finally:
+        if _SEARCH_INFLIGHT.get(cache_key) is task:
+            _SEARCH_INFLIGHT.pop(cache_key, None)
 
 
 def web_search_status():
