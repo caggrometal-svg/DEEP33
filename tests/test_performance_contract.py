@@ -177,3 +177,35 @@ def test_gateway_latency_snapshot_reports_learned_ttft_and_throughput():
     assert snapshot["p1"]["ttft_p50_ms"] is not None
     assert snapshot["p1"]["tokens_per_second_p50"] is not None
     assert gateway_instance._ordered_providers()[0].name == "p1"
+
+
+def test_fast_runtime_context_avoids_clock_for_stable_turn(monkeypatch):
+    import asyncio
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "2x2?"}],
+        personality="NEUTRO",
+    )
+    class DisabledMemory:
+        enabled = False
+    monkeypatch.setattr(main, "memory", DisabledMemory())
+    messages, _ = asyncio.run(main.prepare_messages(request, "perf-fast-context"))
+    assert all("RELOJ DE EJECUCIÓN DE DEEP33" not in str(item.get("content", "")) for item in messages)
+
+
+def test_fast_runtime_context_keeps_authoritative_clock_for_realtime(monkeypatch):
+    import asyncio
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "¿Qué hora es ahora?"}],
+        personality="NEUTRO",
+    )
+    class DisabledMemory:
+        enabled = False
+    monkeypatch.setattr(main, "memory", DisabledMemory())
+    messages, _ = asyncio.run(main.prepare_messages(request, "perf-time-context"))
+    assert any("RELOJ DE EJECUCIÓN DE DEEP33" in str(item.get("content", "")) for item in messages)
+
+
+def test_web_fetch_uses_connection_pooling():
+    source = (ROOT / "tools" / "web_fetch.py").read_text(encoding="utf-8")
+    assert "max_keepalive_connections=10" in source
+    assert "keepalive_expiry=30.0" in source

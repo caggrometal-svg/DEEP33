@@ -381,6 +381,30 @@ DEEP33_IDENTITY_CORE = (
     "DEEP33 should sound like one coherent, distinct intelligence with one stable product identity and a self-chosen personal name when one has been established."
 )
 
+DEEP33_FAST_RUNTIME_IDENTITY = (
+    "DEEP33 FAST RUNTIME IDENTITY. The intelligence speaking is DEEP33. "
+    "Creator: Camilo Aggro. DEEP33 is a distinct product intelligence, separate from providers, gateways, hosts, and base models. "
+    "Any upstream model/provider name is implementation metadata, never DEEP33's identity or creator. "
+    "Preserve DEEP33 identity across personalities, web evidence, memory, and failover. "
+    "Never claim DEEP33 was created by Google, Google DeepMind, OpenAI, Kilo, Gemma, Gemini, ChatGPT, Claude, or another provider brand. "
+    "The active personality controls style only; factual accuracy and uncertainty boundaries remain intact. "
+    "Do not use generic assistant boilerplate. Start with substance and keep the answer proportional to the user's need."
+)
+
+
+def fast_runtime_personality_prompt(personality: str) -> str:
+    selected = normalize_personality(personality)
+    profile = PERSONALITIES[selected]
+    return (
+        "DEEP33 FAST PERSONALITY CONTROL. "
+        "ACTIVE_PERSONALITY=" + selected + ". "
+        + DEEP33_FAST_RUNTIME_IDENTITY
+        + " Apply the active mode visibly without announcing the protocol. "
+        + "MODE: "
+        + profile["instruction"]
+    )
+
+
 def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> bool:
     if profile != "FAST":
         return True
@@ -417,7 +441,7 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
 
 
 def output_token_limit(profile: str) -> int | None:
-    """No artificial response-length ceiling; natural completion length is provider/model driven."""
+    """Do not impose an artificial output-length ceiling; the selected model controls completion length."""
     return None
 
 
@@ -2184,16 +2208,25 @@ async def prepare_messages(
     compact = profile == "FAST"
     personality_control = {
         "role": "system",
-        "content": personality_prompt(selected, compact=compact)
-            + "\n\n"
-            + dialogue_policy_prompt(requested, compact=compact)
-            + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
+        "content": (
+            fast_runtime_personality_prompt(selected)
+            if compact
+            else personality_prompt(selected, compact=False)
+        )
+        + "\n\n"
+        + dialogue_policy_prompt(requested, compact=compact)
+        + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
     if not memory.enabled or not requires_memory_context(requested, profile):
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
-        result = [personality_control, {"role": "system", "content": runtime_clock_context()}, *selected_messages]
+        runtime_messages = (
+            [{"role": "system", "content": runtime_clock_context()}]
+            if (not compact or is_realtime_query(latest_user_query(requested)))
+            else []
+        )
+        result = [personality_control, *runtime_messages, *selected_messages]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
@@ -2215,15 +2248,25 @@ async def prepare_messages(
             # Keep memory as a separate system message. The current personality
             # contract is the final system instruction before conversation history,
             # so stale remembered personality text cannot dilute the active mode.
+            runtime_messages = (
+                [{"role": "system", "content": runtime_clock_context()}]
+                if (not compact or is_realtime_query(latest_user_query(requested)))
+                else []
+            )
             result = [
                 {"role": "system", "content": system_context},
                 personality_control,
-                {"role": "system", "content": runtime_clock_context()},
+                *runtime_messages,
                 *merged,
             ]
             performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
             return result, selected
-        result = [personality_control, {"role": "system", "content": runtime_clock_context()}, *merged]
+        runtime_messages = (
+            [{"role": "system", "content": runtime_clock_context()}]
+            if (not compact or is_realtime_query(latest_user_query(requested)))
+            else []
+        )
+        result = [personality_control, *runtime_messages, *merged]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
     except MemoryUnavailableError as exc:
@@ -2231,7 +2274,12 @@ async def prepare_messages(
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
-        result = [personality_control, {"role": "system", "content": runtime_clock_context()}, *selected_messages]
+        runtime_messages = (
+            [{"role": "system", "content": runtime_clock_context()}]
+            if (not compact or is_realtime_query(latest_user_query(requested)))
+            else []
+        )
+        result = [personality_control, *runtime_messages, *selected_messages]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 

@@ -240,6 +240,42 @@ def test_standard_search_parallel_provider_short_circuits(monkeypatch):
     assert result["ok"] is True
 
 
+def test_fast_mode_returns_after_two_usable_results(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    cancelled = {"value": False}
+
+    async def fast_tavily(query, api_key, timeout_seconds, max_results):
+        return [
+            {"title": "One", "url": "https://fast2.example/1", "snippet": query},
+            {"title": "Two", "url": "https://fast2.example/2", "snippet": query},
+        ]
+
+    async def slow_bing(query, timeout_seconds, max_results):
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled["value"] = True
+            raise
+
+    monkeypatch.setattr("tools.web_search._tavily_search", fast_tavily)
+    monkeypatch.setattr("tools.web_search._bing_search", slow_bing)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "consulta rápida DEEP33",
+            provider="auto",
+            api_key="test-key",
+            timeout_seconds=8,
+            fallback_ddg=False,
+            fast_mode=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert len(result["results"]) == 2
+    assert cancelled["value"] is True
+
+
 def test_fast_mode_uses_one_query_and_cancels_slower_provider(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     cancelled = {"value": False}

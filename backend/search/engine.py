@@ -52,7 +52,11 @@ _STOPWORDS = {
     "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
 }
 _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
-MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "3"))))
+MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "2"))))
+REALTIME_CORROBORATION_WINDOW_SECONDS = max(
+    0.0,
+    min(0.5, float(os.getenv("WEB_SEARCH_REALTIME_CORROBORATION_WINDOW_SECONDS", "0.20"))),
+)
 PROVIDER_RETRIES = max(0, min(1, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "0"))))
 RETRY_BACKOFF_SECONDS = max(0.0, min(1.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.25"))))
 PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().lower() == "true"
@@ -474,8 +478,11 @@ class SearchEngine:
             return successful, errors, attempted
 
         if plan_depth in {"deep", "realtime"}:
-            # Latency-first verification: obtain two independent providers, then
-            # stop. A slow third provider must not hold the response hostage.
+            # Deep research keeps independent-provider verification. Realtime search
+            # remains multi-provider when the first provider is weak, but returns
+            # immediately once one provider has enough current results. A tiny
+            # opportunistic window collects a provider that is already finishing
+            # without making a slow provider block the user's response.
             if not providers:
                 return successful, errors, attempted
             tasks = [asyncio.create_task(call(name)) for name in providers]
@@ -496,6 +503,25 @@ class SearchEngine:
                         successful.append((name, results))
                         provider_results += 1
                         total_results += len(results)
+
+                    if plan_depth == "realtime" and len(results) >= required_results:
+                        pending = [other for other in tasks if not other.done()]
+                        if pending and REALTIME_CORROBORATION_WINDOW_SECONDS > 0:
+                            done, _ = await asyncio.wait(
+                                pending,
+                                timeout=REALTIME_CORROBORATION_WINDOW_SECONDS,
+                            )
+                            for other in done:
+                                other_name, other_results, other_errors = await other
+                                attempted.append(other_name)
+                                errors.extend(other_errors)
+                                if other_results:
+                                    successful.append((other_name, other_results))
+                        for other in tasks:
+                            if not other.done():
+                                other.cancel()
+                        break
+
                     if (
                         provider_results >= min_provider_successes
                         and total_results >= required_results
