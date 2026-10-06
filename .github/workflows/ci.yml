@@ -436,7 +436,7 @@ jobs:
               -H "Content-Type: application/json" \
               -H "X-DEEP33-Session-Id: $SESSION-web-$attempt" \
               -H "X-Idempotency-Key: ci-web-generation-${{ github.run_id }}-$attempt" \
-              -d '{"messages":[{"role":"user","content":"Busca en internet y responde solo: OK"}]}')"
+              -d '{"messages":[{"role":"user","content":"Busca en internet la fecha actual en Chile y responde solo: OK"}]}')"
             echo "PRIMARY_WEB_GENERATION_HTTP=$WEB_STATUS attempt=$attempt"
             if [ "$WEB_STATUS" = "200" ]; then
               web_ok=1
