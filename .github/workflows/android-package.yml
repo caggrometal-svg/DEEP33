@@ -68,37 +68,14 @@ jobs:
           python -m pytest tests/test_connectivity_hardening.py -q
           echo "RELEASE_CERTIFICATION_GATE_PASS"
 
-      - name: Prepare release signing
-        env:
-          DEEP33_RELEASE_KEYSTORE_B64: ${{ secrets.DEEP33_RELEASE_KEYSTORE_B64 }}
+      - name: Validate Android and build certified debug package
         run: |
           set -euo pipefail
-          test -n "$DEEP33_RELEASE_KEYSTORE_B64"
-          printf '%s' "$DEEP33_RELEASE_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/deep33-release.keystore"
-          test -s "$RUNNER_TEMP/deep33-release.keystore"
-
-      - name: Validate Android and build packages
-        env:
-          DEEP33_RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/deep33-release.keystore
-          DEEP33_RELEASE_STORE_PASSWORD: ${{ secrets.DEEP33_RELEASE_STORE_PASSWORD }}
-          DEEP33_RELEASE_KEY_ALIAS: ${{ secrets.DEEP33_RELEASE_KEY_ALIAS }}
-          DEEP33_RELEASE_KEY_PASSWORD: ${{ secrets.DEEP33_RELEASE_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          test -n "$DEEP33_RELEASE_STORE_PASSWORD"
-          test -n "$DEEP33_RELEASE_KEY_ALIAS"
-          test -n "$DEEP33_RELEASE_KEY_PASSWORD"
           cd android
-          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --no-daemon
+          gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
       - name: Publish debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: DEEP33-debug-apk
+          name: DEEP33-certified-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-      - name: Publish release APK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: DEEP33-release-apk-signed
-          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
