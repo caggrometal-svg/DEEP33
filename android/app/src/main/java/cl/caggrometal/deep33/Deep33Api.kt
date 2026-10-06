@@ -139,8 +139,8 @@ object Deep33Api {
             path,
             null,
             sessionId,
-            timeoutMs = FAST_HEALTH_TIMEOUT_MS,
-            connectTimeoutMs = FAST_HEALTH_CONNECT_TIMEOUT_MS
+            timeoutMs = FAST_HEALTH_TIMEOUT_MS.toLong(),
+            connectTimeoutMs = FAST_HEALTH_CONNECT_TIMEOUT_MS.toLong()
         )
 
     fun generate(
@@ -255,7 +255,7 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = "POST"
-                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.connectTimeout = minOf(connectTimeoutMs, remainingMs).toInt()
                     connection.readTimeout = remainingMs.toInt()
                     connection.useCaches = false
                     connection.doInput = true
@@ -437,8 +437,8 @@ object Deep33Api {
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null,
         memoryProfileId: String? = null,
-        timeoutMs: Long = GLOBAL_TIMEOUT_MS,
-        connectTimeoutMs: Long = CONNECT_TIMEOUT_MS
+        timeoutMs: Long = GLOBAL_TIMEOUT_MS.toLong(),
+        connectTimeoutMs: Long = CONNECT_TIMEOUT_MS.toLong()
     ): JSONObject {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
@@ -456,7 +456,7 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = method
-                    connection.connectTimeout = minOf(connectTimeoutMs, remainingMs).toInt()
+                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
                     connection.readTimeout = remainingMs.toInt()
                     connection.useCaches = false
                     connection.doInput = true
@@ -518,3 +518,53 @@ object Deep33Api {
                     if (!Deep33FailoverPolicy.canFailover(
                             method,
                             requestBodyStarted,
+                            e.kind,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw e
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } catch (e: SocketTimeoutException) {
+                    lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
+                    if (!Deep33FailoverPolicy.canFailover(
+                            method,
+                            requestBodyStarted,
+                            Deep33ApiException.Kind.TIMEOUT,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw lastError
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } catch (e: IOException) {
+                    lastError = Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
+                    if (!Deep33FailoverPolicy.canFailover(
+                            method,
+                            requestBodyStarted,
+                            Deep33ApiException.Kind.NETWORK,
+                            idempotentRequest = body != null && idempotencyKey.isNotBlank()
+                        )) throw lastError
+                    if (attempt >= ENDPOINT_ATTEMPTS) break
+                } finally {
+                    connection.disconnect()
+                }
+            }
+        }
+
+        throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
+    }
+}
+
+object SseTextParser {
+    fun extractText(data: String): String? {
+        return try {
+            val json = JSONObject(data)
+            val choices = json.optJSONArray("choices") ?: return null
+            val first = choices.optJSONObject(0) ?: return null
+
+            val delta = first.optJSONObject("delta")
+            val deltaContent = delta?.optString("content").orEmpty()
+            if (deltaContent.isNotEmpty()) return deltaContent
+
+            val messageContent = first.optJSONObject("message")?.optString("content").orEmpty()
+            messageContent.ifEmpty { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
