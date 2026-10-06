@@ -107,7 +107,7 @@ object Deep33LocationProvider {
                         provider,
                         null,
                         callbackExecutor,
-                        report
+                        { location -> report(location) }
                     )
                 }.onFailure {
                     report(null)
