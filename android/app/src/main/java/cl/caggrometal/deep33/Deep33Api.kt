@@ -255,7 +255,7 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = "POST"
-                    connection.connectTimeout = minOf(connectTimeoutMs, remainingMs).toInt()
+                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
                     connection.readTimeout = remainingMs.toInt()
                     connection.useCaches = false
                     connection.doInput = true
@@ -456,7 +456,7 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = method
-                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.connectTimeout = minOf(connectTimeoutMs, remainingMs).toInt()
                     connection.readTimeout = remainingMs.toInt()
                     connection.useCaches = false
                     connection.doInput = true
