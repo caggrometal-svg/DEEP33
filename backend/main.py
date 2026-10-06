@@ -2223,7 +2223,7 @@ async def prepare_messages(
             selected_messages.pop(0)
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
-            if is_realtime_query(latest_user_query(requested))
+            if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
         result = [personality_control, *runtime_messages, *selected_messages]
@@ -2250,7 +2250,7 @@ async def prepare_messages(
             # so stale remembered personality text cannot dilute the active mode.
             runtime_messages = (
                 [{"role": "system", "content": runtime_clock_context()}]
-                if is_realtime_query(latest_user_query(requested))
+                if (not compact or is_realtime_query(latest_user_query(requested)))
                 else []
             )
             result = [
@@ -2263,7 +2263,7 @@ async def prepare_messages(
             return result, selected
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
-            if is_realtime_query(latest_user_query(requested))
+            if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
         result = [personality_control, *runtime_messages, *merged]
@@ -2276,7 +2276,7 @@ async def prepare_messages(
             selected_messages.pop(0)
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
-            if is_realtime_query(latest_user_query(requested))
+            if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
         result = [personality_control, *runtime_messages, *selected_messages]
