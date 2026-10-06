@@ -1792,6 +1792,15 @@ async function publicWebSearch(query: string) {
       name: "ddg_public",
       url: "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(q),
     },
+    {
+      name: "wikipedia_public",
+      url: "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" +
+        encodeURIComponent(q) +
+        "&srlimit=8&srprop=snippet|timestamp&format=json&formatversion=2",
+      headers: {
+        "Accept": "application/json",
+      },
+    },
   ];
 
   const merged = new Map<string, Record<string, string>>();
@@ -1842,6 +1851,24 @@ async function publicWebSearch(query: string) {
           const title = String(value.title ?? "").trim();
           const url = String(value.url ?? "").trim();
           const snippet = String(value.description ?? value.desc ?? "").trim();
+          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+        }
+      } catch {
+        // Ignore malformed provider JSON and continue.
+      }
+    } else if (provider.name === "wikipedia_public") {
+      try {
+        const body = JSON.parse(html);
+        const items = Array.isArray(body?.query?.search) ? body.query.search : [];
+        for (const item of items.slice(0, 8)) {
+          if (!item || typeof item !== "object") continue;
+          const value = item as Record<string, unknown>;
+          const title = String(value.title ?? "").trim();
+          const pageId = Number(value.pageid ?? 0);
+          const url = pageId > 0
+            ? "https://en.wikipedia.org/?curid=" + String(pageId)
+            : "";
+          const snippet = decodeHtml(String(value.snippet ?? "").replace(/<[^>]*>/g, "").trim());
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
         }
       } catch {
@@ -2055,7 +2082,7 @@ Deno.serve(async (req) => {
               tool_loop_enabled: true,
               provider_independent: true,
               configured_provider: "edge-direct",
-              fallback_providers: ["bing_public", "marginalia_public", "ddg_public"],
+              fallback_providers: ["bing_public", "marginalia_public", "ddg_public", "wikipedia_public"],
             }),
       ]);
 
