@@ -417,7 +417,9 @@ def model_for_profile(requested_model: str | None, profile: str) -> str:
 
 
 def output_token_limit(profile: str) -> int | None:
-    """No artificial response-length ceiling; natural completion length is provider/model driven."""
+    """Bound only the fast profile; deep/balanced responses retain their full provider budget."""
+    if str(profile or "").strip().upper() == "FAST":
+        return max(256, min(1024, int(os.getenv("DEEP33_FAST_MAX_OUTPUT_TOKENS", "768"))))
     return None
 
 
