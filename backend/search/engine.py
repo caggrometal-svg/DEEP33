@@ -583,7 +583,7 @@ class SearchEngine:
             planned_batches = [first_batch]
             first_results, _first_errors, _first_attempted = first_batch[1]
             first_provider_count = len({
-                name for name, items, _provider_errors in first_results if items
+                name for name, items in first_results if items
             })
             first_result_count = sum(
                 len(items) for _name, items, _provider_errors in first_results
