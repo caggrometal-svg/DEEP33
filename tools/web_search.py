@@ -30,17 +30,22 @@ _SEARCH_HTTP_CLIENT: httpx.AsyncClient | None = None
 _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 
 
+def _http_timeout(seconds: float) -> httpx.Timeout:
+    bounded = max(0.5, float(seconds))
+    return httpx.Timeout(
+        connect=min(2.5, bounded),
+        read=bounded,
+        write=min(5.0, bounded),
+        pool=min(2.0, bounded),
+    )
+
+
 async def _search_http_client() -> httpx.AsyncClient:
     global _SEARCH_HTTP_CLIENT, _SEARCH_HTTP_LOOP
     loop = asyncio.get_running_loop()
     if _SEARCH_HTTP_CLIENT is None or _SEARCH_HTTP_LOOP is not loop:
         _SEARCH_HTTP_CLIENT = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                connect=min(2.5, DEFAULT_TIMEOUT_SECONDS),
-                read=DEFAULT_TIMEOUT_SECONDS,
-                write=DEFAULT_TIMEOUT_SECONDS,
-                pool=DEFAULT_TIMEOUT_SECONDS,
-            ),
+            timeout=_http_timeout(DEFAULT_TIMEOUT_SECONDS),
             follow_redirects=True,
             limits=httpx.Limits(
                 max_connections=20,
@@ -297,7 +302,7 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
             "Content-Type": "application/json",
             "User-Agent": "DEEP33-WebSearch/1.0",
         },
-        timeout=timeout_seconds,
+        timeout=_http_timeout(rss_timeout),
     )
     if response.status_code >= 400:
         raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
@@ -360,7 +365,7 @@ async def _bing_search(query, timeout_seconds, max_results):
                 "User-Agent": "DEEP33-WebSearch/1.0",
                 "Accept": "text/html,application/xhtml+xml",
             },
-            timeout=timeout_seconds,
+            timeout=_http_timeout(timeout_seconds),
         )
         if response.status_code >= 400:
             raise WebSearchError(f"WEB_SEARCH_BING_HTTP_{response.status_code}")
@@ -375,6 +380,7 @@ async def _bing_search(query, timeout_seconds, max_results):
     except Exception as exc:
         html_error = exc
 
+    rss_timeout = min(timeout_seconds, 2.5)
     rss = await client.get(
         os.getenv("WEB_SEARCH_BING_URL", BING_URL),
         params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
