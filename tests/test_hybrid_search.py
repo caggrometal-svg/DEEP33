@@ -71,7 +71,7 @@ def test_hybrid_status_contract_exposes_real_transport():
             dimensions=1536,
         ).status()
         assert status["engine"] == "DEEP33 Hybrid Search"
-        assert status["engine_version"] == "1.1.0"
+        assert status["engine_version"] == "1.3.0"
         assert status["enabled"] is True
         assert status["configured"] is True
         assert status["dimensions"] == 1536
