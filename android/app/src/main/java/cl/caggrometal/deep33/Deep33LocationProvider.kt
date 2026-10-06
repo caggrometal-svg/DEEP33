@@ -12,6 +12,7 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class Deep33LocationContext(
     val latitude: Double,
@@ -38,7 +39,11 @@ object Deep33LocationProvider {
     }
 
     @SuppressLint("MissingPermission")
-    fun resolve(context: Context, callback: (Deep33LocationContext?) -> Unit) {
+    fun resolve(
+        context: Context,
+        callback: (Deep33LocationContext?) -> Unit,
+        includeLabel: Boolean = true
+    ) {
         if (!hasPermission(context)) {
             callback(null)
             return
@@ -57,7 +62,7 @@ object Deep33LocationProvider {
                 Deep33LocationContext(
                     latitude = location.latitude,
                     longitude = location.longitude,
-                    label = reverseGeocode(context, location)
+                    label = if (includeLabel) reverseGeocode(context, location) else null
                 )
             )
         }
@@ -70,10 +75,43 @@ object Deep33LocationProvider {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (providers.isEmpty()) {
+                callback(null)
+                return
+            }
+
             val callbackExecutor = Executors.newSingleThreadExecutor()
-            requestCurrentLocation(manager, providers, 0, callbackExecutor) { location ->
-                finish(location)
-                callbackExecutor.shutdown()
+            val completed = AtomicBoolean(false)
+            val remaining = java.util.concurrent.atomic.AtomicInteger(providers.size)
+
+            fun report(location: Location?) {
+                if (location != null && completed.compareAndSet(false, true)) {
+                    finish(location)
+                    callbackExecutor.shutdownNow()
+                    return
+                }
+
+                if (
+                    location == null &&
+                    remaining.decrementAndGet() == 0 &&
+                    completed.compareAndSet(false, true)
+                ) {
+                    callback(null)
+                    callbackExecutor.shutdownNow()
+                }
+            }
+
+            providers.forEach { provider ->
+                runCatching {
+                    manager.getCurrentLocation(
+                        provider,
+                        null,
+                        callbackExecutor,
+                        report
+                    )
+                }.onFailure {
+                    report(null)
+                }
             }
             return
         }
@@ -82,35 +120,6 @@ object Deep33LocationProvider {
             .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
             .maxByOrNull { it.time }
         finish(lastKnown)
-    }
-
-    @RequiresApi(Build.VERSION_CODES.R)
-    @SuppressLint("MissingPermission")
-    private fun requestCurrentLocation(
-        manager: LocationManager,
-        providers: List<String>,
-        index: Int,
-        callbackExecutor: java.util.concurrent.Executor,
-        callback: (Location?) -> Unit
-    ) {
-        if (index >= providers.size) {
-            callback(null)
-            return
-        }
-        val provider = providers[index]
-        runCatching {
-            manager.getCurrentLocation(
-                provider,
-                null,
-                callbackExecutor,
-                { location ->
-                    if (location != null) callback(location)
-                    else requestCurrentLocation(manager, providers, index + 1, callbackExecutor, callback)
-                }
-            )
-        }.onFailure {
-            requestCurrentLocation(manager, providers, index + 1, callbackExecutor, callback)
-        }
     }
 
     private fun reverseGeocode(context: Context, location: Location): String? {
