@@ -57,6 +57,8 @@ object Deep33FailoverPolicy {
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val CONNECT_TIMEOUT_MS = 15_000
+    private const val FAST_HEALTH_TIMEOUT_MS = 20_000
+    private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
     // therefore performs one attempt per configured endpoint; no nested transport retry.
     private const val ENDPOINT_ATTEMPTS = 1
@@ -130,6 +132,16 @@ object Deep33Api {
 
     fun get(path: String, sessionId: String): JSONObject =
         request("GET", path, null, sessionId)
+
+    fun getFast(path: String, sessionId: String): JSONObject =
+        request(
+            "GET",
+            path,
+            null,
+            sessionId,
+            timeoutMs = FAST_HEALTH_TIMEOUT_MS,
+            connectTimeoutMs = FAST_HEALTH_CONNECT_TIMEOUT_MS
+        )
 
     fun generate(
         messages: JSONArray,
@@ -243,7 +255,7 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = "POST"
-                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.connectTimeout = minOf(connectTimeoutMs, remainingMs).toInt()
                     connection.readTimeout = remainingMs.toInt()
                     connection.useCaches = false
                     connection.doInput = true
@@ -424,9 +436,11 @@ object Deep33Api {
         idempotencyKey: String = requestId,
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null,
-        memoryProfileId: String? = null
+        memoryProfileId: String? = null,
+        timeoutMs: Long = GLOBAL_TIMEOUT_MS,
+        connectTimeoutMs: Long = CONNECT_TIMEOUT_MS
     ): JSONObject {
-        val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
 
         for (endpoint in normalizedEndpoints(endpointOverride)) {
