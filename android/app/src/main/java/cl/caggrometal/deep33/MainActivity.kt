@@ -189,6 +189,7 @@ class MainActivity : Activity() {
     private var connectivityManager: ConnectivityManager? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
     private var scheduledHealthCheck: Runnable? = null
+    private var pendingLocationAwareText: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1664,21 +1665,89 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isLocationAwareQuery(text: String): Boolean {
+        val normalized = VoiceConversationPolicy.normalizeForComparison(text)
+        return Regex(
+            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|" +
+                "ubicacion|donde estoy|mi ubicacion|cerca de mi|near me|nearby)\\b"
+        ).containsMatchIn(normalized)
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        Deep33LocationProvider.hasPermission(this)
+
+    private fun beginLocationAwareSend(text: String) {
+        pendingLocationAwareText = text
+        if (!hasLocationPermission()) {
+            Log.i("DEEP33_GPS", "GPS_PERMISSION_REQUESTED")
+            requestPermissions(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                LOCATION_PERMISSION_REQUEST
+            )
+            return
+        }
+        resolveLocationAndSend(text)
+    }
+
+    private fun resolveLocationAndSend(text: String) {
+        if (!Deep33LocationProvider.isLocationEnabled(this)) {
+            Log.w("DEEP33_GPS", "LOCATION_PROVIDERS_DISABLED")
+            pendingLocationAwareText = null
+            sendMessageInternal(text, null)
+            return
+        }
+
+        if (::statusView.isInitialized) {
+            statusView.text = "● GPS"
+            statusView.contentDescription = "Obteniendo ubicación GPS para esta consulta"
+        }
+
+        Deep33LocationProvider.resolve(this) { location ->
+            runOnUiThread {
+                pendingLocationAwareText = null
+                if (location != null) {
+                    Log.i(
+                        "DEEP33_GPS",
+                        "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
+                    )
+                } else {
+                    Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
+                }
+                sendMessageInternal(text, location)
+            }
+        }
+    }
+
     private fun sendMessage(textOverride: String? = null) {
         val text = (textOverride ?: input.text.toString()).trim()
-        Log.i("DEEP33_PERF", "PERF T0_INPUT text_length=0")
+        Log.i("DEEP33_PERF", "PERF T0_INPUT text_length=${text.length}")
         if (text.isEmpty() || generationActive) return
 
-        // Never overwrite a durable request that is waiting for recovery. The pending
-        // turn is the single source of truth when the Activity/process disappears.
+        if (store.loadPendingTurn() != null) {
+            restorePendingTurnIfNeeded()
+            return
+        }
+
+        if (isLocationAwareQuery(text)) {
+            beginLocationAwareSend(text)
+            return
+        }
+
+        sendMessageInternal(text, null)
+    }
+
+    private fun sendMessageInternal(text: String, locationContext: Deep33LocationContext?) {
+        if (text.isEmpty() || generationActive) return
+
         val pendingRecovery = store.loadPendingTurn()
         if (pendingRecovery != null) {
             restorePendingTurnIfNeeded()
             return
         }
 
-        // Snapshot the active personality for this turn. The user's next selection must
-        // affect the next turn, while this request/voice output remains internally consistent.
         val requestPersonality = Personality.fromKey(store.personality)
         Log.i("DEEP33", "TURN PERSONALITY: " + requestPersonality.key)
 
@@ -1704,14 +1773,12 @@ class MainActivity : Activity() {
         cancelButton.visibility = View.VISIBLE
         updateConnection(ConnectionState.CONNECTING)
 
-        val payload = buildModelPayload()
+        val payload = buildModelPayload(locationContext)
 
         val requestId = UUID.randomUUID().toString()
         val idempotencyKey = "chat-" + requestId
         val sessionId = store.sessionId
 
-        // Persist before network execution so Activity/process destruction can recover
-        // the exact turn with the same idempotency key.
         store.savePendingTurn(
             PendingTurn(
                 sessionId = sessionId,
@@ -1816,21 +1883,29 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun buildModelPayload(): org.json.JSONArray {
+    private fun buildModelPayload(locationContext: Deep33LocationContext? = null): org.json.JSONArray {
         val selected = GenerationPerformancePolicy.selectModelContext(conversation)
         val payload = org.json.JSONArray()
+        val lastUserIndex = selected.indexOfLast { it.role == "user" }
         var chars = 0
-        selected.forEach { message ->
-            chars += message.content.length
+
+        selected.forEachIndexed { index, message ->
+            val content = if (locationContext != null && message.role == "user" && index == lastUserIndex) {
+                message.content + "\n\n" + locationContext.asPromptContext()
+            } else {
+                message.content
+            }
+            chars += content.length
             payload.put(
                 org.json.JSONObject()
                     .put("role", message.role)
-                    .put("content", message.content)
+                    .put("content", content)
             )
         }
+
         Log.i(
             "DEEP33",
-            "MODEL_CONTEXT messages=${selected.size} chars=${chars}"
+            "MODEL_CONTEXT messages=${selected.size} chars=${chars} gps=${locationContext != null}"
         )
         return payload
     }
@@ -2786,10 +2861,26 @@ class MainActivity : Activity() {
             grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         ) {
             startVoiceInput()
+            return
+        }
+
+        if (requestCode == LOCATION_PERMISSION_REQUEST) {
+            val text = pendingLocationAwareText ?: return
+            if (hasLocationPermission()) {
+                resolveLocationAndSend(text)
+            } else {
+                pendingLocationAwareText = null
+                if (::statusView.isInitialized) {
+                    statusView.text = "● CONECTANDO"
+                    statusView.contentDescription = "Estado de conexión de DEEP33"
+                }
+                sendMessageInternal(text, null)
+            }
         }
     }
 
     companion object {
-         private const val VOICE_PERMISSION_REQUEST = 7001
+        private const val VOICE_PERMISSION_REQUEST = 7001
+        private const val LOCATION_PERMISSION_REQUEST = 7002
     }
 }
