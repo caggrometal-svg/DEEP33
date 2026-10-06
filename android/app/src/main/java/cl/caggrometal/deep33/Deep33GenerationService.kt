@@ -11,6 +11,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import org.json.JSONArray
 import java.util.concurrent.Executors
@@ -25,6 +27,8 @@ class Deep33GenerationService : Service() {
     private var generationWakeLock: PowerManager.WakeLock? = null
     private var connectivityManager: ConnectivityManager? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
+    private val networkRecoveryHandler = Handler(Looper.getMainLooper())
+    private var scheduledNetworkRecovery: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -361,13 +365,35 @@ class Deep33GenerationService : Service() {
         if (connectivityCallback != null) return
 
         val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                // A Wi-Fi -> mobile handoff can emit onLost for the old route just
+                // before the replacement route becomes active. Cancel the pending
+                // transport abort as soon as Android reports a usable network.
+                clearScheduledNetworkRecovery()
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: android.net.NetworkCapabilities
+            ) {
+                if (networkCapabilities.hasCapability(
+                        android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET
+                    )
+                ) {
+                    clearScheduledNetworkRecovery()
+                } else if (network == manager.activeNetwork) {
+                    scheduleNetworkRecovery(manager)
+                }
+            }
+
             override fun onLost(network: Network) {
                 val requestId = runningRequestId
                 if (!requestId.isNullOrBlank()) {
-                    // Force a fast transport failure so the durable recovery loop can
-                    // switch routes/retry immediately instead of waiting for readTimeout.
-                    Deep33Api.cancelActiveStream(requestId)
-                    updateForegroundNotification("Red perdida · reconectando…")
+                    // Do not tear down the stream immediately: Android may be handing
+                    // off from Wi-Fi to mobile data. Give the replacement default route
+                    // a short window to become active, while still bounding a true loss
+                    // to hundreds of milliseconds instead of the full stream timeout.
+                    scheduleNetworkRecovery(manager)
                 }
             }
         }
@@ -380,7 +406,40 @@ class Deep33GenerationService : Service() {
         }
     }
 
+    private fun scheduleNetworkRecovery(manager: ConnectivityManager) {
+        if (runningRequestId.isNullOrBlank()) return
+        clearScheduledNetworkRecovery()
+
+        val requestId = runningRequestId
+        val recovery = Runnable {
+            scheduledNetworkRecovery = null
+            if (requestId != runningRequestId || requestId.isNullOrBlank()) return@Runnable
+
+            val activeNetwork = manager.activeNetwork
+            val capabilities = activeNetwork?.let { manager.getNetworkCapabilities(it) }
+            val hasInternet = capabilities?.hasCapability(
+                android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET
+            ) == true
+
+            if (!hasInternet) {
+                // Force a fast transport failure so the durable recovery loop can
+                // switch routes/retry immediately instead of waiting for readTimeout.
+                Deep33Api.cancelActiveStream(requestId)
+                updateForegroundNotification("Red perdida · reconectando…")
+            }
+        }
+
+        scheduledNetworkRecovery = recovery
+        networkRecoveryHandler.postDelayed(recovery, NETWORK_RECOVERY_GRACE_MS)
+    }
+
+    private fun clearScheduledNetworkRecovery() {
+        scheduledNetworkRecovery?.let { networkRecoveryHandler.removeCallbacks(it) }
+        scheduledNetworkRecovery = null
+    }
+
     private fun unregisterConnectivityMonitor() {
+        clearScheduledNetworkRecovery()
         connectivityCallback?.let { callback ->
             runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
         }
@@ -544,6 +603,7 @@ class Deep33GenerationService : Service() {
         private const val CHANNEL_ID = "deep33_generation"
         private const val NOTIFICATION_ID = 3301
         private const val MAX_STREAM_RECOVERY_RETRIES = 5
+        private const val NETWORK_RECOVERY_GRACE_MS = 350L
         private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
