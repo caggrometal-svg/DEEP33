@@ -146,7 +146,7 @@ def _extract_text(content,content_type,max_text_chars):
     parser=HTMLTextExtractor(); parser.feed(decoded); parser.close()
     return parser.title[:500],parser.text[:max_text_chars]
 
-async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects=MAX_REDIRECTS,max_text_chars=MAX_TEXT_CHARS,user_agent=DEFAULT_USER_AGENT):
+async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects=MAX_REDIRECTS,max_text_chars=MAX_TEXT_CHARS,user_agent=DEFAULT_USER_AGENT,fresh=False):
     if not 1<=max_redirects<=MAX_REDIRECTS: raise ValueError("max_redirects must be between 1 and 3")
     timeout_seconds=max(1.0,min(8.0,timeout_seconds)); max_text_chars=max(1000,min(MAX_TEXT_CHARS,max_text_chars))
     original_url=url.strip(); current_url=validate_public_url(original_url); redirects=[]
@@ -154,7 +154,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
         f"{current_url}\x1f{max_redirects}\x1f{max_text_chars}\x1f{user_agent}".encode("utf-8")
     ).hexdigest()
     cached=_FETCH_CACHE.get(cache_key)
-    if cached and cached[0] > time.monotonic():
+    if not fresh and cached and cached[0] > time.monotonic():
         return copy.deepcopy(cached[1])
     timeout=httpx.Timeout(connect=min(timeout_seconds,5.0),read=timeout_seconds,write=timeout_seconds,pool=timeout_seconds)
     client=await _fetch_http_client()
@@ -180,7 +180,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
                     content=await _read_limited(response,_max_response_bytes())
                 title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
                 if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
-                result={"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects)}
+                result={"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects),"retrieved_at":__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
                 _FETCH_CACHE[cache_key]=(time.monotonic()+FETCH_CACHE_TTL_SECONDS,copy.deepcopy(result))
                 return result
             except httpx.TimeoutException as exc: raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
