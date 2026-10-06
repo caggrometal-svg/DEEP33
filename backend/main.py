@@ -39,7 +39,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
-from backend.weather import build_weather_evidence, resolve_gps_weather
+from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
