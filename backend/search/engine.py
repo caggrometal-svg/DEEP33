@@ -586,7 +586,7 @@ class SearchEngine:
                 name for name, items in first_results if items
             })
             first_result_count = sum(
-                len(items) for _name, items, _provider_errors in first_results
+                len(items) for _name, items in first_results
             )
             required_results = (
                 min(3, self.max_results)
