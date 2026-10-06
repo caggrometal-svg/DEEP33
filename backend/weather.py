@@ -6,6 +6,7 @@ web-search result for the city.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -15,6 +16,9 @@ import httpx
 
 DEFAULT_WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
 DEFAULT_TIMEOUT_SECONDS = 4.0
+
+_WEATHER_HTTP_CLIENT: httpx.AsyncClient | None = None
+_WEATHER_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 
 _WEATHER_CODE_TEXT = {
     0: "cielo despejado", 1: "mayormente despejado", 2: "parcialmente nublado",
@@ -69,6 +73,34 @@ def _weather_description(code: Any) -> str:
         return "condición meteorológica no especificada"
 
 
+
+
+
+async def _weather_http_client() -> httpx.AsyncClient:
+    global _WEATHER_HTTP_CLIENT, _WEATHER_HTTP_LOOP
+
+    loop = asyncio.get_running_loop()
+    if _WEATHER_HTTP_CLIENT is None or _WEATHER_HTTP_LOOP is not loop:
+        previous = _WEATHER_HTTP_CLIENT
+        _WEATHER_HTTP_CLIENT = httpx.AsyncClient(
+            follow_redirects=False,
+            headers={"User-Agent": "DEEP33-Weather/1.0"},
+            limits=httpx.Limits(
+                max_connections=8,
+                max_keepalive_connections=4,
+                keepalive_expiry=30.0,
+            ),
+        )
+        _WEATHER_HTTP_LOOP = loop
+        if previous is not None:
+            try:
+                await previous.aclose()
+            except Exception:
+                pass
+
+    return _WEATHER_HTTP_CLIENT
+
+
 async def fetch_current_weather(
     latitude: float,
     longitude: float,
@@ -94,20 +126,21 @@ async def fetch_current_weather(
         "precipitation_unit": "mm",
     }
     timeout = max(1.0, min(6.0, float(timeout_seconds)))
+    timeout_config = httpx.Timeout(
+        connect=min(1.5, timeout),
+        read=timeout,
+        write=timeout,
+        pool=timeout,
+    )
 
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(
-            connect=min(2.0, timeout),
-            read=timeout,
-            write=timeout,
-            pool=timeout,
-        ),
-        follow_redirects=True,
-        headers={"User-Agent": "DEEP33-Weather/1.0"},
-    ) as client:
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+    client = await _weather_http_client()
+    response = await client.get(
+        url,
+        params=params,
+        timeout=timeout_config,
+    )
+    response.raise_for_status()
+    data = response.json()
 
     current = data.get("current")
     if not isinstance(current, dict):
