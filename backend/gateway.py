@@ -244,11 +244,21 @@ class AIGateway:
             }
         return output
 
+    @staticmethod
+    def _http_timeout(seconds: float) -> httpx.Timeout:
+        bounded = max(0.5, float(seconds))
+        return httpx.Timeout(
+            connect=min(2.5, bounded),
+            read=bounded,
+            write=min(5.0, bounded),
+            pool=min(2.0, bounded),
+        )
+
     def _client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
         if self._http_client is None or self._http_loop is not loop:
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.config.timeout_seconds),
+                timeout=self._http_timeout(self.config.timeout_seconds),
                 follow_redirects=False,
                 limits=httpx.Limits(
                     max_connections=20,
@@ -426,7 +436,7 @@ class AIGateway:
                         provider.url,
                         json=body,
                         headers=self._headers(provider, request_id, idempotency_key),
-                        timeout=timeout,
+                        timeout=self._http_timeout(timeout),
                     )
 
                     if response.status_code >= 400:
