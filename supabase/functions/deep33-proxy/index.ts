@@ -83,10 +83,14 @@ const EDGE_AI_REQUIRES_AUTH =
   EDGE_AI_PROVIDER.toLowerCase() === "kilo";
 // Interactive chat is latency-first. A provider that does not begin streaming quickly
 // should be abandoned before a long retry chain can stall the user experience.
-const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "45000")));
+const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("AI_PROVIDER_TIMEOUT_MS") || "25000")));
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
-const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 8000;
+const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000;
+const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "2500")));
+const EDGE_SEARCH_CACHE_TTL_MS = Math.max(0, Math.min(120000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_CACHE_TTL_MS") || "45000")));
+const edgeSearchCache = new Map<string, { expiresAt: number; data: Record<string, unknown> }>();
+const edgeSearchInflight = new Map<string, Promise<Record<string, unknown>>>();
 const EDGE_AI_RETRY_COUNT = Math.max(0, Math.min(2, Number(Deno.env.get("AI_PROVIDER_RETRY_COUNT") || "0")));
 const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(2000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "250")));
 const EDGE_INTERNAL_FETCH_TIMEOUT_MS = Math.max(3000, Math.min(15000, Number(Deno.env.get("DEEP33_EDGE_INTERNAL_TIMEOUT_MS") || "10000")));
@@ -758,6 +762,7 @@ async function streamEdgeAI(
         let done = false;
         let buffer = "";
         let fullText = "";
+        let policyCheckTail = "";
 
         try {
           const response = await fetch(provider.url, {
@@ -830,9 +835,11 @@ async function streamEdgeAI(
                   if (typeof content === "string") chunk = content;
                 }
                 if (chunk) {
-                  if (isProviderPolicyBlock(fullText + chunk)) {
+                  const policySample = policyCheckTail + chunk;
+                  if (isProviderPolicyBlock(policySample)) {
                     throw new Error("EDGE_AI_PROVIDER_POLICY_BLOCKED");
                   }
+                  policyCheckTail = policySample.slice(-512);
                   if (!emitted) {
                     emitted = true;
                     firstChunkMs = Math.round(performance.now() - started);
@@ -1851,7 +1858,7 @@ async function runPublicWebSearchQuery(query: string) {
         ...(provider.headers || {}),
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
@@ -2031,9 +2038,11 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
 
-async function publicWebSearch(query: string) {
+async function publicWebSearchUncached(
+  query: string,
+  plan = edgeSearchQueries(query),
+): Promise<Record<string, unknown>> {
   const started = performance.now();
-  const plan = edgeSearchQueries(query);
   const batches: Array<{ query: string; data: Record<string, unknown> }> = [];
   const first = await runPublicWebSearchQuery(plan.queries[0]);
   batches.push({ query: plan.queries[0], data: first });
@@ -2087,6 +2096,46 @@ async function publicWebSearch(query: string) {
     latency_ms: Math.round(performance.now() - started),
   };
 }
+
+function edgeSearchCacheKey(plan: { original: string; depth: string }): string {
+  return plan.depth + ":" + plan.original.trim().toLowerCase();
+}
+
+async function publicWebSearch(query: string): Promise<Record<string, unknown>> {
+  const plan = edgeSearchQueries(query);
+  const key = edgeSearchCacheKey(plan);
+  const cacheable = plan.depth === "standard" && EDGE_SEARCH_CACHE_TTL_MS > 0;
+  const now = Date.now();
+
+  if (cacheable) {
+    const cached = edgeSearchCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.data;
+    if (cached) edgeSearchCache.delete(key);
+  }
+
+  const inflight = edgeSearchInflight.get(key);
+  if (inflight) return await inflight;
+
+  const promise = publicWebSearchUncached(query, plan);
+  edgeSearchInflight.set(key, promise);
+  try {
+    const result = await promise;
+    if (cacheable && result.ok === true && EDGE_SEARCH_CACHE_TTL_MS > 0) {
+      if (!edgeSearchCache.has(key) && edgeSearchCache.size >= 128) {
+        const oldest = edgeSearchCache.keys().next().value;
+        if (typeof oldest === "string") edgeSearchCache.delete(oldest);
+      }
+      edgeSearchCache.set(key, {
+        expiresAt: Date.now() + EDGE_SEARCH_CACHE_TTL_MS,
+        data: result,
+      });
+    }
+    return result;
+  } finally {
+    edgeSearchInflight.delete(key);
+  }
+}
+
 
 async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   const q = query.trim();
