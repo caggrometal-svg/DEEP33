@@ -83,6 +83,7 @@ object Deep33LocationProvider {
         finish(lastKnown)
     }
 
+    @SuppressLint("MissingPermission")
     private fun requestCurrentLocation(
         manager: LocationManager,
         providers: List<String>,
