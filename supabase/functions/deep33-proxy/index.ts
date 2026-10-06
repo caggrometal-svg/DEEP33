@@ -1888,7 +1888,7 @@ async function publicWebSearch(query: string) {
     return {
       ok: true,
       engine: "DEEP33 Search Engine",
-      engine_version: "1.2.0",
+      engine_version: "1.1.0",
       provider_independent: providerNames.length > 1,
       providers: providerNames,
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result),
