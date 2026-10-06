@@ -1107,6 +1107,7 @@ async def execute_web_tool(name,arguments):
                 timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","8")),
                 max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","5")),
                 fast=True,
+                fresh=True,
             )
         except Exception as exc:
             logger.warning("web_search_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
@@ -1248,6 +1249,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fast=not deep,
+            fresh=True,
         )
     except Exception as exc:
         logger.warning(
@@ -1767,6 +1769,7 @@ async def connectivity_audit() -> dict:
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
             fast=True,
+            fresh=True,
         )
     except Exception as exc:
         logger.warning(
@@ -1913,6 +1916,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             q,
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
+            fresh=True,
         )
     except Exception as exc:
         logger.warning("web_search_endpoint_failed request_id=%s error=%s", request_id_from_request(request), type(exc).__name__)
@@ -2169,7 +2173,7 @@ async def prepare_messages(
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
-        result = [personality_control, *selected_messages]
+        result = [personality_control, {"role": "system", "content": runtime_clock_context()}, *selected_messages]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
