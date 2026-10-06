@@ -118,8 +118,13 @@ def _realtime_query_variants(lookup_query: str, lowered: str, local_date: str) -
         variants.append(f"{lookup_query} últimas noticias de hoy {local_date}".strip())
         variants.append(f"{lookup_query} última hora y actualización {local_date}".strip())
     elif any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico")):
-        variants.append(f"{lookup_query} condiciones actuales hoy {local_date}".strip())
-        variants.append(f"{lookup_query} pronóstico actualizado {local_date}".strip())
+        weather_base = _normalise_lookup_query(lookup_query) or lookup_query
+        variants.append(f"{weather_base} condiciones meteorológicas actuales hoy {local_date}".strip())
+        variants.append(f"{weather_base} temperatura humedad lluvia pronóstico actualizado {local_date}".strip())
+        if len(variants) < 3:
+            variants.append(
+                f"site:meteochile.gob.cl {weather_base} temperatura pronóstico {local_date}".strip()
+            )
     elif any(term in lowered for term in ("política", "politica", "presidente", "elecciones", "elección", "gobierno", "congreso", "senado", "ministro")):
         variants.append(f"{lookup_query} actualidad política hoy {local_date}".strip())
         variants.append(f"{lookup_query} últimas novedades y cambios {local_date}".strip())
@@ -159,6 +164,7 @@ def _domain_quality(url: str) -> float:
         "nasa.gov": 1.0,
         "who.int": 1.0,
         "un.org": 1.0,
+        "meteochile.gob.cl": 1.0,
     }
     if host in exact:
         return exact[host]
