@@ -326,3 +326,40 @@ def test_web_routing_skips_stable_chat_and_uses_fresh_external_signals():
     assert main.should_force_web(stable_messages) is False
     assert main.should_force_web(current_messages) is True
     assert main.should_force_web(explicit_messages) is True
+
+
+def test_runtime_clock_is_authoritative():
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    now_utc = datetime.now(timezone.utc)
+    local = now_utc.astimezone(ZoneInfo(main.DEEP33_RUNTIME_TIMEZONE))
+    context = main.runtime_clock_context()
+
+    assert "RELOJ DE EJECUCIÓN DE DEEP33 — DATO AUTORITATIVO." in context
+    assert f"Fecha ISO local: {local.date().isoformat()}." in context
+    assert f"UTC: {now_utc.date().isoformat()}" in context
+
+
+def test_date_questions_force_fresh_web_lookup():
+    assert main.should_force_web([{"role": "user", "content": "¿Qué fecha es?"}]) is True
+    assert main.should_force_web([{"role": "user", "content": "¿Qué día es hoy?"}]) is True
+    assert main.should_force_web([{"role": "user", "content": "¿Qué hora es?"}]) is True
+
+
+def test_required_web_search_failure_never_falls_back_to_stale_model(monkeypatch: pytest.MonkeyPatch):
+    async def failing_search(*_args, **_kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(main, "search_web", failing_search)
+
+    with pytest.raises(main.HTTPException) as exc_info:
+        asyncio.run(
+            main.prepare_web_evidence(
+                [{"role": "user", "content": "¿Qué fecha es hoy?"}],
+                request_id="web-failure-test",
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "WEB_SEARCH_UNAVAILABLE"
