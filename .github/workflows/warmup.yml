@@ -29,10 +29,18 @@ jobs:
             ready=0
             last_ready=""
             for attempt in $(seq 1 6); do
-              health="$(curl -sS --connect-timeout 8 --max-time 30 "$url/health" || true)"
-              if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
-                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 "$url/ready" || true)"
-                if printf "%s" "$last_ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
+              if [ "$name" = "TERTIARY" ]; then
+                health="$(curl -sS --connect-timeout 8 --max-time 30 "$url/health" || true)"
+                if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
+                  last_ready="$(curl -sS --connect-timeout 8 --max-time 45 "$url/ready" || true)"
+                  if printf "%s" "$last_ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
+                    ready=1
+                    break
+                  fi
+                fi
+              else
+                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 "$url/v1/web/status" || true)"
+                if printf "%s" "$last_ready" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.1.0"' >/dev/null 2>&1; then
                   ready=1
                   break
                 fi
