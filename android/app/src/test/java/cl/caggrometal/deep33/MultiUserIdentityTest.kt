@@ -15,7 +15,7 @@ class MultiUserIdentityTest {
         assertTrue(first.startsWith(MultiUserIdentity.PROFILE_PREFIX))
         assertTrue(first.length > MultiUserIdentity.PROFILE_PREFIX.length)
         assertNotEquals(first, second)
-        assertEquals(5 + 36, first.length)
+        assertEquals(MultiUserIdentity.PROFILE_PREFIX.length + 36, first.length)
     }
 
     @Test
