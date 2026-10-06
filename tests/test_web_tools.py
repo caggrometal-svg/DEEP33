@@ -89,3 +89,93 @@ def test_web_status_endpoint(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["tool_loop_enabled"] is True
+
+
+def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
+    import tools.web_search as module
+
+    calls = {"count": 0}
+
+    async def fake_engine_search(*_args, **_kwargs):
+        calls["count"] += 1
+        await asyncio.sleep(0.05)
+        return {
+            "ok": True,
+            "results": [
+                {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
+                {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
+            ],
+            "sources": [],
+            "providers": ["test"],
+            "provider": "test",
+            "errors": [],
+        }
+
+    monkeypatch.setattr(module.SearchEngine, "search", fake_engine_search)
+    module._SEARCH_CACHE.clear()
+    module._SEARCH_INFLIGHT.clear()
+
+    async def exercise():
+        return await asyncio.gather(
+            module.search_web("misma consulta", provider="auto", fresh=True),
+            module.search_web("misma consulta", provider="auto", fresh=True),
+        )
+
+    first, second = asyncio.run(exercise())
+    assert calls["count"] == 1
+    assert first["results"] == second["results"]
+
+
+def test_fetch_coalesces_concurrent_fresh_requests(monkeypatch):
+    import tools.web_fetch as module
+
+    calls = {"count": 0}
+
+    monkeypatch.setattr(module, "validate_public_url", lambda value: value)
+
+    async def fake_fetch(**kwargs):
+        calls["count"] += 1
+        await asyncio.sleep(0.05)
+        return {
+            "ok": True,
+            "url": kwargs["original_url"],
+            "final_url": kwargs["current_url"],
+            "title": "Example",
+            "text": "contenido",
+            "content_type": "text/html",
+            "bytes": 10,
+            "redirects": 0,
+            "retrieved_at": "now",
+        }
+
+    monkeypatch.setattr(module, "_fetch_page_uncached", fake_fetch)
+    module._FETCH_CACHE.clear()
+    module._FETCH_INFLIGHT.clear()
+
+    async def exercise():
+        return await asyncio.gather(
+            module.fetch_page("https://example.com/a", fresh=True),
+            module.fetch_page("https://example.com/a", fresh=True),
+        )
+
+    first, second = asyncio.run(exercise())
+    assert calls["count"] == 1
+    assert first["text"] == second["text"]
+
+
+def test_fetch_http_client_has_connection_pool(monkeypatch):
+    import tools.web_fetch as module
+
+    module._FETCH_HTTP_CLIENT = None
+    module._FETCH_HTTP_LOOP = None
+
+    async def exercise():
+        client = await module._fetch_http_client()
+        pool = client._transport._pool
+        assert pool._max_connections == 20
+        assert pool._max_keepalive_connections == 10
+        await client.aclose()
+        module._FETCH_HTTP_CLIENT = None
+        module._FETCH_HTTP_LOOP = None
+
+    asyncio.run(exercise())
