@@ -26,11 +26,44 @@ jobs:
           for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
-            curl -fsS --connect-timeout 8 --max-time 30 "$url/health" | jq -e '.status=="PASS"' >/dev/null
-            curl -fsS --connect-timeout 8 --max-time 45 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            ready=0
+            last_ready=""
+            for attempt in $(seq 1 6); do
+              health="$(curl -sS --connect-timeout 8 --max-time 30 "$url/health" || true)"
+              if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
+                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 "$url/ready" || true)"
+                if printf "%s" "$last_ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
+                  ready=1
+                  break
+                fi
+              fi
+              echo "${name}_WARM_NOT_READY attempt=${attempt}"
+              sleep 10
+            done
+            if [ "$ready" != "1" ]; then
+              echo "${name}_WARM_FAIL"
+              printf "%s\n" "$last_ready"
+              exit 1
+            fi
             echo "${name}_WARM_PASS"
           done
-          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true' >/dev/null
+
+          audit_ok=0
+          last_audit=""
+          for attempt in $(seq 1 4); do
+            last_audit="$(curl -sS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" || true)"
+            if printf "%s" "$last_audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' >/dev/null 2>&1; then
+              audit_ok=1
+              break
+            fi
+            echo "DEEP33_WEB_AUDIT_NOT_READY attempt=${attempt}"
+            sleep 10
+          done
+          if [ "$audit_ok" != "1" ]; then
+            echo "DEEP33_WEB_AUDIT_FAIL"
+            printf "%s\n" "$last_audit"
+            exit 1
+          fi
           echo "DEEP33_WARM_PASS"
 
       - name: Certify real model inference through DEEP33 edge
