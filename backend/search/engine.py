@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -138,12 +139,22 @@ def _realtime_query_variants(lookup_query: str, lowered: str, local_date: str) -
     return variants
 
 
-def _tokens(text: str) -> list[str]:
-    return [
+@lru_cache(maxsize=4096)
+def _cached_tokens(text: str) -> tuple[str, ...]:
+    return tuple(
         token.lower()
         for token in TOKEN_RE.findall(text)
         if token.lower() not in _STOPWORDS
-    ]
+    )
+
+
+def _tokens(text: str) -> list[str]:
+    return list(_cached_tokens(str(text)))
+
+
+@lru_cache(maxsize=4096)
+def _token_set(text: str) -> frozenset[str]:
+    return frozenset(_cached_tokens(str(text)))
 
 
 def _canonical_url(url: str) -> str:
@@ -183,8 +194,8 @@ def _evidence_text(item: dict) -> str:
 
 
 def _similarity(left: dict, right: dict) -> float:
-    a = set(_tokens(_evidence_text(left)))
-    b = set(_tokens(_evidence_text(right)))
+    a = _token_set(_evidence_text(left))
+    b = _token_set(_evidence_text(right))
     if not a or not b:
         return 0.0
     return len(a & b) / max(1, len(a | b))
@@ -192,15 +203,23 @@ def _similarity(left: dict, right: dict) -> float:
 
 def _corroboration_counts(results: list[dict]) -> dict[int, int]:
     counts = {id(item): 0 for item in results}
-    for index, left in enumerate(results):
-        left_host = _host(str(left.get("url") or ""))
-        for right in results[index + 1:]:
-            right_host = _host(str(right.get("url") or ""))
-            if not left_host or not right_host or left_host == right_host:
+    prepared = [
+        (_host(str(item.get("url") or "")), _token_set(_evidence_text(item)))
+        for item in results
+    ]
+    for index, (left_host, left_tokens) in enumerate(prepared):
+        if not left_host or not left_tokens:
+            continue
+        for right_index in range(index + 1, len(prepared)):
+            right_host, right_tokens = prepared[right_index]
+            if not right_host or not right_tokens or left_host == right_host:
                 continue
-            if _similarity(left, right) >= 0.25:
-                counts[id(left)] += 1
-                counts[id(right)] += 1
+            similarity = len(left_tokens & right_tokens) / max(
+                1, len(left_tokens | right_tokens)
+            )
+            if similarity >= 0.25:
+                counts[id(results[index])] += 1
+                counts[id(results[right_index])] += 1
     return counts
 
 
