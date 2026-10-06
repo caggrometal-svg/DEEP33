@@ -389,6 +389,7 @@ async def search_web(
     provider=None,
     api_key=None,
     fast: bool = False,
+    fresh: bool = False,
 ):
     cleaned = " ".join(query.split()).strip()
     if not cleaned:
@@ -420,7 +421,9 @@ async def search_web(
     )
     now = time.monotonic()
     cached = _SEARCH_CACHE.get(cache_key)
-    if cached and cached[0] > now:
+    # Explicit/current web requests must reach the Internet on every call.
+    # Cache remains available only for non-fresh repeated searches.
+    if not fresh and cached and cached[0] > now:
         return copy.deepcopy(cached[1])
 
     result = await engine.search(
