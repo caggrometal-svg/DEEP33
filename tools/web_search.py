@@ -18,7 +18,7 @@ from tools.web_fetch import validate_public_url
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
-DEFAULT_TIMEOUT_SECONDS = 8.0
+DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_MAX_RESULTS = 5
 MAX_QUERY_CHARS = 1000
 SEARCH_CACHE_TTL_SECONDS = max(
@@ -34,8 +34,18 @@ async def _search_http_client() -> httpx.AsyncClient:
     loop = asyncio.get_running_loop()
     if _SEARCH_HTTP_CLIENT is None or _SEARCH_HTTP_LOOP is not loop:
         _SEARCH_HTTP_CLIENT = httpx.AsyncClient(
-            timeout=httpx.Timeout(DEFAULT_TIMEOUT_SECONDS),
+            timeout=httpx.Timeout(
+                connect=min(2.5, DEFAULT_TIMEOUT_SECONDS),
+                read=DEFAULT_TIMEOUT_SECONDS,
+                write=DEFAULT_TIMEOUT_SECONDS,
+                pool=DEFAULT_TIMEOUT_SECONDS,
+            ),
             follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
         )
         _SEARCH_HTTP_LOOP = loop
     return _SEARCH_HTTP_CLIENT
@@ -397,7 +407,7 @@ async def search_web(
     if len(cleaned) > MAX_QUERY_CHARS:
         raise WebSearchError("WEB_SEARCH_QUERY_TOO_LONG")
 
-    timeout_seconds = max(1.0, min(8.0, timeout_seconds))
+    timeout_seconds = max(1.0, min(6.0, timeout_seconds))
     max_results = max(1, min(8, int(max_results)))
     selected_provider = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")
@@ -426,6 +436,7 @@ async def search_web(
     if not fresh and cached and cached[0] > now:
         return copy.deepcopy(cached[1])
 
+    started = time.perf_counter()
     result = await engine.search(
         cleaned,
         provider=selected_provider,
@@ -434,6 +445,10 @@ async def search_web(
         fallback_ddg=os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() == "true",
         fast_mode=fast,
     )
+    result = {
+        **result,
+        "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+    }
     if not result["ok"]:
         raise WebSearchError(
             "WEB_SEARCH_FAILED:" + ",".join(result.get("errors") or ["NO_RESULTS"])
@@ -458,7 +473,7 @@ def web_search_status():
     return {
         "enabled": True,
         "engine": "DEEP33 Search Engine",
-        "engine_version": "1.2.0",
+        "engine_version": "1.3.0",
         "configured_provider": provider,
         "active_provider": active,
         "tavily_configured": key,

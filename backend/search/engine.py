@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"
 TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",
@@ -53,10 +53,12 @@ _STOPWORDS = {
 }
 _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
 MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "3"))))
-PROVIDER_RETRIES = max(0, min(2, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "1"))))
-RETRY_BACKOFF_SECONDS = max(0.0, min(2.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.35"))))
+PROVIDER_RETRIES = max(0, min(1, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "0"))))
+RETRY_BACKOFF_SECONDS = max(0.0, min(1.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.25"))))
 PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().lower() == "true"
 PARALLEL_QUERIES = os.getenv("WEB_SEARCH_PARALLEL_QUERIES", "true").strip().lower() == "true"
+MAX_QUERY_FANOUT = max(1, min(2, int(os.getenv("WEB_SEARCH_MAX_QUERY_FANOUT", "2"))))
+MIN_VERIFIED_RESULTS = max(2, min(3, int(os.getenv("WEB_SEARCH_MIN_VERIFIED_RESULTS", "2"))))
 
 
 @dataclass(frozen=True)
@@ -472,12 +474,38 @@ class SearchEngine:
             return successful, errors, attempted
 
         if plan_depth in {"deep", "realtime"}:
-            gathered = await asyncio.gather(*(call(name) for name in providers))
-            for name, results, provider_errors in gathered:
-                attempted.append(name)
-                errors.extend(provider_errors)
-                if results:
-                    successful.append((name, results))
+            # Latency-first verification: obtain two independent providers, then
+            # stop. A slow third provider must not hold the response hostage.
+            if not providers:
+                return successful, errors, attempted
+            tasks = [asyncio.create_task(call(name)) for name in providers]
+            provider_results = 0
+            total_results = 0
+            min_provider_successes = 1 if len(providers) == 1 else 2
+            required_results = (
+                min(3, self.max_results)
+                if plan_depth == "deep"
+                else min(MIN_VERIFIED_RESULTS, self.max_results)
+            )
+            try:
+                for task in asyncio.as_completed(tasks):
+                    name, results, provider_errors = await task
+                    attempted.append(name)
+                    errors.extend(provider_errors)
+                    if results:
+                        successful.append((name, results))
+                        provider_results += 1
+                        total_results += len(results)
+                    if (
+                        provider_results >= min_provider_successes
+                        and total_results >= required_results
+                    ):
+                        for other in tasks:
+                            if not other.done():
+                                other.cancel()
+                        break
+            finally:
+                await asyncio.gather(*tasks, return_exceptions=True)
             return successful, errors, attempted
 
         if PARALLEL_PROVIDERS and len(providers) > 1:
@@ -545,11 +573,37 @@ class SearchEngine:
 
         if (
             not fast_mode
-            and PARALLEL_QUERIES
             and plan.depth in {"deep", "realtime"}
             and len(planned_queries) > 1
         ):
-            planned_batches = await asyncio.gather(*(run_planned(q) for q in planned_queries))
+            # First query is authoritative. Expand only when the initial result
+            # set is not sufficiently verified, instead of always running all
+            # variants in parallel.
+            first_batch = await run_planned(planned_queries[0])
+            planned_batches = [first_batch]
+            first_results, _first_errors, _first_attempted = first_batch[1]
+            first_provider_count = len({
+                name for name, items, _provider_errors in first_results if items
+            })
+            first_result_count = sum(
+                len(items) for _name, items, _provider_errors in first_results
+            )
+            required_results = (
+                min(3, self.max_results)
+                if plan.depth == "deep"
+                else min(MIN_VERIFIED_RESULTS, self.max_results)
+            )
+            min_provider_successes = 1 if len(providers) == 1 else 2
+            sufficiently_verified = (
+                first_provider_count >= min_provider_successes
+                and first_result_count >= required_results
+            )
+            if not sufficiently_verified:
+                remaining = planned_queries[1:MAX_QUERY_FANOUT]
+                if remaining:
+                    planned_batches.extend(
+                        await asyncio.gather(*(run_planned(q) for q in remaining))
+                    )
         else:
             planned_batches = []
             for q in planned_queries:

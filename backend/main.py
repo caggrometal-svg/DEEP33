@@ -1125,7 +1125,7 @@ async def execute_web_tool(name,arguments):
         try:
             return await fetch_page(
                 url,
-                timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS","8")),
+                timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS","5")),
                 max_redirects=min(3,int(os.getenv("WEB_FETCH_MAX_REDIRECTS","3"))),
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
                 fresh=True,
@@ -1255,7 +1255,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     try:
         search_result = await search_web(
             query,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fast=not search_depth,
             fresh=True,
@@ -1288,16 +1288,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(source.get("snippet") or "")[:1500],
             }
 
-    candidates = list(sources.values())[:(4 if search_depth else 2)]
+    candidates = list(sources.values())[:2]
     fetched_pages = []
     compact_search_results = [
         {
             "title": item.get("title"),
             "url": item.get("url"),
-            "snippet": str(item.get("snippet") or "")[:900],
+            "snippet": str(item.get("snippet") or "")[:700],
             "published_at": item.get("published_at"),
         }
-        for item in list(search_result.get("results") or [])[:5]
+        for item in list(search_result.get("results") or [])[:4]
         if isinstance(item, dict)
     ]
     snippet_lengths = [
@@ -1308,7 +1308,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         len(compact_search_results) >= 2
         and sum(1 for length in snippet_lengths if length >= 120) >= 2
     )
-    if candidates and (search_depth or not snippets_sufficient):
+    explicit_research = bool(deep and not realtime)
+    if candidates and (explicit_research or not snippets_sufficient):
         results = await asyncio.gather(
             *(execute_web_tool("web_fetch", {"url": source["url"]}) for source in candidates),
             return_exceptions=True,
@@ -1319,16 +1320,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             fetched_pages.append({
                 "title": source["title"],
                 "url": source["url"],
-                "text": str(result.get("text") or result.get("snippet") or "")[:3500],
+                "text": str(result.get("text") or result.get("snippet") or "")[:2200],
             })
 
     compact_fetched_pages = [
         {
             "title": item.get("title"),
             "url": item.get("url"),
-            "text": str(item.get("text") or "")[:3500],
+            "text": str(item.get("text") or "")[:2200],
         }
-        for item in fetched_pages[:(4 if search_depth else 2)]
+        for item in fetched_pages[:2]
     ]
     evidence_fragments = [
         str(item.get("snippet") or "")
@@ -1777,7 +1778,7 @@ async def connectivity_audit() -> dict:
     try:
         search = await search_web(
             "DEEP33",
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
             max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
             fast=True,
             fresh=True,
@@ -1927,7 +1928,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     try:
         return await search_web(
             q,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fresh=True,
         )

@@ -87,12 +87,55 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.2.0"
+    assert result["engine_version"] == "1.3.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
+
+
+def test_deep_search_stops_after_verified_providers(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    cancelled = {"ddg": False}
+
+    async def fake_tavily(query, api_key, timeout_seconds, max_results):
+        return [
+            {"title": f"Tavily {i}", "url": f"https://tavily.example/{i}", "snippet": "DEEP33 evidence"}
+            for i in range(3)
+        ]
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        return [
+            {"title": f"Bing {i}", "url": f"https://bing.example/{i}", "snippet": "DEEP33 evidence"}
+            for i in range(3)
+        ]
+
+    async def slow_ddg(query, timeout_seconds, max_results):
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled["ddg"] = True
+            raise
+
+    monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", slow_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5, max_queries=3).search(
+            "investiga DEEP33",
+            provider="auto",
+            api_key="test-key",
+            timeout_seconds=5,
+            fallback_ddg=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert len(result["queries"]) == 1
+    assert set(result["providers"]) == {"tavily", "bing"}
+    assert cancelled["ddg"] is True
 
 
 def test_deep_search_uses_multiple_independent_providers(monkeypatch):
@@ -343,6 +386,6 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["ok"] is True
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
-    assert len(result["queries"]) == 3
-    assert set(result["providers"]) == {"tavily", "bing", "duckduckgo"}
-    assert result["verification"]["distinct_providers"] == 3
+    assert len(result["queries"]) == 1
+    assert set(result["providers"]) == {"tavily", "bing"}
+    assert result["verification"]["distinct_providers"] == 2

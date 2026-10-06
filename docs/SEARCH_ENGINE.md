@@ -6,6 +6,13 @@ Pipeline:
 
 `query -> plan -> providers -> normalize -> deduplicate -> rank -> verify -> sources`
 
+Latency/quality behavior:
+
+- The first query races independent providers and stops as soon as the minimum verification set is satisfied.
+- Deep/realtime query variants are expanded only when the first provider set is insufficient; the default query fan-out is capped at two.
+- Search provider retries default to zero because provider failover is faster than waiting through duplicate attempts.
+- Page retrieval is optional when search snippets already provide sufficient evidence; explicit research fetches at most two pages in parallel.
+
 Hardened behavior:
 
 - Deep/research queries execute across all configured providers instead of accepting the first successful provider.
@@ -24,6 +31,7 @@ Providers:
 - Bing public search with HTML parsing plus RSS rescue.
 - DuckDuckGo fallback.
 - The engine contract is independent of any one provider; providers are adapters behind the same interface.
+- Engine version: 1.3.0.
 
 Production contract:
 
