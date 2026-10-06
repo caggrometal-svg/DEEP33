@@ -93,6 +93,7 @@ def test_web_status_endpoint(monkeypatch):
 
 def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
     import tools.web_search as module
+    from backend.search.engine import SearchEngine
 
     calls = {"count": 0}
 
@@ -111,7 +112,7 @@ def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
             "errors": [],
         }
 
-    monkeypatch.setattr(module.SearchEngine, "search", fake_engine_search)
+    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
     module._SEARCH_CACHE.clear()
     module._SEARCH_INFLIGHT.clear()
 
