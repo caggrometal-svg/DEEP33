@@ -53,14 +53,10 @@ fun Deep33Screen(
                 Spacer(Modifier.height(4.dp))
 
                 Text(
-                    text = when (linkState) {
-                        LinkState.SYNCING -> "Sincronizando enlace"
-                        LinkState.ONLINE -> "Enlace activo"
-                        LinkState.ERROR -> "Enlace no disponible"
-                        LinkState.IDLE -> "Listo"
-                    },
+                    text = personality.key,
                     color = Color(personality.accent),
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
                 )
 
                 if (linkState == LinkState.SYNCING) {
