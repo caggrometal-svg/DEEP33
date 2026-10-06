@@ -1710,20 +1710,24 @@ class MainActivity : Activity() {
                 "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
             ).containsMatchIn(it)
         }
-        Deep33LocationProvider.resolve(this, callback = { location ->
-            runOnUiThread {
-                pendingLocationAwareText = null
-                if (location != null) {
-                    Log.i(
-                        "DEEP33_GPS",
-                        "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
-                    )
-                } else {
-                    Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
+        Deep33LocationProvider.resolve(
+            this,
+            callback = { location ->
+                runOnUiThread {
+                    pendingLocationAwareText = null
+                    if (location != null) {
+                        Log.i(
+                            "DEEP33_GPS",
+                            "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
+                        )
+                    } else {
+                        Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
+                    }
+                    sendMessageInternal(text, location)
                 }
-                sendMessageInternal(text, location)
-            }, includeLabel = !weatherQuery)
-        }
+            },
+            includeLabel = !weatherQuery
+        )
     }
 
     private fun sendMessage(textOverride: String? = null) {
