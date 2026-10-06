@@ -171,7 +171,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
 
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
-    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v4" in messages[0]["content"]
+    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v5" in messages[0]["content"]
     assert "SHAPE_SELECTED=CONVERSATIONAL" in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
     conversation_messages = [
