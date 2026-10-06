@@ -302,7 +302,7 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
             "Content-Type": "application/json",
             "User-Agent": "DEEP33-WebSearch/1.0",
         },
-        timeout=_http_timeout(rss_timeout),
+        timeout=_http_timeout(timeout_seconds),
     )
     if response.status_code >= 400:
         raise WebSearchError(f"WEB_SEARCH_TAVILY_HTTP_{response.status_code}")
