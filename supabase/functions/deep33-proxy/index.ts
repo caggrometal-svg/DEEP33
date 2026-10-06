@@ -1922,6 +1922,10 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
 
+  if (!UPSTREAM) {
+    return await publicWebSearch(q);
+  }
+
   try {
     const res = await fetchUpstream(
       "/v1/web/search?q=" + encodeURIComponent(q),
@@ -2057,7 +2061,7 @@ Deno.serve(async (req) => {
 
       let search: Record<string, unknown>;
       try {
-        search = await edgeSearch("DEEP33 internet", auditSession);
+        search = await edgeSearch("fecha actual en Chile", auditSession);
       } catch (error) {
         search = {
           ok: false,
