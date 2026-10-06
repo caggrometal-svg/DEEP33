@@ -95,6 +95,13 @@ def is_realtime_query(query: str) -> bool:
     lowered = " ".join(str(query or "").split()).strip().lower()
     if not lowered:
         return False
+    historical = bool(re.search(r"\b(?:1[5-9]\d{2}|20(?:0\d|1\d))\b", lowered))
+    current_marker = any(
+        marker in lowered
+        for marker in ("hoy", "ahora", "actual", "actualmente", "último", "última", "últimos", "últimas", "en vivo", "live", "breaking", "latest", "current", "today")
+    )
+    if historical and not current_marker:
+        return False
     if any(term in lowered for term in REALTIME_TERMS):
         return True
     return bool(re.search(
