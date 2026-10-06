@@ -458,7 +458,7 @@ def web_search_status():
     return {
         "enabled": True,
         "engine": "DEEP33 Search Engine",
-        "engine_version": "1.1.0",
+        "engine_version": "1.2.0",
         "configured_provider": provider,
         "active_provider": active,
         "tavily_configured": key,
