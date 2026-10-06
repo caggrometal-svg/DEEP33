@@ -229,7 +229,7 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 }
 DEFAULT_PERSONALITY = "NEUTRO"
 PERSONALITY_PROTOCOL_VERSION = "5"
-DIALOGUE_POLICY_VERSION = "4"
+DIALOGUE_POLICY_VERSION = "5"
 REAL_DIALOGUE_PROTOCOL_VERSION = "1"
 
 _rate_state: dict[str, tuple[float, int]] = {}
@@ -487,10 +487,16 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
 
     question_count = latest_user.count("?")
     complex_markers = (
-        "compara", "analiza", "evalúa", "explica las diferencias",
-        "pros y contras", "ventajas y desventajas",
+        "compara", "comparar", "analiza", "analizar", "evalúa", "evaluar",
+        "explica las diferencias", "pros y contras", "ventajas y desventajas",
+        "causas y consecuencias", "qué tan probable", "que tan probable",
+        "haz un análisis", "hacer un análisis", "en profundidad", "a fondo",
     )
-    if len(latest_user) > 700 or question_count >= 3 or any(marker in lowered for marker in complex_markers):
+    # A long message is not automatically a request for an analytical report.
+    # Users often paste context, an opinion, or a previous answer and expect
+    # DEEP33 to react conversationally. Complexity is selected by intent markers,
+    # not by character count alone.
+    if question_count >= 3 or any(marker in lowered for marker in complex_markers):
         return "COMPLEX_NECESSARY"
 
     if latest_user.endswith("?") or latest_user.endswith("？"):
@@ -511,10 +517,11 @@ def dialogue_policy_prompt(
         return (
             f"DEEP33 FAST DIALOGUE. FORMA={shape}. "
             "Responde primero a la pregunta actual y conserva el hilo inmediato. "
-            "Conclusión primero, sin introducciones, ceremonias ni relleno. "
+            "Respuesta directa primero, sin introducciones, ceremonias ni relleno. "
             "La respuesta debe detenerse en cuanto la necesidad del turno quede resuelta. "
             "No conviertas una pregunta simple o factual en un informe, tutorial o catálogo de contexto. "
-            "Evita listas, secciones y explicaciones históricas cuando no sean necesarias para responder. "
+            "La salida por defecto es prosa conversacional en párrafos naturales. No uses encabezados, listas numeradas, viñetas ni tablas salvo que el usuario pida explícitamente ese formato. "
+            "Evita explicaciones históricas y bloques técnicos cuando no sean necesarios para responder. "
             "En SIMPLE_DIRECT responde con la extensión que realmente requiera la pregunta: normalmente una respuesta directa y, como mucho, el contexto mínimo que evita una interpretación incorrecta. "
             "No uses una cantidad fija de frases, palabras o caracteres y no recortes una precisión o explicación necesaria solo para parecer breve. "
             "No añadas una pregunta al final de una respuesta autosuficiente. Una pregunta contextual solo puede aparecer cuando el usuario dejó una decisión, ambigüedad o hilo abierto que realmente necesite continuar. "
@@ -538,8 +545,9 @@ def dialogue_policy_prompt(
             "Es decir: una sola pregunta contextual debe ser usada solo cuando aporte una continuación natural."
         ),
         "COMPLEX_NECESSARY": (
-            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. Mantén la explicación integrada; no conviertas automáticamente el tema en un informe con varias secciones. "
-            "Resume primero la conclusión y después añade la evidencia, lógica o contexto imprescindible. "
+            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. Mantén la explicación integrada y conversacional; no conviertas automáticamente el tema en un informe con varias secciones. "
+            "Abre con la respuesta que realmente le darías al usuario y desarrolla después la evidencia, lógica o contexto imprescindible dentro de párrafos naturales. "
+            "No uses encabezados, listas numeradas, viñetas ni tablas salvo que el usuario los haya pedido explícitamente. "
             "Cuando una respuesta compleja ya quedó resuelta, termina sin añadir un resumen redundante ni una pregunta ceremonial. "
             "Usa como máximo una pregunta lógica solo si existe una incertidumbre, decisión o línea de investigación útil para continuar."
         ),
@@ -557,6 +565,9 @@ def dialogue_policy_prompt(
         "La conversación no exige alargar cada turno ni cerrar con una pregunta. "
         "No conviertas el razonamiento en un esquema visible. La respuesta debe leerse como una conversación inteligente, no como un informe. "
         "No conviertas una pregunta simple o factual en un informe, tutorial o catálogo de contexto. "
+        "Por defecto, la respuesta se serializa como diálogo: prosa natural en párrafos breves y conectados, reaccionando al turno actual y manteniendo el hilo. "
+        "Los encabezados, listas numeradas, viñetas y tablas están prohibidos por defecto; solo aparecen cuando el usuario solicita explícitamente ese formato o cuando el contenido exige una estructura técnica que no pueda expresarse claramente en prosa. "
+        "No empieces una respuesta con etiquetas como \"Conclusión:\", \"Análisis:\", \"Hipótesis:\", \"Veredicto:\", \"Evidencia:\" o equivalentes. "
         "Cada turno debe resolver primero lo que el usuario acaba de decir y después mantener una continuación natural cuando exista. "
         "Cuando la pregunta sea actual, externa, cambiante, de nicho o el modelo detecte que su conocimiento no es suficiente, la aplicación busca primero información pública relevante en Internet y la entrega al modelo como evidencia; "
         "la respuesta final debe ser una síntesis original de esa evidencia, con la profundidad que el asunto requiera; nunca una copia de fuentes. "
@@ -1188,6 +1199,8 @@ def _web_personality_lock(personality: str) -> dict[str, str]:
             "Use retrieved pages only as factual raw material. Synthesize an original answer: never copy, paste, mirror, "
             "mechanically translate, or reproduce source paragraphs. The final answer must sound like the active personality "
             "in wording, rhythm, attitude, humor or suspicion, directness, and reasoning framing. "
+            "Use plain conversational paragraphs by default. Do not use headings, numbered lists, bullet lists, or tables unless the user explicitly requests them. "
+            "Do not start with report labels such as conclusion, analysis, hypothesis, evidence, or verdict. "
             "Do not mention sources, URLs, citations, or this lock."
         ),
     }
@@ -1250,6 +1263,7 @@ async def _enforce_web_originality(
                 "source words, do not translate source sentences mechanically, do not reproduce paragraph structure, "
                 "and do not mention or expose sources, URLs, citations, or this gate. The result must be an original "
                 "DEEP33 synthesis in ACTIVE_PERSONALITY=" + normalize_personality(personality) + ". "
+                "Keep the final response conversational: use natural paragraphs, not report headings or numbered/bulleted lists, unless the user explicitly requested that format. "
                 "Candidate draft is internal material and must not be copied."
                 "\nCANDIDATE DRAFT:\n"
                 + candidate[:12000]
