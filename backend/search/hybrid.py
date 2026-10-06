@@ -11,7 +11,7 @@ import httpx
 from backend.search.chunking import chunk_document
 
 
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.3.0"
 _TOKEN_RE = re.compile(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 
 
