@@ -257,7 +257,7 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
             return {
                 "ok": True,
                 "engine": "DEEP33 Search Engine",
-                "engine_version": "1.1.0",
+                "engine_version": "1.2.0",
                 "provider_independent": True,
                 "results": [{
                     "title": "Live result",
