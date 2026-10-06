@@ -5,6 +5,13 @@ import asyncio
 from backend.search.engine import SearchEngine, deduplicate, rank_results
 
 
+def test_search_plan_strips_conversational_web_instructions():
+    plan = SearchEngine(max_queries=1).plan(
+        "Busca en internet la fecha actual en Chile y responde solo: OK"
+    )
+    assert plan.queries == ["la fecha actual en Chile"]
+
+
 def test_search_plan_expands_deep_queries():
     plan = SearchEngine(max_queries=3).plan("investiga DEEP33")
     assert plan.depth == "deep"
