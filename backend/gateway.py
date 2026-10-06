@@ -368,7 +368,7 @@ class AIGateway:
                 response = await self._client().get(
                     provider.health_url,
                     headers=self._headers(provider),
-                    timeout=timeout,
+                    timeout=self._http_timeout(timeout),
                 )
 
                 if 200 <= response.status_code < 300:
