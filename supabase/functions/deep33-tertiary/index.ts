@@ -1221,7 +1221,7 @@ async function memoryCall(
 function hybridStatus() {
   return {
     engine: "DEEP33 Hybrid Search",
-    engine_version: "1.1.0",
+    engine_version: "1.3.0",
     enabled: true,
     configured: true,
     dimensions: 1536,
@@ -1578,7 +1578,7 @@ async function handleHybridRequest(
     return json({
       ok: true,
       engine: "DEEP33 Hybrid Search",
-      engine_version: "1.1.0",
+      engine_version: "1.3.0",
       document_id: documentId.slice(0, 200),
       indexed_chunks: saved,
       chunking: {
@@ -1767,7 +1767,7 @@ function decodeHtml(value: string): string {
     });
 }
 
-async function publicWebSearch(query: string) {
+async function runPublicWebSearchQuery(query: string) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
 
@@ -1899,7 +1899,7 @@ async function publicWebSearch(query: string) {
     return {
       ok: true,
       engine: "DEEP33 Search Engine",
-      engine_version: "1.1.0",
+      engine_version: "1.3.0",
       provider_independent: true,
       providers: providerNames,
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result),
@@ -1915,6 +1915,81 @@ async function publicWebSearch(query: string) {
     error: "PUBLIC_WEB_SEARCH_UNAVAILABLE",
     results: [],
     providers: providerNames,
+  };
+}
+
+
+function normalizeEdgeSearchQuery(query: string): string {
+  return query
+    .replace(/\b(busca|buscar|búscame|investiga|investigar|consulta|consultar|verifica|verificar)\b/giu, " ")
+    .replace(/\b(en internet|por internet|en la web|por la web|online|on-line)\b/giu, " ")
+    .replace(/\b(responde solo|responde únicamente|responde exactamente|contesta solo|devuelve solo)\b[\s\S]*$/iu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function edgeRealtimeQuery(query: string): boolean {
+  const lowered = query.toLowerCase();
+  if (/\b(?:15\d{2}|16\d{2}|17\d{2}|18\d{2}|19\d{2}|200\d|201\d)\b/.test(lowered) &&
+      !/(hoy|ahora|actual|latest|current|today)/i.test(lowered)) return false;
+  return ["noticia","noticias","última hora","ultima hora","actualidad","actual","actualmente","ahora","hoy","último","últimos","última","últimas","reciente","recientes","clima","tiempo","temperatura","pronóstico","pronostico","política","politica","presidente","elecciones","gobierno","congreso","senado","mercado","bolsa","dólar","dolar","euro","precio","cotización","cotizacion","resultados","marcador","horario","tráfico","trafico","vuelo","vuelos","alerta","terremoto","tsunami","incendio","guerra","fecha","hora","vigente","en vivo","live","breaking","latest","current"].some((term) => lowered.includes(term));
+}
+function edgeSearchQueries(query: string): { original: string; queries: string[]; depth: string } {
+  const original = query.trim();
+  const normalized = normalizeEdgeSearchQuery(original) || original;
+  if (!edgeRealtimeQuery(original)) return { original, queries: [normalized], depth: "standard" };
+  const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const lowered = original.toLowerCase();
+  const variants = lowered.includes("clima") || lowered.includes("tiempo") || lowered.includes("temperatura")
+    ? [`${normalized} temperatura humedad lluvia condiciones actuales hoy ${localDate}`, `site:meteochile.gob.cl ${normalized} temperatura pronóstico ${localDate}`]
+    : lowered.includes("noticia") || lowered.includes("guerra")
+      ? [`${normalized} últimas noticias de hoy ${localDate}`, `${normalized} última hora y actualización ${localDate}`]
+      : [`${normalized} actualización de hoy ${localDate}`, `${normalized} información más reciente ${localDate}`];
+  return { original, queries: [normalized, ...variants], depth: "realtime" };
+}
+async function publicWebSearch(query: string) {
+  const started = performance.now();
+  const plan = edgeSearchQueries(query);
+  const first = await runPublicWebSearchQuery(plan.queries[0]);
+  const batches: Array<{ query: string; data: Record<string, unknown> }> = [{ query: plan.queries[0], data: first }];
+  const firstResults = Array.isArray(first.results) ? first.results : [];
+  const firstProviders = Array.isArray(first.providers) ? first.providers : [];
+  const required = plan.depth === "realtime" ? 2 : 3;
+  if (plan.queries.length > 1 && (firstProviders.length < 2 || firstResults.length < required)) {
+    batches.push(...await Promise.all(plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))));
+  }
+  const merged = new Map<string, Record<string, unknown>>();
+  const providers = new Set<string>();
+  for (const batch of batches) {
+    for (const provider of (Array.isArray(batch.data.providers) ? batch.data.providers : [])) providers.add(String(provider));
+    for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
+      if (!item || typeof item !== "object") continue;
+      const value = item as Record<string, unknown>;
+      const url = String(value.url || "").trim();
+      if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
+    }
+  }
+  const results = [...merged.values()].slice(0, 8);
+  return {
+    ok: results.length > 0,
+    realtime: plan.depth === "realtime",
+    retrieved_at: new Date().toISOString(),
+    engine: "DEEP33 Search Engine",
+    engine_version: "1.3.0",
+    provider_independent: true,
+    query: plan.original,
+    depth: plan.depth,
+    queries: batches.map((item) => item.query),
+    providers: [...providers],
+    provider: providers.size === 1 ? [...providers][0] : providers.size > 1 ? "multi" : null,
+    results,
+    sources: results,
+    verification: {
+      level: providers.size > 1 ? "multi-source" : results.length ? "single-source" : "none",
+      distinct_domains: new Set(results.map((item) => { try { return new URL(String(item.url)).hostname; } catch { return ""; } }).filter(Boolean)).size,
+      distinct_providers: providers.size,
+      corroborated_results: 0,
+    },
+    latency_ms: Math.round(performance.now() - started),
   };
 }
 
@@ -2047,7 +2122,7 @@ Deno.serve(async (req) => {
           : Promise.resolve({
               enabled: true,
               engine: "DEEP33 Search Engine",
-              engine_version: "1.1.0",
+              engine_version: "1.3.0",
               tool_loop_enabled: true,
               provider_independent: true,
               configured_provider: "edge-direct",
@@ -2690,7 +2765,7 @@ return json({
       return json({
         enabled: true,
         engine: "DEEP33 Search Engine",
-        engine_version: "1.1.0",
+        engine_version: "1.3.0",
         tool_loop_enabled: true,
         provider_independent: true,
         configured_provider: "edge-public-fallback+upstream",
