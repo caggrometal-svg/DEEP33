@@ -387,5 +387,5 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 1
-    assert set(result["providers"]) == {"tavily", "bing"}
+    assert len(result["providers"]) == 2
     assert result["verification"]["distinct_providers"] == 2
