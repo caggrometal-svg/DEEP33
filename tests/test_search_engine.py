@@ -290,6 +290,18 @@ def test_realtime_search_plan_adds_current_date_variants():
     assert all("2026-10-06" in query for query in plan.queries[1:])
 
 
+def test_realtime_weather_search_targets_local_conditions_and_official_source():
+    plan = SearchEngine(max_queries=3).plan(
+        "¿Cómo está el clima en Recoleta, Santiago?"
+    )
+    assert plan.depth == "realtime"
+    assert len(plan.queries) == 3
+    assert "Recoleta, Santiago" in plan.queries[0]
+    assert all("2026-10-06" in query for query in plan.queries[1:])
+    assert any("temperatura" in query.lower() and "humedad" in query.lower() for query in plan.queries[1:])
+    assert any("site:meteochile.gob.cl" in query for query in plan.queries[1:])
+
+
 def test_realtime_search_uses_multiple_providers(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
 
