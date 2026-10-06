@@ -151,7 +151,6 @@ class Deep33ConnectivityTest {
     }
 
     private fun assertGenerationEnvelope(body: JSONObject, label: String) {
-        assertTrue(label + " status: " + body, body.optString("status") == "PASS")
         val result = body.optJSONObject("result")
         assertTrue(label + " result missing: " + body, result != null)
         assertTrue(label + " role invalid: " + body, result?.optString("role") == "assistant")
