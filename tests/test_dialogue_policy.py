@@ -289,3 +289,28 @@ def test_conspiranoico_does_not_require_labeled_reasoning_sections() -> None:
 
     assert "Do not present the response as labeled blocks" in prompt
     assert "EVIDENCE, HYPOTHESIS, SPECULATION, or VERDICT" in prompt
+
+
+def test_long_context_statement_remains_conversational_without_explicit_analysis_request() -> None:
+    message = (
+        "Quiero dejarte todo este contexto para que entiendas el problema antes de responder. "
+        + ("Esto agrega contexto al hilo. " * 40)
+    )
+    assert main.conversation_response_shape([{"role": "user", "content": message}]) == "CONVERSATIONAL"
+
+
+def test_policy_makes_prose_dialogue_the_default_serialization() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "Quiero dejarte este contexto para seguir conversando."}
+    ])
+    assert "Por defecto, la respuesta se serializa como diálogo" in prompt
+    assert "Los encabezados, listas numeradas, viñetas y tablas están prohibidos por defecto" in prompt
+    assert 'No empieces una respuesta con etiquetas como "Conclusión:"' in prompt
+
+
+def test_complex_policy_does_not_force_report_structure() -> None:
+    prompt = main.dialogue_policy_prompt([
+        {"role": "user", "content": "Analiza este problema y dime por qué ocurre."}
+    ])
+    assert "Mantén la explicación integrada y conversacional" in prompt
+    assert "No uses encabezados, listas numeradas, viñetas ni tablas salvo que el usuario" in prompt
