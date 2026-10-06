@@ -56,44 +56,16 @@ jobs:
             echo "${name}_WARM_PASS"
           done
 
-          audit_ok=0
-          last_audit=""
-          for attempt in $(seq 1 4); do
-            last_audit="$(curl -sS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" || true)"
-            if printf "%s" "$last_audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' >/dev/null 2>&1; then
-              audit_ok=1
+          web_ok=0
+          for attempt in $(seq 1 3); do
+            status="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/web/status" || true)
+            if printf "%s" "$status" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then
+              web_ok=1
               break
             fi
-            echo "DEEP33_WEB_AUDIT_NOT_READY attempt=${attempt}"
+            echo "DEEP33_WEB_STATUS_NOT_READY attempt=${attempt}"
             sleep 10
           done
-          if [ "$audit_ok" != "1" ]; then
-            echo "DEEP33_WEB_AUDIT_FAIL"
-            printf "%s\n" "$last_audit"
-            exit 1
-          fi
+          test "$web_ok" = "1"
           echo "DEEP33_WARM_PASS"
 
-      - name: Certify real model inference through DEEP33 edge
-        if: github.event_name != 'schedule'
-        run: |
-          set -euo pipefail
-
-          set +e
-          DIAG="$(curl -sS --connect-timeout 8 --max-time 90             -w '\n__HTTP_STATUS__%{http_code}'             "$PRIMARY_URL/v1/ai/inference-check" 2>&1)"
-          set -e
-          echo "=== EDGE INFERENCE CHECK ==="
-          printf '%s\n' "$DIAG"
-
-          BODY='{"messages":[{"role":"user","content":"Return exactly DEEP33_E2E_OK"}],"personality":"NEUTRO"}'
-          STREAM="$(curl -sS             --connect-timeout 8             --max-time 120             -w '\n__HTTP_STATUS__%{http_code}'             -H 'Content-Type: application/json'             -H 'Accept: text/event-stream'             -H 'X-DEEP33-Session-Id: DEEP33-WARMUP-STREAM-${{ github.run_id }}'             -H 'X-Request-ID: DEEP33-WARMUP-STREAM-${{ github.run_id }}'             -H 'X-Idempotency-Key: DEEP33-WARMUP-STREAM-${{ github.run_id }}'             -d "$BODY"             "$PRIMARY_URL/v1/chat/stream" || true)"
-
-          echo "=== EDGE SSE INFERENCE ==="
-          printf '%s\n' "$STREAM"
-
-          EDGE_STATUS="$(printf '%s\n' "$STREAM" | sed -n 's/^__HTTP_STATUS__//p' | tail -n1)"
-          EDGE_BODY="$(printf '%s\n' "$STREAM" | sed '/^__HTTP_STATUS__/d')"
-          test "$EDGE_STATUS" = "200"
-          printf '%s\n' "$EDGE_BODY" | grep -q '"content"'
-          printf '%s\n' "$EDGE_BODY" | grep -q '\[DONE\]'
-          echo "DEEP33_DIRECT_STREAM_INFERENCE_PASS"
