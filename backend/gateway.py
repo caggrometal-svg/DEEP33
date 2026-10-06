@@ -316,6 +316,23 @@ class AIGateway:
         return result
 
     @staticmethod
+    def _is_provider_policy_block(text: str) -> bool:
+        normalized = " ".join(str(text or "").split()).strip().lower()
+        if not normalized:
+            return False
+        return any(
+            phrase in normalized
+            for phrase in (
+                "automated bulk tasks detected",
+                "future requests will be blocked",
+                "tos violation",
+                "terms of service violation",
+                "contact for a custom policy",
+                "automated abuse detected",
+                "request blocked by the provider",
+            )
+        )
+    @staticmethod
     def _classify_http_status(status: int) -> str:
         if status in {401, 403}:
             return "auth"
@@ -459,6 +476,25 @@ class AIGateway:
                             provider.name,
                         )
                         break
+
+                    provider_text = ""
+                    choices = data.get("choices")
+                    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                        message = choices[0].get("message")
+                        if isinstance(message, dict):
+                            provider_text = str(message.get("content") or "")
+                    if self._is_provider_policy_block(provider_text):
+                        logger.warning(
+                            "ai_provider_policy_block request_id=%s provider=%s",
+                            request_id,
+                            provider.name,
+                        )
+                        circuit.failure(
+                            self.config.circuit_failure_threshold,
+                            self.config.circuit_cooldown_seconds,
+                        )
+                        saw_invalid_response = True
+                        continue
 
                     elapsed_ms = (time.perf_counter() - started_request) * 1000
                     self._record_latency(provider, elapsed_ms)
