@@ -1112,7 +1112,7 @@ async def execute_web_tool(name,arguments):
                 query,
                 timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","8")),
                 max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","5")),
-                fast=True,
+                fast=not is_realtime_query(query),
                 fresh=True,
             )
         except Exception as exc:
@@ -1128,6 +1128,7 @@ async def execute_web_tool(name,arguments):
                 timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS","8")),
                 max_redirects=min(3,int(os.getenv("WEB_FETCH_MAX_REDIRECTS","3"))),
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
+                fresh=True,
             )
         except Exception as exc:
             logger.warning("web_fetch_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
@@ -1287,7 +1288,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(source.get("snippet") or "")[:1500],
             }
 
-    candidates = list(sources.values())[:(4 if deep else 2)]
+    candidates = list(sources.values())[:(4 if search_depth else 2)]
     fetched_pages = []
     compact_search_results = [
         {
@@ -1327,7 +1328,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "url": item.get("url"),
             "text": str(item.get("text") or "")[:3500],
         }
-        for item in fetched_pages[:(4 if deep else 2)]
+        for item in fetched_pages[:(4 if search_depth else 2)]
     ]
     evidence_fragments = [
         str(item.get("snippet") or "")
@@ -1340,6 +1341,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     ]
 
     evidence = {
+        "realtime": realtime,
+        "retrieved_at": search_result.get("retrieved_at"),
         "search_results": compact_search_results,
         "fetched_pages": compact_fetched_pages,
     }
