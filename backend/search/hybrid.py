@@ -145,11 +145,20 @@ class HybridSearchClient:
             ),
         )
 
+    def _http_timeout(self) -> httpx.Timeout:
+        bounded = max(0.5, float(self.timeout_seconds))
+        return httpx.Timeout(
+            connect=min(2.5, bounded),
+            read=bounded,
+            write=min(5.0, bounded),
+            pool=min(2.0, bounded),
+        )
+
     async def _client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()
         if self._http_client is None or self._http_loop is not loop:
             self._http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout_seconds),
+                timeout=self._http_timeout(),
                 follow_redirects=True,
             )
             self._http_loop = loop
@@ -233,7 +242,7 @@ class HybridSearchClient:
                 self.base_url,
                 json=body,
                 headers=self._headers(),
-                timeout=self.timeout_seconds,
+                timeout=self._http_timeout(),
             )
         except httpx.HTTPError as exc:
             raise HybridSearchUnavailableError(type(exc).__name__) from exc

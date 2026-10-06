@@ -177,14 +177,14 @@ async def _fetch_page_uncached(
     headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}
     redirects=[]
     for hop in range(max_redirects+1):
-        current_url=validate_public_url(current_url)
+        current_url=await asyncio.to_thread(validate_public_url, current_url)
         try:
             async with client.stream("GET",current_url,headers=headers,timeout=timeout) as response:
                 if response.status_code in REDIRECT_STATUSES:
                     location=response.headers.get("location")
                     if not location: raise WebFetchError("WEB_FETCH_REDIRECT_LOCATION_MISSING")
                     if hop>=max_redirects: raise WebFetchError("WEB_FETCH_REDIRECT_LIMIT")
-                    next_url=urljoin(current_url,location); validate_public_url(next_url)
+                    next_url=urljoin(current_url,location); await asyncio.to_thread(validate_public_url, next_url)
                     redirects.append(next_url); current_url=next_url; continue
                 if response.status_code>=400: raise WebFetchError(f"WEB_FETCH_HTTP_{response.status_code}")
                 content_type=response.headers.get("content-type",""); mime=content_type.split(";",1)[0].strip().lower()
@@ -218,7 +218,7 @@ async def _fetch_page_uncached(
 async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects=MAX_REDIRECTS,max_text_chars=MAX_TEXT_CHARS,user_agent=DEFAULT_USER_AGENT,fresh=False):
     if not 1<=max_redirects<=MAX_REDIRECTS: raise ValueError("max_redirects must be between 1 and 3")
     timeout_seconds=max(1.0,min(8.0,timeout_seconds)); max_text_chars=max(1000,min(MAX_TEXT_CHARS,max_text_chars))
-    original_url=url.strip(); current_url=validate_public_url(original_url)
+    original_url=url.strip(); current_url=await asyncio.to_thread(validate_public_url, original_url)
     cache_key=hashlib.sha256(
         f"{current_url}{max_redirects}{max_text_chars}{user_agent}".encode("utf-8")
     ).hexdigest()

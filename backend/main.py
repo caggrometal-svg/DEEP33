@@ -2462,16 +2462,19 @@ async def generate(
         result["text"] = sanitize_assistant_text(result["text"], sources)
 
         assistant_message = {"role": "assistant", "content": result["text"]}
-        await persist_messages(
-            session_id,
-            [message for message in messages if message.get("role") != "system"] + [assistant_message],
-            personality=personality,
-            memory_profile_id=memory_profile_id,
-        )
-        await persist_deep33_self_name(
-            session_id,
-            extract_deep33_self_name(result["text"]),
-            memory_profile_id=memory_profile_id,
+        self_name = extract_deep33_self_name(result["text"])
+        await asyncio.gather(
+            persist_messages(
+                session_id,
+                [message for message in messages if message.get("role") != "system"] + [assistant_message],
+                personality=personality,
+                memory_profile_id=memory_profile_id,
+            ),
+            persist_deep33_self_name(
+                session_id,
+                self_name,
+                memory_profile_id=memory_profile_id,
+            ),
         )
         performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
 
@@ -2791,6 +2794,7 @@ async def stream_gateway(
                 if frame.strip():
                     outbound_frame = bytes(frame)
                     has_visible_content = False
+                    frame_changed = False
                     if b"data:" in frame and b'"content"' in frame:
                         try:
                             frame_json = json.loads(frame[len(b"data:"):].strip())
@@ -2802,16 +2806,18 @@ async def stream_gateway(
                                     safe_delta = sanitize_stream_delta(content_value)
                                     if safe_delta != content_value:
                                         delta["content"] = safe_delta
+                                        frame_changed = True
                                     if safe_delta:
                                         has_visible_content = True
-                            outbound_frame = (
-                                b"data: "
-                                + json.dumps(
-                                    frame_json,
-                                    ensure_ascii=False,
-                                    separators=(",", ":"),
-                                ).encode("utf-8")
-                            )
+                            if frame_changed:
+                                outbound_frame = (
+                                    b"data: "
+                                    + json.dumps(
+                                        frame_json,
+                                        ensure_ascii=False,
+                                        separators=(",", ":"),
+                                    ).encode("utf-8")
+                                )
                         except (
                             json.JSONDecodeError,
                             UnicodeDecodeError,
