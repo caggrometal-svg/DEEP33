@@ -177,3 +177,14 @@ def test_gateway_latency_snapshot_reports_learned_ttft_and_throughput():
     assert snapshot["p1"]["ttft_p50_ms"] is not None
     assert snapshot["p1"]["tokens_per_second_p50"] is not None
     assert gateway_instance._ordered_providers()[0].name == "p1"
+
+
+def test_fast_response_budget_is_bounded_without_limiting_deep_profile():
+    assert 256 <= main.output_token_limit("FAST") <= 1024
+    assert main.output_token_limit("DEEP") is None
+
+
+def test_web_fetch_uses_connection_pooling():
+    source = (ROOT / "tools" / "web_fetch.py").read_text(encoding="utf-8")
+    assert "max_keepalive_connections=10" in source
+    assert "keepalive_expiry=30.0" in source
