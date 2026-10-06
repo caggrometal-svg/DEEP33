@@ -219,16 +219,15 @@ function edgeProviders(): EdgeAIProvider[] {
     (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
   if (
     !publicFallbacksDisabled &&
-    EDGE_AI_PROVIDER.toLowerCase() === "vireonix" &&
-    !raw
+    !providers.some((provider) => provider.name.toLowerCase() === "llmfaucet")
   ) {
-    // LLMFaucet is an OpenAI-compatible anonymous gateway with a free placeholder
-    // credential. It acts only as an independent fallback; it is never the primary.
+    // Independent emergency inference route. It is never the primary and is used
+    // only when configured/primary providers reject, rate-limit, or fail.
     providers.push({
       name: "llmfaucet",
       url: "https://api.llmfaucet.dev/v1/chat/completions",
       api_key: "free",
-      model: "auto",
+      model: "auto:fast",
       requires_auth: true,
     });
   }
@@ -291,6 +290,22 @@ function providerRequestHeaders(provider: EdgeAIProvider, requestId: string, acc
       : {}),
     "X-Request-ID": requestId,
   };
+}
+
+const PROVIDER_POLICY_BLOCK_PATTERNS: RegExp[] = [
+  /automated\s+bulk\s+tasks?\s+detected/i,
+  /future\s+requests?\s+will\s+be\s+blocked/i,
+  /tos\s+violation/i,
+  /terms\s+of\s+service\s+violation/i,
+  /contact\s+(?:for|support)\s+(?:a\s+)?custom\s+policy/i,
+  /automated\s+abuse\s+detected/i,
+  /request\s+blocked\s+by\s+(?:the\s+)?(?:provider|policy)/i,
+];
+
+function isProviderPolicyBlock(text: string): boolean {
+  const normalized = String(text || "").replace(/\\s+/g, " ").trim();
+  if (!normalized) return false;
+  return PROVIDER_POLICY_BLOCK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -579,6 +594,17 @@ async function callEdgeAI(
 
           if (response.ok) {
             const text = extractProviderText(body);
+            if (isProviderPolicyBlock(text)) {
+              lastError = provider.name + "_POLICY_BLOCKED";
+              console.warn(JSON.stringify({
+                event: "edge_ai_provider_policy_block",
+                provider: provider.name,
+                model: provider.model,
+                request_id: requestId,
+              }));
+              recordProviderFailure(provider);
+              break;
+            }
             if (text.trim()) {
               edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
               const record: EdgeIdempotencyRecord = {
@@ -796,6 +822,9 @@ async function streamEdgeAI(
                   if (typeof content === "string") chunk = content;
                 }
                 if (chunk) {
+                  if (isProviderPolicyBlock(fullText + chunk)) {
+                    throw new Error("EDGE_AI_PROVIDER_POLICY_BLOCKED");
+                  }
                   if (!emitted) {
                     emitted = true;
                     firstChunkMs = Math.round(performance.now() - started);
