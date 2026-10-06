@@ -209,3 +209,17 @@ def test_web_fetch_uses_connection_pooling():
     source = (ROOT / "tools" / "web_fetch.py").read_text(encoding="utf-8")
     assert "max_keepalive_connections=10" in source
     assert "keepalive_expiry=30.0" in source
+
+
+def test_async_web_url_validation_is_offloaded_from_event_loop():
+    source = (ROOT / "tools" / "web_fetch.py").read_text(encoding="utf-8")
+    assert "await asyncio.to_thread(validate_public_url, original_url)" in source
+    assert "await asyncio.to_thread(validate_public_url, current_url)" in source
+    assert "await asyncio.to_thread(validate_public_url, next_url)" in source
+
+
+def test_sse_frames_are_forwarded_without_unneeded_reserialization():
+    source = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
+    route = source[source.index("async def stream_gateway("):source.index('@app.post("/v1/chat/stream")')]
+    assert "frame_changed = False" in route
+    assert "if frame_changed:" in route
