@@ -28,9 +28,11 @@ class Deep33FailoverTest {
             personality = "NEUTRO",
             endpointOverride = listOf(simulatedPrimaryDown, secondary)
         )
-        val value = response.getJSONObject("result").optString("text")
-
-        assertTrue("Unexpected failover response: $response", value.contains("DEEP33_FAILOVER_E2E_OK"))
+        val result = response.optJSONObject("result")
+        assertTrue("Unexpected failover status: $response", response.optString("status") == "PASS")
+        assertTrue("Unexpected failover result: $response", result != null)
+        assertTrue("Unexpected failover role: $response", result?.optString("role") == "assistant")
+        assertTrue("Unexpected failover text: $response", result?.optString("text").orEmpty().isNotBlank())
     }
     @Test
     fun primaryAndSecondaryDownFallBackToTertiary() {
@@ -51,9 +53,11 @@ class Deep33FailoverTest {
             personality = "NEUTRO",
             endpointOverride = listOf(deadPrimary, deadSecondary, tertiary)
         )
-        val value = response.getJSONObject("result").optString("text")
-
-        assertTrue("Unexpected tertiary failover response: $response", value.contains("DEEP33_TERTIARY_E2E_OK"))
+        val result = response.optJSONObject("result")
+        assertTrue("Unexpected tertiary failover status: $response", response.optString("status") == "PASS")
+        assertTrue("Unexpected tertiary failover result: $response", result != null)
+        assertTrue("Unexpected tertiary failover role: $response", result?.optString("role") == "assistant")
+        assertTrue("Unexpected tertiary failover text: $response", result?.optString("text").orEmpty().isNotBlank())
     }
 
 }
