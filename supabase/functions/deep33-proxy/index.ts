@@ -217,19 +217,27 @@ function edgeProviders(): EdgeAIProvider[] {
   }
   const publicFallbacksDisabled =
     (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
-  if (
-    !publicFallbacksDisabled &&
-    !providers.some((provider) => provider.name.toLowerCase() === "llmfaucet")
-  ) {
-    // Independent emergency inference route. It is never the primary and is used
-    // only when configured/primary providers reject, rate-limit, or fail.
-    providers.push({
-      name: "llmfaucet",
-      url: "https://api.llmfaucet.dev/v1/chat/completions",
-      api_key: "free",
-      model: "auto:fast",
-      requires_auth: true,
-    });
+  if (!publicFallbacksDisabled) {
+    // Independent emergency routes. They are never the primary and are used only
+    // when the configured provider rejects, rate-limits, or fails.
+    if (!providers.some((provider) => provider.url === "https://vireonix.ai/v1/chat/completions")) {
+      providers.push({
+        name: "vireonix-public-fallback",
+        url: "https://vireonix.ai/v1/chat/completions",
+        api_key: "",
+        model: "auto",
+        requires_auth: false,
+      });
+    }
+    if (!providers.some((provider) => provider.url === "https://api.llmfaucet.dev/v1/chat/completions")) {
+      providers.push({
+        name: "llmfaucet",
+        url: "https://api.llmfaucet.dev/v1/chat/completions",
+        api_key: "free",
+        model: "auto:fast",
+        requires_auth: true,
+      });
+    }
   }
 
   const seen = new Set<string>();
