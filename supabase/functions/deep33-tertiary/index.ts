@@ -927,7 +927,7 @@ function extractDeep33SelfName(value: unknown): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (!match) continue;
-    const name = match[1].replace(/\s+/g, " ").trim().replace(/^[ .,!?:;-'’]+|[ .,!?:;-'’]+$/g, "");
+    const name = match[1].replace(/\s+/g, " ").trim().replace(/^[ .,!?:;’'\-]+|[ .,!?:;’'\-]+$/g, "");
     if (name.length < 2 || name.length > 32) continue;
     if (BLOCKED_SELF_NAMES.has(name.toUpperCase())) continue;
     if (/^(un modelo de lenguaje|una inteligencia artificial|una ia)$/i.test(name)) continue;
