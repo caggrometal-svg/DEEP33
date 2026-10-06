@@ -39,6 +39,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
+from backend.weather import build_weather_evidence, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -1384,6 +1385,43 @@ async def run_web_tool_loop(
     # search/fetch server-side first, then send the retrieved evidence to the
     # model as untrusted context using a normal chat request.
     if force_web:
+        # GPS-aware weather goes through a dedicated current-weather provider first.
+        # Generic web search remains the fallback and the transport layer is untouched.
+        try:
+            weather = await resolve_gps_weather(
+                messages,
+                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            )
+        except Exception as exc:
+            logger.warning(
+                "gps_weather_resolution_unexpected_error request_id=%s error=%s detail=%s",
+                request_id,
+                type(exc).__name__,
+                str(exc)[:300],
+            )
+            weather = None
+
+        if weather is not None:
+            working = _append_web_system_context(messages)
+            working.append({
+                "role": "system",
+                "content": build_weather_evidence(messages, weather),
+            })
+            working.append(_web_personality_lock(personality))
+            performance.mark(request_id, "T5_SEARCH_FINISHED")
+            performance.mark(request_id, "T6_INFERENCE_STARTED")
+            data = await call_gateway(
+                _completion_payload(working, model, max_tokens=max_tokens),
+                request_id=request_id,
+                idempotency_key=f"{idempotency_key}:weather",
+                deadline=deadline,
+            )
+            return data, [{
+                "title": "Open-Meteo — current weather",
+                "url": str(weather.get("source_url") or "https://api.open-meteo.com/v1/forecast"),
+                "snippet": f"GPS {weather.get('latitude')},{weather.get('longitude')} · {weather.get('time')}",
+            }]
+
         working, prepared_sources, prepared_evidence, compact_search_results = await prepare_web_evidence(
             messages,
             request_id=request_id,
