@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from backend import weather as weather_module
 from backend.weather import (
     build_weather_evidence,
     extract_gps_coordinates,
@@ -71,3 +72,16 @@ def test_build_weather_evidence_contains_current_values():
     )
     assert "12.3" in evidence
     assert "parcialmente nublado" in evidence
+
+
+
+def test_weather_http_client_reuses_connection_pool():
+    async def exercise():
+        first = await weather_module._weather_http_client()
+        second = await weather_module._weather_http_client()
+        assert first is second
+        await first.aclose()
+        weather_module._WEATHER_HTTP_CLIENT = None
+        weather_module._WEATHER_HTTP_LOOP = None
+
+    asyncio.run(exercise())

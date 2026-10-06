@@ -1705,7 +1705,12 @@ class MainActivity : Activity() {
             statusView.contentDescription = "Obteniendo ubicación GPS para esta consulta"
         }
 
-        Deep33LocationProvider.resolve(this) { location ->
+        val weatherQuery = VoiceConversationPolicy.normalizeForComparison(text).let {
+            Regex(
+                "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
+            ).containsMatchIn(it)
+        }
+        Deep33LocationProvider.resolve(this, includeLabel = !weatherQuery) { location ->
             runOnUiThread {
                 pendingLocationAwareText = null
                 if (location != null) {

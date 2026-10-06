@@ -1375,6 +1375,7 @@ async def run_web_tool_loop(
     deadline=None,
     personality=DEFAULT_PERSONALITY,
     research_mode: bool = False,
+    weather: dict[str, Any] | None = None,
 ):
     working=_append_web_system_context(messages)
     sources={}
@@ -1387,22 +1388,25 @@ async def run_web_tool_loop(
     if force_web:
         # GPS-aware weather goes through a dedicated current-weather provider first.
         # Generic web search remains the fallback and the transport layer is untouched.
-        try:
-            weather = await resolve_gps_weather(
-                messages,
-                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
-            )
-        except Exception as exc:
-            logger.warning(
-                "gps_weather_resolution_unexpected_error request_id=%s error=%s detail=%s",
-                request_id,
-                type(exc).__name__,
-                str(exc)[:300],
-            )
-            weather = None
+        if weather is None:
+            try:
+                weather = await resolve_gps_weather(
+                    messages,
+                    timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "gps_weather_resolution_unexpected_error request_id=%s error=%s detail=%s",
+                    request_id,
+                    type(exc).__name__,
+                    str(exc)[:300],
+                )
+                weather = None
 
         if weather is not None:
-            working = _append_web_system_context(messages)
+            # Weather is already authoritative structured data; the web-navigation
+            # prompt adds tokens without improving the answer.
+            working = [dict(message) for message in messages]
             working.append({
                 "role": "system",
                 "content": build_weather_evidence(messages, weather),
@@ -1410,8 +1414,9 @@ async def run_web_tool_loop(
             working.append(_web_personality_lock(personality))
             performance.mark(request_id, "T5_SEARCH_FINISHED")
             performance.mark(request_id, "T6_INFERENCE_STARTED")
+            weather_max_tokens = min(max_tokens or 384, 160)
             data = await call_gateway(
-                _completion_payload(working, model, max_tokens=max_tokens),
+                _completion_payload(working, model, max_tokens=weather_max_tokens),
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:weather",
                 deadline=deadline,
@@ -2302,11 +2307,31 @@ async def generate(
             request_id=request_id,
         )
     )
+    raw_messages = [
+        message.model_dump()
+        for message in request.messages
+        if message.role in {"user", "assistant"}
+    ]
+    weather_task = (
+        asyncio.create_task(
+            resolve_gps_weather(
+                raw_messages,
+                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            )
+        )
+        if DEEP33_WEB_TOOLS_ENABLED
+        and not skip_web_tools
+        and is_weather_query(latest_user_query(raw_messages))
+        else None
+    )
     try:
         state, record = await claim_task
         if state in {"COMPLETED", "FAILED"}:
             context_task.cancel()
             await asyncio.gather(context_task, return_exceptions=True)
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             output = sanitize_generation_output(replay_idempotent(state, record))
             cache_put(session_id, idempotency_key, request_hash, output)
             return output
@@ -2315,6 +2340,9 @@ async def generate(
         if not lease_token:
             context_task.cancel()
             await asyncio.gather(context_task, return_exceptions=True)
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
@@ -2332,6 +2360,11 @@ async def generate(
             should_force_web(messages) or should_deep_web(messages, personality)
         ):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
+            prefetched_weather = (
+                await weather_task
+                if weather_task is not None
+                else None
+            )
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
@@ -2342,8 +2375,12 @@ async def generate(
                 deadline=deadline,
                 personality=personality,
                 research_mode=should_deep_web(messages, personality),
+                weather=prefetched_weather,
             )
         else:
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             performance.mark(request_id, "T6_INFERENCE_STARTED")
             data = await call_gateway(
                 payload,
@@ -2825,11 +2862,29 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             request_id=request_id,
         )
     )
+    raw_messages = [
+        message.model_dump()
+        for message in request.messages
+        if message.role in {"user", "assistant"}
+    ]
+    weather_task = (
+        asyncio.create_task(
+            resolve_gps_weather(
+                raw_messages,
+                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            )
+        )
+        if DEEP33_WEB_TOOLS_ENABLED and is_weather_query(latest_user_query(raw_messages))
+        else None
+    )
     try:
         state, record = await claim_task
         if state in {"COMPLETED", "FAILED"}:
             context_task.cancel()
             await asyncio.gather(context_task, return_exceptions=True)
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             cached = replay_idempotent(state, record)
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
             async def replay_stream():
@@ -2843,6 +2898,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         if not lease_token:
             context_task.cancel()
             await asyncio.gather(context_task, return_exceptions=True)
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
@@ -2851,7 +2909,14 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             claim_task.cancel()
         if not context_task.done():
             context_task.cancel()
-        await asyncio.gather(claim_task, context_task, return_exceptions=True)
+        if weather_task is not None and not weather_task.done():
+            weather_task.cancel()
+        await asyncio.gather(
+            claim_task,
+            context_task,
+            weather_task if weather_task is not None else asyncio.sleep(0),
+            return_exceptions=True,
+        )
         raise
 
     profile = complexity_profile(messages)[2]
@@ -2867,18 +2932,40 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             should_force_web(messages) or should_deep_web(messages, personality)
         ):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
-                messages,
-                request_id=request_id,
-                deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
+            prefetched_weather = (
+                await weather_task
+                if weather_task is not None
+                else None
             )
-            working.append(_web_personality_lock(personality))
-            payload = _completion_payload(
-                working,
-                payload["model"],
-                max_tokens=payload.get("max_tokens"),
-                temperature=request.temperature,
-            )
+            if prefetched_weather is not None:
+                # Keep the streaming transport unchanged; only bypass generic search
+                # and the extra navigation prompt for direct GPS weather.
+                working = [dict(message) for message in messages]
+                working.append({
+                    "role": "system",
+                    "content": build_weather_evidence(messages, prefetched_weather),
+                })
+                working.append(_web_personality_lock(personality))
+                weather_max_tokens = min(payload.get("max_tokens") or 384, 160)
+                payload = _completion_payload(
+                    working,
+                    payload["model"],
+                    max_tokens=weather_max_tokens,
+                    temperature=request.temperature,
+                )
+            else:
+                working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
+                    messages,
+                    request_id=request_id,
+                    deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
+                )
+                working.append(_web_personality_lock(personality))
+                payload = _completion_payload(
+                    working,
+                    payload["model"],
+                    max_tokens=payload.get("max_tokens"),
+                    temperature=request.temperature,
+                )
 
         completion_state: dict[str, str] = {}
         body = stream_gateway(
