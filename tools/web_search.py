@@ -492,6 +492,6 @@ def web_search_status():
         ),
         "timeout_seconds": max(
             1.0,
-            min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))),
+            min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))),
         ),
     }
