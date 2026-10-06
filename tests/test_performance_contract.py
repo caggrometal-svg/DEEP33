@@ -185,7 +185,9 @@ def test_fast_runtime_context_avoids_clock_for_stable_turn(monkeypatch):
         messages=[{"role": "user", "content": "2x2?"}],
         personality="NEUTRO",
     )
-    monkeypatch.setattr(main.memory, "enabled", False)
+    class DisabledMemory:
+        enabled = False
+    monkeypatch.setattr(main, "memory", DisabledMemory())
     messages, _ = asyncio.run(main.prepare_messages(request, "perf-fast-context"))
     assert all("RELOJ DE EJECUCIÓN DE DEEP33" not in str(item.get("content", "")) for item in messages)
 
@@ -196,7 +198,9 @@ def test_fast_runtime_context_keeps_authoritative_clock_for_realtime(monkeypatch
         messages=[{"role": "user", "content": "¿Qué hora es ahora?"}],
         personality="NEUTRO",
     )
-    monkeypatch.setattr(main.memory, "enabled", False)
+    class DisabledMemory:
+        enabled = False
+    monkeypatch.setattr(main, "memory", DisabledMemory())
     messages, _ = asyncio.run(main.prepare_messages(request, "perf-time-context"))
     assert any("RELOJ DE EJECUCIÓN DE DEEP33" in str(item.get("content", "")) for item in messages)
 
