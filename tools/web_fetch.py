@@ -9,6 +9,7 @@ import socket
 import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+from datetime import datetime, timezone
 
 import httpx
 
@@ -180,7 +181,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
                     content=await _read_limited(response,_max_response_bytes())
                 title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
                 if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
-                result={"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects),"retrieved_at":__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
+                result={"ok":True,"url":original_url,"final_url":current_url,"title":title or current_url,"text":text,"content_type":mime,"bytes":len(content),"redirects":len(redirects),"retrieved_at":datetime.now(timezone.utc).isoformat()}
                 _FETCH_CACHE[cache_key]=(time.monotonic()+FETCH_CACHE_TTL_SECONDS,copy.deepcopy(result))
                 return result
             except httpx.TimeoutException as exc: raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
