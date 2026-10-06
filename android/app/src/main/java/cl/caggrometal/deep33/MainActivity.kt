@@ -1545,7 +1545,7 @@ class MainActivity : Activity() {
             executor.execute {
                 try {
                     val osNetworkValidated = hasValidatedInternet()
-                    val ready = Deep33Api.get("/ready", store.sessionId)
+                    val ready = Deep33Api.getFast("/ready", store.sessionId)
                     val online = ready.optString("status") == "PASS" &&
                         ready.optBoolean("ready", false)
                     val checks = ready.optJSONObject("checks")
