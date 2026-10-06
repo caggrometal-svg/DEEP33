@@ -52,20 +52,20 @@ def _normalise_lookup_query(query: str) -> str:
     """Remove conversational search commands before sending text to web providers."""
     cleaned = " ".join(query.split()).strip()
     cleaned = re.sub(
-        r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\\s+"
-        r"(?:en\\s+)?(?:internet|la\\s+web)\\s*[:,-]?\\s*",
+        r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+"
+        r"(?:en\s+)?(?:internet|la\s+web)\s*[:,-]?\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\\s+(?:y|e)\\s+(?:responde|contesta|di|dime)\\b.*$",
+        r"\s+(?:y|e)\s+(?:responde|contesta|di|dime)\b.*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
     cleaned = re.sub(
-        r"\\s+(?:responde|contesta)\\s+(?:solo|únicamente|unicamente)\\b.*$",
+        r"\s+(?:responde|contesta)\s+(?:solo|únicamente|unicamente)\b.*$",
         "",
         cleaned,
         flags=re.IGNORECASE,
