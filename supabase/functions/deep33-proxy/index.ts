@@ -2121,7 +2121,23 @@ Deno.serve(async (req) => {
           : [];
 
         if (!search.ok || sources.length === 0) {
-          controller_placeholder: never;
+          return new Response(
+            "event: error\ndata: " +
+              JSON.stringify({
+                status: "FAIL",
+                error: "WEB_SEARCH_NO_RESULTS",
+              }) +
+              "\n\ndata: [DONE]\n\n",
+            {
+              status: 503,
+              headers: {
+                ...cors,
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                Connection: "keep-alive",
+              },
+            },
+          );
         }
 
         const evidence = {
