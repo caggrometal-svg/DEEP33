@@ -139,6 +139,17 @@ function runtimeClockContext(): string {
   );
 }
 
+
+function buildWebSearchQuery(query: string): string {
+  const normalized = query
+    .replace(/\b(busca|buscar|búscame|investiga|investigar|consulta|consultar|comprueba|comprobar|verifica|verificar)\b/giu, " ")
+    .replace(/\b(en internet|por internet|en la web|por la web|online|on-line)\b/giu, " ")
+    .replace(/\b(responde solo|responde únicamente|responde exactamente|contesta solo|devuelve solo)\b[\\s\\S]*$/iu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.length >= 3 ? normalized.slice(0, 4000) : "internet";
+}
+
 function requiresFreshWeb(query: string): boolean {
   const normalized = query.toLowerCase();
   return [
@@ -2106,7 +2117,7 @@ Deno.serve(async (req) => {
 
       let workingMessages = messages;
       if (webTrigger) {
-        const search = await edgeSearch(query, sessionId);
+        const search = await edgeSearch(buildWebSearchQuery(query), sessionId);
         const sources = Array.isArray(search.results)
           ? search.results
               .filter((item): item is Record<string, unknown> =>
@@ -2439,7 +2450,7 @@ Deno.serve(async (req) => {
           .join(" ")
           .slice(0, 4000);
 
-        const search = await edgeSearch(searchQuery, sessionId);
+        const search = await edgeSearch(buildWebSearchQuery(searchQuery), sessionId);
         const sources = Array.isArray(search.results)
           ? search.results
               .filter((item): item is Record<string, unknown> =>
