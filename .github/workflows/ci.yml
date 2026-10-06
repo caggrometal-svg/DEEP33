@@ -344,7 +344,7 @@ jobs:
           set -euo pipefail
           SESSION="ci-hybrid-${{ github.run_id }}"
           STATUS="$(curl -fsS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/search/hybrid/status" -H "X-DEEP33-Session-Id: $SESSION")"
-          if ! printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function" and .vector_backend=="pgvector" and .keyword_backend=="postgresql_tsvector"' >/dev/null; then
+          if ! printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.2.0" and .enabled==true and .configured==true and .dimensions==1536 and .transport=="supabase_edge_function" and .vector_backend=="pgvector" and .keyword_backend=="postgresql_tsvector"' >/dev/null; then
             echo "PRIMARY_HYBRID_STATUS_FAIL"
             printf "%s\n" "$STATUS"
             exit 1
@@ -361,7 +361,7 @@ jobs:
           for attempt in $(seq 1 3); do
             echo "PRIMARY_HYBRID_SEARCH_ATTEMPT=$attempt"
             last_search="$(curl -sS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/search/hybrid" -H "Content-Type: application/json" -H "X-DEEP33-Session-Id: $SESSION" -d "$BODY" || true)"
-            if printf "%s" "$last_search" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.1.0" and .mode=="hybrid" and (.results|type)=="array"' >/dev/null 2>&1; then
+            if printf "%s" "$last_search" | jq -e '.engine=="DEEP33 Hybrid Search" and .engine_version=="1.2.0" and .mode=="hybrid" and (.results|type)=="array"' >/dev/null 2>&1; then
               hybrid_ok=1
               break
             fi
@@ -382,7 +382,7 @@ jobs:
           status_ok=0
           for attempt in $(seq 1 3); do
             STATUS="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/web/status" -H "X-DEEP33-Session-Id: $SESSION" || true)"
-            if printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.1.0" and .tool_loop_enabled==true' >/dev/null 2>&1; then
+            if printf "%s" "$STATUS" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.2.0" and .tool_loop_enabled==true' >/dev/null 2>&1; then
               status_ok=1
               break
             fi
@@ -394,12 +394,12 @@ jobs:
 
           search_ok=0
           for attempt in $(seq 1 3); do
-            SEARCH="$(curl -sS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/web/search?q=Chile" -H "X-DEEP33-Session-Id: $SESSION" || true)"
-            if printf "%s" "$SEARCH" | jq -e '.ok==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.1.0" and .provider_independent==true and (.results|length)>=1 and (.verification.distinct_domains)>=1' >/dev/null 2>&1; then
+            SEARCH="$(curl -sS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/web/search?q=Noticias%20mundiales" -H "X-DEEP33-Session-Id: $SESSION" || true)"
+            if printf "%s" "$SEARCH" | jq -e '.ok==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.2.0" and .realtime==true and .depth=="realtime" and (.results|length)>=1 and (.verification.distinct_domains)>=1' >/dev/null 2>&1; then
               search_ok=1
               break
             fi
-            echo "PRIMARY_WEB_SEARCH_NOT_READY query=Chile attempt=$attempt"
+            echo "PRIMARY_WEB_SEARCH_NOT_READY query=Noticias-mundiales attempt=$attempt"
             printf "%s\n" "$SEARCH"
             sleep 5
           done
