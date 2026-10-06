@@ -38,11 +38,6 @@ REALTIME_NEWS_TERMS = (
     "qué pasó", "que paso", "qué está pasando", "que esta pasando", "guerra",
 )
 
-REALTIME_CONTEXT_VARIANTS = (
-    "últimas noticias de hoy",
-    "última hora y actualización",
-)
-
 CONTROVERSIAL_TERMS = (
     "conspiración", "conspirativa", "encubrimiento", "ocultan", "ocultaron",
     "versión oficial", "narrativa oficial", "comunicado oficial", "evidencia independiente",
@@ -616,7 +611,6 @@ class SearchEngine:
             "provider_independent": True,
             "query": plan.original_query,
             "depth": plan.depth,
-            "realtime": plan.depth == "realtime",
             "queries": executed_queries,
             "providers_attempted": providers_attempted,
             "providers": providers_used,
