@@ -1786,88 +1786,88 @@ async function publicWebSearch(query: string) {
   const merged = new Map<string, Record<string, string>>();
   const providerNames: string[] = [];
 
-  for (const provider of providers) {
-    try {
-      const response = await fetch(provider.url, {
-        headers: {
-          "User-Agent": "DEEP33-EdgeSearch/1.1",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          ...(provider.headers || {}),
-        },
-        redirect: "follow",
-        signal: AbortSignal.timeout(6000),
-      });
-      if (!response.ok) continue;
+  const fetchProvider = async (provider: typeof providers[number]) => {
+    const response = await fetch(provider.url, {
+      headers: {
+        "User-Agent": "DEEP33-EdgeSearch/1.2",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        ...(provider.headers || {}),
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
+    const html = await response.text();
+    const results: Array<Record<string, string>> = [];
 
-      const html = await response.text();
-      const results: Array<Record<string, string>> = [];
-
-      if (provider.name === "bing_public") {
-        const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
+    if (provider.name === "bing_public") {
+      const items = [...html.matchAll(/<item>[sS]*?<title>([sS]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
+      for (const item of items.slice(0, 8)) {
+        const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
+        const url = decodeHtml(String(item[2] ?? "").trim());
+        const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+      }
+    } else if (provider.name === "mojeek_public") {
+      const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+      const snippets = [...html.matchAll(/<p[^>]+class="s"[^>]*>([\s\S]*?)<\/p>/gi)]
+        .map((item) => decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim()));
+      for (let index = 0; index < Math.min(items.length, 8); index++) {
+        const item = items[index];
+        const url = decodeHtml(String(item[1] ?? "").trim());
+        const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
+        const snippet = snippets[index] ?? "";
+        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+      }
+    } else if (provider.name === "marginalia_public") {
+      try {
+        const body = JSON.parse(html);
+        const items = Array.isArray(body?.response?.results)
+          ? body.response.results
+          : (Array.isArray(body?.results) ? body.results : []);
         for (const item of items.slice(0, 8)) {
-          const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
-          const url = decodeHtml(String(item[2] ?? "").trim());
-          const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+          if (!item || typeof item !== "object") continue;
+          const value = item as Record<string, unknown>;
+          const title = String(value.title ?? "").trim();
+          const url = String(value.url ?? "").trim();
+          const snippet = String(value.description ?? value.desc ?? "").trim();
           if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
         }
-      } else if (provider.name === "mojeek_public") {
-        const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
-        const snippets = [...html.matchAll(/<p[^>]+class="s"[^>]*>([\s\S]*?)<\/p>/gi)]
-          .map((item) => decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim()));
-        for (let index = 0; index < Math.min(items.length, 8); index++) {
-          const item = items[index];
-          const url = decodeHtml(String(item[1] ?? "").trim());
-          const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
-          const snippet = snippets[index] ?? "";
-          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
-        }
-      } else if (provider.name === "marginalia_public") {
-        try {
-          const body = JSON.parse(html);
-          const items = Array.isArray(body?.response?.results) ? body.response.results : (Array.isArray(body?.results) ? body.results : []);
-          for (const item of items.slice(0, 8)) {
-            if (!item || typeof item !== "object") continue;
-            const value = item as Record<string, unknown>;
-            const title = String(value.title ?? "").trim();
-            const url = String(value.url ?? "").trim();
-            const snippet = String(value.description ?? value.desc ?? "").trim();
-            if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
-          }
-        } catch {
-          // Ignore malformed provider JSON and continue with the next engine.
-        }
-      } else {
-        const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
-        for (const item of items.slice(0, 8)) {
-          const rawUrl = decodeHtml(String(item[1] ?? ""));
-          const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
-          const urlMatch = rawUrl.match(/uddg=([^&]+)/i);
-          const url = urlMatch ? decodeURIComponent(urlMatch[1]) : rawUrl;
-          if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
-        }
+      } catch {
+        // Ignore malformed provider JSON and continue.
       }
+    } else {
+      const items = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+      for (const item of items.slice(0, 8)) {
+        const rawUrl = decodeHtml(String(item[1] ?? ""));
+        const title = decodeHtml(String(item[2] ?? "").replace(/<[^>]*>/g, "").trim());
+        const urlMatch = rawUrl.match(/uddg=([^&]+)/i);
+        const url = urlMatch ? decodeURIComponent(urlMatch[1]) : rawUrl;
+        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
+      }
+    }
+    return { name: provider.name, results };
+  };
 
-      if (results.length) {
-        providerNames.push(provider.name);
-        for (const result of results) {
-          try {
-            const domain = new URL(result.url).hostname;
-            if (!merged.has(result.url)) {
-              merged.set(result.url, {
-                title: String(result.title || result.url).slice(0, 300),
-                url: String(result.url).slice(0, 2000),
-                snippet: String(result.snippet || "").slice(0, 1500),
-                provider: provider.name,
-                domain,
-              });
-            }
-          } catch {
-            // Ignore malformed URLs.
-          }
+  const settled = await Promise.allSettled(providers.map(fetchProvider));
+  for (const item of settled) {
+    if (item.status !== "fulfilled" || !item.value.results.length) continue;
+    providerNames.push(item.value.name);
+    for (const result of item.value.results) {
+      try {
+        const domain = new URL(result.url).hostname;
+        if (!merged.has(result.url)) {
+          merged.set(result.url, {
+            title: String(result.title || result.url).slice(0, 300),
+            url: String(result.url).slice(0, 2000),
+            snippet: String(result.snippet || "").slice(0, 1500),
+            provider: item.value.name,
+            domain,
+          });
         }
+      } catch {
+        // Ignore malformed URLs.
       }
-    } catch {
-      // Try the next provider.
     }
   }
 
