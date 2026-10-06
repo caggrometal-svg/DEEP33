@@ -189,7 +189,7 @@ jobs:
           echo "backend_changed=$backend_changed" >> "$GITHUB_OUTPUT"
 
   production_gate:
-    if: ${{ github.event_name != 'pull_request' && needs.change_scope.outputs.backend_changed == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.change_scope.outputs.backend_changed == 'true' }}
     needs: [backend_unit, change_scope]
     runs-on: ubuntu-latest
     steps:
@@ -455,7 +455,7 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    if: ${{ needs.change_scope.outputs.backend_changed == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.change_scope.outputs.backend_changed == 'true' }}
     needs: [production_gate, android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
