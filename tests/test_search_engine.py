@@ -90,7 +90,7 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     assert result["engine_version"] == "1.3.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
-    assert len(result["queries"]) == 2
+    assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
 
@@ -133,7 +133,7 @@ def test_deep_search_stops_after_verified_providers(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert len(result["queries"]) == 1
+    assert len(result["queries"]) == 3
     assert set(result["providers"]) == {"tavily", "bing"}
     assert cancelled["ddg"] is True
 
@@ -273,7 +273,7 @@ def test_fast_mode_uses_one_query_and_cancels_slower_provider(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert len(result["queries"]) == 1
+    assert len(result["queries"]) == 3
     assert result["results"]
     assert cancelled["value"] is True
 
@@ -300,7 +300,7 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
             return {
                 "ok": True,
                 "engine": "DEEP33 Search Engine",
-                "engine_version": "1.2.0",
+                "engine_version": "1.3.0",
                 "provider_independent": True,
                 "results": [{
                     "title": "Live result",
