@@ -1404,7 +1404,9 @@ async def run_web_tool_loop(
                 weather = None
 
         if weather is not None:
-            working = _append_web_system_context(messages)
+            # Weather is already authoritative structured data; the web-navigation
+            # prompt adds tokens without improving the answer.
+            working = [dict(message) for message in messages]
             working.append({
                 "role": "system",
                 "content": build_weather_evidence(messages, weather),
@@ -1412,8 +1414,9 @@ async def run_web_tool_loop(
             working.append(_web_personality_lock(personality))
             performance.mark(request_id, "T5_SEARCH_FINISHED")
             performance.mark(request_id, "T6_INFERENCE_STARTED")
+            weather_max_tokens = min(max_tokens or 384, 160)
             data = await call_gateway(
-                _completion_payload(working, model, max_tokens=max_tokens),
+                _completion_payload(working, model, max_tokens=weather_max_tokens),
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:weather",
                 deadline=deadline,
@@ -2329,9 +2332,6 @@ async def generate(
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
-            if weather_task is not None and not weather_task.done():
-                weather_task.cancel()
-                await asyncio.gather(weather_task, return_exceptions=True)
             output = sanitize_generation_output(replay_idempotent(state, record))
             cache_put(session_id, idempotency_key, request_hash, output)
             return output
@@ -2882,6 +2882,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         if state in {"COMPLETED", "FAILED"}:
             context_task.cancel()
             await asyncio.gather(context_task, return_exceptions=True)
+            if weather_task is not None and not weather_task.done():
+                weather_task.cancel()
+                await asyncio.gather(weather_task, return_exceptions=True)
             cached = replay_idempotent(state, record)
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
             async def replay_stream():
@@ -2906,7 +2909,14 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             claim_task.cancel()
         if not context_task.done():
             context_task.cancel()
-        await asyncio.gather(claim_task, context_task, return_exceptions=True)
+        if weather_task is not None and not weather_task.done():
+            weather_task.cancel()
+        await asyncio.gather(
+            claim_task,
+            context_task,
+            weather_task if weather_task is not None else asyncio.sleep(0),
+            return_exceptions=True,
+        )
         raise
 
     profile = complexity_profile(messages)[2]
@@ -2928,16 +2938,19 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 else None
             )
             if prefetched_weather is not None:
-                working = _append_web_system_context(messages)
+                # Keep the streaming transport unchanged; only bypass generic search
+                # and the extra navigation prompt for direct GPS weather.
+                working = [dict(message) for message in messages]
                 working.append({
                     "role": "system",
                     "content": build_weather_evidence(messages, prefetched_weather),
                 })
                 working.append(_web_personality_lock(personality))
+                weather_max_tokens = min(payload.get("max_tokens") or 384, 160)
                 payload = _completion_payload(
                     working,
                     payload["model"],
-                    max_tokens=payload.get("max_tokens"),
+                    max_tokens=weather_max_tokens,
                     temperature=request.temperature,
                 )
             else:
