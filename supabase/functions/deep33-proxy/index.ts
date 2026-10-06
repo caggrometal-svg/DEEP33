@@ -144,7 +144,7 @@ function buildWebSearchQuery(query: string): string {
   const normalized = query
     .replace(/\b(busca|buscar|búscame|investiga|investigar|consulta|consultar|comprueba|comprobar|verifica|verificar)\b/giu, " ")
     .replace(/\b(en internet|por internet|en la web|por la web|online|on-line)\b/giu, " ")
-    .replace(/\b(responde solo|responde únicamente|responde exactamente|contesta solo|devuelve solo)\b[\\s\\S]*$/iu, " ")
+    .replace(/\b(responde solo|responde únicamente|responde exactamente|contesta solo|devuelve solo)\b[\s\S]*$/iu, " ")
     .replace(/\s+/g, " ")
     .trim();
   return normalized.length >= 3 ? normalized.slice(0, 4000) : "internet";
