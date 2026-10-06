@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from backend.search.engine import SearchEngine, deduplicate, rank_results
+from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
 
 
 def test_search_plan_strips_conversational_web_instructions():
@@ -87,7 +87,7 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.1.0"
+    assert result["engine_version"] == "1.2.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
@@ -273,3 +273,64 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
 
     assert calls["count"] == 2
+
+
+def test_realtime_policy_catches_news_weather_and_politics():
+    assert is_realtime_query("Noticias mundiales")
+    assert is_realtime_query("¿Cómo está el clima hoy?")
+    assert is_realtime_query("¿Quién es el presidente de Chile?")
+    assert not is_realtime_query("¿Quién fue el presidente de Chile en 1990?")
+
+
+def test_realtime_search_plan_adds_current_date_variants():
+    plan = SearchEngine(max_queries=3).plan("Noticias mundiales")
+    assert plan.depth == "realtime"
+    assert plan.queries[0] == "Noticias mundiales"
+    assert len(plan.queries) == 3
+    assert all("2026-10-06" in query for query in plan.queries[1:])
+
+
+def test_realtime_search_uses_multiple_providers(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+
+    async def fake_tavily(query, api_key, timeout_seconds, max_results):
+        return [{
+            "title": "Live Tavily",
+            "url": "https://tavily.example/live",
+            "snippet": "latest current news",
+        }]
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        return [{
+            "title": "Live Bing",
+            "url": "https://bing.example/live",
+            "snippet": "latest current news",
+        }]
+
+    async def fake_ddg(query, timeout_seconds, max_results):
+        return [{
+            "title": "Live DDG",
+            "url": "https://ddg.example/live",
+            "snippet": "latest current news",
+        }]
+
+    monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "Noticias mundiales",
+            provider="auto",
+            api_key="test-key",
+            timeout_seconds=8,
+            fallback_ddg=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["realtime"] is True
+    assert result["depth"] == "realtime"
+    assert len(result["queries"]) == 3
+    assert set(result["providers"]) == {"tavily", "bing", "duckduckgo"}
+    assert result["verification"]["distinct_providers"] == 3
