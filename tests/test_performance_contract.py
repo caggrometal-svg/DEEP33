@@ -223,3 +223,13 @@ def test_sse_frames_are_forwarded_without_unneeded_reserialization():
     route = source[source.index("async def stream_gateway("):source.index('@app.post("/v1/chat/stream")')]
     assert "frame_changed = False" in route
     assert "if frame_changed:" in route
+
+
+def test_edge_runtime_performance_contract():
+    source = (ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts").read_text(encoding="utf-8")
+    assert '|| "25000"' in source
+    assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000" in source
+    assert "EDGE_SEARCH_PROVIDER_TIMEOUT_MS" in source
+    assert "edgeSearchCache" in source
+    assert "edgeSearchInflight" in source
+    assert "policyCheckTail = policySample.slice(-512)" in source
