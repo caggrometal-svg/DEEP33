@@ -233,3 +233,36 @@ def test_controversial_queries_expand_against_official_and_independent_versions(
     assert plan.depth == "deep"
     assert any("versión oficial" in q.lower() for q in plan.queries[1:])
     assert any("evidencia independiente" in q.lower() for q in plan.queries[1:])
+
+
+def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
+    import tools.web_search as web_search_module
+
+    calls = {"count": 0}
+
+    class FakeEngine:
+        def __init__(self, *, max_results, max_queries):
+            self.max_results = max_results
+            self.max_queries = max_queries
+
+        async def search(self, *args, **kwargs):
+            calls["count"] += 1
+            return {
+                "ok": True,
+                "engine": "DEEP33 Search Engine",
+                "engine_version": "1.1.0",
+                "provider_independent": True,
+                "results": [{
+                    "title": "Live result",
+                    "url": f"https://example.com/live-{calls['count']}",
+                    "snippet": "fresh",
+                }],
+            }
+
+    monkeypatch.setattr("backend.search.engine.SearchEngine", FakeEngine)
+    web_search_module._SEARCH_CACHE.clear()
+
+    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+
+    assert calls["count"] == 2
