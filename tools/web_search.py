@@ -322,7 +322,7 @@ async def _duckduckgo_search(query, timeout_seconds, max_results):
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
         },
-        timeout=timeout_seconds,
+        timeout=_http_timeout(timeout_seconds),
     )
     if response.status_code >= 400:
         raise WebSearchError(f"WEB_SEARCH_DDG_HTTP_{response.status_code}")
@@ -388,7 +388,7 @@ async def _bing_search(query, timeout_seconds, max_results):
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
         },
-        timeout=timeout_seconds,
+        timeout=_http_timeout(rss_timeout),
     )
     try:
         return await _parse_bing_rss(rss, max_results)
