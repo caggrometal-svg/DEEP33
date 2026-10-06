@@ -643,7 +643,7 @@ class AIGateway:
                         provider.url,
                         json=body,
                         headers=self._headers(provider, request_id, idempotency_key),
-                        timeout=timeout,
+                        timeout=self._http_timeout(timeout),
                     ) as response:
                             if response.status_code >= 400:
                                 status = response.status_code
