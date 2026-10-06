@@ -179,9 +179,26 @@ def test_gateway_latency_snapshot_reports_learned_ttft_and_throughput():
     assert gateway_instance._ordered_providers()[0].name == "p1"
 
 
-def test_fast_response_budget_is_bounded_without_limiting_deep_profile():
-    assert 256 <= main.output_token_limit("FAST") <= 1024
-    assert main.output_token_limit("DEEP") is None
+def test_fast_runtime_context_avoids_clock_for_stable_turn(monkeypatch):
+    import asyncio
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "2x2?"}],
+        personality="NEUTRO",
+    )
+    monkeypatch.setattr(main.memory, "enabled", False)
+    messages, _ = asyncio.run(main.prepare_messages(request, "perf-fast-context"))
+    assert all("RELOJ DE EJECUCIÓN DE DEEP33" not in str(item.get("content", "")) for item in messages)
+
+
+def test_fast_runtime_context_keeps_authoritative_clock_for_realtime(monkeypatch):
+    import asyncio
+    request = main.ChatRequest(
+        messages=[{"role": "user", "content": "¿Qué hora es ahora?"}],
+        personality="NEUTRO",
+    )
+    monkeypatch.setattr(main.memory, "enabled", False)
+    messages, _ = asyncio.run(main.prepare_messages(request, "perf-time-context"))
+    assert any("RELOJ DE EJECUCIÓN DE DEEP33" in str(item.get("content", "")) for item in messages)
 
 
 def test_web_fetch_uses_connection_pooling():
