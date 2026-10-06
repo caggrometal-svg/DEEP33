@@ -9,6 +9,7 @@ import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
+import androidx.annotation.RequiresApi
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -83,6 +84,7 @@ object Deep33LocationProvider {
         finish(lastKnown)
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     @SuppressLint("MissingPermission")
     private fun requestCurrentLocation(
         manager: LocationManager,
