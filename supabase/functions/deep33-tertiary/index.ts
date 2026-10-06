@@ -2295,6 +2295,26 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (path === "/health" && (req.method === "GET" || req.method === "HEAD")) {
+      return json({
+        status: "PASS",
+        service: "DEEP33 Edge Gateway",
+        edge: true,
+        ready: true,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (path === "/ready" && (req.method === "GET" || req.method === "HEAD")) {
+      return json({
+        status: "PASS",
+        service: "DEEP33 Edge Gateway",
+        edge: true,
+        ready: true,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (path === "/v1/ai/inference-check" && req.method === "GET") {
       if (!edgeAIConfigured()) {
         return json({ status: "FAIL", error: "EDGE_AI_GATEWAY_NOT_CONFIGURED", direct_edge: true }, 503);
