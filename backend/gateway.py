@@ -84,8 +84,8 @@ def _provider_url_is_secure(value: str) -> bool:
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
     timeout_seconds: float
-    provider_timeout_seconds: float = 18.0
-    max_retries: int = 1
+    provider_timeout_seconds: float = 10.0
+    max_retries: int = 0
     backoff_seconds: float = 0.6
     circuit_failure_threshold: int = 3
     circuit_cooldown_seconds: float = 30.0
@@ -138,13 +138,13 @@ class GatewayConfig:
         )
         return cls(
             providers=secure_providers,
-            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75"))),
+            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
             provider_timeout_seconds=max(
-                3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "18"))
+                3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))
             ),
-            max_retries=max(0, min(2, int(os.getenv("AI_PROVIDER_MAX_RETRIES", "1")))),
+            max_retries=max(0, min(2, int(os.getenv("AI_PROVIDER_MAX_RETRIES", "0")))),
             backoff_seconds=max(
-                0.05, float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "0.6"))
+                0.05, float(os.getenv("AI_RETRY_BACKOFF_SECONDS", "0.2"))
             ),
             circuit_failure_threshold=max(
                 1, int(os.getenv("AI_CIRCUIT_FAILURE_THRESHOLD", "3"))
