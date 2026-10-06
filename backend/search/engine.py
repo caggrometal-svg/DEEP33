@@ -48,6 +48,30 @@ class SearchPlan:
     depth: str
 
 
+def _normalise_lookup_query(query: str) -> str:
+    """Remove conversational search commands before sending text to web providers."""
+    cleaned = " ".join(query.split()).strip()
+    cleaned = re.sub(
+        r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\\s+"
+        r"(?:en\\s+)?(?:internet|la\\s+web)\\s*[:,-]?\\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\\s+(?:y|e)\\s+(?:responde|contesta|di|dime)\\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\\s+(?:responde|contesta)\\s+(?:solo|únicamente|unicamente)\\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" ?¡!.,;:")
+
 def _tokens(text: str) -> list[str]:
     return [
         token.lower()
@@ -231,19 +255,20 @@ class SearchEngine:
 
     def plan(self, query: str) -> SearchPlan:
         cleaned = " ".join(query.split()).strip()
+        lookup_query = _normalise_lookup_query(cleaned) or cleaned
         lowered = cleaned.lower()
         exact_deep = bool(re.search(r"\bdeep\b", lowered))
         deep_signal = exact_deep or any(
             term != "deep" and term in lowered for term in DEEP_TERMS
         )
         depth = "deep" if deep_signal else "standard"
-        queries = [cleaned]
+        queries = [lookup_query]
         if depth == "deep":
             controversial = any(term in lowered for term in CONTROVERSIAL_TERMS)
             variant_pool = ("versión oficial", "evidencia independiente") if controversial else QUERY_VARIANTS
             for variant in variant_pool:
-                candidate = f"{cleaned} {variant}".strip()
-                if candidate.lower() != cleaned.lower() and len(queries) < self.max_queries:
+                candidate = f"{lookup_query} {variant}".strip()
+                if candidate.lower() != lookup_query.lower() and len(queries) < self.max_queries:
                     queries.append(candidate)
         return SearchPlan(original_query=cleaned, queries=queries, depth=depth)
 
