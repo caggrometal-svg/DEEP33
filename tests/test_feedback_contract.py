@@ -17,5 +17,5 @@ def test_feedback_is_validated_and_owned_by_authenticated_user():
     assert '@app.post("/v1/feedback")' in source
     assert "response_hash" in source
     assert "positive|negative" in source
-    assert "ownerUserId" in source
+    assert "user_id" in source
     assert "deep33_feedback" in source
