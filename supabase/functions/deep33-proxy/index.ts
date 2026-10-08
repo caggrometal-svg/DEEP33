@@ -2344,6 +2344,34 @@ Deno.serve(async (req) => {
       return json(body, body.ready ? 200 : 503);
     }
 
+    if (path === "/v1/feedback" && req.method === "POST") {
+      if (!authUserId) throw new Error("AUTH_REQUIRED");
+      const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const rating = String(payload.rating ?? "").trim();
+      const responseHash = String(payload.response_hash ?? "").trim().toLowerCase();
+      if (!["useful", "not_useful"].includes(rating)) {
+        return json({ error: "FEEDBACK_RATING_INVALID" }, 400);
+      }
+      if (!/^[0-9a-f]{64}$/.test(responseHash)) {
+        return json({ error: "FEEDBACK_HASH_INVALID" }, 400);
+      }
+
+      const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { error } = await admin.from("deep33_feedback").upsert(
+        {
+          user_id: authUserId,
+          session_id: (memoryProfileId ? memoryProfileId + ":" : "") + sessionId,
+          response_hash: responseHash,
+          rating,
+        },
+        { onConflict: "user_id,session_id,response_hash" },
+      );
+      if (error) throw new Error("FEEDBACK_PERSIST_FAILED");
+      return json({ ok: true, stored: true });
+    }
+
     if (
       path === "/v1/search/hybrid/status" ||
       path === "/v1/search/hybrid" ||
