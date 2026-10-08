@@ -55,7 +55,7 @@ class SupabaseAuthManager(
         val body = JSONObject()
             .put("action", "session")
             .put("memory_profile_id", profileId)
-        val json = post(
+        val json = postUrl(
             BuildConfig.DEEP33_SUPABASE_URL + "/functions/v1/deep33-auth",
             body
         ) ?: return false
@@ -97,9 +97,12 @@ class SupabaseAuthManager(
         return true
     }
 
-    private fun post(path: String, body: JSONObject): JSONObject? {
+    private fun post(path: String, body: JSONObject): JSONObject? =
+        postUrl(AUTH_BASE + path, body)
+
+    private fun postUrl(url: String, body: JSONObject): JSONObject? {
         val connection = runCatching {
-            (URL(AUTH_BASE + path).openConnection() as HttpsURLConnection).apply {
+            (URL(url).openConnection() as HttpsURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = AUTH_TIMEOUT_MS
                 readTimeout = AUTH_TIMEOUT_MS
