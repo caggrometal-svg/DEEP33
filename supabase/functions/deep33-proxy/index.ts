@@ -230,18 +230,51 @@ function validateChatPayload(payload: Record<string, unknown>): { ok: true; mess
 }
 
 const edgeRateState = new Map<string, { windowStart: number; count: number }>();
-function enforceEdgeRateLimit(userId: string, operation: string, maxCount: number, windowMs = 60_000): void {
+
+function enforceLocalRateLimit(userId: string, operation: string, maxCount: number): boolean {
   const key = userId + ":" + operation;
   const now = Date.now();
   const current = edgeRateState.get(key);
-  if (!current || now - current.windowStart >= windowMs) {
+  if (!current || now - current.windowStart >= 60_000) {
     edgeRateState.set(key, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (current.count >= maxCount) return false;
+  current.count += 1;
+  return true;
+}
+
+async function enforceEdgeRateLimit(
+  userId: string,
+  operation: string,
+  maxCount: number,
+): Promise<void> {
+  if (!supabaseAdmin) {
+    if (!enforceLocalRateLimit(userId, operation, maxCount)) {
+      throw new Deep33HttpError(429, "DEEP33_RATE_LIMITED");
+    }
     return;
   }
-  if (current.count >= maxCount) {
-    throw new Error("DEEP33_RATE_LIMITED");
+
+  const minute = Math.floor(Date.now() / 60_000) * 60_000;
+  const bucketStart = new Date(minute).toISOString();
+  const { data, error } = await supabaseAdmin.rpc("deep33_rate_limit_claim", {
+    p_user_id: userId,
+    p_bucket_start: bucketStart,
+    p_operation: operation,
+    p_max_count: maxCount,
+  });
+
+  if (error || typeof data !== "boolean") {
+    // Preserve availability during a short database outage while keeping an
+    // effective per-instance abuse guard.
+    if (!enforceLocalRateLimit(userId, operation, maxCount)) {
+      throw new Deep33HttpError(429, "DEEP33_RATE_LIMITED");
+    }
+    return;
   }
-  current.count += 1;
+
+  if (!data) throw new Deep33HttpError(429, "DEEP33_RATE_LIMITED");
 }
 
 function isSecureHttpsUrl(value: string): boolean {
@@ -2746,7 +2779,7 @@ Deno.serve(async (req) => {
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const validation = validateChatPayload(payload);
       if (!validation.ok) throw new Deep33HttpError(400, validation.error);
-      enforceEdgeRateLimit(ownerUserId, "ai_generate", 20);
+      await enforceEdgeRateLimit(ownerUserId, "ai_generate", 20);
       payload.memory_profile_id = memoryProfileId;
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
@@ -3021,7 +3054,7 @@ return json({
     }
 
     if (path === "/v1/web/search" && req.method === "GET") {
-      enforceEdgeRateLimit(ownerUserId, "web_search", 60);
+      await enforceEdgeRateLimit(ownerUserId, "web_search", 60);
       const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
       const result = await edgeSearch(query, sessionId);
       return json(result, result.ok ? 200 : 503);
