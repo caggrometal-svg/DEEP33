@@ -254,6 +254,7 @@ class MemoryClient:
             idempotency_key=f"memory:preferences:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
 
