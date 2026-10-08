@@ -255,24 +255,6 @@ object Deep33Api {
             memoryProfileId = memoryProfileId
         )
 
-    fun sendFeedback(
-        sessionId: String,
-        responseContent: String,
-        useful: Boolean,
-    ): JSONObject {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(responseContent.toByteArray(Charsets.UTF_8))
-        val responseHash = digest.joinToString("") { byte -> "%02x".format(byte) }
-        return request(
-            "POST",
-            "/v1/feedback",
-            JSONObject()
-                .put("response_hash", responseHash)
-                .put("rating", if (useful) "useful" else "not_useful"),
-            sessionId,
-        )
-    }
-
     fun stream(
         messages: JSONArray,
         sessionId: String,
