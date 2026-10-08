@@ -2034,7 +2034,7 @@ class MainActivity : Activity() {
 
     private fun serializeConversation(messages: List<UiMessage>): String {
         val json = org.json.JSONArray()
-        messages.takeLast(80).forEach { message ->
+        messages.forEach { message ->
             if (message.role !in setOf("user", "assistant")) return@forEach
             json.put(
                 org.json.JSONObject()
