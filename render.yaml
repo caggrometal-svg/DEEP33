@@ -9,6 +9,8 @@ services:
     envVars:
       - key: DEEP33_AUTH_SUPABASE_URL
         value: "https://opocgzydeknuchtrqzfa.supabase.co"
+      - key: DEEP33_AUTH_API_KEY
+        value: "sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA"
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
       - key: WEB_SEARCH_BING_ENABLED
