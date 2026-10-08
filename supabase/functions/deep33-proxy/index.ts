@@ -1808,7 +1808,10 @@ async function handleMemoryRequest(
   memoryProfileId?: string,
 ): Promise<Response> {
   const profileScope = memoryProfileId?.trim()
-    ? { memory_profile_id: memoryProfileId.trim().slice(0, 128) }
+    ? {
+        memory_profile_id: memoryProfileId.trim().slice(0, 128),
+        owner_user_id: memoryProfileId.trim().slice(0, 128),
+      }
     : {};
 
   if (path === "/v1/memory/context" && req.method === "GET") {
