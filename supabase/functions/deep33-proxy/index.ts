@@ -2966,6 +2966,8 @@ Deno.serve(async (req) => {
                   messages: [...messages, { role: "assistant", content: responseText }],
                   personality: payload.personality,
                   preferences: payload.preferences,
+                  memory_profile_id: memoryProfileId,
+                  owner_user_id: memoryProfileId,
                 }),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
               ]);
