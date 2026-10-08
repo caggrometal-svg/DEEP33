@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from backend import main
 
-client = TestClient(main.app)
+client = TestClient(main.app, headers={"Authorization": "Bearer test-client-token"})
 
 
 class FakeMemory:
@@ -11,7 +11,7 @@ class FakeMemory:
     async def ping(self) -> dict:
         return {"ok": True}
 
-    async def context(self, session_id: str, memory_profile_id=None) -> dict:
+    async def context(self, session_id: str, memory_profile_id=None, owner_user_id=None) -> dict:
         return {"session": {"session_id": session_id}, "messages": [], "memories": []}
 
     async def sync(self, *args, **kwargs) -> dict:
