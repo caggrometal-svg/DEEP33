@@ -367,8 +367,8 @@ object Deep33Api {
                             }
                         }
                     }
-                    // A clean EOF is a valid SSE termination even when the provider omits
-                    // an explicit [DONE]. The caller will still reject an actually empty answer.
+                    // clean SSE termination: a valid stream may end by EOF without an explicit
+                    // [DONE] after text has been received; an actually empty answer remains invalid.
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
