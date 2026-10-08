@@ -3069,7 +3069,7 @@ return json({
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const responseHash = String(payload.response_hash ?? "").trim().toLowerCase();
       const rating = String(payload.rating ?? "").trim();
-      if (!/^[0-9a-f]{64}$/.test(responseHash) || !["useful", "not_useful"].includes(rating)) {
+      if (!/^[0-9a-f]{64}$/.test(responseHash) || !["useful", "not_useful", "positive", "negative"].includes(rating)) {
         throw new Deep33HttpError(400, "DEEP33_FEEDBACK_INVALID");
       }
       if (!supabaseAdmin) throw new Deep33HttpError(503, "DEEP33_FEEDBACK_UNAVAILABLE");
@@ -3078,7 +3078,7 @@ return json({
         user_id: ownerUserId,
         session_id: sessionId,
         response_hash: responseHash,
-        rating,
+        rating: rating === "positive" ? "useful" : rating === "negative" ? "not_useful" : rating,
         created_at: new Date().toISOString(),
       });
       if (error) throw error;
