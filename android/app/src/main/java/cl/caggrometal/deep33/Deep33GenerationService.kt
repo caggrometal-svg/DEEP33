@@ -102,8 +102,9 @@ class Deep33GenerationService : Service() {
 
     private fun runGeneration(requestId: String) {
         val store = SessionStore(this)
+        Deep33Api.configureAuth(this)
         val pending = store.loadPendingTurn()
-        if (pending == null || pending.requestId != requestId) {
+        if (pending == null || pending.requestId != requestId || pending.profileId != store.profileId) {
             runningRequestId = null
             stopSelf()
             return
@@ -149,12 +150,25 @@ class Deep33GenerationService : Service() {
             }
 
             val messages = buildList {
-                for (i in 0 until payload.length()) {
-                    val item = payload.optJSONObject(i) ?: continue
-                    val role = item.optString("role")
-                    val content = item.optString("content")
-                    if (role in setOf("user", "assistant") && content.isNotBlank()) {
-                        add(UiMessage(role, content))
+                runCatching {
+                    val conversationJson = JSONArray(pending.conversationJson)
+                    for (i in 0 until conversationJson.length()) {
+                        val item = conversationJson.optJSONObject(i) ?: continue
+                        val role = item.optString("role")
+                        val content = item.optString("content")
+                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                            add(UiMessage(role, content))
+                        }
+                    }
+                }
+                if (isEmpty()) {
+                    for (i in 0 until payload.length()) {
+                        val item = payload.optJSONObject(i) ?: continue
+                        val role = item.optString("role")
+                        val content = item.optString("content")
+                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                            add(UiMessage(role, content))
+                        }
                     }
                 }
                 add(UiMessage("assistant", finalText))
