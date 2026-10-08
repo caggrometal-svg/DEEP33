@@ -9,25 +9,39 @@ import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
-import androidx.annotation.RequiresApi
+import android.os.SystemClock
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 
 data class Deep33LocationContext(
-    val latitude: Double,
-    val longitude: Double,
-    val label: String?
+    val label: String?,
+    val accuracyMeters: Float,
+    val ageMs: Long,
 ) {
     fun asPromptContext(): String {
-        val readable = label?.takeIf { it.isNotBlank() }?.let { "$it; " } ?: ""
-        val coarseLat = "%.2f".format(Locale.US, latitude)
-        val coarseLon = "%.2f".format(Locale.US, longitude)
-        return "[UBICACIÓN LOCAL ACTUAL — uso interno para consultas locales: ${readable}lat≈$coarseLat, lon≈$coarseLon]"
+        val readable = label?.takeIf { it.isNotBlank() } ?: "localidad actual no resuelta"
+        val precision = when {
+            accuracyMeters <= 100f -> "alta"
+            accuracyMeters <= 500f -> "media"
+            else -> "aproximada"
+        }
+        return "[CONTEXTO LOCAL ACTUAL — uso temporal para consultas locales: $readable; precisión $precision]"
     }
 }
 
 object Deep33LocationProvider {
+    private const val CURRENT_TIMEOUT_MS = 4_000L
+    private const val MAX_AGE_MS = 5 * 60_000L
+    private const val MAX_ACCURACY_METERS = 2_000f
+    private const val LABEL_TIMEOUT_MS = 1_500L
+
+    private val executor = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "DEEP33-Location").apply { isDaemon = true }
+    }
+
     fun hasPermission(context: Context): Boolean =
         context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -44,7 +58,7 @@ object Deep33LocationProvider {
     fun resolve(
         context: Context,
         callback: (Deep33LocationContext?) -> Unit,
-        includeLabel: Boolean = true
+        includeLabel: Boolean = true,
     ) {
         if (!hasPermission(context)) {
             callback(null)
@@ -55,101 +69,102 @@ object Deep33LocationProvider {
             return
         }
 
-        val providers = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER
-        ).filter { provider ->
-            runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
-        }
-        if (providers.isEmpty()) {
-            callback(null)
-            return
-        }
-
-        val executor = Executors.newSingleThreadExecutor()
-        val completed = AtomicBoolean(false)
-        val candidates = java.util.concurrent.CopyOnWriteArrayList<Location>()
-        val deadline = android.os.SystemClock.elapsedRealtime() + LOCATION_TIMEOUT_MS
-
-        fun chooseBest(): Location? {
-            val now = System.currentTimeMillis()
-            return candidates
-                .filter { location ->
-                    val age = now - location.time
-                    age in 0..MAX_LOCATION_AGE_MS &&
-                        location.latitude in -90.0..90.0 &&
-                        location.longitude in -180.0..180.0 &&
-                        (!location.hasAccuracy() || location.accuracy.isFinite())
-                }
-                .minWithOrNull(compareBy<Location>(
-                    { if (it.hasAccuracy()) it.accuracy else Float.MAX_VALUE },
-                    { now - it.time }
-                ))
-        }
-
-        fun finish() {
-            if (!completed.compareAndSet(false, true)) return
-            val best = chooseBest()
-            executor.shutdownNow()
+        executor.execute {
+            val best = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> currentLocationCandidate(manager)
+                else -> lastKnownCandidate(manager)
+            }
             if (best == null) {
                 callback(null)
-                return
+                return@execute
             }
-            if (!includeLabel) {
-                callback(Deep33LocationContext(best.latitude, best.longitude, null))
-                return
-            }
-            Executors.newSingleThreadExecutor().execute {
-                val label = reverseGeocode(context, best)
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    callback(Deep33LocationContext(best.latitude, best.longitude, label))
-                }
-            }
-        }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val callbackCount = java.util.concurrent.atomic.AtomicInteger(providers.size)
-            providers.forEach { provider ->
-                runCatching {
-                    manager.getCurrentLocation(
-                        provider,
-                        null,
-                        executor
-                    ) { location ->
-                        if (location != null) candidates.add(location)
-                        callbackCount.decrementAndGet()
-                        val best = chooseBest()
-                        val now = android.os.SystemClock.elapsedRealtime()
-                        if (
-                            best != null &&
-                            best.hasAccuracy() &&
-                            best.accuracy <= TARGET_ACCURACY_METERS
-                        ) {
-                            finish()
-                        } else if (callbackCount.get() == 0 || now >= deadline) {
-                            finish()
-                        }
-                    }
-                }.onFailure {
-                    callbackCount.decrementAndGet()
-                    if (callbackCount.get() == 0) finish()
-                }
-            }
-            executor.execute {
-                val remaining = (deadline - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(1L)
-                runCatching { Thread.sleep(remaining) }
-                finish()
-            }
-        } else {
-            providers.forEach { provider ->
-                runCatching { manager.getLastKnownLocation(provider) }
-                    .getOrNull()
-                    ?.let { candidates.add(it) }
-            }
-            finish()
+            val ageMs = locationAgeMs(best)
+            val label = if (includeLabel) reverseGeocode(context, best) else null
+            callback(
+                Deep33LocationContext(
+                    label = label,
+                    accuracyMeters = best.accuracy,
+                    ageMs = ageMs,
+                )
+            )
         }
     }
 
+    @SuppressLint("MissingPermission")
+    private fun currentLocationCandidate(manager: LocationManager): Location? {
+        val providers = enabledProviders(manager)
+        if (providers.isEmpty()) return null
+
+        val results = mutableListOf<Location>()
+        val lock = Any()
+        val latch = CountDownLatch(providers.size)
+        val callbackExecutor = Executors.newFixedThreadPool(providers.size)
+
+        providers.forEach { provider ->
+            runCatching {
+                manager.getCurrentLocation(
+                    provider,
+                    null,
+                    callbackExecutor,
+                ) { location ->
+                    synchronized(lock) {
+                        if (location != null) results.add(location)
+                    }
+                    latch.countDown()
+                }
+            }.onFailure {
+                latch.countDown()
+            }
+        }
+
+        latch.await(CURRENT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        callbackExecutor.shutdownNow()
+
+        return results
+            .asSequence()
+            .filter(::isAcceptable)
+            .minWithOrNull(
+                compareBy<Location>({ accuracyScore(it) }, { locationAgeMs(it) })
+            )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun lastKnownCandidate(manager: LocationManager): Location? {
+        return enabledProviders(manager)
+            .mapNotNull { provider ->
+                runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+            }
+            .filter(::isAcceptable)
+            .minWithOrNull(
+                compareBy<Location>({ accuracyScore(it) }, { locationAgeMs(it) })
+            )
+    }
+
+    private fun enabledProviders(manager: LocationManager): List<String> =
+        listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { provider ->
+                runCatching { manager.isProviderEnabled(provider) }.getOrDefault(false)
+            }
+
+    private fun isAcceptable(location: Location): Boolean {
+        val age = locationAgeMs(location)
+        val accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
+        return age in 0..MAX_AGE_MS && accuracy <= MAX_ACCURACY_METERS
+    }
+
+    private fun accuracyScore(location: Location): Float =
+        if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE
+
+    private fun locationAgeMs(location: Location): Long {
+        val nowElapsedNs = SystemClock.elapsedRealtimeNanos()
+        val locationElapsedNs = runCatching { location.elapsedRealtimeNanos }.getOrDefault(0L)
+        return if (locationElapsedNs > 0L) {
+            maxOf(0L, (nowElapsedNs - locationElapsedNs) / 1_000_000L)
+        } else {
+            maxOf(0L, System.currentTimeMillis() - location.time)
+        }
+    }
 
     private fun reverseGeocode(context: Context, location: Location): String? {
         if (!Geocoder.isPresent()) return null
@@ -163,7 +178,7 @@ object Deep33LocationProvider {
                 address.subLocality,
                 address.locality,
                 address.adminArea,
-                address.countryName
+                address.countryName,
             )
                 .filter { !it.isNullOrBlank() }
                 .distinct()
@@ -171,8 +186,4 @@ object Deep33LocationProvider {
                 .ifBlank { null }
         }.getOrNull()
     }
-    private const val LOCATION_TIMEOUT_MS = 2_500L
-    private const val MAX_LOCATION_AGE_MS = 5 * 60 * 1000L
-    private const val TARGET_ACCURACY_METERS = 250f
-
 }
