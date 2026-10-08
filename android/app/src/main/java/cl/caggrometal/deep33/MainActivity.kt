@@ -306,7 +306,11 @@ class MainActivity : Activity() {
         checkHealthFast()
         restorePendingTurnIfNeeded()
         window.decorView.postDelayed({
-            if (activityVisible && !generationActive) {
+            if (
+                activityVisible &&
+                !generationActive &&
+                store.loadPendingTurn() == null
+            ) {
                 loadRemoteContext()
                 retryPendingMemorySync()
             }
@@ -1515,6 +1519,16 @@ class MainActivity : Activity() {
     }
 
     private fun loadRemoteContext() {
+        // Never refresh remote memory over an active or retryable local turn. Its
+        // persisted user/assistant messages are authoritative until recovery ends.
+        val pendingAtStart = store.loadPendingTurn()
+        if (pendingAtStart?.sessionId == store.sessionId) {
+            Log.i(
+                "DEEP33_RECOVERY",
+                "REMOTE_CONTEXT_DEFERRED pending_request=${pendingAtStart.requestId}"
+            )
+            return
+        }
         // Capture the session/profile at scheduling time. A previous asynchronous
         // context load must never write old-session data into a newly opened chat.
         val targetSessionId = store.sessionId
@@ -1530,6 +1544,13 @@ class MainActivity : Activity() {
                 val remotePersonality = session?.optString("personality").orEmpty()
 
                 if (store.sessionId != targetSessionId) return@submit
+                if (store.loadPendingTurn()?.sessionId == targetSessionId) {
+                    Log.i(
+                        "DEEP33_RECOVERY",
+                        "REMOTE_CONTEXT_DISCARDED pending_request=${store.loadPendingTurn()?.requestId}"
+                    )
+                    return@submit
+                }
 
                 val shouldApplyRemotePersonality =
                     personalitySelectionGeneration == selectionGeneration &&
@@ -1573,6 +1594,19 @@ class MainActivity : Activity() {
                     // the active conversation. This closes the final race between the
                     // worker finishing and the user opening a different chat.
                     if (store.sessionId != targetSessionId) return@runOnUiThread
+                    if (store.loadPendingTurn()?.sessionId == targetSessionId) {
+                        Log.i(
+                            "DEEP33_RECOVERY",
+                            "REMOTE_CONTEXT_UI_DISCARDED pending_request=${store.loadPendingTurn()?.requestId}"
+                        )
+                        return@runOnUiThread
+                    }
+                    // A response may have landed while remote context was in flight.
+                    // Discard the stale snapshot if local conversation changed meanwhile.
+                    if (conversation.toList() != localConversation) {
+                        Log.i("DEEP33_RECOVERY", "REMOTE_CONTEXT_DISCARDED_LOCAL_CONVERSATION_CHANGED")
+                        return@runOnUiThread
+                    }
                     val uiGeneration = store.loadGenerationState()
                     if (generationActive ||
                         uiGeneration?.sessionId == targetSessionId &&
