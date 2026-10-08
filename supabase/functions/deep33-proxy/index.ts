@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
@@ -41,6 +42,7 @@ function headerSubset(req: Request) {
     "accept",
     "x-deep33-session-id",
     "x-deep33-memory-profile-id",
+    "authorization",
     "x-request-id",
     "x-idempotency-key",
   ]) {
@@ -56,7 +58,9 @@ async function fetchUpstream(
   sessionId = "deep33-edge",
 ) {
   const headers = new Headers(init.headers || {});
-  headers.delete("Authorization");
+  // The verified user JWT is forwarded unchanged to the canonical backend.
+  // The gateway already verified it; downstream services can bind identity without
+  // introducing a second client secret into the APK.
   headers.delete("apikey");
   headers.delete("x-client-info");
   if (!headers.has("x-deep33-session-id")) {
@@ -68,6 +72,81 @@ async function fetchUpstream(
     redirect: "error",
     signal: init.signal ?? AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS),
   });
+}
+
+function decodeVerifiedJwtUserId(req: Request): string {
+  const raw = req.headers.get("authorization")?.trim() ?? "";
+  if (!raw.startsWith("Bearer ")) throw new Error("AUTH_REQUIRED");
+  const token = raw.slice(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("AUTH_INVALID");
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    throw new Error("AUTH_INVALID");
+  }
+  const sub = String(payload.sub ?? "").trim();
+  const exp = Number(payload.exp ?? 0);
+  const iss = String(payload.iss ?? "").trim().replace(/\/+$/, "");
+  if (!sub || !/^[0-9a-fA-F-]{36}$/.test(sub) || exp <= Math.floor(Date.now() / 1000)) {
+    throw new Error("AUTH_INVALID");
+  }
+  if (iss && iss !== SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1") {
+    throw new Error("AUTH_ISSUER_INVALID");
+  }
+  return sub;
+}
+
+async function resolveAuthenticatedMemoryProfile(
+  authUserId: string,
+  requestedProfileId?: string,
+): Promise<string> {
+  const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const requested = String(requestedProfileId || "").trim().slice(0, 128);
+  const { data, error } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("memory_profile_id")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+  if (error) throw new Error("AUTH_PROFILE_LOOKUP_FAILED");
+
+  if (data?.memory_profile_id) {
+    const mapped = String(data.memory_profile_id);
+    if (requested && requested !== mapped) throw new Error("MEMORY_PROFILE_MISMATCH");
+    return mapped;
+  }
+
+  if (!/^[A-Za-z0-9._-]{8,96}$/.test(requested)) {
+    throw new Error("MEMORY_PROFILE_REQUIRED");
+  }
+
+  const { data: conflict } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("user_id")
+    .eq("memory_profile_id", requested)
+    .maybeSingle();
+  if (conflict?.user_id && conflict.user_id !== authUserId) {
+    throw new Error("MEMORY_PROFILE_OWNED_BY_OTHER_USER");
+  }
+
+  const { error: insertError } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .upsert(
+      {
+        user_id: authUserId,
+        memory_profile_id: requested,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (insertError) throw new Error("AUTH_PROFILE_BINDING_FAILED");
+  return requested;
 }
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
@@ -2211,10 +2290,26 @@ Deno.serve(async (req) => {
   const sessionId =
     req.headers.get("x-deep33-session-id")?.trim() ||
     "deep33-mobile";
-  const memoryProfileId =
+  const requestedMemoryProfileId =
     req.headers.get("x-deep33-memory-profile-id")?.trim() || undefined;
 
   try {
+    const requiresAuth =
+      path === "/health" ||
+      path === "/ready" ||
+      path === "/v1/connectivity/audit" ||
+      path.startsWith("/v1/");
+    let memoryProfileId = requestedMemoryProfileId;
+    if (requiresAuth) {
+      const authUserId = decodeVerifiedJwtUserId(req);
+      if (path.startsWith("/v1/memory/") || path === "/v1/chat/stream" || path === "/v1/ai/generate") {
+        memoryProfileId = await resolveAuthenticatedMemoryProfile(
+          authUserId,
+          requestedMemoryProfileId,
+        );
+      }
+    }
+
     if (path === "/v1/ai/edge-status" && req.method === "GET") {
       const providers = edgeProviders();
       return json({
