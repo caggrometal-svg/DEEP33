@@ -1520,7 +1520,7 @@ class MainActivity : Activity() {
         val targetMemoryProfileId = store.memoryProfileId
         val localPersonality = store.personality
         val selectionGeneration = personalitySelectionGeneration
-        val localConversation = conversation.takeLast(50)
+        val localConversation = conversation.toList()
 
         executor.submit {
             try {
@@ -1555,7 +1555,7 @@ class MainActivity : Activity() {
                 (remoteMessages + localConversation).forEach {
                     if (seen.add(it.role to it.content)) merged.add(it)
                 }
-                val mergedSnapshot = merged.takeLast(50)
+                val mergedSnapshot = merged.toList()
 
                 // Generation state is authoritative over a stale remote snapshot.
                 val currentGeneration = store.loadGenerationState()
