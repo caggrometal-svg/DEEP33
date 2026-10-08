@@ -111,11 +111,15 @@ jobs:
         run: |
           set -euo pipefail
           profile_id="doctor-${GITHUB_RUN_ID}"
-          auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
+          auth_http="$(curl -sS --connect-timeout 8 --max-time 30 -o /tmp/deep33-auth.json -w '%{http_code}' \
             -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "content-type: application/json" \
             -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}")"
+          auth_json="$(cat /tmp/deep33-auth.json)"
+          echo "DEEP33_AUTH_HTTP=$auth_http"
+          printf '%s\n' "$auth_json" | jq -e 'del(.access_token, .refresh_token)'
+          test "$auth_http" = "200"
           token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_DOCTOR_TOKEN=$token" >> "$GITHUB_ENV"
