@@ -1434,19 +1434,16 @@ class MainActivity : Activity() {
                 val mergedSnapshot = merged.takeLast(50)
 
                 runOnUiThread {
-                    // Re-check the session on the UI thread immediately before mutating
-                    // the active conversation. This closes the final race between the
-                    // worker finishing and the user opening a different chat.
+                    // Re-check all ownership/state guards immediately before mutation.
+                    // A remote snapshot may arrive after a new turn started; in that case
+                    // it must be discarded rather than overwrite the active conversation.
                     if (store.sessionId != targetSessionId) return@runOnUiThread
+                    if (store.memoryProfileId != targetMemoryProfileId) return@runOnUiThread
+                    if (generationActive || store.loadPendingTurn() != null) return@runOnUiThread
 
                     conversation.clear()
                     conversation.addAll(mergedSnapshot)
                     store.saveMessages(conversation)
-
-                    // Remote memory refresh must not rebuild the chat while a pending
-                    // generation is active, otherwise the "Pensando..." bubble can be
-                    // detached from the active request after foreground recovery.
-                    if (generationActive) return@runOnUiThread
 
                     applyPersonalityTheme(Personality.fromKey(store.personality))
                     renderConversation()
@@ -2025,10 +2022,18 @@ class MainActivity : Activity() {
 
     private fun cancelGeneration() {
         if (!generationActive) return
-        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId ?: return
+        val personality = Personality.fromKey(store.personality).key
+
+        // Persist the terminal transition before disconnecting the socket. The service
+        // checks this same state, so it cannot publish DONE after the user cancelled.
+        store.cancelGenerationAtomically(
+            requestId = requestId,
+            sessionId = store.sessionId,
+            personality = personality,
+        )
         Deep33GenerationService.cancel(this, requestId)
-        store.clearPendingTurn(requestId)
-        store.clearGenerationState(requestId)
+
         generationActive = false
         activeRequestId = null
         activeIdempotencyKey = null

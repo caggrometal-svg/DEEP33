@@ -267,3 +267,25 @@ def test_android_sse_checkpoint_path_avoids_sync_commit_and_full_buffer_persiste
     assert "releaseGenerationWakeLock()" in source
     assert "enqueueMemorySync(it)" in source
     assert "Thread({" in source
+
+
+def test_generation_cancel_is_persisted_as_terminal_and_remote_context_is_gated():
+    store = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/SessionStore.kt")
+        .read_text(encoding="utf-8")
+    )
+    activity = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/MainActivity.kt")
+        .read_text(encoding="utf-8")
+    )
+    service = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33GenerationService.kt")
+        .read_text(encoding="utf-8")
+    )
+    assert "cancelGenerationAtomically" in store
+    assert 'GenerationStatus.CANCELLED.name' in store
+    assert "isGenerationCancelled(requestId: String)" in store
+    assert "if (generationActive || store.loadPendingTurn() != null) return@runOnUiThread" in activity
+    assert "store.cancelGenerationAtomically(" in activity
+    assert "if (userCancelled.get() || store.isGenerationCancelled(requestId))" in service
+    assert "store.isGenerationCancelled(requestId)" in service
