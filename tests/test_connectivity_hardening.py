@@ -132,3 +132,22 @@ def test_apk_workflows_require_certified_production_pass() -> None:
 
     package = read(".github/workflows/android-package.yml")
     assert '- "production-pass"' in package
+
+
+
+def test_edge_connectivity_audit_scopes_internal_memory_probe_to_authenticated_user() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert "async function probeMemory(sessionId: string, memoryProfileId?: string)" in source
+        assert 'memoryCall("context", sessionId, ownerScope)' in source
+        assert "probeMemory(auditSession, memoryProfileId)" in source
+
+
+def test_edge_realtime_search_does_not_require_generic_geography_words_in_every_result() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    assert '"comuna","municipio","municipalidad","región","region"' in source
+    assert 'const countryContextTokens = new Set(["chile"])' in source
+    assert '"noticias recientes en Chile"' in source

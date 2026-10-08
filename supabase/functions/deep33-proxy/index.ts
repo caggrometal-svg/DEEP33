@@ -2085,10 +2085,17 @@ async function probeInference(sessionId: string, userAuthorization = "") {
   }
 }
 
-async function probeMemory(sessionId: string) {
+async function probeMemory(sessionId: string, memoryProfileId?: string) {
   if (SUPABASE_SECRET_KEY) {
     try {
-      const result = await memoryCall("context", sessionId);
+      // The memory Edge Function requires an authenticated owner UUID even for a
+      // read-only probe. Pass the verified caller scope rather than sending an
+      // anonymous internal context request that can only return HTTP 401.
+      const ownerId = memoryProfileId?.trim() || "";
+      const ownerScope = ownerId
+        ? { memory_profile_id: ownerId, owner_user_id: ownerId }
+        : {};
+      const result = await memoryCall("context", sessionId, ownerScope);
       return {
         ok: result.status >= 200 && result.status < 300,
         status: result.status >= 200 && result.status < 300 ? "PASS" : "FAIL",
@@ -2434,9 +2441,16 @@ async function publicWebSearchUncached(
     "noticia","noticias","actualidad","reciente","recientes","información","informacion",
     "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
     "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
-    "contingencia","suceso","sucesos","en","vivo",
+    "contingencia","suceso","sucesos","en","vivo","comuna","municipio","municipalidad","región","region",
   ]);
   const entityTokens = new Set([...anchorTokens].filter(token => !realtimeFiller.has(token)));
+  // Generic geography words should not suppress otherwise-local results. For a
+  // locality inside Chile, require the locality/topic entity, not both the
+  // municipality label and country name to appear in every headline.
+  const countryContextTokens = new Set(["chile"]);
+  if ([...entityTokens].some(token => !countryContextTokens.has(token))) {
+    for (const token of countryContextTokens) entityTokens.delete(token);
+  }
   const relevant = plan.depth === "realtime" && entityTokens.size
     ? allResults.filter(item => {
         const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
@@ -2646,12 +2660,12 @@ Deno.serve(async (req) => {
       const started = performance.now();
       const auditSession = sessionId || "deep33-audit";
 
-      const safeSearch = edgeSearch("fecha actual en Chile", auditSession).catch((error) => ({
+      const safeSearch = edgeSearch("noticias recientes en Chile", auditSession).catch((error) => ({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
         results: [],
       }));
-      const safeMemory = probeMemory(auditSession).catch(() => ({
+      const safeMemory = probeMemory(auditSession, memoryProfileId).catch(() => ({
         ok: false,
         status: "FAIL",
         http_status: 0,

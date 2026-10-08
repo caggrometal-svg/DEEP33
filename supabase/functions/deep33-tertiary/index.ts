@@ -1800,10 +1800,17 @@ async function probeInference(sessionId: string) {
   }
 }
 
-async function probeMemory(sessionId: string) {
+async function probeMemory(sessionId: string, memoryProfileId?: string) {
   if (SUPABASE_SECRET_KEY) {
     try {
-      const result = await memoryCall("context", sessionId);
+      // The memory Edge Function requires an authenticated owner UUID even for a
+      // read-only probe. Pass the verified caller scope rather than sending an
+      // anonymous internal context request that can only return HTTP 401.
+      const ownerId = memoryProfileId?.trim() || "";
+      const ownerScope = ownerId
+        ? { memory_profile_id: ownerId, owner_user_id: ownerId }
+        : {};
+      const result = await memoryCall("context", sessionId, ownerScope);
       return {
         ok: result.status >= 200 && result.status < 300,
         status: result.status >= 200 && result.status < 300 ? "PASS" : "FAIL",
@@ -2216,7 +2223,7 @@ Deno.serve(async (req) => {
 
       let search: Record<string, unknown>;
       try {
-        search = await edgeSearch("DEEP33 internet", auditSession);
+        search = await edgeSearch("noticias recientes en Chile", auditSession);
       } catch (error) {
         search = {
           ok: false,
@@ -2227,7 +2234,7 @@ Deno.serve(async (req) => {
 
       let memory = { ok: false, status: "FAIL", http_status: 0 };
       try {
-        memory = await probeMemory(auditSession);
+        memory = await probeMemory(auditSession, memoryProfileId);
       } catch (error) {
         memory = {
           ok: false,
