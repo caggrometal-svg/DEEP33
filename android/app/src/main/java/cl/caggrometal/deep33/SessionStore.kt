@@ -330,7 +330,33 @@ class SessionStore(
         val raw = prefs.getString(messagesKey(sessionId), null)
             ?: prefs.getString(KEY_MESSAGES_LEGACY, null)
             ?: return emptyList()
-        return parseMessages(raw)
+        val parsed = parseMessages(raw)
+        val sanitized = parsed.map { message ->
+            message.copy(content = sanitizePersistedLocationText(message.content))
+        }
+        if (sanitized != parsed) {
+            // One-time migration: remove legacy exact GPS coordinates from persisted
+            // conversation data before the messages are reused or synchronized.
+            saveMessages(sanitized, durable = true)
+        }
+        return sanitized
+    }
+
+    private fun sanitizePersistedLocationText(value: String): String {
+        var text = value
+        text = text.replace(
+            Regex("""(?i)(lat(?:itude)?\s*[:=]\s*)[-+]?\d+(?:\.\d+)?"""),
+            "$1[location-removed]"
+        )
+        text = text.replace(
+            Regex("""(?i)(lon(?:gitude)?\s*[:=]\s*)[-+]?\d+(?:\.\d+)?"""),
+            "$1[location-removed]"
+        )
+        text = text.replace(
+            Regex("""\[(?:UBICACIÓN|CONTEXTO)\s+GPS[^\]]*\]""", RegexOption.IGNORE_CASE),
+            "[contexto geográfico eliminado]"
+        )
+        return text
     }
 
     fun saveMessages(messages: List<UiMessage>, durable: Boolean = false) {
