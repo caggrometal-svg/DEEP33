@@ -1074,14 +1074,15 @@ async function persistDeep33SelfName(
   sessionId: string,
   value: unknown,
   memoryProfileId?: string,
+  ownerUserId?: string,
 ): Promise<void> {
   const name = extractDeep33SelfName(value);
   if (!name) return;
   await memoryCall("remember", sessionId, {
     kind: "context",
     content: DEEP33_SELF_NAME_MEMORY_PREFIX + " " + name,
-    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}, ownerUserId),
-  });
+    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}),
+  }, ownerUserId);
 }
 
 function personalityInstruction(value: unknown): string {
@@ -2590,7 +2591,7 @@ Deno.serve(async (req) => {
 
               // Memory remains outside the first-response path. The answer is already
               // visible when this background persistence starts.
-              void persistDeep33SelfName(sessionId, responseText, memoryProfileId).catch(() => {});
+              void persistDeep33SelfName(sessionId, responseText, memoryProfileId, ownerUserId).catch(() => {});
               void memoryCall("sync", sessionId, {
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: activePersonality,
