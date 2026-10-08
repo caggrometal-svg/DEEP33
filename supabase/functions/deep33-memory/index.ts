@@ -28,6 +28,89 @@ async function sha256(value: string): Promise<string> {
     .join("");
 }
 
+function sanitizeLocationText(value: string): string {
+  return value
+    .replace(/\\[(?:UBICACIÓN|UBICACION) GPS ACTUAL[^\\]]*\\]/giu, "[contexto local eliminado por privacidad]")
+    .replace(/\\[(?:CONTEXTO) LOCAL ACTUAL[^\\]]*\\]/giu, "[contexto local]");
+}
+
+function validUserId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+async function resolveOwnerId(req: Request, body: Record<string, unknown>): Promise<string | null> {
+  const authorization = req.headers.get("authorization")?.trim() || "";
+  const token = authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : "";
+
+  if (token) {
+    const { data, error } = await supabase.auth.getUser(token);
+    const userId = data.user?.id?.trim() || "";
+    if (!error && validUserId(userId)) {
+      const claimed = String(body.memory_profile_id || body.owner_user_id || "").trim();
+      if (claimed && claimed !== userId) return null;
+      return userId;
+    }
+  }
+
+  const internalToken = req.headers.get("x-deep33-internal-token")?.trim() || "";
+  const ownerUserId = String(body.owner_user_id || body.memory_profile_id || "").trim();
+  const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (
+    internalToken &&
+    serviceRole &&
+    internalToken === serviceRole &&
+    validUserId(ownerUserId)
+  ) {
+    return ownerUserId;
+  }
+
+  return null;
+}
+
+async function resolveMemoryProfileId(ownerUserId: string, requested: string): Promise<string> {
+  const claimed = requested.trim().slice(0, 128);
+  const { data, error } = await supabase
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("memory_profile_id")
+    .eq("user_id", ownerUserId)
+    .maybeSingle();
+  if (error) throw error;
+  if (data?.memory_profile_id) {
+    if (claimed && claimed !== data.memory_profile_id) {
+      throw new Error("MEMORY_PROFILE_MISMATCH");
+    }
+    return String(data.memory_profile_id);
+  }
+  if (!/^[A-Za-z0-9._-]{8,96}$/.test(claimed)) {
+    throw new Error("MEMORY_PROFILE_REQUIRED");
+  }
+  const { data: conflict } = await supabase
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("user_id")
+    .eq("memory_profile_id", claimed)
+    .maybeSingle();
+  if (conflict?.user_id && conflict.user_id !== ownerUserId) {
+    throw new Error("MEMORY_PROFILE_OWNED_BY_OTHER_USER");
+  }
+  const { error: insertError } = await supabase
+    .schema("private")
+    .from("deep33_user_profiles")
+    .upsert(
+      { user_id: ownerUserId, memory_profile_id: claimed, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+  if (insertError) throw insertError;
+  return claimed;
+}
+
+function scopeSession(memoryProfileId: string, clientSessionId: string): string {
+  return (memoryProfileId + ":" + clientSessionId).slice(0, 128);
+}
+
 async function requireHybridInternalToken(req: Request): Promise<boolean> {
   const supplied = req.headers.get("x-deep33-internal-token")?.trim();
   if (!supplied || supplied.length < 24) return false;
@@ -227,7 +310,7 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const action = String(body.action || "");
-    const sessionId = String(body.session_id || "").trim();
+    const clientSessionId = String(body.session_id || "").trim();
 
     if (action === "ping") {
       return response({ ok: true, service: "deep33-memory", version: 6 });
@@ -237,9 +320,28 @@ Deno.serve(async (req) => {
       return await handleHybridAction(body, req);
     }
 
-    if (!sessionId || sessionId.length > 128) {
+    if (!clientSessionId || clientSessionId.length > 128) {
       return response({ error: "SESSION_ID_REQUIRED" }, 400);
     }
+
+    const ownerUserId = await resolveOwnerId(req, body);
+    if (!ownerUserId) {
+      return response({ error: "MEMORY_AUTH_REQUIRED" }, 401);
+    }
+    let memoryProfileId: string;
+    try {
+      memoryProfileId = await resolveMemoryProfileId(
+        ownerUserId,
+        String(body.memory_profile_id || ""),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "MEMORY_PROFILE_INVALID";
+      return response(
+        { error: message },
+        message.includes("OTHER_USER") ? 403 : 409,
+      );
+    }
+    const sessionId = scopeSession(memoryProfileId, clientSessionId);
 
     if (action === "idempotency_claim") {
       return response(
@@ -298,10 +400,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (sessionError) throw sessionError;
 
-      const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
-      const messageSessionIds = memoryProfileId && memoryProfileId !== sessionId
-        ? [sessionId, memoryProfileId]
-        : [sessionId];
+      const messageSessionIds = [sessionId];
       const { data: messages, error: messageError } = await supabase
         .from("deep33_messages")
         .select("role, content, model, provider, request_id, created_at, session_id")
@@ -330,8 +429,7 @@ Deno.serve(async (req) => {
 
     if (action === "sync") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
-        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
-        const profileSessionId = memoryProfileId || sessionId;
+        const profileSessionId = ownerUserId;
         const sessionPatch: Record<string, unknown> = {
           session_id: sessionId,
           updated_at: new Date().toISOString(),
@@ -353,18 +451,11 @@ Deno.serve(async (req) => {
           .upsert(sessionPatch, { onConflict: "session_id" });
         if (sessionError) throw sessionError;
 
-        if (profileSessionId !== sessionId) {
-          const { error: profileSessionError } = await supabase
-            .from("deep33_sessions")
-            .upsert({ session_id: profileSessionId, updated_at: new Date().toISOString() }, { onConflict: "session_id" });
-          if (profileSessionError) throw profileSessionError;
-        }
-
         const incoming = Array.isArray(body.messages) ? body.messages : [];
         const rows = [];
         for (const message of incoming.slice(-50)) {
           const role = String(message?.role || "");
-          const content = String(message?.content || "");
+          const content = sanitizeLocationText(String(message?.content || ""));
           if (!["user", "assistant"].includes(role) || !content.trim()) continue;
 
           rows.push({
@@ -379,33 +470,29 @@ Deno.serve(async (req) => {
         }
 
         if (rows.length) {
-          const profileRows = profileSessionId === sessionId
-            ? rows
-            : rows.map((row) => ({ ...row, session_id: profileSessionId }));
           const { error } = await supabase
             .from("deep33_messages")
-            .upsert([...rows, ...profileRows], {
+            .upsert(rows, {
               onConflict: "session_id,fingerprint",
               ignoreDuplicates: true,
             });
           if (error) throw error;
         }
 
-        return { body: { ok: true, session_id: sessionId, memory_profile_id: profileSessionId, saved: rows.length }, status: 200 };
+        return { body: { ok: true, session_id: sessionId, memory_profile_id: ownerUserId, saved: rows.length }, status: 200 };
       });
     }
 
     if (action === "remember") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.remember", async () => {
         const kind = String(body.kind || "explicit");
-        const content = String(body.content || "").trim();
+        const content = sanitizeLocationText(String(body.content || "").trim());
 
         if (!["preference", "explicit", "summary", "context"].includes(kind) || !content) {
           return { body: { error: "MEMORY_INVALID" }, status: 400 };
         }
 
-        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
-        const memorySessionId = memoryProfileId || sessionId;
+        const memorySessionId = scopeSession(memoryProfileId, ownerUserId);
         const fingerprint = await sha256(kind + "\n" + content);
 
         const { error: sessionError } = await supabase
@@ -436,8 +523,7 @@ Deno.serve(async (req) => {
 
     if (action === "preferences") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.preferences", async () => {
-        const memoryProfileId = String(body.memory_profile_id || "").trim().slice(0, 128);
-        const memorySessionId = memoryProfileId || sessionId;
+        const memorySessionId = scopeSession(memoryProfileId, ownerUserId);
         const patch: Record<string, unknown> = {
           session_id: memorySessionId,
           updated_at: new Date().toISOString(),
