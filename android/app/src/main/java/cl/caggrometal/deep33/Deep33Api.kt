@@ -613,59 +613,196 @@ object Deep33Api {
 
 object SseTextParser {
     fun extractText(data: String): String? {
-        return runCatching {
-            val json = JSONObject(data)
-            extractChoiceContent(json.optJSONArray("choices")?.optJSONObject(0))
-        }.getOrNull()
+        val choices = extractJsonValueForKey(data, "choices")?.value ?: return null
+        val firstChoice = extractFirstObject(choices) ?: return null
+
+        for (key in listOf("delta", "message")) {
+            val container = extractJsonValueForKey(firstChoice, key)?.value
+            if (!container.isNullOrBlank() && container.trim().startsWith("{")) {
+                extractTextFromContainer(container)?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+        }
+        return extractTextFromContainer(firstChoice)
     }
 
-    private fun extractChoiceContent(choice: JSONObject?): String? {
-        if (choice == null) return null
-        extractContentValue(choice.opt("delta")?.let { it as? JSONObject }?.opt("content"))
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { return it }
-
-        extractContentValue(choice.opt("message")?.let { it as? JSONObject }?.opt("content"))
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { return it }
-
-        // Some providers expose content directly on the choice envelope.
-        return extractContentValue(choice.opt("content"))
+    private fun extractTextFromContainer(jsonObject: String): String? {
+        val content = extractJsonValueForKey(jsonObject, "content")?.value ?: return null
+        return extractContentValue(content)
     }
 
-    private fun extractContentValue(value: Any?): String? {
-        return when (value) {
-            is String -> value.takeIf { it.isNotEmpty() }
-            is JSONArray -> {
+    private fun extractContentValue(value: String): String? {
+        val trimmed = value.trim()
+        return when {
+            trimmed.startsWith(""") -> parseJsonString(trimmed).first
+            trimmed.startsWith("[") -> {
                 val out = StringBuilder()
-                for (i in 0 until value.length()) {
-                    val item = value.opt(i)
-                    when (item) {
-                        is String -> out.append(item)
-                        is JSONObject -> {
-                            val type = item.optString("type").lowercase()
-                            if (type.isBlank() || type == "text" || type == "output_text") {
-                                out.append(
-                                    item.optString("text").ifBlank {
-                                        item.optString("content")
-                                    }
-                                )
-                            }
+                for (item in splitTopLevelArray(trimmed)) {
+                    val piece = item.trim()
+                    if (piece.startsWith(""")) {
+                        out.append(parseJsonString(piece).first)
+                    } else if (piece.startsWith("{")) {
+                        val type = extractJsonStringForKey(piece, "type").orEmpty().lowercase()
+                        if (type.isBlank() || type == "text" || type == "output_text") {
+                            val text = extractJsonValueForKey(piece, "text")?.value
+                                ?.let { parseJsonString(it).first }
+                                ?: extractJsonValueForKey(piece, "content")?.value
+                                    ?.let { extractContentValue(it) }
+                            if (!text.isNullOrEmpty()) out.append(text)
                         }
                     }
                 }
                 out.toString().takeIf { it.isNotEmpty() }
             }
-            is JSONObject -> {
-                val type = value.optString("type").lowercase()
+            trimmed.startsWith("{") -> {
+                val type = extractJsonStringForKey(trimmed, "type").orEmpty().lowercase()
                 if (type.isBlank() || type == "text" || type == "output_text") {
-                    extractContentValue(value.opt("text"))
-                        ?: extractContentValue(value.opt("content"))
-                } else {
-                    null
-                }
+                    extractJsonValueForKey(trimmed, "text")?.value
+                        ?.let { parseJsonString(it).first }
+                        ?: extractJsonValueForKey(trimmed, "content")?.value
+                            ?.let { extractContentValue(it) }
+                } else null
             }
             else -> null
         }
+    }
+
+    private data class JsonValue(val value: String, val endIndex: Int)
+
+    private fun extractJsonValueForKey(json: String, key: String): JsonValue? {
+        val keyPattern = """ + key + """
+        var index = 0
+        while (index < json.length) {
+            val keyIndex = json.indexOf(keyPattern, index)
+            if (keyIndex < 0) return null
+            if (keyIndex > 0 && json[keyIndex - 1] == '\\') {
+                index = keyIndex + keyPattern.length
+                continue
+            }
+            var colon = keyIndex + keyPattern.length
+            while (colon < json.length && json[colon].isWhitespace()) colon++
+            if (colon >= json.length || json[colon] != ':') {
+                index = keyIndex + keyPattern.length
+                continue
+            }
+            var valueStart = colon + 1
+            while (valueStart < json.length && json[valueStart].isWhitespace()) valueStart++
+            if (valueStart >= json.length) return null
+            return readJsonValue(json, valueStart)
+        }
+        return null
+    }
+
+    private fun readJsonValue(json: String, start: Int): JsonValue? {
+        return when (json[start]) {
+            '"' -> {
+                val parsed = parseJsonString(json.substring(start))
+                JsonValue(json.substring(start, start + parsed.second), start + parsed.second)
+            }
+            '{', '[' -> {
+                val end = findMatchingJsonContainer(json, start)
+                if (end < 0) null else JsonValue(json.substring(start, end + 1), end + 1)
+            }
+            else -> {
+                var end = start
+                while (end < json.length && json[end] !in ",}]\n\r") end++
+                JsonValue(json.substring(start, end).trim(), end)
+            }
+        }
+    }
+
+    private fun findMatchingJsonContainer(json: String, start: Int): Int {
+        val open = json[start]
+        val close = if (open == '{') '}' else ']'
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in start until json.length) {
+            val ch = json[i]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') inString = false
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                open -> depth++
+                close -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return -1
+    }
+
+    private fun extractFirstObject(arrayJson: String): String? {
+        val trimmed = arrayJson.trim()
+        if (!trimmed.startsWith("[")) return null
+        val start = trimmed.indexOf('{')
+        if (start < 0) return null
+        val end = findMatchingJsonContainer(trimmed, start)
+        return if (end >= 0) trimmed.substring(start, end + 1) else null
+    }
+
+    private fun splitTopLevelArray(arrayJson: String): List<String> {
+        val trimmed = arrayJson.trim()
+        if (trimmed.length < 2 || trimmed.first() != '[' || trimmed.last() != ']') return emptyList()
+        val result = mutableListOf<String>()
+        var start = 1
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in 1 until trimmed.lastIndex) {
+            val ch = trimmed[i]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') inString = false
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                '[', '{' -> depth++
+                ']', '}' -> depth--
+                ',' -> if (depth == 0) {
+                    result += trimmed.substring(start, i)
+                    start = i + 1
+                }
+            }
+        }
+        if (start < trimmed.lastIndex) result += trimmed.substring(start, trimmed.lastIndex)
+        return result
+    }
+
+    private fun extractJsonStringForKey(json: String, key: String): String? =
+        extractJsonValueForKey(json, key)?.value?.trim()?.let { parseJsonString(it).first }
+
+    private fun parseJsonString(value: String): Pair<String, Int> {
+        if (value.isEmpty() || value[0] != '"') return "" to 0
+        val out = StringBuilder()
+        var i = 1
+        while (i < value.length) {
+            val ch = value[i]
+            if (ch == '"') return out.toString() to (i + 1)
+            if (ch == '\\' && i + 1 < value.length) {
+                when (val next = value[++i]) {
+                    '"', '\\', '/' -> out.append(next)
+                    'b' -> out.append('\b')
+                    'f' -> out.append('\u000C')
+                    'n' -> out.append('\n')
+                    'r' -> out.append('\r')
+                    't' -> out.append('\t')
+                    'u' -> if (i + 4 < value.length) {
+                        val hex = value.substring(i + 1, i + 5)
+                        hex.toIntOrNull(16)?.let(out::append)
+                        i += 4
+                    }
+                    else -> out.append(next)
+                }
+            } else out.append(ch)
+            i++
+        }
+        return out.toString() to value.length
     }
 }
