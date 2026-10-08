@@ -1,12 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
 // while the direct Edge gateway becomes the canonical runtime.
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
@@ -76,6 +75,7 @@ function headerSubset(req: Request) {
   for (const name of [
     "content-type",
     "accept",
+    "authorization",
     "x-deep33-session-id",
     "x-deep33-memory-profile-id",
     "x-request-id",
@@ -2916,6 +2916,9 @@ return json({
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof Deep33HttpError) {
+      return json({ status: "FAIL", error: error.message, path }, error.status);
+    }
     return json(
       {
         status: "FAIL",
