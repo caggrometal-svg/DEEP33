@@ -427,20 +427,41 @@ class SessionStore(
         }
     }
 
+    private fun sanitizePendingMessagesJson(raw: String): String? {
+        return runCatching {
+            val input = JSONArray(raw)
+            val sanitized = JSONArray()
+            for (i in 0 until input.length()) {
+                val item = input.optJSONObject(i) ?: continue
+                if (item.has("content")) {
+                    item.put(
+                        "content",
+                        sanitizePersistedLocationText(item.optString("content"))
+                    )
+                }
+                sanitized.put(item)
+            }
+            sanitized.toString()
+        }.getOrNull()
+    }
+
     fun savePendingMemorySync(sync: PendingMemorySync) {
         synchronized(STORE_LOCK) {
             val queued = loadPendingMemorySyncQueue().toMutableList()
             queued.removeAll { it.requestId == sync.requestId }
             queued.add(sync)
             val json = JSONArray()
-            queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+            queued.take(MAX_PENDING_MEMORY_SYNCS).forEach { syncItem ->
+                val safeMessages = sanitizePendingMessagesJson(syncItem.messagesJson) ?: "[]"
+                val safeSync = syncItem.copy(messagesJson = safeMessages)
+                
                 json.put(
                     JSONObject()
-                        .put("session_id", it.sessionId)
-                        .put("request_id", it.requestId)
-                        .put("personality", it.personality)
-                        .put("memory_profile_id", it.memoryProfileId)
-                        .put("messages", it.messagesJson)
+                        .put("session_id", safeSync.sessionId)
+                        .put("request_id", safeSync.requestId)
+                        .put("personality", safeSync.personality)
+                        .put("memory_profile_id", safeSync.memoryProfileId)
+                        .put("messages", safeSync.messagesJson)
                 )
             }
             // Remote-memory retry state is a durable queue. Multiple completed chats may
@@ -466,8 +487,8 @@ class SessionStore(
                     val memoryProfileId = item.optString("memory_profile_id")
                     val messagesJson = item.optString("messages")
                     if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) continue
-                    runCatching { JSONArray(messagesJson) }.getOrNull() ?: continue
-                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson))
+                    val safeMessages = sanitizePendingMessagesJson(messagesJson) ?: continue
+                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, safeMessages))
                 }
             }
         } catch (_: Exception) {
