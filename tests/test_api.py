@@ -97,6 +97,8 @@ def test_health() -> None:
 
 def test_ready(monkeypatch) -> None:
     patch_memory(monkeypatch)
+    monkeypatch.setattr(main, "network_probe", fake_network_probe)
+    monkeypatch.setattr(main, "gateway_probe", fake_gateway_probe)
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["ready"] is True
