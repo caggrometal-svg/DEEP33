@@ -92,6 +92,7 @@ object Deep33LocationProvider {
     }
 
     @SuppressLint("MissingPermission")
+    @android.annotation.TargetApi(Build.VERSION_CODES.R)
     private fun currentLocationCandidate(manager: LocationManager): Location? {
         val providers = enabledProviders(manager)
         if (providers.isEmpty()) return null
