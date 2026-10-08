@@ -3336,6 +3336,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 lease_token=lease_token,
                 assistant_text=assistant_text,
                 memory_profile_id=memory_profile_id,
+                owner_user_id=owner_user_id,
             )
 
         return StreamingResponse(
