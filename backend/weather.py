@@ -184,7 +184,15 @@ def build_weather_evidence(messages: list[dict[str, Any]], weather: dict[str, An
         "Úsalos como datos factuales de esta consulta. No inventes valores ni digas que "
         "son una medición física del teléfono. Responde de forma natural y proporcional.\n"
         f"Consulta original: {query}\n"
-        + json.dumps(weather, ensure_ascii=False, separators=(",", ":"))
+        + json.dumps(
+            {
+                key: value
+                for key, value in weather.items()
+                if key not in {"latitude", "longitude"}
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     )
 
 
