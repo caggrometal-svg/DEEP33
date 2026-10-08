@@ -80,7 +80,7 @@ object Deep33LocationProvider {
             }
 
             val ageMs = locationAgeMs(best)
-            val label = if (includeLabel) reverseGeocode(context, best) else null
+            val label = if (includeLabel) reverseGeocodeWithTimeout(context, best) else null
             callback(
                 Deep33LocationContext(
                     label = label,
@@ -163,6 +163,15 @@ object Deep33LocationProvider {
             maxOf(0L, (nowElapsedNs - locationElapsedNs) / 1_000_000L)
         } else {
             maxOf(0L, System.currentTimeMillis() - location.time)
+        }
+    }
+
+    private fun reverseGeocodeWithTimeout(context: Context, location: Location): String? {
+        val future = executor.submit<String?> { reverseGeocode(context, location) }
+        return runCatching {
+            future.get(LABEL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }.getOrNull().also {
+            if (it == null) future.cancel(true)
         }
     }
 
