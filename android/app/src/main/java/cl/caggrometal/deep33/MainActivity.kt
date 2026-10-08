@@ -35,6 +35,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -2730,6 +2731,7 @@ class MainActivity : Activity() {
             button.imageTintList =
                 android.content.res.ColorStateList.valueOf(activeTint)
             dislikeButtonTint(normalTint, likeButton = button, other = null)
+            sendResponseFeedback(content, useful = true)
         }
         row.addView(likeButton)
 
@@ -2740,6 +2742,7 @@ class MainActivity : Activity() {
             button.imageTintList =
                 android.content.res.ColorStateList.valueOf(activeTint)
             dislikeButtonTint(normalTint, likeButton = null, other = button)
+            sendResponseFeedback(content, useful = false)
         }
         row.addView(dislikeButton)
 
@@ -2775,6 +2778,23 @@ class MainActivity : Activity() {
         if (other != null) {
             other.imageTintList =
                 android.content.res.ColorStateList.valueOf(Personality.fromKey(store.personality).accent)
+        }
+    }
+
+    private fun sendResponseFeedback(content: String, useful: Boolean) {
+        val response = content.trim()
+        if (response.isBlank()) return
+        val sessionId = store.sessionId
+        executor.execute {
+            runCatching {
+                Deep33Api.sendFeedback(
+                    sessionId = sessionId,
+                    responseContent = response,
+                    useful = useful,
+                )
+            }.onFailure {
+                Log.w("DEEP33", "Feedback deferred: " + it.javaClass.simpleName)
+            }
         }
     }
 
