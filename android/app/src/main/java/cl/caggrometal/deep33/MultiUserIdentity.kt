@@ -15,6 +15,8 @@ internal object MultiUserIdentity {
     private const val PROFILE_IDS = "profile_ids"
     private const val NAME_PREFIX = "profile_name_"
     private const val DEFAULT_NAME_PREFIX = "Usuario "
+    private const val LEGACY_TARGET_ID = "legacy_migration_target"
+    private const val LEGACY_MIGRATED = "legacy_migrated"
 
     private val lock = Any()
 
