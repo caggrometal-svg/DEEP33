@@ -174,20 +174,27 @@ function validUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
+class Deep33HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "Deep33HttpError";
+  }
+}
+
 async function requireAuthenticatedUser(req: Request): Promise<string> {
   if (!supabaseAdmin) throw new Error("DEEP33_AUTH_NOT_CONFIGURED");
   const authorization = req.headers.get("authorization")?.trim() || "";
   if (!authorization.startsWith("Bearer ")) {
-    throw new Response(JSON.stringify({ error: "DEEP33_AUTH_REQUIRED" }), {
-      status: 401,
-      headers: { ...cors, "Content-Type": "application/json; charset=utf-8" },
-    }) as unknown as Error;
+    throw new Deep33HttpError(401, "DEEP33_AUTH_REQUIRED");
   }
   const token = authorization.slice("Bearer ".length).trim();
-  if (!token) throw new Error("DEEP33_AUTH_REQUIRED");
+  if (!token) throw new Deep33HttpError(401, "DEEP33_AUTH_REQUIRED");
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   const userId = data.user?.id?.trim() || "";
-  if (error || !validUuid(userId)) throw new Error("DEEP33_AUTH_INVALID");
+  if (error || !validUuid(userId)) throw new Deep33HttpError(401, "DEEP33_AUTH_INVALID");
   return userId;
 }
 
@@ -2295,7 +2302,7 @@ Deno.serve(async (req) => {
     const claimedProfileId =
       req.headers.get("x-deep33-memory-profile-id")?.trim() || "";
     if (claimedProfileId && claimedProfileId !== ownerUserId) {
-      throw new Error("DEEP33_PROFILE_SCOPE_MISMATCH");
+      throw new Deep33HttpError(403, "DEEP33_PROFILE_SCOPE_MISMATCH");
     }
     const sessionId = scopedSession(ownerUserId, clientSessionId);
     const memoryProfileId = ownerUserId;
@@ -3068,6 +3075,9 @@ return json({
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof Deep33HttpError) {
+      return json({ status: "FAIL", error: error.message, path }, error.status);
+    }
     return json(
       {
         status: "FAIL",
