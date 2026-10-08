@@ -21,7 +21,7 @@ data class ChatSummary(
 )
 
 data class PendingTurn(
-    val profileId: String,
+    val profileId: String = "",
     val sessionId: String,
     val requestId: String,
     val idempotencyKey: String,
@@ -31,7 +31,7 @@ data class PendingTurn(
 )
 
 data class PendingMemorySync(
-    val profileId: String,
+    val profileId: String = "",
     val sessionId: String,
     val requestId: String,
     val personality: String,
@@ -301,7 +301,7 @@ class SessionStore(
     fun savePendingTurn(turn: PendingTurn) {
         synchronized(STORE_LOCK) {
             val json = JSONObject()
-                .put("profile_id", turn.profileId)
+                .put("profile_id", turn.profileId.ifBlank { profileId })
                 .put("session_id", turn.sessionId)
                 .put("request_id", turn.requestId)
                 .put("idempotency_key", turn.idempotencyKey)
@@ -361,7 +361,7 @@ class SessionStore(
             queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
                 json.put(
                     JSONObject()
-                        .put("profile_id", it.profileId)
+                        .put("profile_id", it.profileId.ifBlank { profileId })
                         .put("session_id", it.sessionId)
                         .put("request_id", it.requestId)
                         .put("personality", it.personality)
