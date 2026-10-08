@@ -102,9 +102,17 @@ jobs:
           disable-spellchecker: true
           working-directory: android
           script: |
-            set -euo pipefail
+            set -eu
+            trap 'adb logcat -d -v epoch -s DEEP33_PERF:I > deep33-performance.log 2>/dev/null || true' EXIT
             gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
             gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest,cl.caggrometal.deep33.Deep33LifecycleRecoveryTest,cl.caggrometal.deep33.SessionStorePersistenceTest,cl.caggrometal.deep33.SseTextParserTest --no-daemon
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: DEEP33-performance-instrumentation
+          path: android/deep33-performance.log
+          if-no-files-found: warn
 
   production:
     needs: [backend, android]
