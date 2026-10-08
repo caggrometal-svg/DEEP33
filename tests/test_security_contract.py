@@ -54,7 +54,8 @@ def test_deep33_auth_bootstrap_contract():
     source = (ROOT / "supabase/functions/deep33-auth/index.ts").read_text(encoding="utf-8")
     config = CONFIG
     assert "SUPABASE_SERVICE_ROLE_KEY" in source
-    assert '.schema("private").from("deep33_user_profiles")' in source
+    assert 'deep33_auth_profile_lookup' in source
+    assert 'deep33_auth_profile_bind' in source
     assert 'memory_profile_id' in source
     assert "[functions.deep33-auth]" in config
     assert "verify_jwt = false" in config
