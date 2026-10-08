@@ -2910,6 +2910,45 @@ async def memory_preferences(
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
 
+def _extract_stream_content(choice: dict[str, Any]) -> str:
+    for container_key in ("delta", "message"):
+        container = choice.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        value = container.get("content")
+        text = _normalize_stream_content_value(value)
+        if text:
+            return text
+    return _normalize_stream_content_value(choice.get("content")) or ""
+
+
+def _normalize_stream_content_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                item_type = str(item.get("type") or "").lower()
+                if item_type in {"", "text", "output_text"}:
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    elif isinstance(item.get("content"), str):
+                        parts.append(str(item["content"]))
+        return "".join(parts)
+    if isinstance(value, dict):
+        item_type = str(value.get("type") or "").lower()
+        if item_type in {"", "text", "output_text"}:
+            if isinstance(value.get("text"), str):
+                return str(value["text"])
+            if isinstance(value.get("content"), str):
+                return str(value["content"])
+    return ""
+
+
 async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
     text = raw.decode("utf-8", errors="ignore")
     assistant_parts: list[str] = []
@@ -2928,10 +2967,9 @@ async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
         except Exception:
             continue
         choices = event.get("choices")
-        if choices and isinstance(choices[0], dict):
-            delta = choices[0].get("delta") or {}
-            content = delta.get("content")
-            if isinstance(content, str):
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            content = _extract_stream_content(choices[0])
+            if content:
                 assistant_parts.append(content)
     return "".join(assistant_parts), saw_done
 
@@ -3039,14 +3077,17 @@ async def stream_gateway(
                         try:
                             frame_json = json.loads(frame[len(b"data:"):].strip())
                             for choice in frame_json.get("choices", []):
-                                delta = choice.get("delta") or {}
-                                content_value = delta.get("content")
-                                if isinstance(content_value, str):
+                                if not isinstance(choice, dict):
+                                    continue
+                                content_value = _extract_stream_content(choice)
+                                if content_value:
                                     assistant_parts.append(content_value)
                                     safe_delta = sanitize_stream_delta(content_value)
                                     if safe_delta != content_value:
-                                        delta["content"] = safe_delta
-                                        frame_changed = True
+                                        delta = choice.get("delta")
+                                        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                                            delta["content"] = safe_delta
+                                            frame_changed = True
                                     if safe_delta:
                                         has_visible_content = True
                             if frame_changed:
@@ -3090,13 +3131,15 @@ async def stream_gateway(
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
-    if saw_done and assistant_parts:
+    if assistant_parts:
         assistant_raw = "".join(assistant_parts)
     else:
         assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
         saw_done = saw_done or parsed_done
     assistant_text = sanitize_assistant_text(assistant_raw)
-    if not saw_done or not assistant_text:
+    # A clean provider close is valid even when [DONE] was omitted, provided
+    # actual assistant content was received.
+    if not assistant_text:
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
