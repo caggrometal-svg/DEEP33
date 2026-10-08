@@ -3053,6 +3053,26 @@ return json({
       });
     }
 
+    if (path === "/v1/feedback" && req.method === "POST") {
+      const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const responseHash = String(payload.response_hash ?? "").trim().toLowerCase();
+      const rating = String(payload.rating ?? "").trim();
+      if (!/^[0-9a-f]{64}$/.test(responseHash) || !["useful", "not_useful"].includes(rating)) {
+        throw new Deep33HttpError(400, "DEEP33_FEEDBACK_INVALID");
+      }
+      if (!supabaseAdmin) throw new Deep33HttpError(503, "DEEP33_FEEDBACK_UNAVAILABLE");
+
+      const { error } = await supabaseAdmin.from("deep33_feedback").insert({
+        user_id: ownerUserId,
+        session_id: sessionId,
+        response_hash: responseHash,
+        rating,
+        created_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+      return json({ ok: true, persisted: true });
+    }
+
     if (path === "/v1/web/search" && req.method === "GET") {
       await enforceEdgeRateLimit(ownerUserId, "web_search", 60);
       const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
