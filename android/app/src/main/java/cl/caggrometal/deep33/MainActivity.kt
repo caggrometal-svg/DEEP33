@@ -36,8 +36,10 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 private enum class ConnectionState { CONNECTING, ONLINE, OFFLINE }
@@ -1740,14 +1742,23 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                val health = Deep33Api.get("/health", store.sessionId)
-                val audit = Deep33Api.get("/v1/connectivity/audit", store.sessionId)
-                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
-                val upstream = audit.optJSONObject("upstream")
-                val inferencePass = inference.optString("status") == "PASS" &&
+                val checks = executor.invokeAll(
+                    listOf(
+                        Callable { runCatching { Deep33Api.getFast("/health", store.sessionId) }.getOrNull() },
+                        Callable { runCatching { Deep33Api.getFast("/v1/connectivity/audit", store.sessionId) }.getOrNull() },
+                        Callable { runCatching { Deep33Api.getFast("/v1/ai/inference-check", store.sessionId) }.getOrNull() },
+                    ),
+                    10_000L,
+                    TimeUnit.MILLISECONDS
+                )
+                val health = checks.getOrNull(0)?.getOrNull()
+                val audit = checks.getOrNull(1)?.getOrNull()
+                val inference = checks.getOrNull(2)?.getOrNull()
+                val upstream = audit?.optJSONObject("upstream")
+                val inferencePass = inference?.optString("status").orEmpty() == "PASS" &&
                     inference.optBoolean("text_ok", false)
-                val online = health.optString("status") == "PASS" &&
-                    audit.optString("status") == "PASS" &&
+                val online = health?.optString("status").orEmpty() == "PASS" &&
+                    audit?.optString("status").orEmpty() == "PASS" &&
                     audit.optString("edge") == "PASS" &&
                     audit.optString("internet") == "PASS" &&
                     upstream?.optBoolean("ready", false) == true &&
