@@ -36,6 +36,14 @@ class SupabaseAuthManager(
 
     fun storedUserId(): String? = prefs.getString(USER_ID, null)?.takeIf { it.isNotBlank() }
 
+    fun forceRefreshSession(): String? = synchronized(lock) {
+        val refresh = secret(REFRESH_TOKEN)
+        if (!refresh.isNullOrBlank() && refreshToken(refresh)) {
+            secret(ACCESS_TOKEN)?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
+        }
+        if (bootstrapSession()) secret(ACCESS_TOKEN) else null
+    }
+
     fun ensureSession(): String? = synchronized(lock) {
         val existing = secret(ACCESS_TOKEN)
         val expiresAt = prefs.getLong(EXPIRES_AT, 0L)
