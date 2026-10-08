@@ -2350,7 +2350,7 @@ async def prepare_messages(
     try:
         context = await memory.context(session_id, memory_profile_id=memory_profile_id)
         remote = extract_context_messages(context)
-        merged = merge_messages(remote, requested, limit=max_messages)
+        merged = merge_messages(remote, requested)
         merged_chars = 0
         bounded: list[dict[str, str]] = []
         for item in reversed(merged):
