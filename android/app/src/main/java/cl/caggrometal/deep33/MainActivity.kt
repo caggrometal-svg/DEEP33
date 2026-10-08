@@ -1237,6 +1237,32 @@ class MainActivity : Activity() {
             setMargins(dp(2), 0, dp(2), dp(10))
         })
 
+        val profileBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val activeProfile = MultiUserIdentity.currentProfile(this)
+        profileBody.addView(TextView(this).apply {
+            text = "PERFIL ACTIVO · " + activeProfile.displayName
+            textSize = 14f
+            setTextColor(Deep33Theme.TEXT)
+            setPadding(0, 0, 0, dp(8))
+        })
+        profileBody.addView(Button(this).apply {
+            text = "CAMBIAR / CREAR PERFIL"
+            isAllCaps = false
+            setTextColor(Deep33Theme.TEXT)
+            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+            setOnClickListener { showProfileManager() }
+            addPressFeedback(this)
+        })
+        box.addView(section(
+            "Usuario",
+            "Cada perfil mantiene sesión, historial y memoria remota separados.",
+            profileBody
+        ), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(2), 0, dp(2), dp(10))
+        })
+
         val sessionBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -1276,6 +1302,43 @@ class MainActivity : Activity() {
 
         scroll.addView(box)
         return scroll
+    }
+
+    private fun showProfileManager() {
+        if (generationActive) {
+            Toast.makeText(this, "Detén la generación antes de cambiar de usuario.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val profiles = MultiUserIdentity.listProfiles(this)
+        val labels = profiles.map { it.displayName }.toMutableList()
+        labels.add("＋ Nuevo perfil")
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Usuario DEEP33")
+            .setItems(labels.toTypedArray()) { dialog, which ->
+                if (which == labels.lastIndex) {
+                    val field = EditText(this).apply {
+                        hint = "Nombre del perfil"
+                        setSingleLine(true)
+                    }
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Nuevo perfil")
+                        .setView(field)
+                        .setNegativeButton("Cancelar", null)
+                        .setPositiveButton("Crear") { _, _ ->
+                            val profile = MultiUserIdentity.createProfile(this, field.text?.toString())
+                            MultiUserIdentity.switchProfile(this, profile.id)
+                            recreate()
+                        }
+                        .show()
+                } else {
+                    val selected = profiles[which]
+                    if (MultiUserIdentity.switchProfile(this, selected.id)) {
+                        recreate()
+                    }
+                }
+                dialog.dismiss()
+            }
+            .show()
     }
 
     private fun voicePanelOrNull(): LinearLayout? =
