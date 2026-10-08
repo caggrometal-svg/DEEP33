@@ -302,6 +302,7 @@ object Deep33Api {
                 var emitted = false
                 var requestBodyStarted = false
                 var sawDone = false
+                var sawStreamData = false
                 var eventType: String? = null
 
                 try {
