@@ -56,7 +56,7 @@ jobs:
           auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
             -X POST "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-auth" \
             -H "content-type: application/json" \
-            -d '{"action":"session","memory_profile_id":"ci-production-realtime"}')"
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"ci-production-realtime-${GITHUB_RUN_ID}\"}")"
           token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_CI_TOKEN=$token" >> "$GITHUB_ENV"
