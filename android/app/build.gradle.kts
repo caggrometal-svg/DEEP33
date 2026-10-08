@@ -42,7 +42,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -103,6 +108,11 @@ android {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
+        buildConfigField(
+            "String",
+            "DEEP33_AUTH_URL",
+            quoteBuildConfig("https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-auth")
+        )
     }
 
     compileOptions {

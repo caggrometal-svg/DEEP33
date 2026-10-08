@@ -33,6 +33,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONObject
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -194,6 +195,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
+        Deep33Api.configureAuthProfile(this, store.profileId)
         store.migrateNaturalVoiceDefault()
         conversation.addAll(store.loadMessages())
 
@@ -1598,9 +1600,18 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                val health = Deep33Api.get("/health", store.sessionId)
-                val audit = Deep33Api.get("/v1/connectivity/audit", store.sessionId)
-                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
+                val healthFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/health", store.sessionId)
+                }
+                val auditFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/v1/connectivity/audit", store.sessionId)
+                }
+                val inferenceFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/v1/ai/inference-check", store.sessionId)
+                }
+                val health = healthFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
+                val audit = auditFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
+                val inference = inferenceFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
                 val upstream = audit.optJSONObject("upstream")
                 val inferencePass = inference.optString("status") == "PASS" &&
                     inference.optBoolean("text_ok", false)
@@ -1664,10 +1675,25 @@ class MainActivity : Activity() {
 
     private fun isLocationAwareQuery(text: String): Boolean {
         val normalized = VoiceConversationPolicy.normalizeForComparison(text)
-        return Regex(
-            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|" +
+        val directLocal = Regex(
+            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas|" +
                 "ubicacion|donde estoy|mi ubicacion|cerca de mi|near me|nearby)\\b"
         ).containsMatchIn(normalized)
+        val naturalWeatherPhrase = Regex(
+            "(hara\\s+(mucho\\s+)?calor|que\\s+tan\\s+frio|como\\s+estara\\s+(el\\s+)?dia|como\\s+estara\\s+(hoy|manana))"
+        ).containsMatchIn(normalized)
+        return directLocal || naturalWeatherPhrase
+    }
+
+    private fun isWeatherSemanticQuery(text: String): Boolean {
+        val normalized = VoiceConversationPolicy.normalizeForComparison(text)
+        val direct = Regex(
+            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
+        ).containsMatchIn(normalized)
+        val natural = Regex(
+            "(hara\\s+(mucho\\s+)?calor|que\\s+tan\\s+frio|como\\s+estara\\s+(el\\s+)?dia|como\\s+estara\\s+(hoy|manana))"
+        ).containsMatchIn(normalized)
+        return direct || natural
     }
 
     private fun hasLocationPermission(): Boolean =
@@ -1702,11 +1728,7 @@ class MainActivity : Activity() {
             statusView.contentDescription = "Obteniendo ubicación GPS para esta consulta"
         }
 
-        val weatherQuery = VoiceConversationPolicy.normalizeForComparison(text).let {
-            Regex(
-                "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
-            ).containsMatchIn(it)
-        }
+        val weatherQuery = isWeatherSemanticQuery(text)
         Deep33LocationProvider.resolve(
             this,
             callback = { location ->
@@ -1715,7 +1737,7 @@ class MainActivity : Activity() {
                     if (location != null) {
                         Log.i(
                             "DEEP33_GPS",
-                            "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
+                            "GPS_LOCATION_READY label=${location.label.orEmpty()}"
                         )
                     } else {
                         Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
@@ -1723,7 +1745,8 @@ class MainActivity : Activity() {
                     sendMessageInternal(text, location)
                 }
             },
-            includeLabel = !weatherQuery
+            includeLabel = true,
+            shareCoordinatesWithInference = weatherQuery
         )
     }
 
@@ -1791,7 +1814,8 @@ class MainActivity : Activity() {
                 requestId = requestId,
                 idempotencyKey = idempotencyKey,
                 personality = requestPersonality.key,
-                payloadJson = payload.toString()
+                payloadJson = payload.toString(),
+                memoryProfileId = store.profileId
             )
         )
         lastRenderedGenerationOutput = ""
@@ -2016,7 +2040,7 @@ class MainActivity : Activity() {
         generationActive = true
         activeRequestId = requestId
         activeIdempotencyKey = idempotencyKey
-        Deep33GenerationService.start(this, requestId)
+        Deep33GenerationService.start(this, requestId, store.profileId)
         startGenerationMonitor()
     }
 
@@ -2032,7 +2056,7 @@ class MainActivity : Activity() {
             sessionId = store.sessionId,
             personality = personality,
         )
-        Deep33GenerationService.cancel(this, requestId)
+        Deep33GenerationService.cancel(this, requestId, store.profileId)
 
         generationActive = false
         activeRequestId = null
@@ -2543,25 +2567,36 @@ class MainActivity : Activity() {
             }
         )
 
-        val likeButton = actionButton(
+        var likeButton: ImageButton? = null
+        var dislikeButton: ImageButton? = null
+
+        likeButton = actionButton(
             R.drawable.ic_action_like,
             "Respuesta útil"
         ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
+            submitResponseFeedback(
+                content = content,
+                rating = "useful",
+                selectedButton = button,
+                otherButton = dislikeButton ?: button,
+            )
             dislikeButtonTint(normalTint, likeButton = button, other = null)
         }
-        row.addView(likeButton)
+        row.addView(likeButton ?: error("like button not created"))
 
-        val dislikeButton = actionButton(
+        dislikeButton = actionButton(
             R.drawable.ic_action_dislike,
             "Respuesta no útil"
         ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
+            submitResponseFeedback(
+                content = content,
+                rating = "not_useful",
+                selectedButton = button,
+                otherButton = likeButton ?: button,
+            )
             dislikeButtonTint(normalTint, likeButton = null, other = button)
         }
-        row.addView(dislikeButton)
+        row.addView(dislikeButton ?: error("dislike button not created"))
 
         // One final compact action, matching the common response-action pattern.
         row.addView(
@@ -2580,6 +2615,41 @@ class MainActivity : Activity() {
                 dp(40)
             )
         )
+    }
+
+    private fun submitResponseFeedback(
+        content: String,
+        rating: String,
+        selectedButton: ImageButton,
+        otherButton: ImageButton,
+    ) {
+        selectedButton.isEnabled = false
+        otherButton.isEnabled = false
+        val expectedProfileId = store.profileId
+        executor.execute {
+            val result = runCatching {
+                Deep33Api.submitFeedback(
+                    sessionId = store.sessionId,
+                    rating = rating,
+                    responseText = content,
+                    memoryProfileId = expectedProfileId,
+                )
+            }
+            runOnUiThread {
+                if (store.profileId != expectedProfileId) return@runOnUiThread
+                if (result.isSuccess) {
+                    selectedButton.imageTintList =
+                        android.content.res.ColorStateList.valueOf(
+                            Personality.fromKey(store.personality).accent
+                        )
+                } else {
+                    selectedButton.imageTintList =
+                        android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(120, 120, 128))
+                    selectedButton.isEnabled = true
+                    otherButton.isEnabled = true
+                }
+            }
+        }
     }
 
     private fun dislikeButtonTint(

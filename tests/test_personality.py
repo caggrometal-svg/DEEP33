@@ -49,7 +49,7 @@ def test_prepare_messages_keeps_current_personality_as_final_system_instruction(
     class FakeMemory:
         enabled = True
 
-        async def context(self, session_id: str, memory_profile_id=None) -> dict:
+        async def context(self, session_id: str, memory_profile_id=None, owner_user_id=None) -> dict:
             return {
                 "session": {"session_id": session_id, "personality": "NEUTRO", "preferences": {}},
                 "messages": [],
@@ -117,7 +117,7 @@ def test_chat_endpoint_returns_active_personality_ack(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(main, "generate", fake_generate)
-    client = TestClient(main.app)
+    client = TestClient(main.app, headers={"Authorization": "Bearer test-client-token"})
 
     response = client.post(
         "/v1/chat",

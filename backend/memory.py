@@ -109,6 +109,7 @@ class MemoryClient:
         idempotency_key: str | None = None,
         request_hash: str | None = None,
         memory_profile_id: str | None = None,
+        owner_user_id: str | None = None,
         **payload: Any,
     ) -> dict:
         if not self.enabled:
@@ -121,11 +122,14 @@ class MemoryClient:
             body["idempotency_key"] = idempotency_key
         if request_hash:
             body["request_hash"] = request_hash
+        if owner_user_id:
+            body["owner_user_id"] = owner_user_id
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "apikey": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "x-deep33-internal-token": self.api_key,
         }
 
         for attempt in range(self.max_retries + 1):
@@ -176,14 +180,14 @@ class MemoryClient:
     async def ping(self) -> dict:
         return await self._call("ping", "deep33-health")
 
-    async def context(self, session_id: str, memory_profile_id: str | None = None) -> dict:
+    async def context(self, session_id: str, memory_profile_id: str | None = None, owner_user_id: str | None = None) -> dict:
         key = (session_id, memory_profile_id or "")
         now = time.monotonic()
         cached = self._context_cache.get(key)
         if cached and cached[0] > now:
             return json.loads(json.dumps(cached[1], ensure_ascii=False))
 
-        result = await self._call("context", session_id, memory_profile_id=memory_profile_id)
+        result = await self._call("context", session_id, memory_profile_id=memory_profile_id, owner_user_id=owner_user_id)
         self._context_cache[key] = (
             time.monotonic() + self.context_cache_ttl_seconds,
             json.loads(json.dumps(result, ensure_ascii=False)),
@@ -197,6 +201,7 @@ class MemoryClient:
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
         memory_profile_id: str | None = None,
+        owner_user_id: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"messages": messages[-50:]}
         if personality:
@@ -210,12 +215,13 @@ class MemoryClient:
             idempotency_key=f"memory:sync:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
         self._context_cache.pop((session_id, memory_profile_id or ""), None)
         return result
 
-    async def remember(self, session_id: str, kind: str, content: str, memory_profile_id: str | None = None) -> dict:
+    async def remember(self, session_id: str, kind: str, content: str, memory_profile_id: str | None = None, owner_user_id: str | None = None) -> dict:
         payload = {"kind": kind, "content": content}
         request_hash = self._request_hash("remember", session_id, payload)
         return await self._call(
@@ -224,6 +230,7 @@ class MemoryClient:
             idempotency_key=f"memory:remember:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
 
@@ -233,6 +240,7 @@ class MemoryClient:
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
         memory_profile_id: str | None = None,
+        owner_user_id: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {}
         if personality:
@@ -246,6 +254,7 @@ class MemoryClient:
             idempotency_key=f"memory:preferences:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
 

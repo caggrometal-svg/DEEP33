@@ -23,6 +23,7 @@ class Deep33GenerationService : Service() {
     private val userCancelled = AtomicBoolean(false)
     @Volatile private var stoppingBySystem = false
     @Volatile private var runningRequestId: String? = null
+    @Volatile private var runningProfileId: String? = null
     @Volatile private var backgroundMode = false
     private var generationWakeLock: PowerManager.WakeLock? = null
     private var connectivityManager: ConnectivityManager? = null
@@ -72,7 +73,8 @@ class Deep33GenerationService : Service() {
 
             ACTION_START -> {
                 val requestedId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
-                if (requestedId.isBlank()) {
+                val requestedProfileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
+                if (requestedId.isBlank() || requestedProfileId.isBlank()) {
                     stopSelfResult(startId)
                     return START_REDELIVER_INTENT
                 }
@@ -90,6 +92,8 @@ class Deep33GenerationService : Service() {
                 // Recover lifecycle state after Android recreates the service process.
                 backgroundMode = SessionStore(this).appBackgrounded
                 runningRequestId = requestedId
+                runningProfileId = requestedProfileId
+                Deep33Api.configureAuthProfile(this, requestedProfileId)
                 acquireGenerationWakeLock()
                 executor.execute { runGeneration(requestedId) }
                 return START_REDELIVER_INTENT
@@ -101,7 +105,7 @@ class Deep33GenerationService : Service() {
     }
 
     private fun runGeneration(requestId: String) {
-        val store = SessionStore(this)
+        val store = SessionStore(this, profileIdOverride = runningProfileId)
         val pending = store.loadPendingTurn()
         if (pending == null || pending.requestId != requestId) {
             runningRequestId = null
@@ -125,6 +129,7 @@ class Deep33GenerationService : Service() {
             return
         }
 
+        Deep33Api.configureAuthProfile(this, pending.memoryProfileId)
         val personality = Personality.fromKey(pending.personality)
         val generationDeadline = android.os.SystemClock.elapsedRealtime() + GENERATION_DEADLINE_MS
         var deferredMemorySync: PendingMemorySync? = null
@@ -260,6 +265,7 @@ class Deep33GenerationService : Service() {
             }
         } finally {
             runningRequestId = null
+            runningProfileId = null
             releaseGenerationWakeLock()
             deferredMemorySync?.let { enqueueMemorySync(it) }
             stopSelf()
@@ -277,7 +283,10 @@ class Deep33GenerationService : Service() {
                     requestId = pending.requestId,
                     memoryProfileId = pending.memoryProfileId
                 )
-                SessionStore(applicationContext).clearPendingMemorySync(pending.requestId)
+                SessionStore(
+                    applicationContext,
+                    profileIdOverride = pending.memoryProfileId
+                ).clearPendingMemorySync(pending.requestId)
             } catch (_: Exception) {
                 // The durable queue remains available for the next Activity/service retry.
             }
@@ -311,7 +320,7 @@ class Deep33GenerationService : Service() {
                 requestId = requestId,
                 sessionId = pending.sessionId,
                 personality = personality.key,
-                partialOutput = checkpoint.takeLast(CHECKPOINT_TAIL_CHARS),
+                partialOutput = checkpoint.takeLast(CHECKPOINT_TAIL_CHARS).toString(),
                 durable = false
             )
             lastCheckpointAt = now
@@ -655,18 +664,21 @@ class Deep33GenerationService : Service() {
         private const val ACTION_BACKGROUND = "cl.caggrometal.deep33.action.APP_BACKGROUND"
         private const val ACTION_FOREGROUND = "cl.caggrometal.deep33.action.APP_FOREGROUND"
         private const val EXTRA_REQUEST_ID = "request_id"
+        private const val EXTRA_PROFILE_ID = "profile_id"
 
-        fun start(context: Context, requestId: String) {
+        fun start(context: Context, requestId: String, profileId: String) {
             val intent = Intent(context, Deep33GenerationService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_REQUEST_ID, requestId)
+                .putExtra(EXTRA_PROFILE_ID, profileId)
             context.startForegroundService(intent)
         }
 
-        fun cancel(context: Context, requestId: String?) {
+        fun cancel(context: Context, requestId: String?, profileId: String? = null) {
             val intent = Intent(context, Deep33GenerationService::class.java)
                 .setAction(ACTION_CANCEL)
                 .putExtra(EXTRA_REQUEST_ID, requestId)
+                .putExtra(EXTRA_PROFILE_ID, profileId)
             context.startService(intent)
         }
 

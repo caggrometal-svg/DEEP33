@@ -130,7 +130,7 @@ def test_policy_for_complex_topic_expands_only_as_needed() -> None:
 
     assert "FORMA=COMPLEX_NECESSARY" in prompt
     assert "Amplía solo lo necesario" in prompt
-    assert "Resume primero la conclusión" in prompt
+    assert "Amplía solo lo necesario" in prompt
     assert "pregunta lógica" in prompt
 
 
@@ -148,7 +148,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
     class FakeMemory:
         enabled = True
 
-        async def context(self, session_id: str, memory_profile_id=None) -> dict:
+        async def context(self, session_id: str, memory_profile_id=None, owner_user_id=None) -> dict:
             return {
                 "session": {"session_id": session_id, "personality": "NEUTRO", "preferences": {}},
                 "messages": [

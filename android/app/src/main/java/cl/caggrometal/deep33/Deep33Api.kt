@@ -1,5 +1,6 @@
 package cl.caggrometal.deep33
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -55,6 +56,23 @@ object Deep33FailoverPolicy {
 }
 
 object Deep33Api {
+    @Volatile private var authContext: Context? = null
+    @Volatile private var authProfileId: String? = null
+
+    fun configureAuthProfile(context: Context, profileId: String) {
+        authContext = context.applicationContext
+        authProfileId = profileId.trim()
+        Deep33Auth.configure(context)
+    }
+
+    private fun authHeaders(profileId: String?): Pair<String?, String?> {
+        val context = authContext ?: return null to null
+        val localProfileId = profileId?.trim()?.takeIf { it.isNotBlank() } ?: authProfileId
+        if (localProfileId.isNullOrBlank()) return null to null
+        val session = Deep33Auth.ensureSession(context, localProfileId)
+        return session.accessToken to session.memoryProfileId
+    }
+
     private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val MEMORY_SYNC_TIMEOUT_MS = 8_000L
     private const val CONNECT_TIMEOUT_MS = 15_000
@@ -209,6 +227,34 @@ object Deep33Api {
             memoryProfileId = memoryProfileId
         )
 
+    fun submitFeedback(
+        sessionId: String,
+        rating: String,
+        responseText: String,
+        memoryProfileId: String? = null,
+    ): JSONObject {
+        val normalizedRating = rating.trim().lowercase()
+        require(normalizedRating == "useful" || normalizedRating == "not_useful") {
+            "Invalid DEEP33 feedback rating"
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(responseText.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+        return request(
+            "POST",
+            "/v1/feedback",
+            JSONObject()
+                .put("rating", normalizedRating)
+                .put("response_hash", digest),
+            sessionId,
+            idempotencyKey = "feedback:" + digest + ":" + normalizedRating,
+            endpointOverride = listOf(BuildConfig.DEEP33_PRIMARY_URL),
+            memoryProfileId = memoryProfileId,
+            timeoutMs = 5_000L,
+        )
+    }
+
     fun setPreferences(
         sessionId: String,
         personality: String,
@@ -256,6 +302,7 @@ object Deep33Api {
                 var emitted = false
                 var requestBodyStarted = false
                 var sawDone = false
+                var sawStreamData = false
                 var eventType: String? = null
 
                 try {
@@ -271,7 +318,10 @@ object Deep33Api {
                     connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
+                    val (accessToken, remoteMemoryProfileId) = authHeaders(memoryProfileId)
+                        ?: throw Deep33ApiException(Deep33ApiException.Kind.AUTH)
+                    connection.setRequestProperty("Authorization", "Bearer " + accessToken)
+                    connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", remoteMemoryProfileId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
@@ -327,6 +377,7 @@ object Deep33Api {
                                 sawDone = true
                                 return@useLines
                             }
+                            sawStreamData = true
                             val chunk = SseTextParser.extractText(data).orEmpty()
                             if (chunk.isNotEmpty()) {
                                 emitted = true
@@ -335,7 +386,11 @@ object Deep33Api {
                             }
                         }
                     }
-                    if (!sawDone) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
+                    // A clean TCP/HTTP close is valid when the server omitted [DONE].
+                    // A stream with no data at all remains invalid.
+                    if (!sawDone && !sawStreamData && output.isEmpty()) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
@@ -468,9 +523,10 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) {
-                        connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
-                    }
+                    val (accessToken, remoteMemoryProfileId) = authHeaders(memoryProfileId)
+                        ?: throw Deep33ApiException(Deep33ApiException.Kind.AUTH)
+                    connection.setRequestProperty("Authorization", "Bearer " + accessToken)
+                    connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", remoteMemoryProfileId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
@@ -557,19 +613,196 @@ object Deep33Api {
 
 object SseTextParser {
     fun extractText(data: String): String? {
-        return try {
-            val json = JSONObject(data)
-            val choices = json.optJSONArray("choices") ?: return null
-            val first = choices.optJSONObject(0) ?: return null
+        val choices = extractJsonValueForKey(data, "choices")?.value ?: return null
+        val firstChoice = extractFirstObject(choices) ?: return null
 
-            val delta = first.optJSONObject("delta")
-            val deltaContent = delta?.optString("content").orEmpty()
-            if (deltaContent.isNotEmpty()) return deltaContent
-
-            val messageContent = first.optJSONObject("message")?.optString("content").orEmpty()
-            messageContent.ifEmpty { null }
-        } catch (_: Exception) {
-            null
+        for (key in listOf("delta", "message")) {
+            val container = extractJsonValueForKey(firstChoice, key)?.value
+            if (!container.isNullOrBlank() && container.trim().startsWith("{")) {
+                extractTextFromContainer(container)?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
         }
+        return extractTextFromContainer(firstChoice)
+    }
+
+    private fun extractTextFromContainer(jsonObject: String): String? {
+        val content = extractJsonValueForKey(jsonObject, "content")?.value ?: return null
+        return extractContentValue(content)
+    }
+
+    private fun extractContentValue(value: String): String? {
+        val trimmed = value.trim()
+        return when {
+            trimmed.startsWith(""") -> parseJsonString(trimmed).first
+            trimmed.startsWith("[") -> {
+                val out = StringBuilder()
+                for (item in splitTopLevelArray(trimmed)) {
+                    val piece = item.trim()
+                    if (piece.startsWith(""")) {
+                        out.append(parseJsonString(piece).first)
+                    } else if (piece.startsWith("{")) {
+                        val type = extractJsonStringForKey(piece, "type").orEmpty().lowercase()
+                        if (type.isBlank() || type == "text" || type == "output_text") {
+                            val text = extractJsonValueForKey(piece, "text")?.value
+                                ?.let { parseJsonString(it).first }
+                                ?: extractJsonValueForKey(piece, "content")?.value
+                                    ?.let { extractContentValue(it) }
+                            if (!text.isNullOrEmpty()) out.append(text)
+                        }
+                    }
+                }
+                out.toString().takeIf { it.isNotEmpty() }
+            }
+            trimmed.startsWith("{") -> {
+                val type = extractJsonStringForKey(trimmed, "type").orEmpty().lowercase()
+                if (type.isBlank() || type == "text" || type == "output_text") {
+                    extractJsonValueForKey(trimmed, "text")?.value
+                        ?.let { parseJsonString(it).first }
+                        ?: extractJsonValueForKey(trimmed, "content")?.value
+                            ?.let { extractContentValue(it) }
+                } else null
+            }
+            else -> null
+        }
+    }
+
+    private data class JsonValue(val value: String, val endIndex: Int)
+
+    private fun extractJsonValueForKey(json: String, key: String): JsonValue? {
+        val keyPattern = """ + key + """
+        var index = 0
+        while (index < json.length) {
+            val keyIndex = json.indexOf(keyPattern, index)
+            if (keyIndex < 0) return null
+            if (keyIndex > 0 && json[keyIndex - 1] == '\\') {
+                index = keyIndex + keyPattern.length
+                continue
+            }
+            var colon = keyIndex + keyPattern.length
+            while (colon < json.length && json[colon].isWhitespace()) colon++
+            if (colon >= json.length || json[colon] != ':') {
+                index = keyIndex + keyPattern.length
+                continue
+            }
+            var valueStart = colon + 1
+            while (valueStart < json.length && json[valueStart].isWhitespace()) valueStart++
+            if (valueStart >= json.length) return null
+            return readJsonValue(json, valueStart)
+        }
+        return null
+    }
+
+    private fun readJsonValue(json: String, start: Int): JsonValue? {
+        return when (json[start]) {
+            '"' -> {
+                val parsed = parseJsonString(json.substring(start))
+                JsonValue(json.substring(start, start + parsed.second), start + parsed.second)
+            }
+            '{', '[' -> {
+                val end = findMatchingJsonContainer(json, start)
+                if (end < 0) null else JsonValue(json.substring(start, end + 1), end + 1)
+            }
+            else -> {
+                var end = start
+                while (end < json.length && json[end] !in ",}]\n\r") end++
+                JsonValue(json.substring(start, end).trim(), end)
+            }
+        }
+    }
+
+    private fun findMatchingJsonContainer(json: String, start: Int): Int {
+        val open = json[start]
+        val close = if (open == '{') '}' else ']'
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in start until json.length) {
+            val ch = json[i]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') inString = false
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                open -> depth++
+                close -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return -1
+    }
+
+    private fun extractFirstObject(arrayJson: String): String? {
+        val trimmed = arrayJson.trim()
+        if (!trimmed.startsWith("[")) return null
+        val start = trimmed.indexOf('{')
+        if (start < 0) return null
+        val end = findMatchingJsonContainer(trimmed, start)
+        return if (end >= 0) trimmed.substring(start, end + 1) else null
+    }
+
+    private fun splitTopLevelArray(arrayJson: String): List<String> {
+        val trimmed = arrayJson.trim()
+        if (trimmed.length < 2 || trimmed.first() != '[' || trimmed.last() != ']') return emptyList()
+        val result = mutableListOf<String>()
+        var start = 1
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in 1 until trimmed.lastIndex) {
+            val ch = trimmed[i]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\') escaped = true
+                else if (ch == '"') inString = false
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                '[', '{' -> depth++
+                ']', '}' -> depth--
+                ',' -> if (depth == 0) {
+                    result += trimmed.substring(start, i)
+                    start = i + 1
+                }
+            }
+        }
+        if (start < trimmed.lastIndex) result += trimmed.substring(start, trimmed.lastIndex)
+        return result
+    }
+
+    private fun extractJsonStringForKey(json: String, key: String): String? =
+        extractJsonValueForKey(json, key)?.value?.trim()?.let { parseJsonString(it).first }
+
+    private fun parseJsonString(value: String): Pair<String, Int> {
+        if (value.isEmpty() || value[0] != '"') return "" to 0
+        val out = StringBuilder()
+        var i = 1
+        while (i < value.length) {
+            val ch = value[i]
+            if (ch == '"') return out.toString() to (i + 1)
+            if (ch == '\\' && i + 1 < value.length) {
+                when (val next = value[++i]) {
+                    '"', '\\', '/' -> out.append(next)
+                    'b' -> out.append('\b')
+                    'f' -> out.append('\u000C')
+                    'n' -> out.append('\n')
+                    'r' -> out.append('\r')
+                    't' -> out.append('\t')
+                    'u' -> if (i + 4 < value.length) {
+                        val hex = value.substring(i + 1, i + 5)
+                        hex.toIntOrNull(16)?.let(out::append)
+                        i += 4
+                    }
+                    else -> out.append(next)
+                }
+            } else out.append(ch)
+            i++
+        }
+        return out.toString() to value.length
     }
 }

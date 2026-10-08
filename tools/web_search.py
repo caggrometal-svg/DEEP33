@@ -464,7 +464,9 @@ async def search_web(
     )
     _SEARCH_INFLIGHT[cache_key] = task
     try:
-        result = await task
+        # Hard outer deadline: provider-level retries/fallbacks can never make
+        # a web-search request exceed the user-facing latency budget indefinitely.
+        result = await asyncio.wait_for(task, timeout=timeout_seconds + 0.75)
         result = {
             **result,
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),

@@ -37,6 +37,7 @@ function normalizePath(pathname: string) {
 function headerSubset(req: Request) {
   const headers = new Headers();
   for (const name of [
+    "authorization",
     "content-type",
     "accept",
     "x-deep33-session-id",
@@ -56,7 +57,7 @@ async function fetchUpstream(
   sessionId = "deep33-edge",
 ) {
   const headers = new Headers(init.headers || {});
-  headers.delete("Authorization");
+  // Preserve the caller JWT so the upstream backend can enforce the same identity.
   headers.delete("apikey");
   headers.delete("x-client-info");
   if (!headers.has("x-deep33-session-id")) {
@@ -994,7 +995,7 @@ async function persistDeep33SelfName(
   await memoryCall("remember", sessionId, {
     kind: "context",
     content: DEEP33_SELF_NAME_MEMORY_PREFIX + " " + name,
-    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}),
+    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}, ownerUserId),
   });
 }
 
@@ -1217,6 +1218,7 @@ async function memoryCall(
   action: string,
   sessionId: string,
   payload: Record<string, unknown> = {},
+  ownerUserId?: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   if (!isSecureHttpsUrl(MEMORY_FUNCTION_URL) || !SUPABASE_SECRET_KEY) {
     throw new Error("DEEP33_MEMORY_EDGE_NOT_CONFIGURED");
@@ -1228,6 +1230,7 @@ async function memoryCall(
     action,
     session_id: sessionId,
     ...payload,
+    ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
   };
 
   if (needsIdempotency) {
@@ -1253,6 +1256,25 @@ async function memoryCall(
     throw new Error("DEEP33_MEMORY_HTTP_" + response.status);
   }
   return { status: response.status, body };
+}
+
+function verifiedJwtUserId(req: Request): string {
+  const raw = req.headers.get("authorization")?.trim() ?? "";
+  if (!raw.startsWith("Bearer ")) throw new Error("AUTH_REQUIRED");
+  const token = raw.slice(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("AUTH_INVALID");
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    const sub = String(payload.sub ?? "").trim();
+    const exp = Number(payload.exp ?? 0);
+    if (!/^[0-9a-fA-F-]{36}$/.test(sub) || exp <= Math.floor(Date.now() / 1000)) {
+      throw new Error("AUTH_INVALID");
+    }
+    return sub;
+  } catch {
+    throw new Error("AUTH_INVALID");
+  }
 }
 
 function hybridStatus() {
@@ -1634,13 +1656,14 @@ async function handleMemoryRequest(
   path: string,
   sessionId: string,
   memoryProfileId?: string,
+  ownerUserId?: string,
 ): Promise<Response> {
   const profileScope = memoryProfileId?.trim()
     ? { memory_profile_id: memoryProfileId.trim().slice(0, 128) }
     : {};
 
   if (path === "/v1/memory/context" && req.method === "GET") {
-    const result = await memoryCall("context", sessionId, profileScope);
+    const result = await memoryCall("context", sessionId, profileScope, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1650,7 +1673,7 @@ async function handleMemoryRequest(
       kind: payload.kind,
       content: payload.content,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1660,7 +1683,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1671,7 +1694,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -2104,6 +2127,7 @@ Deno.serve(async (req) => {
     req.headers.get("x-deep33-memory-profile-id")?.trim() || undefined;
 
   try {
+    const authUserId = verifiedJwtUserId(req);
     if (path === "/v1/ai/edge-status" && req.method === "GET") {
       const providers = edgeProviders();
       return json({
@@ -2145,7 +2169,7 @@ Deno.serve(async (req) => {
       path.startsWith("/v1/memory/") &&
       ["GET", "POST", "PUT"].includes(req.method)
     ) {
-      return await handleMemoryRequest(req, path, sessionId, memoryProfileId);
+      return await handleMemoryRequest(req, path, sessionId, memoryProfileId, authUserId);
     }
 
     if (path === "/v1/connectivity/audit" && req.method === "GET") {
@@ -2356,7 +2380,7 @@ Deno.serve(async (req) => {
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: activePersonality,
                 preferences: payload.preferences,
-              }).catch(() => {
+              }, ownerUserId).catch(() => {
                 console.warn(JSON.stringify({
                   event: "edge_memory_sync_degraded",
                   request_id: requestId,
@@ -2656,7 +2680,7 @@ Deno.serve(async (req) => {
                   messages: [...messages, { role: "assistant", content: responseText }],
                   personality: payload.personality,
                   preferences: payload.preferences,
-                }),
+                }, ownerUserId),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
               ]);
               memoryPersisted = true;
@@ -2752,7 +2776,7 @@ return json({
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: payload.personality,
                 preferences: payload.preferences,
-              }),
+              }, ownerUserId),
               new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
             ]);
             memoryPersisted = true;

@@ -325,6 +325,7 @@ async def persist_deep33_self_name(
     session_id: str,
     self_name: str | None,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     if not self_name or not memory.enabled:
         return
@@ -335,6 +336,7 @@ async def persist_deep33_self_name(
             "context",
             content,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
         )
         logger.info("deep33_self_name_persisted session_id=%s name=%s", session_id, self_name)
     except MemoryUnavailableError as exc:
@@ -419,12 +421,98 @@ def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> boo
 def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     shape = conversation_response_shape(messages)
     if shape == "SIMPLE_DIRECT":
-        return 6, 5000, "FAST"
+        return len(messages), 6000, "FAST"
     if shape == "EXPLICIT_DEPTH":
-        return 24, 18000, "DEEP"
+        return len(messages), 24000, "DEEP"
     if shape == "COMPLEX_NECESSARY":
-        return 16, 12000, "BALANCED"
-    return 12, 8000, "BALANCED"
+        return len(messages), 14000, "BALANCED"
+    return len(messages), 9000, "BALANCED"
+
+
+def adaptive_context_budget(messages: list[dict[str, Any]], profile: str) -> int:
+    """
+    Estimate the usable input window dynamically instead of truncating by message count.
+    The ceiling remains configurable to protect model context, but short conversations are
+    passed through in full.
+    """
+    normalized = str(profile or "BALANCED").upper()
+    minimums = {"FAST": 6000, "BALANCED": 9000, "DEEP": 14000}
+    ceilings = {"FAST": 24000, "BALANCED": 48000, "DEEP": 96000}
+    minimum = minimums.get(normalized, 9000)
+    ceiling = ceilings.get(normalized, 48000)
+    configured = max(6000, int(os.getenv("DEEP33_CONTEXT_MAX_CHARS", "48000")))
+    ceiling = min(ceiling, configured)
+    total_chars = sum(len(str(item.get("content", ""))) for item in messages)
+    growth = max(minimum, int(total_chars * 0.72))
+    return min(ceiling, growth)
+
+
+_CONTINUITY_TERMS = re.compile(
+    r"\b(memoria|recuerda|recordar|mi nombre|mi proyecto|preferencia|preferencias|"
+    r"importante|siempre|nunca|desde ahora|a partir de ahora|decision|decisión)\b",
+    re.IGNORECASE,
+)
+
+
+def compact_context_messages(
+    messages: list[dict[str, Any]],
+    budget_chars: int,
+) -> tuple[list[dict[str, str]], str]:
+    if not messages:
+        return [], ""
+    total = sum(len(str(item.get("content", ""))) for item in messages)
+    if total <= budget_chars:
+        return [dict(item) for item in messages], ""
+
+    latest_user = max(
+        (i for i, item in enumerate(messages) if item.get("role") == "user"),
+        default=len(messages) - 1,
+    )
+    critical_indices = [
+        i for i, item in enumerate(messages[:latest_user])
+        if item.get("role") == "user" and _CONTINUITY_TERMS.search(str(item.get("content", "")))
+    ]
+
+    keep: set[int] = {latest_user}
+    used = len(str(messages[latest_user].get("content", "")))
+    # Preserve critical continuity messages first, then fill remaining budget from newest history.
+    for i in reversed(critical_indices):
+        size = len(str(messages[i].get("content", "")))
+        if used + size <= budget_chars:
+            keep.add(i)
+            used += size
+
+    for i in range(len(messages) - 1, -1, -1):
+        if i in keep:
+            continue
+        size = len(str(messages[i].get("content", "")))
+        if used + size > budget_chars:
+            continue
+        keep.add(i)
+        used += size
+        if used >= budget_chars:
+            break
+
+    selected = [dict(messages[i]) for i in sorted(keep)]
+    omitted = [messages[i] for i in range(len(messages)) if i not in keep]
+    compact_lines: list[str] = []
+    for item in omitted:
+        text = re.sub(r"\s+", " ", str(item.get("content", ""))).strip()
+        if not text:
+            continue
+        prefix = "Usuario" if item.get("role") == "user" else "DEEP33"
+        compact_lines.append(f"{prefix}: {text[:220]}")
+        if sum(len(x) for x in compact_lines) >= 1800:
+            break
+
+    summary = ""
+    if compact_lines:
+        summary = (
+            "CONTINUIDAD COMPACTADA. Se omitió parte del historial por límite de contexto; "
+            "estos son extractos para conservar referencias antiguas necesarias:\n" +
+            "\n".join(compact_lines)
+        )
+    return selected, summary
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
@@ -729,6 +817,11 @@ def request_id_from_request(request: Request) -> str:
     return header[:128] if header else str(uuid.uuid4())
 
 
+def auth_user_id_from_request(request: Request) -> str | None:
+    value = getattr(request.state, "auth_user_id", "").strip()
+    return value[:64] if value else None
+
+
 def idempotency_key_from_request(request: Request, request_id: str) -> str:
     value = request.headers.get("X-Idempotency-Key", "").strip()
     return value[:256] if value else request_id
@@ -762,26 +855,98 @@ def resolve_personality_request(request: ChatRequest, http_request: Request) -> 
     return request.model_copy(update={"personality": selected})
 
 
-def client_key(request: Request, session_id: str) -> str:
-    ip = request.client.host if request.client else "unknown"
-    return f"{ip}:{session_id[:64]}"
+_AUTH_CACHE: dict[str, tuple[float, str]] = {}
 
 
-def enforce_client_controls(request: Request, session_id: str) -> None:
-    if CLIENT_AUTH_TOKEN:
-        supplied = request.headers.get("Authorization", "")
-        if supplied != f"Bearer {CLIENT_AUTH_TOKEN}":
-            raise HTTPException(status_code=401, detail="DEEP33_CLIENT_AUTH_REQUIRED")
+async def authenticated_user_id(request: Request) -> str:
+    supplied = request.headers.get("Authorization", "").strip()
+    if not supplied.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
 
+    if CLIENT_AUTH_TOKEN and supplied == f"Bearer {CLIENT_AUTH_TOKEN}":
+        return "internal-client"
+
+    token = supplied[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    cached = _AUTH_CACHE.get(token_hash)
     now = time.monotonic()
-    key = client_key(request, session_id)
+    if cached and now - cached[0] < 60.0:
+        return cached[1]
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key = os.getenv(
+        "SUPABASE_SERVICE_ROLE_KEY",
+        os.getenv("SUPABASE_ANON_KEY", ""),
+    ).strip()
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_PROVIDER_NOT_CONFIGURED")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(3.0, connect=1.5),
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(
+                f"{supabase_url}/auth/v1/user",
+                headers={
+                    "Authorization": supplied,
+                    "apikey": service_key,
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_PROVIDER_UNAVAILABLE") from exc
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+
+    try:
+        user = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_RESPONSE_INVALID") from exc
+
+    user_id = str(user.get("id") or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", user_id):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+
+    _AUTH_CACHE[token_hash] = (now, user_id)
+    if len(_AUTH_CACHE) > 4096:
+        expired = [key for key, (seen, _) in _AUTH_CACHE.items() if now - seen >= 60.0]
+        for key in expired[:2048]:
+            _AUTH_CACHE.pop(key, None)
+    return user_id
+
+
+def client_key(identity: str, session_id: str) -> str:
+    return f"{identity[:80]}:{session_id[:64]}"
+
+
+async def require_authenticated_request(request: Request) -> str:
+    existing = auth_user_id_from_request(request)
+    if existing:
+        return existing
+    identity = await authenticated_user_id(request)
+    request.state.auth_user_id = identity
+    return identity
+
+
+async def enforce_client_controls(request: Request, session_id: str) -> str:
+    identity = await authenticated_user_id(request)
+
+    request.state.auth_user_id = identity
+    now = time.monotonic()
+    key = client_key(identity, session_id)
     window_start, count = _rate_state.get(key, (now, 0))
     if now - window_start >= RATE_LIMIT_WINDOW:
         _rate_state[key] = (now, 1)
-        return
+        return identity
     if count >= RATE_LIMIT_COUNT:
         raise HTTPException(status_code=429, detail="DEEP33_RATE_LIMITED")
     _rate_state[key] = (window_start, count + 1)
+    return identity
 
 
 def cache_key(session_id: str, idempotency_key: str) -> str:
@@ -1902,6 +2067,7 @@ async def connectivity_audit() -> dict:
 
 @app.get("/v1/network/status")
 async def network_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     probe = await network_probe()
     return {
         **probe,
@@ -1911,12 +2077,14 @@ async def network_status(request: Request) -> dict:
 
 
 @app.get("/v1/ai/status")
-async def ai_status() -> dict:
+async def ai_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     return await gateway_probe()
 
 
 @app.get("/v1/ai/edge-status")
-async def ai_edge_status() -> dict:
+async def ai_edge_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     gateway_status = await gateway_probe()
     gateway_ok = gateway_status.get("gateway") == "PASS"
     return {
@@ -1930,7 +2098,8 @@ async def ai_edge_status() -> dict:
 
 
 @app.get("/v1/search/hybrid/status")
-async def hybrid_search_status() -> dict:
+async def hybrid_search_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     return hybrid_search.status()
 
 
@@ -1940,7 +2109,7 @@ async def hybrid_search_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.search(
             payload.query,
@@ -1965,7 +2134,7 @@ async def hybrid_index_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.index_document(
             payload.document_id,
@@ -1987,7 +2156,8 @@ async def hybrid_index_endpoint(
 
 
 @app.get("/v1/web/status")
-async def web_status() -> dict:
+async def web_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     status = web_search_status()
     status["tool_loop_enabled"] = DEEP33_WEB_TOOLS_ENABLED
     status["realtime_policy_enabled"] = True
@@ -2003,7 +2173,7 @@ async def web_status() -> dict:
 @app.get("/v1/web/search")
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2021,7 +2191,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2090,6 +2260,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
+    await require_authenticated_request(request)
     request_id = request_id_from_request(request)
     status, data, text = await run_inference_check(request_id)
     return {
@@ -2104,10 +2275,14 @@ async def inference_check(request: Request) -> dict:
 
 @app.get("/v1/ai/diagnostics")
 async def ai_diagnostics(request: Request) -> dict:
+    await require_authenticated_request(request)
     request_id = request_id_from_request(request)
-    network = await network_probe()
-    gateway_status = await gateway_probe()
-    inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    network, gateway_status, inference_result = await asyncio.gather(
+        network_probe(),
+        gateway_probe(),
+        run_inference_check(request_id),
+    )
+    inference_status, inference_data, inference_text = inference_result
     model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
 
     return {
@@ -2210,6 +2385,7 @@ async def prepare_messages(
     session_id: str,
     memory_profile_id: str | None = None,
     request_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> tuple[list[dict[str, str]], str]:
     requested = [
         message.model_dump()
@@ -2232,31 +2408,34 @@ async def prepare_messages(
         + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
     if not memory.enabled or not requires_memory_context(requested, profile):
-        selected_messages = requested[-max_messages:]
-        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
-            selected_messages.pop(0)
+        selected_messages, compacted_summary = compact_context_messages(
+            requested,
+            adaptive_context_budget(requested, profile),
+        )
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *selected_messages]
+        continuity_message = (
+            [{"role": "system", "content": compacted_summary}]
+            if compacted_summary
+            else []
+        )
+        result = [personality_control, *runtime_messages, *continuity_message, *selected_messages]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
     try:
-        context = await memory.context(session_id, memory_profile_id=memory_profile_id)
+        context = await memory.context(
+            session_id,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
+        )
         remote = extract_context_messages(context)
-        merged = merge_messages(remote, requested, limit=max_messages)
-        merged_chars = 0
-        bounded: list[dict[str, str]] = []
-        for item in reversed(merged):
-            next_chars = merged_chars + len(item.get("content", ""))
-            if bounded and next_chars > max_chars:
-                break
-            bounded.append(item)
-            merged_chars = next_chars
-        merged = list(reversed(bounded))
+        merged = merge_messages(remote, requested, limit=len(remote) + len(requested))
+        max_chars = adaptive_context_budget(merged, profile)
+        merged, compacted_summary = compact_context_messages(merged, max_chars)
         system_context = extract_context_system_message(context)
         if system_context:
             # Keep memory as a separate system message. The current personality
@@ -2271,6 +2450,11 @@ async def prepare_messages(
                 {"role": "system", "content": system_context},
                 personality_control,
                 *runtime_messages,
+                *(
+                    [{"role": "system", "content": compacted_summary}]
+                    if compacted_summary
+                    else []
+                ),
                 *merged,
             ]
             performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
@@ -2280,20 +2464,39 @@ async def prepare_messages(
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *merged]
+        result = [
+            personality_control,
+            *runtime_messages,
+            *(
+                [{"role": "system", "content": compacted_summary}]
+                if compacted_summary
+                else []
+            ),
+            *merged,
+        ]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
-        selected_messages = requested[-max_messages:]
-        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
-            selected_messages.pop(0)
+        selected_messages, compacted_summary = compact_context_messages(
+            requested,
+            adaptive_context_budget(requested, profile),
+        )
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *selected_messages]
+        result = [
+            personality_control,
+            *runtime_messages,
+            *(
+                [{"role": "system", "content": compacted_summary}]
+                if compacted_summary
+                else []
+            ),
+            *selected_messages,
+        ]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
@@ -2304,11 +2507,18 @@ async def persist_messages(
     *,
     personality: str | None = None,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     if not memory.enabled:
         return
     try:
-        await memory.sync(session_id, messages, personality=personality, memory_profile_id=memory_profile_id)
+        await memory.sync(
+            session_id,
+            messages,
+            personality=personality,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
+        )
     except MemoryUnavailableError as exc:
         logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
 
@@ -2321,6 +2531,7 @@ async def generate(
     idempotency_key: str,
     skip_web_tools: bool = False,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> dict:
     personality = normalize_personality(request.personality)
     logger.info("personality_selected request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
@@ -2367,6 +2578,7 @@ async def generate(
             session_id,
             memory_profile_id,
             request_id=request_id,
+            owner_user_id=owner_user_id,
         )
     )
     raw_messages = [
@@ -2483,6 +2695,7 @@ async def generate(
                 [message for message in messages if message.get("role") != "system"] + [assistant_message],
                 personality=personality,
                 memory_profile_id=memory_profile_id,
+                owner_user_id=owner_user_id,
             ),
             persist_deep33_self_name(
                 session_id,
@@ -2566,7 +2779,8 @@ async def generate(
 @app.post("/v1/ai/generate")
 async def ai_generate(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2581,6 +2795,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
             in {"1", "true", "yes", "on"}
         ),
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -2591,7 +2806,8 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
 @app.post("/v1/chat")
 async def chat(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2602,6 +2818,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
         request_id=request_id,
         idempotency_key=idempotency_key,
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -2615,9 +2832,13 @@ async def memory_context(http_request: Request) -> dict:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.context(session_id, memory_profile_id=memory_profile_id)
+        return await memory.context(
+            session_id,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -2631,7 +2852,7 @@ async def memory_sync(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     messages = [
         message.model_dump()
         for message in payload.messages
@@ -2658,9 +2879,15 @@ async def memory_remember(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
+        return await memory.remember(
+            session_id,
+            payload.kind,
+            payload.content,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -2674,16 +2901,56 @@ async def memory_preferences(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.set_preferences(
             session_id,
             personality=payload.personality,
             preferences=payload.preferences,
             memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
+
+
+def _extract_stream_content(choice: dict[str, Any]) -> str:
+    for container_key in ("delta", "message"):
+        container = choice.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        value = container.get("content")
+        text = _normalize_stream_content_value(value)
+        if text:
+            return text
+    return _normalize_stream_content_value(choice.get("content")) or ""
+
+
+def _normalize_stream_content_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                item_type = str(item.get("type") or "").lower()
+                if item_type in {"", "text", "output_text"}:
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    elif isinstance(item.get("content"), str):
+                        parts.append(str(item["content"]))
+        return "".join(parts)
+    if isinstance(value, dict):
+        item_type = str(value.get("type") or "").lower()
+        if item_type in {"", "text", "output_text"}:
+            if isinstance(value.get("text"), str):
+                return str(value["text"])
+            if isinstance(value.get("content"), str):
+                return str(value["content"])
+    return ""
 
 
 async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
@@ -2704,10 +2971,9 @@ async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
         except Exception:
             continue
         choices = event.get("choices")
-        if choices and isinstance(choices[0], dict):
-            delta = choices[0].get("delta") or {}
-            content = delta.get("content")
-            if isinstance(content, str):
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            content = _extract_stream_content(choices[0])
+            if content:
                 assistant_parts.append(content)
     return "".join(assistant_parts), saw_done
 
@@ -2723,6 +2989,7 @@ async def _finalize_stream(
     lease_token: str,
     assistant_text: str,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     output = {
         "request_id": request_id,
@@ -2744,11 +3011,14 @@ async def _finalize_stream(
         ]
         + [{"role": "assistant", "content": assistant_text}],
         personality=personality,
+        memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     await persist_deep33_self_name(
         session_id,
         extract_deep33_self_name(assistant_text),
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
@@ -2813,14 +3083,17 @@ async def stream_gateway(
                         try:
                             frame_json = json.loads(frame[len(b"data:"):].strip())
                             for choice in frame_json.get("choices", []):
-                                delta = choice.get("delta") or {}
-                                content_value = delta.get("content")
-                                if isinstance(content_value, str):
+                                if not isinstance(choice, dict):
+                                    continue
+                                content_value = _extract_stream_content(choice)
+                                if content_value:
                                     assistant_parts.append(content_value)
                                     safe_delta = sanitize_stream_delta(content_value)
                                     if safe_delta != content_value:
-                                        delta["content"] = safe_delta
-                                        frame_changed = True
+                                        delta = choice.get("delta")
+                                        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                                            delta["content"] = safe_delta
+                                            frame_changed = True
                                     if safe_delta:
                                         has_visible_content = True
                             if frame_changed:
@@ -2864,13 +3137,15 @@ async def stream_gateway(
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
-    if saw_done and assistant_parts:
+    if assistant_parts:
         assistant_raw = "".join(assistant_parts)
     else:
         assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
         saw_done = saw_done or parsed_done
     assistant_text = sanitize_assistant_text(assistant_raw)
-    if not saw_done or not assistant_text:
+    # A clean provider close is valid even when [DONE] was omitted, provided
+    # actual assistant content was received.
+    if not assistant_text:
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
@@ -2888,7 +3163,8 @@ async def stream_gateway(
 @app.post("/v1/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2928,6 +3204,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             session_id,
             memory_profile_id,
             request_id=request_id,
+            owner_user_id=owner_user_id,
         )
     )
     raw_messages = [
@@ -3061,6 +3338,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 lease_token=lease_token,
                 assistant_text=assistant_text,
                 memory_profile_id=memory_profile_id,
+                owner_user_id=owner_user_id,
             )
 
         return StreamingResponse(

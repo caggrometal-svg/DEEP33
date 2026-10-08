@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
@@ -41,6 +42,7 @@ function headerSubset(req: Request) {
     "accept",
     "x-deep33-session-id",
     "x-deep33-memory-profile-id",
+    "authorization",
     "x-request-id",
     "x-idempotency-key",
   ]) {
@@ -56,7 +58,9 @@ async function fetchUpstream(
   sessionId = "deep33-edge",
 ) {
   const headers = new Headers(init.headers || {});
-  headers.delete("Authorization");
+  // The verified user JWT is forwarded unchanged to the canonical backend.
+  // The gateway already verified it; downstream services can bind identity without
+  // introducing a second client secret into the APK.
   headers.delete("apikey");
   headers.delete("x-client-info");
   if (!headers.has("x-deep33-session-id")) {
@@ -68,6 +72,81 @@ async function fetchUpstream(
     redirect: "error",
     signal: init.signal ?? AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS),
   });
+}
+
+function decodeVerifiedJwtUserId(req: Request): string {
+  const raw = req.headers.get("authorization")?.trim() ?? "";
+  if (!raw.startsWith("Bearer ")) throw new Error("AUTH_REQUIRED");
+  const token = raw.slice(7).trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("AUTH_INVALID");
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    throw new Error("AUTH_INVALID");
+  }
+  const sub = String(payload.sub ?? "").trim();
+  const exp = Number(payload.exp ?? 0);
+  const iss = String(payload.iss ?? "").trim().replace(/\/+$/, "");
+  if (!sub || !/^[0-9a-fA-F-]{36}$/.test(sub) || exp <= Math.floor(Date.now() / 1000)) {
+    throw new Error("AUTH_INVALID");
+  }
+  if (iss && iss !== SUPABASE_URL.replace(/\/+$/, "") + "/auth/v1") {
+    throw new Error("AUTH_ISSUER_INVALID");
+  }
+  return sub;
+}
+
+async function resolveAuthenticatedMemoryProfile(
+  authUserId: string,
+  requestedProfileId?: string,
+): Promise<string> {
+  const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const requested = String(requestedProfileId || "").trim().slice(0, 128);
+  const { data, error } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("memory_profile_id")
+    .eq("user_id", authUserId)
+    .maybeSingle();
+  if (error) throw new Error("AUTH_PROFILE_LOOKUP_FAILED");
+
+  if (data?.memory_profile_id) {
+    const mapped = String(data.memory_profile_id);
+    if (requested && requested !== mapped) throw new Error("MEMORY_PROFILE_MISMATCH");
+    return mapped;
+  }
+
+  if (!/^[A-Za-z0-9._-]{8,96}$/.test(requested)) {
+    throw new Error("MEMORY_PROFILE_REQUIRED");
+  }
+
+  const { data: conflict } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .select("user_id")
+    .eq("memory_profile_id", requested)
+    .maybeSingle();
+  if (conflict?.user_id && conflict.user_id !== authUserId) {
+    throw new Error("MEMORY_PROFILE_OWNED_BY_OTHER_USER");
+  }
+
+  const { error: insertError } = await admin
+    .schema("private")
+    .from("deep33_user_profiles")
+    .upsert(
+      {
+        user_id: authUserId,
+        memory_profile_id: requested,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+  if (insertError) throw new Error("AUTH_PROFILE_BINDING_FAILED");
+  return requested;
 }
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
@@ -995,6 +1074,7 @@ async function persistDeep33SelfName(
   sessionId: string,
   value: unknown,
   memoryProfileId?: string,
+  ownerUserId?: string,
 ): Promise<void> {
   const name = extractDeep33SelfName(value);
   if (!name) return;
@@ -1002,7 +1082,7 @@ async function persistDeep33SelfName(
     kind: "context",
     content: DEEP33_SELF_NAME_MEMORY_PREFIX + " " + name,
     ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}),
-  });
+  }, ownerUserId);
 }
 
 function personalityInstruction(value: unknown): string {
@@ -1224,6 +1304,7 @@ async function memoryCall(
   action: string,
   sessionId: string,
   payload: Record<string, unknown> = {},
+  ownerUserId?: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   if (!isSecureHttpsUrl(MEMORY_FUNCTION_URL) || !SUPABASE_SECRET_KEY) {
     throw new Error("DEEP33_MEMORY_EDGE_NOT_CONFIGURED");
@@ -1236,6 +1317,7 @@ async function memoryCall(
     session_id: sessionId,
     ...payload,
   };
+  if (ownerUserId) requestBody.owner_user_id = ownerUserId;
 
   if (needsIdempotency) {
     const requestHash = await sha256(JSON.stringify(requestBody));
@@ -1248,6 +1330,7 @@ async function memoryCall(
     headers: {
       Authorization: "Bearer " + SUPABASE_SECRET_KEY,
       apikey: SUPABASE_SECRET_KEY,
+      "x-deep33-internal-token": SUPABASE_SECRET_KEY,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -1641,13 +1724,14 @@ async function handleMemoryRequest(
   path: string,
   sessionId: string,
   memoryProfileId?: string,
+  ownerUserId?: string,
 ): Promise<Response> {
   const profileScope = memoryProfileId?.trim()
     ? { memory_profile_id: memoryProfileId.trim().slice(0, 128) }
     : {};
 
   if (path === "/v1/memory/context" && req.method === "GET") {
-    const result = await memoryCall("context", sessionId, profileScope);
+    const result = await memoryCall("context", sessionId, profileScope, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1657,7 +1741,7 @@ async function handleMemoryRequest(
       kind: payload.kind,
       content: payload.content,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1667,7 +1751,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1678,7 +1762,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -2211,10 +2295,27 @@ Deno.serve(async (req) => {
   const sessionId =
     req.headers.get("x-deep33-session-id")?.trim() ||
     "deep33-mobile";
-  const memoryProfileId =
+  const requestedMemoryProfileId =
     req.headers.get("x-deep33-memory-profile-id")?.trim() || undefined;
 
   try {
+    const requiresAuth =
+      path === "/health" ||
+      path === "/ready" ||
+      path === "/v1/connectivity/audit" ||
+      path.startsWith("/v1/");
+    let memoryProfileId = requestedMemoryProfileId;
+    let authUserId: string | undefined;
+    if (requiresAuth) {
+      authUserId = decodeVerifiedJwtUserId(req);
+      if (path.startsWith("/v1/memory/") || path === "/v1/chat/stream" || path === "/v1/ai/generate") {
+        memoryProfileId = await resolveAuthenticatedMemoryProfile(
+          authUserId,
+          requestedMemoryProfileId,
+        );
+      }
+    }
+
     if (path === "/v1/ai/edge-status" && req.method === "GET") {
       const providers = edgeProviders();
       return json({
@@ -2244,6 +2345,34 @@ Deno.serve(async (req) => {
       return json(body, body.ready ? 200 : 503);
     }
 
+    if (path === "/v1/feedback" && req.method === "POST") {
+      if (!authUserId) throw new Error("AUTH_REQUIRED");
+      const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const rating = String(payload.rating ?? "").trim();
+      const responseHash = String(payload.response_hash ?? "").trim().toLowerCase();
+      if (!["useful", "not_useful"].includes(rating)) {
+        return json({ error: "FEEDBACK_RATING_INVALID" }, 400);
+      }
+      if (!/^[0-9a-f]{64}$/.test(responseHash)) {
+        return json({ error: "FEEDBACK_HASH_INVALID" }, 400);
+      }
+
+      const admin = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { error } = await admin.from("deep33_feedback").upsert(
+        {
+          user_id: authUserId,
+          session_id: (memoryProfileId ? memoryProfileId + ":" : "") + sessionId,
+          response_hash: responseHash,
+          rating,
+        },
+        { onConflict: "user_id,session_id,response_hash" },
+      );
+      if (error) throw new Error("FEEDBACK_PERSIST_FAILED");
+      return json({ ok: true, stored: true });
+    }
+
     if (
       path === "/v1/search/hybrid/status" ||
       path === "/v1/search/hybrid" ||
@@ -2256,7 +2385,7 @@ Deno.serve(async (req) => {
       path.startsWith("/v1/memory/") &&
       ["GET", "POST", "PUT"].includes(req.method)
     ) {
-      return await handleMemoryRequest(req, path, sessionId, memoryProfileId);
+      return await handleMemoryRequest(req, path, sessionId, memoryProfileId, authUserId);
     }
 
     if (path === "/v1/connectivity/audit" && req.method === "GET") {
@@ -2462,12 +2591,12 @@ Deno.serve(async (req) => {
 
               // Memory remains outside the first-response path. The answer is already
               // visible when this background persistence starts.
-              void persistDeep33SelfName(sessionId, responseText, memoryProfileId).catch(() => {});
+              void persistDeep33SelfName(sessionId, responseText, memoryProfileId, ownerUserId).catch(() => {});
               void memoryCall("sync", sessionId, {
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: activePersonality,
                 preferences: payload.preferences,
-              }).catch(() => {
+              }, ownerUserId).catch(() => {
                 console.warn(JSON.stringify({
                   event: "edge_memory_sync_degraded",
                   request_id: requestId,
@@ -2767,7 +2896,7 @@ Deno.serve(async (req) => {
                   messages: [...messages, { role: "assistant", content: responseText }],
                   personality: payload.personality,
                   preferences: payload.preferences,
-                }),
+                }, ownerUserId),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
               ]);
               memoryPersisted = true;
@@ -2863,7 +2992,7 @@ return json({
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: payload.personality,
                 preferences: payload.preferences,
-              }),
+              }, ownerUserId),
               new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
             ]);
             memoryPersisted = true;

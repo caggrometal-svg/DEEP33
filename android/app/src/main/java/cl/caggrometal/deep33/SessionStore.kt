@@ -20,7 +20,13 @@ data class PendingTurn(
     val requestId: String,
     val idempotencyKey: String,
     val personality: String,
-    val payloadJson: String
+    val payloadJson: String,
+    val memoryProfileId: String
+)
+
+data class UserProfile(
+    val id: String,
+    val name: String
 )
 
 data class PendingMemorySync(
@@ -45,19 +51,136 @@ data class GenerationState(
 
 class SessionStore(
     context: Context,
-    name: String = PREFS_NAME
+    name: String = PREFS_NAME,
+    profileIdOverride: String? = null
 ) {
-    private val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val profileRegistry =
+        appContext.getSharedPreferences(PROFILE_REGISTRY_PREFS, Context.MODE_PRIVATE)
+    private val profileMode = name == PREFS_NAME
+    private val selectedProfileId =
+        if (profileMode) resolveProfileId(profileIdOverride) else (profileIdOverride ?: "test")
+    private val prefs = if (profileMode) {
+        appContext.getSharedPreferences(profilePrefsName(selectedProfileId), Context.MODE_PRIVATE)
+    } else {
+        appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+    }
 
-    /** Stable per-installation user identity. Conversation session IDs can change; this one must not. */
+    init {
+        if (profileMode) migrateLegacyInstallationStore(selectedProfileId)
+    }
+
+    val profileId: String
+        get() = selectedProfileId
+
     val memoryProfileId: String
+        get() = selectedProfileId
+
+    val activeProfileName: String
         get() = synchronized(STORE_LOCK) {
-            val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
-            if (!existing.isNullOrBlank()) return@synchronized existing
-            val created = MultiUserIdentity.newProfileId()
-            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).commit()
-            created
+            loadUserProfiles().firstOrNull { it.id == selectedProfileId }?.name ?: "Usuario"
         }
+
+    fun listUserProfiles(): List<UserProfile> =
+        synchronized(STORE_LOCK) { loadUserProfiles() }
+
+    fun createUserProfile(displayName: String? = null): UserProfile {
+        synchronized(STORE_LOCK) {
+            val existing = loadUserProfiles()
+            val id = MultiUserIdentity.newProfileId()
+            val clean = displayName?.trim()?.replace(Regex("\\s+"), " ").orEmpty()
+            val name = clean.take(40).ifBlank { "Usuario " + (existing.size + 1) }
+            val created = UserProfile(id, name)
+            saveUserProfiles(existing + created)
+            return created
+        }
+    }
+
+    fun activateUserProfile(id: String): Boolean {
+        val normalized = id.trim()
+        if (!normalized.matches(Regex(PROFILE_ID_PATTERN))) return false
+        synchronized(STORE_LOCK) {
+            if (loadUserProfiles().none { it.id == normalized }) return false
+            profileRegistry.edit().putString(KEY_ACTIVE_PROFILE_ID, normalized).commit()
+            return true
+        }
+    }
+
+    private fun resolveProfileId(override: String?): String {
+        val requested = override?.trim().orEmpty()
+        if (requested.isNotBlank()) {
+            require(requested.matches(Regex(PROFILE_ID_PATTERN))) { "Invalid DEEP33 profile id" }
+            ensureProfileRegistered(requested, null)
+            return requested
+        }
+
+        val active = profileRegistry.getString(KEY_ACTIVE_PROFILE_ID, null)?.trim().orEmpty()
+        if (active.matches(Regex(PROFILE_ID_PATTERN))) {
+            ensureProfileRegistered(active, null)
+            return active
+        }
+
+        val legacy = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val legacyId = legacy.getString(KEY_MEMORY_PROFILE_ID, null)?.trim().orEmpty()
+        val id = if (legacyId.matches(Regex(PROFILE_ID_PATTERN))) legacyId else MultiUserIdentity.newProfileId()
+        ensureProfileRegistered(id, if (legacyId.isNotBlank()) "Usuario 1" else null)
+        profileRegistry.edit().putString(KEY_ACTIVE_PROFILE_ID, id).commit()
+        return id
+    }
+
+    private fun ensureProfileRegistered(id: String, defaultName: String?) {
+        val profiles = loadUserProfiles()
+        if (profiles.any { it.id == id }) return
+        saveUserProfiles(profiles + UserProfile(id, defaultName ?: "Usuario " + (profiles.size + 1)))
+    }
+
+    private fun loadUserProfiles(): List<UserProfile> {
+        val raw = profileRegistry.getString(KEY_PROFILES_JSON, null) ?: return emptyList()
+        return runCatching {
+            val json = JSONArray(raw)
+            buildList {
+                for (i in 0 until json.length()) {
+                    val item = json.optJSONObject(i) ?: continue
+                    val id = item.optString("id").trim()
+                    val name = item.optString("name").trim()
+                    if (id.matches(Regex(PROFILE_ID_PATTERN)) && name.isNotBlank()) {
+                        add(UserProfile(id, name.take(40)))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun saveUserProfiles(profiles: List<UserProfile>) {
+        val json = JSONArray()
+        profiles.distinctBy { it.id }.take(MAX_USER_PROFILES).forEach {
+            json.put(JSONObject().put("id", it.id).put("name", it.name))
+        }
+        profileRegistry.edit().putString(KEY_PROFILES_JSON, json.toString()).apply()
+    }
+
+    private fun migrateLegacyInstallationStore(profileId: String) {
+        synchronized(STORE_LOCK) {
+            if (prefs.all.isNotEmpty()) return
+            val legacy = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val values = legacy.all
+            if (values.isEmpty()) return
+            val edit = prefs.edit()
+            values.forEach { (key, value) ->
+                when (value) {
+                    is String -> edit.putString(key, value)
+                    is Boolean -> edit.putBoolean(key, value)
+                    is Int -> edit.putInt(key, value)
+                    is Long -> edit.putLong(key, value)
+                    is Float -> edit.putFloat(key, value)
+                    is Set<*> -> edit.putStringSet(key, value.filterIsInstance<String>().toSet())
+                }
+            }
+            edit.putString(KEY_MEMORY_PROFILE_ID, profileId).commit()
+        }
+    }
+
+    private fun profilePrefsName(id: String): String = "deep33_profile_$id"
 
     val sessionId: String
         get() = synchronized(STORE_LOCK) {
@@ -207,7 +330,33 @@ class SessionStore(
         val raw = prefs.getString(messagesKey(sessionId), null)
             ?: prefs.getString(KEY_MESSAGES_LEGACY, null)
             ?: return emptyList()
-        return parseMessages(raw)
+        val parsed = parseMessages(raw)
+        val sanitized = parsed.map { message ->
+            message.copy(content = sanitizePersistedLocationText(message.content))
+        }
+        if (sanitized != parsed) {
+            // One-time migration: remove legacy exact GPS coordinates from persisted
+            // conversation data before the messages are reused or synchronized.
+            saveMessages(sanitized, durable = true)
+        }
+        return sanitized
+    }
+
+    private fun sanitizePersistedLocationText(value: String): String {
+        var text = value
+        text = text.replace(
+            Regex("""(?i)(lat(?:itude)?\s*[:=]\s*)[-+]?\d+(?:\.\d+)?"""),
+            "$1[location-removed]"
+        )
+        text = text.replace(
+            Regex("""(?i)(lon(?:gitude)?\s*[:=]\s*)[-+]?\d+(?:\.\d+)?"""),
+            "$1[location-removed]"
+        )
+        text = text.replace(
+            Regex("""\[(?:UBICACIÓN|CONTEXTO)\s+GPS[^\]]*\]""", RegexOption.IGNORE_CASE),
+            "[contexto geográfico eliminado]"
+        )
+        return text
     }
 
     fun saveMessages(messages: List<UiMessage>, durable: Boolean = false) {
@@ -235,6 +384,7 @@ class SessionStore(
                 .put("idempotency_key", turn.idempotencyKey)
                 .put("personality", turn.personality)
                 .put("payload", turn.payloadJson)
+                .put("memory_profile_id", turn.memoryProfileId)
             // commit() is intentional: the pending turn must survive Activity destruction
             // before the network request begins.
             prefs.edit().putString(KEY_PENDING_TURN, json.toString()).commit()
@@ -250,11 +400,18 @@ class SessionStore(
             val idempotencyKey = json.optString("idempotency_key")
             val personality = json.optString("personality", "NEUTRO")
             val payload = json.optString("payload")
-            if (session.isBlank() || requestId.isBlank() || idempotencyKey.isBlank() || payload.isBlank()) {
+            val memoryProfileId = json.optString("memory_profile_id", this.memoryProfileId)
+            if (
+                session.isBlank() ||
+                requestId.isBlank() ||
+                idempotencyKey.isBlank() ||
+                payload.isBlank() ||
+                !memoryProfileId.matches(Regex(PROFILE_ID_PATTERN))
+            ) {
                 null
             } else {
                 JSONArray(payload)
-                PendingTurn(session, requestId, idempotencyKey, personality, payload)
+                PendingTurn(session, requestId, idempotencyKey, personality, payload, memoryProfileId)
             }
         } catch (_: Exception) {
             null
@@ -270,20 +427,41 @@ class SessionStore(
         }
     }
 
+    private fun sanitizePendingMessagesJson(raw: String): String? {
+        return runCatching {
+            val input = JSONArray(raw)
+            val sanitized = JSONArray()
+            for (i in 0 until input.length()) {
+                val item = input.optJSONObject(i) ?: continue
+                if (item.has("content")) {
+                    item.put(
+                        "content",
+                        sanitizePersistedLocationText(item.optString("content"))
+                    )
+                }
+                sanitized.put(item)
+            }
+            sanitized.toString()
+        }.getOrNull()
+    }
+
     fun savePendingMemorySync(sync: PendingMemorySync) {
         synchronized(STORE_LOCK) {
             val queued = loadPendingMemorySyncQueue().toMutableList()
             queued.removeAll { it.requestId == sync.requestId }
             queued.add(sync)
             val json = JSONArray()
-            queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
+            queued.take(MAX_PENDING_MEMORY_SYNCS).forEach { syncItem ->
+                val safeMessages = sanitizePendingMessagesJson(syncItem.messagesJson) ?: "[]"
+                val safeSync = syncItem.copy(messagesJson = safeMessages)
+                
                 json.put(
                     JSONObject()
-                        .put("session_id", it.sessionId)
-                        .put("request_id", it.requestId)
-                        .put("personality", it.personality)
-                        .put("memory_profile_id", it.memoryProfileId)
-                        .put("messages", it.messagesJson)
+                        .put("session_id", safeSync.sessionId)
+                        .put("request_id", safeSync.requestId)
+                        .put("personality", safeSync.personality)
+                        .put("memory_profile_id", safeSync.memoryProfileId)
+                        .put("messages", safeSync.messagesJson)
                 )
             }
             // Remote-memory retry state is a durable queue. Multiple completed chats may
@@ -309,8 +487,8 @@ class SessionStore(
                     val memoryProfileId = item.optString("memory_profile_id")
                     val messagesJson = item.optString("messages")
                     if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) continue
-                    runCatching { JSONArray(messagesJson) }.getOrNull() ?: continue
-                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson))
+                    val safeMessages = sanitizePendingMessagesJson(messagesJson) ?: continue
+                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, safeMessages))
                 }
             }
         } catch (_: Exception) {
@@ -508,6 +686,11 @@ class SessionStore(
         // read-modify-write transactions that must be atomic across Activity and Service.
         private val STORE_LOCK = Any()
         private const val PREFS_NAME = "deep33_session"
+        private const val PROFILE_REGISTRY_PREFS = "deep33_user_profiles"
+        private const val KEY_ACTIVE_PROFILE_ID = "active_profile_id"
+        private const val KEY_PROFILES_JSON = "profiles_json"
+        private const val PROFILE_ID_PATTERN = "[A-Za-z0-9._-]{8,96}"
+        private const val MAX_USER_PROFILES = 12
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
         private const val KEY_MESSAGES_LEGACY = "messages_json"
