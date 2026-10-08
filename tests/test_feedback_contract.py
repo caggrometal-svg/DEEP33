@@ -20,3 +20,8 @@ def test_feedback_is_validated_and_owned_by_authenticated_user():
     assert "user_id" in source
     assert "deep33_feedback" in source
     assert '{"positive": "useful", "negative": "not_useful"}' in source
+
+def test_edge_feedback_preserves_legacy_rating_compatibility():
+    source = (ROOT / "supabase/functions/deep33-proxy/index.ts").read_text(encoding="utf-8")
+    assert '"positive", "negative"' in source
+    assert 'rating === "positive" ? "useful"' in source
