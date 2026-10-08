@@ -1511,11 +1511,29 @@ class MainActivity : Activity() {
                 }
                 val mergedSnapshot = merged.takeLast(50)
 
+                // Generation state is authoritative over a stale remote snapshot.
+                val currentGeneration = store.loadGenerationState()
+                if (store.sessionId != targetSessionId ||
+                    currentGeneration?.sessionId == targetSessionId &&
+                    currentGeneration.status in setOf(
+                        GenerationStatus.RUNNING,
+                        GenerationStatus.CANCELLING
+                    )
+                ) return@submit
+
                 runOnUiThread {
-                    // Re-check the session on the UI thread immediately before mutating
+                    // Re-check both identity and generation state immediately before mutating
                     // the active conversation. This closes the final race between the
                     // worker finishing and the user opening a different chat.
                     if (store.sessionId != targetSessionId) return@runOnUiThread
+                    val uiGeneration = store.loadGenerationState()
+                    if (generationActive ||
+                        uiGeneration?.sessionId == targetSessionId &&
+                        uiGeneration.status in setOf(
+                            GenerationStatus.RUNNING,
+                            GenerationStatus.CANCELLING
+                        )
+                    ) return@runOnUiThread
 
                     conversation.clear()
                     conversation.addAll(mergedSnapshot)
@@ -1902,6 +1920,15 @@ class MainActivity : Activity() {
 
         val pending = store.loadPendingTurn() ?: return
 
+        if (state?.status == GenerationStatus.CANCELLING && state.requestId == pending.requestId) {
+            store.finalizeGenerationCancellation(
+                pending.requestId,
+                pending.sessionId,
+                Personality.fromKey(pending.personality).key
+            )
+            return
+        }
+
         if (
             state?.status == GenerationStatus.RETRYABLE &&
             state.requestId == pending.requestId &&
@@ -2064,6 +2091,14 @@ class MainActivity : Activity() {
                 streamingSpeechCursor = 0
                 streamingSpeechRequestId = null
             }
+            GenerationStatus.CANCELLING -> {
+                setGenerationIndicator(thinking = false)
+                setVoiceState(AvatarState.IDLE)
+                activeBubble?.let {
+                    it.tag = "Generación cancelando…"
+                    renderMarkdown(it, "Generación cancelando…")
+                }
+            }
             GenerationStatus.RETRYABLE -> {
                 val message = state.error.ifBlank { "La conexión con DEEP33 no pudo recuperarse. Pulsa reintentar." }
                 activeBubble?.let {
@@ -2117,10 +2152,17 @@ class MainActivity : Activity() {
 
     private fun cancelGeneration() {
         if (!generationActive) return
-        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
+        val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId ?: return
+        val pending = store.loadPendingTurn()
+        val sessionId = pending?.sessionId ?: store.sessionId
+        val personality = pending?.personality ?: store.personality
+        val requested = store.requestGenerationCancellation(
+            requestId,
+            sessionId,
+            Personality.fromKey(personality).key
+        )
+        if (!requested) return
         Deep33GenerationService.cancel(this, requestId)
-        store.clearPendingTurn(requestId)
-        store.clearGenerationState(requestId)
         generationActive = false
         activeRequestId = null
         activeIdempotencyKey = null
