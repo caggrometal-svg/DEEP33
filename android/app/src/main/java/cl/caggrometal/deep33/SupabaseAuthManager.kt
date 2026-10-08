@@ -48,12 +48,17 @@ class SupabaseAuthManager(
             secret(ACCESS_TOKEN)?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
         }
 
-        return@synchronized if (anonymousSignup()) secret(ACCESS_TOKEN) else null
+        return@synchronized if (bootstrapSession()) secret(ACCESS_TOKEN) else null
     }
 
-    private fun anonymousSignup(): Boolean {
-        val body = JSONObject().put("data", JSONObject().put("deep33_profile_id", profileId))
-        val json = post("/signup", body) ?: return false
+    private fun bootstrapSession(): Boolean {
+        val body = JSONObject()
+            .put("action", "session")
+            .put("memory_profile_id", profileId)
+        val json = post(
+            BuildConfig.DEEP33_SUPABASE_URL + "/functions/v1/deep33-auth",
+            body
+        ) ?: return false
         return persistSession(json)
     }
 
@@ -68,7 +73,11 @@ class SupabaseAuthManager(
     private fun persistSession(json: JSONObject): Boolean {
         val access = json.optString("access_token").trim()
         val refresh = json.optString("refresh_token").trim()
-        val userId = json.optJSONObject("user")?.optString("id")?.trim().orEmpty()
+        val userId = (
+            json.optString("user_id").trim().ifBlank {
+                json.optJSONObject("user")?.optString("id")?.trim().orEmpty()
+            }
+        )
         if (access.isBlank() || refresh.isBlank() || userId.isBlank()) return false
 
         val expiresInSeconds = json.optLong("expires_in", 3_600L).coerceIn(60L, 86_400L)
