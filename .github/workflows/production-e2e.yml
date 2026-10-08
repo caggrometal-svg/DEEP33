@@ -35,7 +35,12 @@ jobs:
           for attempt in 1 2 3; do
             # GITHUB_RUN_ID is reused on rerun; add the attempt and rotate on HTTP 409.
             profile_id="e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-${attempt}"
-            response="$(curl -sS --connect-timeout 8 --max-time 30               -w '\nDEEP33_HTTP_STATUS:%{http_code}'               -X POST "$SUPABASE_URL/functions/v1/deep33-auth"               -H "apikey: $SUPABASE_PUBLISHABLE_KEY"               -H "content-type: application/json"               -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            response="$(curl -sS --connect-timeout 8 --max-time 30 \
+              -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
+              -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "content-type: application/json" \
+              -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
             status="${response##*DEEP33_HTTP_STATUS:}"
             auth_json="${response%$'\n'DEEP33_HTTP_STATUS:*}"
             if [ "$status" = "200" ]; then

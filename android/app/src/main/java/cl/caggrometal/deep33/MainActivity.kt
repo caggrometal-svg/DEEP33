@@ -1718,8 +1718,8 @@ class MainActivity : Activity() {
 
     private fun checkHealthFast() {
         if (isFinishing || isDestroyed) return
-        // Remember whether recovery was active before dispatching this asynchronous probe.
-        // A stale health result must not overwrite the UI after the pending turn commits.
+        // An asynchronous health probe can finish after a pending turn has committed.
+        // Snapshot recovery so that stale results cannot overwrite the recovered UI.
         val generationVersionAtProbeStart = generationTransitionVersion
         val recoveryAtProbeStart = generationActive || isGenerationRecoveryActive()
         updateConnection(ConnectionState.CONNECTING)
@@ -1751,7 +1751,41 @@ class MainActivity : Activity() {
                             generationChangedDuringProbe
                         if (keepConnecting) {
                             updateConnection(ConnectionState.CONNECTING)
-                            if (!generationActive && !pendingRecovery) scheduleHealthCheck(350L)
+                            if (!generationActive && !pendingRecovery) {
+                                scheduleHealthCheck(350L)
+                            }
+                        } else {
+                            updateConnection(
+                                if (resolvedOnline) ConnectionState.ONLINE
+                                else ConnectionState.OFFLINE
+                            )
+                        }
+                        if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
+                            diagnosticsView.text = when {
+                                keepConnecting ->
+                                    "CONECTANDO\nRecuperando la conversación pendiente."
+                                resolvedOnline ->
+                                    "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
+                                        if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
+                                else ->
+                                    "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        val pendingRecovery = store.loadPendingTurn() != null
+                        val generationChangedDuringProbe =
+                            generationTransitionVersion != generationVersionAtProbeStart
+                        val keepConnecting = generationActive ||
+                            pendingRecovery ||
+                            recoveryAtProbeStart ||
+                            generationChangedDuringProbe
+                        if (keepConnecting) {
+                            updateConnection(ConnectionState.CONNECTING)
+                            if (!generationActive && !pendingRecovery) {
+                                scheduleHealthCheck(350L)
+                            }
                         } else {
                             updateConnection(ConnectionState.OFFLINE)
                         }
@@ -1769,7 +1803,6 @@ class MainActivity : Activity() {
             return
         }
     }
-
     private fun checkConnectivity() {
         val generationVersionAtProbeStart = generationTransitionVersion
         val recoveryAtProbeStart = generationActive || isGenerationRecoveryActive()
