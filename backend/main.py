@@ -545,7 +545,7 @@ def dialogue_policy_prompt(
             "Es decir: una sola pregunta contextual debe ser usada solo cuando aporte una continuación natural."
         ),
         "COMPLEX_NECESSARY": (
-            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. Mantén la explicación integrada y conversacional; no conviertas automáticamente el tema en un informe con varias secciones. "
+            "FORMA=COMPLEX_NECESSARY. Amplía solo lo necesario para resolver el tema, sin un límite artificial de palabras. Mantén la explicación integrada y conversacional; no conviertas automáticamente el tema en un informe con varias secciones. Resume primero la conclusión; después desarrolla solo la evidencia, lógica o contexto imprescindible. "
             "Abre con la respuesta que realmente le darías al usuario y desarrolla después la evidencia, lógica o contexto imprescindible dentro de párrafos naturales. "
             "No uses encabezados, listas numeradas, viñetas ni tablas salvo que el usuario los haya pedido explícitamente. "
             "Cuando una respuesta compleja ya quedó resuelta, termina sin añadir un resumen redundante ni una pregunta ceremonial. "
