@@ -135,9 +135,10 @@ class SessionStore(
                 when (value) {
                     is String -> {
                         var migrated = value
+                        var migratedValue = value
                         if (key == KEY_PENDING_MEMORY_SYNC) {
                             runCatching {
-                                migrated = JSONObject(value)
+                                migratedValue = JSONObject(value)
                                     .put("profile_id", profileId)
                                     .put("memory_profile_id", profileId)
                                     .toString()
@@ -152,26 +153,18 @@ class SessionStore(
                                     val item = payload.optJSONObject(index) ?: continue
                                     val role = item.optString("role")
                                     val safeContent = sanitizeGpsText(item.optString("content"))
-                                    safePayload.put(
-                                        JSONObject()
-                                            .put("role", role)
-                                            .put("content", safeContent)
-                                    )
+                                    safePayload.put(JSONObject().put("role", role).put("content", safeContent))
                                     if (role == "user" || role == "assistant") {
-                                        safeConversation.put(
-                                            JSONObject()
-                                                .put("role", role)
-                                                .put("content", safeContent)
-                                        )
+                                        safeConversation.put(JSONObject().put("role", role).put("content", safeContent))
                                     }
                                 }
-                                migrated = pending
+                                migratedValue = pending
                                     .put("payload", safePayload)
                                     .put("conversation", safeConversation)
                                     .toString()
                             }
                         }
-                        edit.putString(key, migrated)
+                        edit.putString(key, migratedValue)
                     }
                     is Boolean -> edit.putBoolean(key, value)
                     is Int -> edit.putInt(key, value)
@@ -674,7 +667,7 @@ class SessionStore(
             ) return false
             cancelQueuedGenerationCheckpoint(requestId)
             val messagesJson = JSONArray()
-            messages.takeLast(MAX_MESSAGES).forEach {
+            messages.forEach {
                 messagesJson.put(JSONObject().put("role", it.role).put("content", it.content))
             }
             val stateJson = JSONObject()
