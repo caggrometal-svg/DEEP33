@@ -1599,9 +1599,18 @@ class MainActivity : Activity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.submit {
             try {
-                val health = Deep33Api.get("/health", store.sessionId)
-                val audit = Deep33Api.get("/v1/connectivity/audit", store.sessionId)
-                val inference = Deep33Api.get("/v1/ai/inference-check", store.sessionId)
+                val healthFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/health", store.sessionId)
+                }
+                val auditFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/v1/connectivity/audit", store.sessionId)
+                }
+                val inferenceFuture = executor.submit<JSONObject> {
+                    Deep33Api.get("/v1/ai/inference-check", store.sessionId)
+                }
+                val health = healthFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
+                val audit = auditFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
+                val inference = inferenceFuture.get(8, java.util.concurrent.TimeUnit.SECONDS)
                 val upstream = audit.optJSONObject("upstream")
                 val inferencePass = inference.optString("status") == "PASS" &&
                     inference.optBoolean("text_ok", false)
