@@ -20,17 +20,17 @@ jobs:
   backend_gate:
     runs-on: ubuntu-latest
     steps:
-      - name: Create CI anonymous auth session
+      - name: Create CI DEEP33 auth session
         env:
-          SUPABASE_AUTH_URL: https://opocgzydeknuchtrqzfa.supabase.co/auth/v1
+          SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
           SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
         run: |
           set -euo pipefail
-          body="$(curl -fsS --connect-timeout 8 --max-time 20 \
-            "$SUPABASE_AUTH_URL/signup" \
+          body="$(curl -fsS --connect-timeout 8 --max-time 30 \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"data":{"deep33_ci":true}}')"
+            -H "content-type: application/json" \
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"ci-package-${GITHUB_RUN_ID}\"}")"
           token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_CI_ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
