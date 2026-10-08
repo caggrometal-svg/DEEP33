@@ -240,7 +240,7 @@ class SessionStore(
     fun saveMessages(messages: List<UiMessage>, durable: Boolean = false) {
         synchronized(STORE_LOCK) {
             val json = JSONArray()
-            messages.takeLast(MAX_MESSAGES).forEach {
+            messages.forEach {
                 json.put(JSONObject().put("role", it.role).put("content", it.content))
             }
             val edit = prefs.edit().putString(messagesKey(sessionId), json.toString())
@@ -720,7 +720,7 @@ class SessionStore(
     private fun parseMessages(raw: String): List<UiMessage> = try {
         val json = JSONArray(raw)
         buildList {
-            val start = maxOf(0, json.length() - MAX_MESSAGES)
+            val start = 0
             for (i in start until json.length()) {
                 val item = json.optJSONObject(i) ?: continue
                 val role = item.optString("role")
@@ -754,7 +754,6 @@ class SessionStore(
         private const val KEY_PENDING_TURN = "pending_turn_json"
         private const val KEY_PENDING_MEMORY_SYNC = "pending_memory_sync_json"
         private const val KEY_GENERATION_STATE = "generation_state_json"
-        private const val MAX_MESSAGES = 50
         private const val MAX_CHAT_SUMMARIES = 30
         private const val MAX_PENDING_MEMORY_SYNCS = 10
         private val generationStateListeners = java.util.concurrent.CopyOnWriteArrayList<(GenerationState) -> Unit>()
