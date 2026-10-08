@@ -815,6 +815,11 @@ def request_id_from_request(request: Request) -> str:
     return header[:128] if header else str(uuid.uuid4())
 
 
+def auth_user_id_from_request(request: Request) -> str | None:
+    value = getattr(request.state, "auth_user_id", "").strip()
+    return value[:64] if value else None
+
+
 def idempotency_key_from_request(request: Request, request_id: str) -> str:
     value = request.headers.get("X-Idempotency-Key", "").strip()
     return value[:256] if value else request_id
@@ -920,6 +925,7 @@ def client_key(identity: str, session_id: str) -> str:
 async def enforce_client_controls(request: Request, session_id: str) -> str:
     identity = await authenticated_user_id(request)
 
+    request.state.auth_user_id = identity
     now = time.monotonic()
     key = client_key(identity, session_id)
     window_start, count = _rate_state.get(key, (now, 0))
@@ -2358,6 +2364,7 @@ async def prepare_messages(
     session_id: str,
     memory_profile_id: str | None = None,
     request_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> tuple[list[dict[str, str]], str]:
     requested = [
         message.model_dump()
@@ -2399,7 +2406,11 @@ async def prepare_messages(
         return result, selected
 
     try:
-        context = await memory.context(session_id, memory_profile_id=memory_profile_id)
+        context = await memory.context(
+            session_id,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
+        )
         remote = extract_context_messages(context)
         merged = merge_messages(remote, requested, limit=len(remote) + len(requested))
         max_chars = adaptive_context_budget(merged, profile)
@@ -2475,11 +2486,18 @@ async def persist_messages(
     *,
     personality: str | None = None,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     if not memory.enabled:
         return
     try:
-        await memory.sync(session_id, messages, personality=personality, memory_profile_id=memory_profile_id)
+        await memory.sync(
+            session_id,
+            messages,
+            personality=personality,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
+        )
     except MemoryUnavailableError as exc:
         logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
 
@@ -2492,6 +2510,7 @@ async def generate(
     idempotency_key: str,
     skip_web_tools: bool = False,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> dict:
     personality = normalize_personality(request.personality)
     logger.info("personality_selected request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
@@ -2538,6 +2557,7 @@ async def generate(
             session_id,
             memory_profile_id,
             request_id=request_id,
+            owner_user_id=owner_user_id,
         )
     )
     raw_messages = [
@@ -2654,6 +2674,7 @@ async def generate(
                 [message for message in messages if message.get("role") != "system"] + [assistant_message],
                 personality=personality,
                 memory_profile_id=memory_profile_id,
+                owner_user_id=owner_user_id,
             ),
             persist_deep33_self_name(
                 session_id,
