@@ -151,6 +151,10 @@ class Deep33GenerationService : Service() {
                 requestId = requestId,
                 payload = payload
             )
+            android.util.Log.i(
+                "DEEP33_RECOVERY",
+                "STREAM_RETURNED request_id=$requestId chars=${finalText.length} session_id=${pending.sessionId}"
+            )
 
             if (userCancelled.get() || store.loadGenerationState()?.status == GenerationStatus.CANCELLING) {
                 throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
@@ -172,16 +176,24 @@ class Deep33GenerationService : Service() {
                 add(UiMessage("assistant", finalText))
             }
             store.activateSession(pending.sessionId)
-            if (!store.completeGeneration(
-                    requestId = requestId,
-                    sessionId = pending.sessionId,
-                    personality = personality.key,
-                    messages = messages,
-                    finalText = finalText
+            val completed = store.completeGeneration(
+                requestId = requestId,
+                sessionId = pending.sessionId,
+                personality = personality.key,
+                messages = messages,
+                finalText = finalText
+            )
+            if (!completed) {
+                android.util.Log.e(
+                    "DEEP33_RECOVERY",
+                    "GENERATION_COMMIT_REJECTED request_id=$requestId state=${store.loadGenerationState()?.status} pending=${store.loadPendingTurn()?.requestId}"
                 )
-            ) {
                 throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
             }
+            android.util.Log.i(
+                "DEEP33_RECOVERY",
+                "GENERATION_COMMITTED request_id=$requestId message_count=${messages.size} chars=${finalText.length}"
+            )
 
             val title = messages.firstOrNull { it.role == "user" }
                 ?.content
@@ -214,6 +226,11 @@ class Deep33GenerationService : Service() {
             )
             MemorySyncCoordinator.enqueue(this)
         } catch (e: Deep33ApiException) {
+            android.util.Log.e(
+                "DEEP33_RECOVERY",
+                "GENERATION_API_FAILURE request_id=$requestId kind=${e.kind} status=${e.statusCode} message=${e.message}",
+                e
+            )
             if (userCancelled.get() || store.loadGenerationState()?.status == GenerationStatus.CANCELLING) {
                 store.finalizeGenerationCancellation(requestId, pending.sessionId, personality.key)
             } else if (!stoppingBySystem) {
@@ -233,6 +250,11 @@ class Deep33GenerationService : Service() {
                 )
             }
         } catch (e: Exception) {
+            android.util.Log.e(
+                "DEEP33_RECOVERY",
+                "GENERATION_UNEXPECTED_FAILURE request_id=$requestId message=${e.message}",
+                e
+            )
             if (!stoppingBySystem) {
                 store.clearPendingTurn(requestId)
                 store.saveGenerationState(
