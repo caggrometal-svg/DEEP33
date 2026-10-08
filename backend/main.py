@@ -431,14 +431,25 @@ def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> boo
 
 
 def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
+    # Context grows with the actual conversation instead of applying fixed per-mode
+    # message/character ceilings. Only extreme payloads hit a safety ceiling.
     shape = conversation_response_shape(messages)
-    if shape == "SIMPLE_DIRECT":
-        return 6, 5000, "FAST"
-    if shape == "EXPLICIT_DEPTH":
-        return 24, 18000, "DEEP"
-    if shape == "COMPLEX_NECESSARY":
-        return 16, 12000, "BALANCED"
-    return 12, 8000, "BALANCED"
+    profile = (
+        "FAST" if shape == "SIMPLE_DIRECT"
+        else "DEEP" if shape == "EXPLICIT_DEPTH"
+        else "BALANCED"
+    )
+    total_chars = sum(len(str(item.get("content", ""))) for item in messages)
+    recent_chars = sum(len(str(item.get("content", ""))) for item in messages[-14:])
+    adaptive_budget = min(
+        120_000,
+        max(
+            16_000,
+            total_chars,
+            recent_chars * 3 + 4_000,
+        ),
+    )
+    return min(50, max(1, len(messages))), adaptive_budget, profile
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
