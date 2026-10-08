@@ -1080,7 +1080,7 @@ async function persistDeep33SelfName(
   await memoryCall("remember", sessionId, {
     kind: "context",
     content: DEEP33_SELF_NAME_MEMORY_PREFIX + " " + name,
-    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}),
+    ...(memoryProfileId ? { memory_profile_id: memoryProfileId } : {}, ownerUserId),
   });
 }
 
@@ -1303,6 +1303,7 @@ async function memoryCall(
   action: string,
   sessionId: string,
   payload: Record<string, unknown> = {},
+  ownerUserId?: string,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   if (!isSecureHttpsUrl(MEMORY_FUNCTION_URL) || !SUPABASE_SECRET_KEY) {
     throw new Error("DEEP33_MEMORY_EDGE_NOT_CONFIGURED");
@@ -1315,6 +1316,7 @@ async function memoryCall(
     session_id: sessionId,
     ...payload,
   };
+  if (ownerUserId) requestBody.owner_user_id = ownerUserId;
 
   if (needsIdempotency) {
     const requestHash = await sha256(JSON.stringify(requestBody));
@@ -1327,6 +1329,7 @@ async function memoryCall(
     headers: {
       Authorization: "Bearer " + SUPABASE_SECRET_KEY,
       apikey: SUPABASE_SECRET_KEY,
+      "x-deep33-internal-token": SUPABASE_SECRET_KEY,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
@@ -1720,13 +1723,14 @@ async function handleMemoryRequest(
   path: string,
   sessionId: string,
   memoryProfileId?: string,
+  ownerUserId?: string,
 ): Promise<Response> {
   const profileScope = memoryProfileId?.trim()
     ? { memory_profile_id: memoryProfileId.trim().slice(0, 128) }
     : {};
 
   if (path === "/v1/memory/context" && req.method === "GET") {
-    const result = await memoryCall("context", sessionId, profileScope);
+    const result = await memoryCall("context", sessionId, profileScope, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1736,7 +1740,7 @@ async function handleMemoryRequest(
       kind: payload.kind,
       content: payload.content,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1746,7 +1750,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -1757,7 +1761,7 @@ async function handleMemoryRequest(
       personality: payload.personality,
       preferences: payload.preferences,
       ...profileScope,
-    });
+    }, ownerUserId);
     return json(result.body, result.status);
   }
 
@@ -2300,8 +2304,9 @@ Deno.serve(async (req) => {
       path === "/v1/connectivity/audit" ||
       path.startsWith("/v1/");
     let memoryProfileId = requestedMemoryProfileId;
+    let authUserId: string | undefined;
     if (requiresAuth) {
-      const authUserId = decodeVerifiedJwtUserId(req);
+      authUserId = decodeVerifiedJwtUserId(req);
       if (path.startsWith("/v1/memory/") || path === "/v1/chat/stream" || path === "/v1/ai/generate") {
         memoryProfileId = await resolveAuthenticatedMemoryProfile(
           authUserId,
@@ -2351,7 +2356,7 @@ Deno.serve(async (req) => {
       path.startsWith("/v1/memory/") &&
       ["GET", "POST", "PUT"].includes(req.method)
     ) {
-      return await handleMemoryRequest(req, path, sessionId, memoryProfileId);
+      return await handleMemoryRequest(req, path, sessionId, memoryProfileId, authUserId);
     }
 
     if (path === "/v1/connectivity/audit" && req.method === "GET") {
@@ -2562,7 +2567,7 @@ Deno.serve(async (req) => {
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: activePersonality,
                 preferences: payload.preferences,
-              }).catch(() => {
+              }, ownerUserId).catch(() => {
                 console.warn(JSON.stringify({
                   event: "edge_memory_sync_degraded",
                   request_id: requestId,
@@ -2862,7 +2867,7 @@ Deno.serve(async (req) => {
                   messages: [...messages, { role: "assistant", content: responseText }],
                   personality: payload.personality,
                   preferences: payload.preferences,
-                }),
+                }, ownerUserId),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
               ]);
               memoryPersisted = true;
@@ -2958,7 +2963,7 @@ return json({
                 messages: [...messages, { role: "assistant", content: responseText }],
                 personality: payload.personality,
                 preferences: payload.preferences,
-              }),
+              }, ownerUserId),
               new Promise((_, reject) => setTimeout(() => reject(new Error("MEMORY_SYNC_TIMEOUT")), 3000)),
             ]);
             memoryPersisted = true;
