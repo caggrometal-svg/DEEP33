@@ -233,3 +233,37 @@ def test_edge_runtime_performance_contract():
     assert "edgeSearchCache" in source
     assert "edgeSearchInflight" in source
     assert "policyCheckTail = policySample.slice(-512)" in source
+
+
+def test_android_generation_has_one_shared_deadline_and_passes_remaining_budget():
+    source = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33GenerationService.kt")
+        .read_text(encoding="utf-8")
+    )
+    assert "GENERATION_DEADLINE_MS = 120_000L" in source
+    assert "generationDeadline = generationDeadline" in source
+    assert "timeoutMs = remainingMs" in source
+    assert "generationDeadline - android.os.SystemClock.elapsedRealtime()" in source
+
+
+def test_android_stream_timeout_is_caller_bounded():
+    source = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
+        .read_text(encoding="utf-8")
+    )
+    assert "timeoutMs: Long = GLOBAL_TIMEOUT_MS.toLong()" in source
+    assert "val boundedTimeoutMs = timeoutMs.coerceIn(1_000L, GLOBAL_TIMEOUT_MS.toLong())" in source
+    assert "val deadline = System.nanoTime() + boundedTimeoutMs * 1_000_000L" in source
+
+
+def test_android_sse_checkpoint_path_avoids_sync_commit_and_full_buffer_persistence():
+    source = (
+        (ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33GenerationService.kt")
+        .read_text(encoding="utf-8")
+    )
+    assert "partialOutput = checkpoint.takeLast(CHECKPOINT_TAIL_CHARS)" in source
+    assert "durable = false" in source
+    assert "deferredMemorySync = pendingMemorySync" in source
+    assert "releaseGenerationWakeLock()" in source
+    assert "enqueueMemorySync(it)" in source
+    assert "Thread({" in source
