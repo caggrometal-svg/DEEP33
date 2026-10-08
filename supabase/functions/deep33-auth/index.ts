@@ -91,11 +91,10 @@ Deno.serve(async (req) => {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: existingMapping, error: lookupError } = await admin
-        .schema("private").from("deep33_user_profiles")
-        .select("user_id")
-        .eq("memory_profile_id", localProfileId)
-        .maybeSingle();
+      const { data: existingMapping, error: lookupError } = await admin.rpc(
+        "deep33_auth_profile_lookup",
+        { p_memory_profile_id: localProfileId },
+      );
 
       if (lookupError) {
         return json({ error: "AUTH_PROFILE_LOOKUP_FAILED" }, 503);
@@ -152,15 +151,15 @@ Deno.serve(async (req) => {
         userId = signedIn.data.user.id;
       }
 
-      const { error: mapError } = await admin
-        .schema("private")
-        .from("deep33_user_profiles")
-        .insert({
-          user_id: userId,
-          memory_profile_id: localProfileId,
-        });
+      const { data: bound, error: mapError } = await admin.rpc(
+        "deep33_auth_profile_bind",
+        {
+          p_user_id: userId,
+          p_memory_profile_id: localProfileId,
+        },
+      );
 
-      if (mapError) {
+      if (mapError || bound !== true) {
         if (createdFallbackUserId) await admin.auth.admin.deleteUser(createdFallbackUserId);
         return json({ error: "AUTH_PROFILE_BINDING_FAILED" }, 503);
       }
