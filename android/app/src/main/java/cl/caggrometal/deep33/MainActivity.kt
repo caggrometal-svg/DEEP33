@@ -1505,38 +1505,9 @@ class MainActivity : Activity() {
     }
 
     private fun retryPendingMemorySync() {
-        if (memorySyncRunning) return
-        val pending = store.loadPendingMemorySync() ?: return
-
-        memorySyncRunning = true
-        executor.submit {
-            try {
-                synchronized(memorySyncLock) {
-                    val current = store.loadPendingMemorySync()
-                    if (current == null || current.requestId != pending.requestId) return@synchronized
-
-                    val payload = org.json.JSONArray(current.messagesJson)
-                    Deep33Api.syncMemory(
-                        current.sessionId,
-                        payload,
-                        current.personality,
-                        requestId = current.requestId,
-                        memoryProfileId = current.memoryProfileId
-                    )
-                    store.clearPendingMemorySync(current.requestId)
-                    Log.i("DEEP33", "REMOTE MEMORY SYNCED: " + current.requestId)
-                }
-            } catch (e: Exception) {
-                Log.w("DEEP33", "Pending memory sync deferred: ${e.javaClass.simpleName}")
-            } finally {
-                runOnUiThread {
-                    memorySyncRunning = false
-                    if (store.loadPendingMemorySync() != null && activityVisible) {
-                        window.decorView.postDelayed({ retryPendingMemorySync() }, 5_000L)
-                    }
-                }
-            }
-        }
+        // Memory persistence is durable but non-critical to answer delivery. Keep all
+        // remote-memory retries outside Activity lifecycle and generation timing.
+        MemorySyncCoordinator.enqueue(this)
     }
 
     private fun loadRemoteContext() {
