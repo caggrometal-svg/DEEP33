@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
       });
 
       const { data: existingMapping, error: lookupError } = await admin
-        .from("deep33_user_profiles")
+        .schema("private").from("deep33_user_profiles")
         .select("user_id")
         .eq("memory_profile_id", localProfileId)
         .maybeSingle();
