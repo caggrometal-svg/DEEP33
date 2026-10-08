@@ -28,6 +28,12 @@ async function sha256(value: string): Promise<string> {
     .join("");
 }
 
+function sanitizeLocationText(value: string): string {
+  return value
+    .replace(/\\[(?:UBICACIÓN|UBICACION) GPS ACTUAL[^\\]]*\\]/giu, "[contexto local eliminado por privacidad]")
+    .replace(/\\[(?:CONTEXTO) LOCAL ACTUAL[^\\]]*\\]/giu, "[contexto local]");
+}
+
 function validUserId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -401,7 +407,7 @@ Deno.serve(async (req) => {
         const rows = [];
         for (const message of incoming.slice(-50)) {
           const role = String(message?.role || "");
-          const content = String(message?.content || "");
+          const content = sanitizeLocationText(String(message?.content || ""));
           if (!["user", "assistant"].includes(role) || !content.trim()) continue;
 
           rows.push({
@@ -432,7 +438,7 @@ Deno.serve(async (req) => {
     if (action === "remember") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.remember", async () => {
         const kind = String(body.kind || "explicit");
-        const content = String(body.content || "").trim();
+        const content = sanitizeLocationText(String(body.content || "").trim());
 
         if (!["preference", "explicit", "summary", "context"].includes(kind) || !content) {
           return { body: { error: "MEMORY_INVALID" }, status: 400 };
