@@ -211,6 +211,25 @@ object Deep33Api {
             memoryProfileId = memoryProfileId,
         )
 
+    fun sendFeedback(
+        sessionId: String,
+        requestId: String,
+        rating: String,
+        responseHash: String,
+    ): JSONObject =
+        request(
+            "POST",
+            "/v1/feedback",
+            JSONObject()
+                .put("rating", rating)
+                .put("request_id", requestId)
+                .put("response_hash", responseHash),
+            sessionId,
+            requestId = "feedback-" + requestId,
+            idempotencyKey = "feedback-" + requestId + "-" + rating,
+            timeoutMs = 5_000L,
+        )
+
     fun remember(sessionId: String, kind: String, content: String, memoryProfileId: String? = null): JSONObject =
         request(
             "POST",
