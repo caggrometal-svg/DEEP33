@@ -44,6 +44,7 @@ function headerSubset(req: Request) {
   for (const name of [
     "content-type",
     "accept",
+    "authorization",
     "x-deep33-session-id",
     "x-deep33-memory-profile-id",
     "x-request-id",
@@ -61,7 +62,6 @@ async function fetchUpstream(
   sessionId = "deep33-edge",
 ) {
   const headers = new Headers(init.headers || {});
-  headers.delete("Authorization");
   headers.delete("apikey");
   headers.delete("x-client-info");
   if (!headers.has("x-deep33-session-id")) {
@@ -421,6 +421,7 @@ function recordProviderFailure(
 // completed text is replayable after transport loss or Android app recreation.
 type EdgeIdempotencyContext = {
   sessionId: string;
+  memoryProfileId: string;
   idempotencyKey: string;
   operation: string;
   requestHash: string;
@@ -442,6 +443,7 @@ function idempotencyResultBody(record: EdgeIdempotencyRecord): Record<string, un
 async function buildEdgeIdempotencyContext(
   payload: Record<string, unknown>,
   sessionId: string,
+  memoryProfileId: string,
   idempotencyKey: string,
   operation: string,
   stream: boolean,
@@ -458,6 +460,7 @@ async function buildEdgeIdempotencyContext(
   );
   return {
     sessionId: session,
+    memoryProfileId: memoryProfileId.trim(),
     idempotencyKey: key,
     operation,
     requestHash,
@@ -470,6 +473,8 @@ async function edgeIdempotencyAction(
   extra: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   const result = await memoryCall(action, context.sessionId, {
+    memory_profile_id: context.memoryProfileId,
+    owner_user_id: context.memoryProfileId,
     idempotency_key: context.idempotencyKey,
     request_hash: context.requestHash,
     operation: context.operation,
@@ -2505,6 +2510,7 @@ Deno.serve(async (req) => {
                   messages: buildEdgeMessages(workingMessages, activePersonality),
                 },
                 sessionId,
+                memoryProfileId,
                 idempotencyKey,
                 "ai.chat.stream",
                 true,
@@ -2828,6 +2834,7 @@ Deno.serve(async (req) => {
             const idempotencyContext = await buildEdgeIdempotencyContext(
               { ...payload, messages: edgeMessages },
               sessionId,
+              memoryProfileId,
               idempotencyKey,
               "ai.generate",
               false,
@@ -2924,6 +2931,7 @@ return json({
           const idempotencyContext = await buildEdgeIdempotencyContext(
             { ...payload, messages: edgeMessages },
             sessionId,
+            memoryProfileId,
             idempotencyKey,
             "ai.generate",
             false,
