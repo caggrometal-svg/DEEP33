@@ -37,6 +37,7 @@ function normalizePath(pathname: string) {
 function headerSubset(req: Request) {
   const headers = new Headers();
   for (const name of [
+    "authorization",
     "content-type",
     "accept",
     "x-deep33-session-id",
