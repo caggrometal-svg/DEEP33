@@ -74,6 +74,7 @@ RATE_LIMIT_WINDOW = max(10.0, float(os.getenv("DEEP33_RATE_LIMIT_WINDOW_SECONDS"
 AUTH_TIMEOUT_SECONDS = max(1.0, min(5.0, float(os.getenv("DEEP33_AUTH_TIMEOUT_SECONDS", "2.5"))))
 AUTH_CACHE_TTL_SECONDS = max(5.0, min(300.0, float(os.getenv("DEEP33_AUTH_CACHE_TTL_SECONDS", "60"))))
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 SUPABASE_AUTH_KEY = os.getenv(
     "SUPABASE_SERVICE_ROLE_KEY",
     os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")),
@@ -711,6 +712,12 @@ class MemorySyncRequest(BaseModel):
 class MemoryRememberRequest(BaseModel):
     kind: str = Field(pattern="^(preference|explicit|summary|context)$")
     content: str = Field(min_length=1, max_length=10000)
+
+
+class FeedbackRequest(BaseModel):
+    rating: str = Field(pattern="^(positive|negative)$")
+    request_id: str = Field(min_length=1, max_length=128)
+    response_hash: str | None = Field(default=None, max_length=128)
 
 
 class MemoryPreferencesRequest(BaseModel):
@@ -2653,6 +2660,54 @@ async def generate(
                 type(store_exc).__name__,
             )
         raise
+
+
+@app.post("/v1/feedback")
+async def submit_feedback(payload: FeedbackRequest, http_request: Request) -> dict:
+    session_id = session_id_from_request(http_request)
+    await enforce_client_controls(http_request, session_id)
+    user_id = getattr(http_request.state, "user_id", "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+
+    response_hash = (payload.response_hash or "").strip()
+    if response_hash and not re.fullmatch(r"[0-9a-fA-F]{16,128}", response_hash):
+        raise HTTPException(status_code=400, detail="DEEP33_RESPONSE_HASH_INVALID")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=503, detail="DEEP33_FEEDBACK_NOT_CONFIGURED")
+
+    global _auth_http_client
+    if _auth_http_client is None:
+        _auth_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(3.0),
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8, keepalive_expiry=30.0),
+        )
+
+    row = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "request_id": payload.request_id.strip(),
+        "rating": payload.rating,
+        "response_hash": response_hash or None,
+    }
+    try:
+        response = await _auth_http_client.post(
+            f"{SUPABASE_URL}/rest/v1/deep33_feedback",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            json=row,
+            timeout=3.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_FEEDBACK_UNAVAILABLE") from exc
+    if response.status_code not in {200, 201, 204}:
+        raise HTTPException(status_code=502, detail="DEEP33_FEEDBACK_PERSIST_FAILED")
+    return {"ok": True, "persisted": True}
 
 
 @app.post("/v1/ai/generate")
