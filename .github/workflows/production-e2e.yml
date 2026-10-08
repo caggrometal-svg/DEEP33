@@ -6,11 +6,15 @@ name: DEEP33 Production E2E
 
 on:
   workflow_dispatch:
-  # Run the production smoke test when its auth/retry logic changes.
+  # Re-run live production smoke tests whenever the auth workflow or an
+  # edge runtime contract changes; health-only checks are not sufficient.
   push:
     branches: ["main"]
     paths:
       - ".github/workflows/production-e2e.yml"
+      - "supabase/functions/deep33-proxy/index.ts"
+      - "supabase/functions/deep33-tertiary/index.ts"
+      - "tests/test_connectivity_hardening.py"
 
 permissions:
   contents: read
