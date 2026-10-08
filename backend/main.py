@@ -3007,6 +3007,8 @@ async def _finalize_stream(
         ]
         + [{"role": "assistant", "content": assistant_text}],
         personality=personality,
+        memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     await persist_deep33_self_name(
         session_id,
