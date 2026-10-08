@@ -37,6 +37,8 @@ object Deep33LocationProvider {
     private const val MAX_AGE_MS = 5 * 60_000L
     private const val MAX_ACCURACY_METERS = 2_000f
     private const val LABEL_TIMEOUT_MS = 1_500L
+    private const val FAST_CACHE_MAX_AGE_MS = 60_000L
+    private const val FAST_CACHE_MAX_ACCURACY_METERS = 750f
 
     private val executor = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "DEEP33-Location").apply { isDaemon = true }
@@ -96,6 +98,23 @@ object Deep33LocationProvider {
     private fun currentLocationCandidate(manager: LocationManager): Location? {
         val providers = enabledProviders(manager)
         if (providers.isEmpty()) return null
+
+        // Prefer a recent, sufficiently precise cached fix to avoid adding several
+        // seconds to every local query. A fresh provider fix still follows when the
+        // cache is stale or too imprecise.
+        val cachedBest = providers
+            .mapNotNull { provider ->
+                runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+            }
+            .filter(::isAcceptable)
+            .minWithOrNull(compareBy<Location>({ accuracyScore(it) }, { locationAgeMs(it) }))
+        if (
+            cachedBest != null &&
+            locationAgeMs(cachedBest) <= FAST_CACHE_MAX_AGE_MS &&
+            accuracyScore(cachedBest) <= FAST_CACHE_MAX_ACCURACY_METERS
+        ) {
+            return cachedBest
+        }
 
         val results = mutableListOf<Location>()
         val lock = Any()
