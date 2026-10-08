@@ -6,6 +6,10 @@ on:
       - doctor/deep33-architecture-speed-multiuser-20261008
   workflow_dispatch:
 
+concurrency:
+  group: deep33-doctor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
