@@ -11,6 +11,8 @@ permissions:
   contents: read
 
 env:
+  SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+  SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
   TERTIARY_URL: https://deep33-backend.onrender.com
@@ -20,6 +22,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Create authenticated E2E user session
+        run: |
+          set -euo pipefail
+          auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
+            -X POST "$SUPABASE_URL/auth/v1/signup" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "content-type: application/json" \
+            -d '{"data":{"deep33_profile_id":"e2e-${GITHUB_RUN_ID}"}}')"
+          token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
+          test -n "$token"
+          echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
       - name: Verify every production transport node
         run: |
           set -euo pipefail
@@ -27,8 +41,8 @@ jobs:
           for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
-            curl -fsS --connect-timeout 8 --max-time 30 "$url/health" | jq -e '.status=="PASS"' >/dev/null
-            curl -fsS --connect-timeout 8 --max-time 45 "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            curl -fsS --connect-timeout 8 --max-time 30 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/health" | jq -e '.status=="PASS"' >/dev/null
+            curl -fsS --connect-timeout 8 --max-time 45 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
             echo "${name}_PRODUCTION_NODE_PASS"
           done
           test "$PRIMARY_URL" != "$SECONDARY_URL"
@@ -39,18 +53,19 @@ jobs:
       - name: Verify DEEP33 edge connectivity and search
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
-          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
+          curl -fsS --connect-timeout 8 --max-time 60 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
+          curl -fsS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
           jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
       - name: Verify edge audit and real inference
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
-          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
+          curl -fsS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
+          curl -fsS --connect-timeout 8 --max-time 120 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
           curl -fsS --connect-timeout 8 --max-time 120 \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
             -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}" \
             -H "X-Request-ID: prod-${GITHUB_RUN_ID}" \
             -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}" \
