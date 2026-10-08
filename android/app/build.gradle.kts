@@ -13,6 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         buildConfigField("boolean", "DEEP33_MULTIUSER_MODE", "true")
+        buildConfigField("String", "DEEP33_SUPABASE_URL", ""https://opocgzydeknuchtrqzfa.supabase.co"")
+        buildConfigField("String", "DEEP33_SUPABASE_PUBLISHABLE_KEY", ""sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA"")
         versionCode = 8
         versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -42,7 +44,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
             }
