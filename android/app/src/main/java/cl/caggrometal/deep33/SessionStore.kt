@@ -83,6 +83,14 @@ class SessionStore(
                 Regex("\\[(?:CONTEXTO) LOCAL ACTUAL[^\\]]*\\]", RegexOption.IGNORE_CASE),
                 "[contexto local]"
             )
+            .replace(
+                Regex("\\b(?:latitude|longitude|lat|lon)\\b\\s*[=:]\\s*-?\\d+(?:\\.\\d+)?", RegexOption.IGNORE_CASE),
+                "[coordenada eliminada por privacidad]"
+            )
+            .replace(
+                Regex("\"(?:latitude|longitude)\"\\s*:\\s*-?\\d+(?:\\.\\d+)?", RegexOption.IGNORE_CASE),
+                ""latitude":null"
+            )
     }
 
     private fun migrateGpsPrivacyState() {
