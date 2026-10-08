@@ -1,4 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+  : null;
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // No hosting provider is hard-coded. DEEP33_UPSTREAM_URL is optional legacy compatibility
@@ -27,6 +33,37 @@ const json = (data: unknown, status = 200) =>
       "Cache-Control": "no-store",
     },
   });
+
+function validUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+class Deep33HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "Deep33HttpError";
+  }
+}
+
+async function requireAuthenticatedUser(req: Request): Promise<string> {
+  if (!supabaseAdmin) throw new Deep33HttpError(503, "DEEP33_AUTH_NOT_CONFIGURED");
+  const authorization = req.headers.get("authorization")?.trim() || "";
+  if (!authorization.startsWith("Bearer ")) {
+    throw new Deep33HttpError(401, "DEEP33_AUTH_REQUIRED");
+  }
+  const token = authorization.slice("Bearer ".length).trim();
+  if (!token) throw new Deep33HttpError(401, "DEEP33_AUTH_REQUIRED");
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  const userId = data.user?.id?.trim() || "";
+  if (error || !validUuid(userId)) throw new Deep33HttpError(401, "DEEP33_AUTH_INVALID");
+  return userId;
+}
+
+function scopedSession(userId: string, clientSessionId: string): string {
+  const clean = clientSessionId.trim().slice(0, 96);
+  const prefix = userId + ":";
+  return (clean.startsWith(prefix) ? clean : prefix + clean).slice(0, 128);
+}
 
 function normalizePath(pathname: string) {
   return pathname
@@ -423,6 +460,9 @@ async function edgeIdempotencyComplete(
       });
       return;
     } catch (error) {
+    if (error instanceof Deep33HttpError) {
+      return json({ ok: false, error: error.message }, error.status);
+    }
       lastError = error;
       if (attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
@@ -2097,13 +2137,19 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   const path = normalizePath(url.pathname);
-  const sessionId =
-    req.headers.get("x-deep33-session-id")?.trim() ||
-    "deep33-mobile";
-  const memoryProfileId =
-    req.headers.get("x-deep33-memory-profile-id")?.trim() || undefined;
 
   try {
+    const ownerUserId = await requireAuthenticatedUser(req);
+    const clientSessionId =
+      req.headers.get("x-deep33-session-id")?.trim() ||
+      "deep33-mobile";
+    const claimedProfileId =
+      req.headers.get("x-deep33-memory-profile-id")?.trim() || "";
+    if (claimedProfileId && claimedProfileId !== ownerUserId) {
+      throw new Deep33HttpError(403, "DEEP33_PROFILE_SCOPE_MISMATCH");
+    }
+    const sessionId = scopedSession(ownerUserId, clientSessionId);
+    const memoryProfileId = ownerUserId;
     if (path === "/v1/ai/edge-status" && req.method === "GET") {
       const providers = edgeProviders();
       return json({
