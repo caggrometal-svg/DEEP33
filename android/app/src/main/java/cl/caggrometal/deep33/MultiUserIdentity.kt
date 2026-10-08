@@ -73,7 +73,7 @@ internal object MultiUserIdentity {
         val id = newProfileId()
         ids.add(id)
         val fallback = DEFAULT_NAME_PREFIX + ids.size
-        val name = requestedName?.trim()?.replace(Regex("\s+"), " ")?.take(40).orEmpty()
+        val name = requestedName?.trim()?.replace(Regex("\\s+"), " ")?.take(40).orEmpty()
             .ifBlank { fallback }
         prefs.edit()
             .putStringSet(PROFILE_IDS, ids)
