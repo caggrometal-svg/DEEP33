@@ -16,7 +16,9 @@ def test_edge_runtime_contains_real_dialogue_policy() -> None:
         "En particular, no uses fórmulas artificiales",
         "En resumen",
         "Cuando la pregunta ya quedó respondida, termina.",
-        "DEEP33 CONVERSATION CONTROL v1.",
+        "No respondas con estructuras del tipo Introducción, Análisis, Estudio, Resumen o Conclusión.",
+        "DEEP33 dialoga; no redacta informes.",
+        "DEEP33 CONVERSATION CONTROL v2.",
     )
 
     for path in EDGE_FILES:
