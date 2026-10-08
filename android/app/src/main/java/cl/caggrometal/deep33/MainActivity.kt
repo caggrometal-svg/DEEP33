@@ -1366,7 +1366,7 @@ class MainActivity : Activity() {
     private fun manageUserProfiles() {
         val profiles = store.listUserProfiles()
         val labels = profiles.map { it.name }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this)
             .setTitle("PERFIL DE USUARIO")
             .setSingleChoiceItems(
                 labels,
@@ -1381,7 +1381,7 @@ class MainActivity : Activity() {
                     hint = "Nombre del usuario"
                     setSingleLine(true)
                 }
-                androidx.appcompat.app.AlertDialog.Builder(this)
+                android.app.AlertDialog.Builder(this)
                     .setTitle("NUEVO PERFIL")
                     .setView(field)
                     .setNegativeButton("CANCELAR", null)
