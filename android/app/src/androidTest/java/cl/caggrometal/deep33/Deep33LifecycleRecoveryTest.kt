@@ -63,7 +63,9 @@ class Deep33LifecycleRecoveryTest {
             Thread.sleep(7_000L)
             scenario.moveToState(Lifecycle.State.RESUMED)
 
-            val deadline = System.currentTimeMillis() + 60_000L
+            // Recovery is allowed the same 180-second global deadline as the service,
+            // plus margin for the emulator and foreground/background lifecycle transitions.
+            val deadline = System.currentTimeMillis() + 210_000L
             var responseReceived = false
             var offlineSeen = false
             while (System.currentTimeMillis() < deadline) {
@@ -81,13 +83,25 @@ class Deep33LifecycleRecoveryTest {
             }
 
             assertTrue("Lifecycle recovery exposed OFFLINE while recovering the pending turn", !offlineSeen)
+            val finalStore = SessionStore(context)
+            val finalState = finalStore.loadGenerationState()
+            val finalPending = finalStore.loadPendingTurn()
+            val persistedAssistant = finalStore.loadMessages().any {
+                it.role == "assistant" && it.content.isNotBlank()
+            }
+            val recoveryReport =
+                "ui_response=$responseReceived persisted_assistant=$persistedAssistant " +
+                    "state=${finalState?.status} error=${finalState?.error} " +
+                    "pending_request=${finalPending?.requestId}"
+            android.util.Log.e("DEEP33_TEST", "LIFECYCLE_RECOVERY_RESULT $recoveryReport")
+
             assertTrue(
-                "The original pending turn did not produce an assistant response",
+                "The original pending turn did not produce an assistant response: $recoveryReport",
                 responseReceived
             )
             assertNull(
-                "Pending marker was not cleared after the recovered response",
-                SessionStore(context).loadPendingTurn()
+                "Pending marker was not cleared after the recovered response: $recoveryReport",
+                finalPending
             )
         } finally {
             store.clearPendingTurn(pending.requestId)
