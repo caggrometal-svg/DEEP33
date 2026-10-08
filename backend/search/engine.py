@@ -64,6 +64,10 @@ PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().
 PARALLEL_QUERIES = os.getenv("WEB_SEARCH_PARALLEL_QUERIES", "true").strip().lower() == "true"
 MAX_QUERY_FANOUT = max(1, min(2, int(os.getenv("WEB_SEARCH_MAX_QUERY_FANOUT", "2"))))
 MIN_VERIFIED_RESULTS = max(2, min(3, int(os.getenv("WEB_SEARCH_MIN_VERIFIED_RESULTS", "2"))))
+TOTAL_SEARCH_TIMEOUT_SECONDS = max(
+    3.0,
+    min(15.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "8"))),
+)
 
 
 @dataclass(frozen=True)
@@ -622,15 +626,27 @@ class SearchEngine:
 
         planned_queries = plan.queries[:1] if fast_mode else plan.queries
 
+        search_deadline = asyncio.get_running_loop().time() + TOTAL_SEARCH_TIMEOUT_SECONDS
+
         async def run_planned(planned_query: str):
-            return planned_query, await self._run_query(
-                providers,
-                planned_query,
-                plan_depth=plan.depth,
-                timeout_seconds=timeout_seconds,
-                api_key=api_key,
-                fast_mode=fast_mode,
-            )
+            remaining = search_deadline - asyncio.get_running_loop().time()
+            if remaining <= 0.25:
+                return planned_query, ([], ["search:deadline"], [])
+            try:
+                batch = await asyncio.wait_for(
+                    self._run_query(
+                        providers,
+                        planned_query,
+                        plan_depth=plan.depth,
+                        timeout_seconds=min(timeout_seconds, max(1.0, remaining)),
+                        api_key=api_key,
+                        fast_mode=fast_mode,
+                    ),
+                    timeout=remaining,
+                )
+                return planned_query, batch
+            except asyncio.TimeoutError:
+                return planned_query, ([], ["search:deadline"], [])
 
         if (
             not fast_mode
@@ -684,14 +700,8 @@ class SearchEngine:
             rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
             if rescue and rescue.lower() != plan.original_query.lower():
                 executed_queries.append(rescue)
-                batch, batch_errors, attempted = await self._run_query(
-                    providers,
-                    rescue,
-                    plan_depth="standard",
-                    timeout_seconds=timeout_seconds,
-                    api_key=api_key,
-                    fast_mode=fast_mode,
-                )
+                _rescue_query, rescue_result = await run_planned(rescue)
+                batch, batch_errors, attempted = rescue_result
                 errors.extend(batch_errors)
                 for provider_used in attempted:
                     if provider_used not in providers_attempted:
