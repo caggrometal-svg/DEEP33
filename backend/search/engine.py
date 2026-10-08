@@ -118,8 +118,8 @@ def is_realtime_query(query: str) -> bool:
 
     # Natural weather questions can omit explicit words such as "clima".
     weather_semantic = bool(re.search(
-        r"\\b(?:hara|hará|estara|estará|como estará|como estara|qué tan|que tan|qué tal|que tal)"
-        r"[^.?!]{0,80}\\b(?:calor|frío|frio|helado|helada)\\b",
+        r"\b(?:hara|hará|estara|estará|como estará|como estara|qué tan|que tan|qué tal|que tal)"
+        r"[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b",
         lowered,
     ))
     weather_context = any(term in lowered for term in (
