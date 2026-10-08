@@ -452,8 +452,9 @@ def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     )
     # Preserve a usable conversational window even for a one-message client turn;
     # the backend can then merge remote session history without silently reducing it to 1.
-    message_budget = min(50, max(16, len(messages)))
-    return message_budget, adaptive_budget, profile
+    # No fixed message-count truncation. The context selector below uses the adaptive
+    # character budget and compacts only when the assembled conversation exceeds it.
+    return len(messages), adaptive_budget, profile
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
