@@ -11,3 +11,6 @@ verify_jwt = true
 
 [functions.deep33-tertiary]
 verify_jwt = true
+
+[functions.deep33-auth]
+verify_jwt = false
