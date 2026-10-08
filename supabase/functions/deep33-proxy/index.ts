@@ -2140,6 +2140,14 @@ async function runPublicWebSearchQuery(query: string) {
       url: "https://www.bing.com/search?format=rss&q=" + encodeURIComponent(q),
     },
     {
+      name: "google_news_public",
+      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(q) +
+        "&hl=es-419&gl=CL&ceid=CL:es-419",
+      headers: {
+        "Accept": "application/rss+xml,application/xml,text/xml",
+      },
+    },
+    {
       name: "mojeek_public",
       url: "https://www.mojeek.com/search?q=" + encodeURIComponent(q) + "&fmt=html",
     },
@@ -2183,7 +2191,18 @@ async function runPublicWebSearchQuery(query: string) {
     const html = await response.text();
     const results: Array<Record<string, string>> = [];
 
-    if (provider.name === "bing_public") {
+    if (provider.name === "google_news_public") {
+      const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?(?:<pubDate>([\s\S]*?)<\/pubDate>)?[\s\S]*?<\/item>/gi)];
+      for (const item of items.slice(0, 8)) {
+        const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
+        const url = decodeHtml(String(item[2] ?? "").trim());
+        const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
+        const published_at = decodeHtml(String(item[4] ?? "").trim());
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({ title, url, snippet, published_at });
+        }
+      }
+    } else if (provider.name === "bing_public") {
       const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
       for (const item of items.slice(0, 8)) {
         const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
@@ -2332,6 +2351,9 @@ function edgeRealtimeQuery(query: string): boolean {
     "dólar","dolar","euro","precio","cotización","cotizacion","resultados","marcador",
     "horario","tráfico","trafico","vuelo","vuelos","alerta","terremoto","tsunami",
     "incendio","guerra","fecha","hora","vigente","en vivo","live","breaking","latest","current",
+    "situación actual","situacion actual","estado actual","qué ocurre","que ocurre",
+    "qué pasa","que pasa","qué está pasando","que esta pasando","emergencia","incidente",
+    "incidentes","contingencia","suceso","sucesos","ocurriendo","sucediendo","sucede",
   ].some((term) => lowered.includes(term));
 }
 
@@ -2340,22 +2362,29 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
   const normalized = normalizeEdgeSearchQuery(original) || original;
   const realtime = edgeRealtimeQuery(original);
   if (!realtime) return { original, queries: [normalized], depth: "standard" };
-  const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const localDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
   const lowered = original.toLowerCase();
-  const weatherSemantic = /\b(?:clima|tiempo|temperatura|pronóstico|pronostico|lluvia|llover|humedad|viento|calor|frío|frio|helado|helada)\b/i.test(lowered) || /\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered);
+  const weatherSemantic = /\b(?:clima|tiempo|temperatura|pronóstico|pronostico|lluvia|llover|humedad|viento|calor|frío|frio|helado|helada)\b/i.test(lowered)
+    || /\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered);
+  const currentNews = /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|guerra|alerta)\b/i.test(lowered);
   const variants = weatherSemantic
     ? [
         normalized + " temperatura humedad lluvia condiciones actuales hoy " + localDate,
         "site:meteochile.gob.cl " + normalized + " temperatura pronóstico " + localDate,
       ]
-    : lowered.includes("noticia") || lowered.includes("guerra")
+    : currentNews
       ? [
           normalized + " últimas noticias de hoy " + localDate,
-          normalized + " última hora y actualización " + localDate,
+          normalized + " última hora y actualización de hoy " + localDate,
         ]
       : [
           normalized + " actualización de hoy " + localDate,
-          normalized + " información más reciente " + localDate,
+          normalized + " información más reciente de hoy " + localDate,
         ];
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
@@ -2391,10 +2420,36 @@ async function publicWebSearchUncached(
       if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
     }
   }
-  const results = [...merged.values()].slice(0, 8);
+  const allResults = [...merged.values()];
+  const anchorTokens = plan.depth === "realtime"
+    ? new Set(
+        normalizeEdgeSearchQuery(plan.original)
+          .toLowerCase()
+          .match(/[a-záéíóúüñ]{3,}/gi) || [],
+      )
+    : new Set<string>();
+  const realtimeFiller = new Set([
+    "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
+    "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
+    "noticia","noticias","actualidad","reciente","recientes","información","informacion",
+    "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
+    "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
+    "contingencia","suceso","sucesos","en","vivo",
+  ]);
+  const entityTokens = new Set([...anchorTokens].filter(token => !realtimeFiller.has(token)));
+  const relevant = plan.depth === "realtime" && entityTokens.size
+    ? allResults.filter(item => {
+        const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
+        return [...entityTokens].filter(token => evidence.includes(token)).length >=
+          Math.min(2, entityTokens.size);
+      })
+    : allResults;
+  const results = (relevant.length ? relevant : plan.depth === "realtime" ? [] : allResults).slice(0, 8);
   return {
     ok: results.length > 0,
     realtime: plan.depth === "realtime",
+    fresh_request: true,
+    realtime_news: /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|alerta|guerra)\b/i.test(plan.original),
     retrieved_at: new Date().toISOString(),
     engine: "DEEP33 Search Engine",
     engine_version: "1.3.0",
@@ -2413,6 +2468,7 @@ async function publicWebSearchUncached(
       }).filter(Boolean)).size,
       distinct_providers: providers.size,
       corroborated_results: 0,
+      relevant_results: results.length,
     },
     latency_ms: Math.round(performance.now() - started),
   };
