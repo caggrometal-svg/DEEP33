@@ -48,8 +48,10 @@ async function resolveOwnerId(req: Request, body: Record<string, unknown>): Prom
     const { data, error } = await supabase.auth.getUser(token);
     const userId = data.user?.id?.trim() || "";
     if (!error && validUserId(userId)) {
-      const claimed = String(body.memory_profile_id || body.owner_user_id || "").trim();
-      if (claimed && claimed !== userId) return null;
+      const claimedOwner = String(body.owner_user_id || "").trim();
+      if (claimedOwner && claimedOwner !== userId) return null;
+      // memory_profile_id is a namespace identifier, not the Auth user UUID.
+      // Its ownership is checked separately by resolveMemoryProfileId().
       return userId;
     }
   }
