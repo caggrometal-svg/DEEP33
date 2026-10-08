@@ -1665,10 +1665,14 @@ class MainActivity : Activity() {
 
     private fun isLocationAwareQuery(text: String): Boolean {
         val normalized = VoiceConversationPolicy.normalizeForComparison(text)
-        return Regex(
-            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|" +
+        val directLocal = Regex(
+            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas|" +
                 "ubicacion|donde estoy|mi ubicacion|cerca de mi|near me|nearby)\\b"
         ).containsMatchIn(normalized)
+        val naturalWeatherPhrase = Regex(
+            "(hara\\s+(mucho\\s+)?calor|que\\s+tan\\s+frio|como\\s+estara\\s+(el\\s+)?dia|como\\s+estara\\s+(hoy|manana))"
+        ).containsMatchIn(normalized)
+        return directLocal || naturalWeatherPhrase
     }
 
     private fun hasLocationPermission(): Boolean =
@@ -1716,7 +1720,7 @@ class MainActivity : Activity() {
                     if (location != null) {
                         Log.i(
                             "DEEP33_GPS",
-                            "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
+                            "GPS_LOCATION_READY label=${location.label.orEmpty()}"
                         )
                     } else {
                         Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
@@ -1724,7 +1728,8 @@ class MainActivity : Activity() {
                     sendMessageInternal(text, location)
                 }
             },
-            includeLabel = !weatherQuery
+            includeLabel = true,
+            shareCoordinatesWithInference = weatherQuery
         )
     }
 
