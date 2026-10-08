@@ -103,6 +103,53 @@ class SessionStore(
         }
     }
 
+    fun cancelGenerationAtomically(
+        requestId: String?,
+        sessionId: String,
+        personality: String,
+    ): Boolean {
+        val id = requestId?.trim().orEmpty()
+        if (id.isBlank() || sessionId.isBlank()) return false
+        synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            val pending = loadPendingTurn()
+            val matches = current?.requestId == id || pending?.requestId == id
+            if (!matches) return false
+
+            val edit = prefs.edit()
+                .putString(
+                    KEY_GENERATION_STATE,
+                    JSONObject()
+                        .put("status", GenerationStatus.CANCELLED.name)
+                        .put("request_id", id)
+                        .put("session_id", sessionId)
+                        .put("personality", personality)
+                        .put("partial_output", current?.partialOutput.orEmpty())
+                        .put("final_text", "")
+                        .put("error", "Generación cancelada.")
+                        .toString()
+                )
+                .remove(KEY_PENDING_TURN)
+            edit.commit()
+
+            generationStateListeners.forEach { listener ->
+                runCatching {
+                    listener(
+                        GenerationState(
+                            status = GenerationStatus.CANCELLED,
+                            requestId = id,
+                            sessionId = sessionId,
+                            personality = personality,
+                            partialOutput = current?.partialOutput.orEmpty(),
+                            error = "Generación cancelada."
+                        )
+                    )
+                }
+            }
+            return true
+        }
+    }
+
     var appBackgrounded: Boolean
         get() = prefs.getBoolean(KEY_APP_BACKGROUNDED, false)
         set(value) {
