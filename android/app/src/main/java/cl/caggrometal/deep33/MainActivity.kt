@@ -2767,12 +2767,16 @@ class MainActivity : Activity() {
         val response = content.trim()
         if (response.isBlank()) return
         val sessionId = store.sessionId
+        val responseHash = MessageDigest.getInstance("SHA-256")
+            .digest((sessionId + "\u0000" + response).toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
         executor.execute {
             runCatching {
                 Deep33Api.sendFeedback(
                     sessionId = sessionId,
-                    responseContent = response,
-                    useful = useful,
+                    requestId = responseHash,
+                    rating = if (useful) "positive" else "negative",
+                    responseHash = responseHash,
                 )
             }.onFailure {
                 Log.w("DEEP33", "Feedback deferred: " + it.javaClass.simpleName)
