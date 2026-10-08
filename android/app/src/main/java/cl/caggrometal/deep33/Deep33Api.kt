@@ -63,13 +63,17 @@ object Deep33Api {
         authContext = context.applicationContext
     }
 
-    private fun authorizationToken(): String? {
+    private fun authorizationToken(forceRefresh: Boolean = false): String? {
         val context = authContext ?: return null
         val profileId = MultiUserIdentity.currentProfileId(context)
         return runCatching {
-            SupabaseAuthManager(context, profileId).ensureSession()
+            val manager = SupabaseAuthManager(context, profileId)
+            if (forceRefresh) manager.forceRefreshSession() else manager.ensureSession()
         }.getOrNull()
     }
+
+    private fun refreshAuthorizationToken(): Boolean =
+        !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
@@ -274,6 +278,7 @@ object Deep33Api {
 
         for (endpoint in normalizedEndpoints()) {
             var attempt = 0
+            var authRetryUsed = false
             while (attempt < ENDPOINT_ATTEMPTS) {
                 attempt++
                 val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L)
@@ -303,7 +308,8 @@ object Deep33Api {
                     // Remote ownership is derived from the authenticated Supabase subject.
                     // The legacy client-provided memory-profile header is intentionally no
                     // longer authoritative and is not sent to the server.
-                    authorizationToken()?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
+                    authorizationToken(forceRefresh = authRetryUsed)
+                        ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
@@ -372,6 +378,15 @@ object Deep33Api {
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
+                    if (
+                        e.kind == Deep33ApiException.Kind.AUTH &&
+                        !authRetryUsed &&
+                        refreshAuthorizationToken()
+                    ) {
+                        authRetryUsed = true
+                        attempt -= 1
+                        continue
+                    }
                     if (
                         e.kind == Deep33ApiException.Kind.CANCELLED ||
                         !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, e.kind, idempotentRequest = true)
@@ -483,6 +498,7 @@ object Deep33Api {
 
         for (endpoint in normalizedEndpoints(endpointOverride)) {
             var attempt = 0
+            var authRetryUsed = false
             while (attempt < ENDPOINT_ATTEMPTS) {
                 attempt++
                 val remainingMs = ((deadline - System.nanoTime()) / 1_000_000L)
@@ -501,7 +517,8 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    authorizationToken()?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
+                    authorizationToken(forceRefresh = authRetryUsed)
+                        ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
@@ -551,6 +568,15 @@ object Deep33Api {
                     return json
                 } catch (e: Deep33ApiException) {
                     lastError = e
+                    if (
+                        e.kind == Deep33ApiException.Kind.AUTH &&
+                        !authRetryUsed &&
+                        refreshAuthorizationToken()
+                    ) {
+                        authRetryUsed = true
+                        attempt -= 1
+                        continue
+                    }
                     if (!Deep33FailoverPolicy.canFailover(
                             method,
                             requestBodyStarted,
