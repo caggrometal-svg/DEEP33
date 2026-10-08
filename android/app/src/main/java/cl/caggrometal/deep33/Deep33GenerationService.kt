@@ -150,6 +150,9 @@ class Deep33GenerationService : Service() {
             if (finalText.isBlank()) {
                 throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
             }
+            if (userCancelled.get() || store.isGenerationCancelled(requestId)) {
+                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+            }
 
             val messages = buildList {
                 for (i in 0 until payload.length()) {
@@ -176,6 +179,10 @@ class Deep33GenerationService : Service() {
                 ?.take(60)
             if (!title.isNullOrBlank()) {
                 store.saveChatSummary(title)
+            }
+
+            if (userCancelled.get() || store.isGenerationCancelled(requestId)) {
+                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
             }
 
             store.saveGenerationState(
@@ -213,7 +220,7 @@ class Deep33GenerationService : Service() {
             store.savePendingMemorySync(pendingMemorySync)
             deferredMemorySync = pendingMemorySync
         } catch (e: Deep33ApiException) {
-            if (userCancelled.get()) {
+            if (userCancelled.get() || store.isGenerationCancelled(requestId)) {
                 store.clearPendingTurn(requestId)
                 store.saveGenerationState(
                     status = GenerationStatus.CANCELLED,
@@ -312,7 +319,11 @@ class Deep33GenerationService : Service() {
         }
 
         for (attempt in 0..MAX_STREAM_RECOVERY_RETRIES) {
-            if (userCancelled.get() || Thread.currentThread().isInterrupted) {
+            if (
+                userCancelled.get() ||
+                Thread.currentThread().isInterrupted ||
+                store.isGenerationCancelled(requestId)
+            ) {
                 throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
             }
 
@@ -337,7 +348,9 @@ class Deep33GenerationService : Service() {
                     memoryProfileId = store.memoryProfileId,
                     timeoutMs = remainingMs,
                     isCancelled = {
-                        userCancelled.get() || Thread.currentThread().isInterrupted
+                        userCancelled.get() ||
+                            Thread.currentThread().isInterrupted ||
+                            store.isGenerationCancelled(requestId)
                     },
                     onText = { chunk ->
                         checkpoint.append(chunk)
