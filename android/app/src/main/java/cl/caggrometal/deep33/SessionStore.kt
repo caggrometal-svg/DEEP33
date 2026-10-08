@@ -89,7 +89,7 @@ class SessionStore(
             )
             .replace(
                 Regex("\"(?:latitude|longitude)\"\\s*:\\s*-?\\d+(?:\\.\\d+)?", RegexOption.IGNORE_CASE),
-                ""latitude":null"
+                "[coordenada eliminada por privacidad]"
             )
     }
 
