@@ -1675,6 +1675,17 @@ class MainActivity : Activity() {
         return directLocal || naturalWeatherPhrase
     }
 
+    private fun isWeatherSemanticQuery(text: String): Boolean {
+        val normalized = VoiceConversationPolicy.normalizeForComparison(text)
+        val direct = Regex(
+            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
+        ).containsMatchIn(normalized)
+        val natural = Regex(
+            "(hara\\s+(mucho\\s+)?calor|que\\s+tan\\s+frio|como\\s+estara\\s+(el\\s+)?dia|como\\s+estara\\s+(hoy|manana))"
+        ).containsMatchIn(normalized)
+        return direct || natural
+    }
+
     private fun hasLocationPermission(): Boolean =
         Deep33LocationProvider.hasPermission(this)
 
@@ -1707,11 +1718,7 @@ class MainActivity : Activity() {
             statusView.contentDescription = "Obteniendo ubicación GPS para esta consulta"
         }
 
-        val weatherQuery = VoiceConversationPolicy.normalizeForComparison(text).let {
-            Regex(
-                "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
-            ).containsMatchIn(it)
-        }
+        val weatherQuery = isWeatherSemanticQuery(text)
         Deep33LocationProvider.resolve(
             this,
             callback = { location ->
