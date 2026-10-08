@@ -23,6 +23,7 @@ class Deep33GenerationService : Service() {
     private val userCancelled = AtomicBoolean(false)
     @Volatile private var stoppingBySystem = false
     @Volatile private var runningRequestId: String? = null
+    @Volatile private var runningProfileId: String? = null
     @Volatile private var backgroundMode = false
     private var generationWakeLock: PowerManager.WakeLock? = null
     private var connectivityManager: ConnectivityManager? = null
@@ -72,7 +73,8 @@ class Deep33GenerationService : Service() {
 
             ACTION_START -> {
                 val requestedId = intent.getStringExtra(EXTRA_REQUEST_ID).orEmpty()
-                if (requestedId.isBlank()) {
+                val requestedProfileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
+                if (requestedId.isBlank() || requestedProfileId.isBlank()) {
                     stopSelfResult(startId)
                     return START_REDELIVER_INTENT
                 }
@@ -90,6 +92,7 @@ class Deep33GenerationService : Service() {
                 // Recover lifecycle state after Android recreates the service process.
                 backgroundMode = SessionStore(this).appBackgrounded
                 runningRequestId = requestedId
+                runningProfileId = requestedProfileId
                 acquireGenerationWakeLock()
                 executor.execute { runGeneration(requestedId) }
                 return START_REDELIVER_INTENT
@@ -101,19 +104,21 @@ class Deep33GenerationService : Service() {
     }
 
     private fun runGeneration(requestId: String) {
-        val store = SessionStore(this)
-        val pending = store.loadPendingTurn()
+        val activeStore = SessionStore(this, profileIdOverride = runningProfileId)
+        val pending = activeStore.loadPendingTurn()
         if (pending == null || pending.requestId != requestId) {
             runningRequestId = null
             stopSelf()
             return
         }
 
+        val store = SessionStore(this, profileIdOverride = pending.memoryProfileId)
+        Deep33Api.configureAuthProfile(this, pending.memoryProfileId)
         val payload = try {
             JSONArray(pending.payloadJson)
         } catch (_: Exception) {
-            store.clearPendingTurn(requestId)
-            store.saveGenerationState(
+            activeStore.clearPendingTurn(requestId)
+            activeStore.saveGenerationState(
                 GenerationStatus.FAILED,
                 requestId,
                 pending.sessionId,
@@ -253,6 +258,7 @@ class Deep33GenerationService : Service() {
             }
         } finally {
             runningRequestId = null
+            runningProfileId = null
             releaseGenerationWakeLock()
             deferredMemorySync?.let { enqueueMemorySync(it) }
             stopSelf()
@@ -550,7 +556,7 @@ class Deep33GenerationService : Service() {
         stoppingBySystem = true
         val requestId = runningRequestId
         if (!requestId.isNullOrBlank()) {
-            val store = SessionStore(this)
+            val store = SessionStore(this, profileIdOverride = runningProfileId)
             val pending = store.loadPendingTurn()
             val state = store.loadGenerationState()
             if (
@@ -612,7 +618,7 @@ class Deep33GenerationService : Service() {
         // Android may recreate a foreground service after process reclamation. Preserve
         // a durable RUNNING checkpoint before closing the socket so the redelivered
         // request can continue from the same persisted turn instead of becoming lost.
-        val pending = SessionStore(this).loadPendingTurn()
+        val pending = SessionStore(this, profileIdOverride = runningProfileId).loadPendingTurn()
         if (!userCancelled.get()) {
             pending?.takeIf { it.requestId == runningRequestId }?.let {
                 persistRecoveryCheckpoint(it)
@@ -642,18 +648,21 @@ class Deep33GenerationService : Service() {
         private const val ACTION_BACKGROUND = "cl.caggrometal.deep33.action.APP_BACKGROUND"
         private const val ACTION_FOREGROUND = "cl.caggrometal.deep33.action.APP_FOREGROUND"
         private const val EXTRA_REQUEST_ID = "request_id"
+        private const val EXTRA_PROFILE_ID = "profile_id"
 
-        fun start(context: Context, requestId: String) {
+        fun start(context: Context, requestId: String, profileId: String) {
             val intent = Intent(context, Deep33GenerationService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_REQUEST_ID, requestId)
+                .putExtra(EXTRA_PROFILE_ID, profileId)
             context.startForegroundService(intent)
         }
 
-        fun cancel(context: Context, requestId: String?) {
+        fun cancel(context: Context, requestId: String?, profileId: String? = null) {
             val intent = Intent(context, Deep33GenerationService::class.java)
                 .setAction(ACTION_CANCEL)
                 .putExtra(EXTRA_REQUEST_ID, requestId)
+                .putExtra(EXTRA_PROFILE_ID, profileId)
             context.startService(intent)
         }
 
