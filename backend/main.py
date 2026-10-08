@@ -2805,6 +2805,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
 async def chat(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2815,6 +2816,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
         request_id=request_id,
         idempotency_key=idempotency_key,
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
