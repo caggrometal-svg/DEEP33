@@ -39,7 +39,7 @@ data class PendingMemorySync(
     val messagesJson: String
 )
 
-enum class GenerationStatus { RUNNING, DONE, FAILED, RETRYABLE, CANCELLED }
+enum class GenerationStatus { RUNNING, CANCELLING, DONE, FAILED, RETRYABLE, CANCELLED }
 
 data class GenerationState(
     val status: GenerationStatus,
@@ -224,11 +224,13 @@ class SessionStore(
     fun savePendingTurn(turn: PendingTurn) {
         synchronized(STORE_LOCK) {
             val json = JSONObject()
+                .put("profile_id", turn.profileId)
                 .put("session_id", turn.sessionId)
                 .put("request_id", turn.requestId)
                 .put("idempotency_key", turn.idempotencyKey)
                 .put("personality", turn.personality)
                 .put("payload", turn.payloadJson)
+                .put("conversation", turn.conversationJson)
             // commit() is intentional: the pending turn must survive Activity destruction
             // before the network request begins.
             prefs.edit().putString(KEY_PENDING_TURN, json.toString()).commit()
@@ -493,6 +495,125 @@ class SessionStore(
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Publish the cancellation transition atomically. The pending request is retained
+     * until the generation service acknowledges terminal cancellation.
+     */
+    fun requestGenerationCancellation(
+        requestId: String,
+        sessionId: String,
+        personality: String
+    ): Boolean {
+        if (requestId.isBlank() || sessionId.isBlank()) return false
+        val state = GenerationState(
+            status = GenerationStatus.CANCELLING,
+            requestId = requestId,
+            sessionId = sessionId,
+            personality = personality,
+            error = "Generación cancelando…"
+        )
+        synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            if (current?.requestId == requestId &&
+                current.status in setOf(GenerationStatus.CANCELLED, GenerationStatus.DONE, GenerationStatus.FAILED)
+            ) return false
+            if (current != null && current.requestId != requestId &&
+                current.status in setOf(GenerationStatus.RUNNING, GenerationStatus.CANCELLING)
+            ) return false
+            cancelQueuedGenerationCheckpoint(requestId)
+            writeGenerationState(state, durable = true)
+        }
+        generationStateListeners.forEach { listener -> runCatching { listener(state) } }
+        return true
+    }
+
+    /**
+     * Terminal cancellation boundary. This cannot overwrite DONE and removes the
+     * pending replay marker in the same durable write.
+     */
+    fun finalizeGenerationCancellation(
+        requestId: String,
+        sessionId: String,
+        personality: String
+    ): Boolean {
+        if (requestId.isBlank() || sessionId.isBlank()) return false
+        val state = GenerationState(
+            status = GenerationStatus.CANCELLED,
+            requestId = requestId,
+            sessionId = sessionId,
+            personality = personality,
+            error = "Generación cancelada."
+        )
+        synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            if (current?.requestId == requestId && current.status == GenerationStatus.DONE) return false
+            if (current != null && current.requestId != requestId) return false
+            cancelQueuedGenerationCheckpoint(requestId)
+            val json = JSONObject()
+                .put("status", state.status.name)
+                .put("request_id", state.requestId)
+                .put("session_id", state.sessionId)
+                .put("personality", state.personality)
+                .put("partial_output", "")
+                .put("final_text", "")
+                .put("error", state.error)
+            prefs.edit().putString(KEY_GENERATION_STATE, json.toString()).remove(KEY_PENDING_TURN).commit()
+        }
+        generationStateListeners.forEach { listener -> runCatching { listener(state) } }
+        return true
+    }
+
+    /**
+     * Complete a generation atomically. A cancellation that wins the race prevents
+     * DONE from ever being published.
+     */
+    fun completeGeneration(
+        requestId: String,
+        sessionId: String,
+        personality: String,
+        messages: List<UiMessage>,
+        finalText: String
+    ): Boolean {
+        if (requestId.isBlank() || sessionId.isBlank() || finalText.isBlank()) return false
+        val state = GenerationState(
+            status = GenerationStatus.DONE,
+            requestId = requestId,
+            sessionId = sessionId,
+            personality = personality,
+            partialOutput = finalText,
+            finalText = finalText
+        )
+        synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            if (current?.requestId == requestId &&
+                current.status in setOf(GenerationStatus.CANCELLING, GenerationStatus.CANCELLED)
+            ) return false
+            if (current != null && current.requestId != requestId &&
+                current.status in setOf(GenerationStatus.RUNNING, GenerationStatus.CANCELLING)
+            ) return false
+            cancelQueuedGenerationCheckpoint(requestId)
+            val messagesJson = JSONArray()
+            messages.takeLast(MAX_MESSAGES).forEach {
+                messagesJson.put(JSONObject().put("role", it.role).put("content", it.content))
+            }
+            val stateJson = JSONObject()
+                .put("status", state.status.name)
+                .put("request_id", state.requestId)
+                .put("session_id", state.sessionId)
+                .put("personality", state.personality)
+                .put("partial_output", state.partialOutput)
+                .put("final_text", state.finalText)
+                .put("error", "")
+            prefs.edit()
+                .putString(messagesKey(sessionId), messagesJson.toString())
+                .putString(KEY_GENERATION_STATE, stateJson.toString())
+                .remove(KEY_PENDING_TURN)
+                .commit()
+        }
+        generationStateListeners.forEach { listener -> runCatching { listener(state) } }
+        return true
     }
 
     fun clearGenerationState(requestId: String? = null) {
