@@ -61,8 +61,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
         with:
           gradle-version: "8.9"
-      - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
+      - name: Android lint, unit tests and debug/release builds
+        run: cd android && gradle :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest --no-daemon
 
   performance_gate:
     needs: [backend_unit, android_validation]
