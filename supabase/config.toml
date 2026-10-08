@@ -8,3 +8,6 @@ verify_jwt = true
 
 [functions.deep33-hybrid-search]
 verify_jwt = true
+
+[functions.deep33-tertiary]
+verify_jwt = true
