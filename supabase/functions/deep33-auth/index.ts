@@ -153,6 +153,7 @@ Deno.serve(async (req) => {
       }
 
       const { error: mapError } = await admin
+        .schema("private")
         .from("deep33_user_profiles")
         .insert({
           user_id: userId,
