@@ -1814,7 +1814,8 @@ class MainActivity : Activity() {
                 requestId = requestId,
                 idempotencyKey = idempotencyKey,
                 personality = requestPersonality.key,
-                payloadJson = payload.toString()
+                payloadJson = payload.toString(),
+                memoryProfileId = store.profileId
             )
         )
         lastRenderedGenerationOutput = ""
