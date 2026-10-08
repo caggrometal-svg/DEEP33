@@ -6,6 +6,13 @@ services:
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --loop uvloop --http httptools --no-access-log
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: DEEP33_WEB_TOOLS_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_BING_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_FALLBACK_DDG
+        value: "true"
 
   - type: web
     name: deep33-backup
