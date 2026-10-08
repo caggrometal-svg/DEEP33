@@ -93,7 +93,6 @@ async function fetchUpstream(
   sessionId = "deep33-edge",
 ) {
   const headers = new Headers(init.headers || {});
-  headers.delete("Authorization");
   headers.delete("apikey");
   headers.delete("x-client-info");
   if (!headers.has("x-deep33-session-id")) {
