@@ -797,7 +797,8 @@ class SearchEngine:
             "realtime_news": any(
                 term in plan.original_query.lower() for term in REALTIME_NEWS_TERMS
             ),
-            "queries": executed_queries,
+            "queries": list(planned_queries),
+            "queries_executed": executed_queries,
             "providers_attempted": providers_attempted,
             "providers": providers_used,
             "provider": providers_used[0] if len(providers_used) == 1 else "multi" if providers_used else None,
