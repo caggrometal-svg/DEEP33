@@ -114,6 +114,13 @@ class SessionStore(
 
     private fun migrateLegacyInstallState(context: Context) {
         if (prefs.getBoolean(KEY_LEGACY_MIGRATED, false)) return
+        val identityPrefs = context.getSharedPreferences("deep33_user_profiles", Context.MODE_PRIVATE)
+        val targetProfile = identityPrefs.getString("legacy_migration_target", null)
+        if (targetProfile.isNullOrBlank() || targetProfile != profileId) return
+        if (identityPrefs.getBoolean("legacy_migrated", false)) {
+            prefs.edit().putBoolean(KEY_LEGACY_MIGRATED, true).apply()
+            return
+        }
         val legacy = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (legacy.all.isEmpty()) {
             prefs.edit().putBoolean(KEY_LEGACY_MIGRATED, true).apply()
@@ -173,6 +180,7 @@ class SessionStore(
                 }
             }
             edit.putBoolean(KEY_LEGACY_MIGRATED, true).commit()
+            identityPrefs.edit().putBoolean("legacy_migrated", true).apply()
         }
     }
 
