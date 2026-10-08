@@ -848,26 +848,88 @@ def resolve_personality_request(request: ChatRequest, http_request: Request) -> 
     return request.model_copy(update={"personality": selected})
 
 
-def client_key(request: Request, session_id: str) -> str:
-    ip = request.client.host if request.client else "unknown"
-    return f"{ip}:{session_id[:64]}"
+_AUTH_CACHE: dict[str, tuple[float, str]] = {}
 
 
-def enforce_client_controls(request: Request, session_id: str) -> None:
-    if CLIENT_AUTH_TOKEN:
-        supplied = request.headers.get("Authorization", "")
-        if supplied != f"Bearer {CLIENT_AUTH_TOKEN}":
-            raise HTTPException(status_code=401, detail="DEEP33_CLIENT_AUTH_REQUIRED")
+async def authenticated_user_id(request: Request) -> str:
+    supplied = request.headers.get("Authorization", "").strip()
+    if not supplied.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+
+    if CLIENT_AUTH_TOKEN and supplied == f"Bearer {CLIENT_AUTH_TOKEN}":
+        return "internal-client"
+
+    token = supplied[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    cached = _AUTH_CACHE.get(token_hash)
+    now = time.monotonic()
+    if cached and now - cached[0] < 60.0:
+        return cached[1]
+
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    service_key = os.getenv(
+        "SUPABASE_SERVICE_ROLE_KEY",
+        os.getenv("SUPABASE_ANON_KEY", ""),
+    ).strip()
+    if not supabase_url or not service_key:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_PROVIDER_NOT_CONFIGURED")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(3.0, connect=1.5),
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(
+                f"{supabase_url}/auth/v1/user",
+                headers={
+                    "Authorization": supplied,
+                    "apikey": service_key,
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_PROVIDER_UNAVAILABLE") from exc
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+
+    try:
+        user = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_RESPONSE_INVALID") from exc
+
+    user_id = str(user.get("id") or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", user_id):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+
+    _AUTH_CACHE[token_hash] = (now, user_id)
+    if len(_AUTH_CACHE) > 4096:
+        expired = [key for key, (seen, _) in _AUTH_CACHE.items() if now - seen >= 60.0]
+        for key in expired[:2048]:
+            _AUTH_CACHE.pop(key, None)
+    return user_id
+
+
+def client_key(identity: str, session_id: str) -> str:
+    return f"{identity[:80]}:{session_id[:64]}"
+
+
+async def enforce_client_controls(request: Request, session_id: str) -> str:
+    identity = await authenticated_user_id(request)
 
     now = time.monotonic()
-    key = client_key(request, session_id)
+    key = client_key(identity, session_id)
     window_start, count = _rate_state.get(key, (now, 0))
     if now - window_start >= RATE_LIMIT_WINDOW:
         _rate_state[key] = (now, 1)
-        return
+        return identity
     if count >= RATE_LIMIT_COUNT:
         raise HTTPException(status_code=429, detail="DEEP33_RATE_LIMITED")
     _rate_state[key] = (window_start, count + 1)
+    return identity
 
 
 def cache_key(session_id: str, idempotency_key: str) -> str:
@@ -2026,7 +2088,7 @@ async def hybrid_search_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.search(
             payload.query,
