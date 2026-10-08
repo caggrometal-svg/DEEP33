@@ -227,6 +227,34 @@ object Deep33Api {
             memoryProfileId = memoryProfileId
         )
 
+    fun submitFeedback(
+        sessionId: String,
+        rating: String,
+        responseText: String,
+        memoryProfileId: String? = null,
+    ): JSONObject {
+        val normalizedRating = rating.trim().lowercase()
+        require(normalizedRating == "useful" || normalizedRating == "not_useful") {
+            "Invalid DEEP33 feedback rating"
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(responseText.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+        return request(
+            "POST",
+            "/v1/feedback",
+            JSONObject()
+                .put("rating", normalizedRating)
+                .put("response_hash", digest),
+            sessionId,
+            idempotencyKey = "feedback:" + digest + ":" + normalizedRating,
+            endpointOverride = listOf(BuildConfig.DEEP33_PRIMARY_URL),
+            memoryProfileId = memoryProfileId,
+            timeoutMs = 5_000L,
+        )
+    }
+
     fun setPreferences(
         sessionId: String,
         personality: String,
