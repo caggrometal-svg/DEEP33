@@ -353,15 +353,24 @@ Deno.serve(async (req) => {
       if (sessionError) throw sessionError;
 
       const messageSessionIds = [sessionId];
-      const { data: messages, error: messageError } = await supabase
-        .from("deep33_messages")
-        .select("role, content, model, provider, request_id, created_at, session_id")
-        .in("session_id", messageSessionIds)
-        .in("role", ["user", "assistant"])
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(100);
-      if (messageError) throw messageError;
+      const messages = [];
+      const messagePageSize = 100;
+      let messageOffset = 0;
+      while (true) {
+        const { data: page, error: messageError } = await supabase
+          .from("deep33_messages")
+          .select("role, content, model, provider, request_id, created_at, session_id")
+          .in("session_id", messageSessionIds)
+          .in("role", ["user", "assistant"])
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(messageOffset, messageOffset + messagePageSize - 1);
+        if (messageError) throw messageError;
+        if (!page?.length) break;
+        messages.push(...page);
+        if (page.length < messagePageSize) break;
+        messageOffset += page.length;
+      }
 
       const { data: memories, error: memoryError } = await supabase
         .from("deep33_memories")
