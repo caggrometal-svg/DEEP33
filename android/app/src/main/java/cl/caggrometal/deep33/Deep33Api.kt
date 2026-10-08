@@ -348,6 +348,7 @@ object Deep33Api {
                                 sawDone = true
                                 return@useLines
                             }
+                            sawStreamData = true
                             val chunk = SseTextParser.extractText(data).orEmpty()
                             if (chunk.isNotEmpty()) {
                                 emitted = true
@@ -356,7 +357,11 @@ object Deep33Api {
                             }
                         }
                     }
-                    if (!sawDone) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
+                    // A clean TCP/HTTP close is valid when the server omitted [DONE].
+                    // A stream with no data at all remains invalid.
+                    if (!sawDone && !sawStreamData && output.isEmpty()) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
@@ -579,19 +584,59 @@ object Deep33Api {
 
 object SseTextParser {
     fun extractText(data: String): String? {
-        return try {
+        return runCatching {
             val json = JSONObject(data)
-            val choices = json.optJSONArray("choices") ?: return null
-            val first = choices.optJSONObject(0) ?: return null
+            extractChoiceContent(json.optJSONArray("choices")?.optJSONObject(0))
+        }.getOrNull()
+    }
 
-            val delta = first.optJSONObject("delta")
-            val deltaContent = delta?.optString("content").orEmpty()
-            if (deltaContent.isNotEmpty()) return deltaContent
+    private fun extractChoiceContent(choice: JSONObject?): String? {
+        if (choice == null) return null
+        extractContentValue(choice.opt("delta")?.let { it as? JSONObject }?.opt("content"))
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
 
-            val messageContent = first.optJSONObject("message")?.optString("content").orEmpty()
-            messageContent.ifEmpty { null }
-        } catch (_: Exception) {
-            null
+        extractContentValue(choice.opt("message")?.let { it as? JSONObject }?.opt("content"))
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        // Some providers expose content directly on the choice envelope.
+        return extractContentValue(choice.opt("content"))
+    }
+
+    private fun extractContentValue(value: Any?): String? {
+        return when (value) {
+            is String -> value.takeIf { it.isNotEmpty() }
+            is JSONArray -> {
+                val out = StringBuilder()
+                for (i in 0 until value.length()) {
+                    val item = value.opt(i)
+                    when (item) {
+                        is String -> out.append(item)
+                        is JSONObject -> {
+                            val type = item.optString("type").lowercase()
+                            if (type.isBlank() || type == "text" || type == "output_text") {
+                                out.append(
+                                    item.optString("text").ifBlank {
+                                        item.optString("content")
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                out.toString().takeIf { it.isNotEmpty() }
+            }
+            is JSONObject -> {
+                val type = value.optString("type").lowercase()
+                if (type.isBlank() || type == "text" || type == "output_text") {
+                    extractContentValue(value.opt("text"))
+                        ?: extractContentValue(value.opt("content"))
+                } else {
+                    null
+                }
+            }
+            else -> null
         }
     }
 }
