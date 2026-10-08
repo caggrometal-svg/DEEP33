@@ -1,5 +1,6 @@
 package cl.caggrometal.deep33
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -56,6 +57,19 @@ object Deep33FailoverPolicy {
 
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
+    @Volatile private var authContext: Context? = null
+
+    fun configureAuth(context: Context) {
+        authContext = context.applicationContext
+    }
+
+    private fun authorizationToken(): String? {
+        val context = authContext ?: return null
+        val profileId = MultiUserIdentity.currentProfileId(context)
+        return runCatching {
+            SupabaseAuthManager(context, profileId).ensureSession()
+        }.getOrNull()
+    }
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
@@ -267,7 +281,10 @@ object Deep33Api {
                     connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
+                    // Remote ownership is derived from the authenticated Supabase subject.
+                    // The legacy client-provided memory-profile header is intentionally no
+                    // longer authoritative and is not sent to the server.
+                    authorizationToken()?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
@@ -464,9 +481,7 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) {
-                        connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
-                    }
+                    authorizationToken()?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
