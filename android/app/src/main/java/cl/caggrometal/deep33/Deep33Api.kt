@@ -1,5 +1,6 @@
 package cl.caggrometal.deep33
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -55,6 +56,23 @@ object Deep33FailoverPolicy {
 }
 
 object Deep33Api {
+    @Volatile private var authContext: Context? = null
+    @Volatile private var authProfileId: String? = null
+
+    fun configureAuthProfile(context: Context, profileId: String) {
+        authContext = context.applicationContext
+        authProfileId = profileId.trim()
+        Deep33Auth.configure(context)
+    }
+
+    private fun authHeaders(profileId: String?): Pair<String?, String?> {
+        val context = authContext ?: return null to null
+        val localProfileId = profileId?.trim()?.takeIf { it.isNotBlank() } ?: authProfileId
+        if (localProfileId.isNullOrBlank()) return null to null
+        val session = Deep33Auth.ensureSession(context, localProfileId)
+        return session.accessToken to session.memoryProfileId
+    }
+
     private const val GLOBAL_TIMEOUT_MS = 180_000
     private const val MEMORY_SYNC_TIMEOUT_MS = 8_000L
     private const val CONNECT_TIMEOUT_MS = 15_000
@@ -271,7 +289,10 @@ object Deep33Api {
                     connection.setRequestProperty("Cache-Control", "no-cache")
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
+                    val (accessToken, remoteMemoryProfileId) = authHeaders(memoryProfileId)
+                        ?: throw Deep33ApiException(Deep33ApiException.Kind.AUTH)
+                    connection.setRequestProperty("Authorization", "Bearer " + accessToken)
+                    connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", remoteMemoryProfileId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
@@ -468,9 +489,10 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
-                    if (!memoryProfileId.isNullOrBlank()) {
-                        connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", memoryProfileId)
-                    }
+                    val (accessToken, remoteMemoryProfileId) = authHeaders(memoryProfileId)
+                        ?: throw Deep33ApiException(Deep33ApiException.Kind.AUTH)
+                    connection.setRequestProperty("Authorization", "Bearer " + accessToken)
+                    connection.setRequestProperty("X-DEEP33-Memory-Profile-Id", remoteMemoryProfileId)
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
 
