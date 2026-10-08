@@ -194,6 +194,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
+        Deep33Api.configureAuthProfile(this, store.profileId)
         store.migrateNaturalVoiceDefault()
         conversation.addAll(store.loadMessages())
 
@@ -2016,7 +2017,7 @@ class MainActivity : Activity() {
         generationActive = true
         activeRequestId = requestId
         activeIdempotencyKey = idempotencyKey
-        Deep33GenerationService.start(this, requestId)
+        Deep33GenerationService.start(this, requestId, store.profileId)
         startGenerationMonitor()
     }
 
@@ -2032,7 +2033,7 @@ class MainActivity : Activity() {
             sessionId = store.sessionId,
             personality = personality,
         )
-        Deep33GenerationService.cancel(this, requestId)
+        Deep33GenerationService.cancel(this, requestId, store.profileId)
 
         generationActive = false
         activeRequestId = null
