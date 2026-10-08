@@ -922,6 +922,15 @@ def client_key(identity: str, session_id: str) -> str:
     return f"{identity[:80]}:{session_id[:64]}"
 
 
+async def require_authenticated_request(request: Request) -> str:
+    existing = auth_user_id_from_request(request)
+    if existing:
+        return existing
+    identity = await authenticated_user_id(request)
+    request.state.auth_user_id = identity
+    return identity
+
+
 async def enforce_client_controls(request: Request, session_id: str) -> str:
     identity = await authenticated_user_id(request)
 
@@ -2056,6 +2065,7 @@ async def connectivity_audit() -> dict:
 
 @app.get("/v1/network/status")
 async def network_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     probe = await network_probe()
     return {
         **probe,
@@ -2065,12 +2075,14 @@ async def network_status(request: Request) -> dict:
 
 
 @app.get("/v1/ai/status")
-async def ai_status() -> dict:
+async def ai_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     return await gateway_probe()
 
 
 @app.get("/v1/ai/edge-status")
-async def ai_edge_status() -> dict:
+async def ai_edge_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     gateway_status = await gateway_probe()
     gateway_ok = gateway_status.get("gateway") == "PASS"
     return {
@@ -2244,6 +2256,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
+    await require_authenticated_request(request)
     request_id = request_id_from_request(request)
     status, data, text = await run_inference_check(request_id)
     return {
@@ -2258,10 +2271,14 @@ async def inference_check(request: Request) -> dict:
 
 @app.get("/v1/ai/diagnostics")
 async def ai_diagnostics(request: Request) -> dict:
+    await require_authenticated_request(request)
     request_id = request_id_from_request(request)
-    network = await network_probe()
-    gateway_status = await gateway_probe()
-    inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    network, gateway_status, inference_result = await asyncio.gather(
+        network_probe(),
+        gateway_probe(),
+        run_inference_check(request_id),
+    )
+    inference_status, inference_data, inference_text = inference_result
     model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
 
     return {
