@@ -215,6 +215,7 @@ class MemoryClient:
             idempotency_key=f"memory:sync:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
         self._context_cache.pop((session_id, memory_profile_id or ""), None)
@@ -229,6 +230,7 @@ class MemoryClient:
             idempotency_key=f"memory:remember:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
             **payload,
         )
 
