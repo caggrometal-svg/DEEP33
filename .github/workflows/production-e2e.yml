@@ -6,6 +6,11 @@ name: DEEP33 Production E2E
 
 on:
   workflow_dispatch:
+  # Run the production smoke test when its auth/retry logic changes.
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/production-e2e.yml"
 
 permissions:
   contents: read
@@ -26,15 +31,31 @@ jobs:
       - name: Create authenticated E2E user session
         run: |
           set -euo pipefail
-          auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
-            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
-            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
-            -H "content-type: application/json" \
-            -d "{\"action\":\"session\",\"memory_profile_id\":\"e2e-${GITHUB_RUN_ID}\"}")"
-          token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
-          test -n "$token"
+          token=""
+          for attempt in 1 2 3; do
+            # GITHUB_RUN_ID is reused on rerun; add the attempt and rotate on HTTP 409.
+            profile_id="e2e-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-\${RANDOM}-\${SECONDS}-\${attempt}"
+            response="$(curl -sS --connect-timeout 8 --max-time 30 \
+              -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
+              -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+              -H "content-type: application/json" \
+              -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            status="\${response##*DEEP33_HTTP_STATUS:}"
+            auth_json="\${response%$'\n'DEEP33_HTTP_STATUS:*}"
+            if [ "$status" = "200" ]; then
+              token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
+              break
+            fi
+            if [ "$status" = "409" ]; then
+              echo "AUTH_PROFILE_COLLISION attempt=$attempt; rotating test profile"
+              continue
+            fi
+            echo "AUTH_SESSION_FAILED status=$status"
+            printf '%s\n' "$auth_json" | jq -c '{error: (.error // "unknown")}' || true
+            exit 1
+          done
+          test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
-
       - name: Verify every production transport node
         run: |
           set -euo pipefail
