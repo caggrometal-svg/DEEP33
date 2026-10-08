@@ -755,8 +755,19 @@ async function callEdgeAI(
                 model: provider.model || String(body.model || ""),
               };
               if (leaseContext) {
-                await edgeIdempotencyComplete(leaseContext, record);
-                forgetLeaseToken(leaseContext);
+                try {
+                  await edgeIdempotencyComplete(leaseContext, record);
+                } catch (error) {
+                  console.warn(JSON.stringify({
+                    event: "edge_idempotency_complete_degraded",
+                    request_id: requestId,
+                    provider: provider.name,
+                    error: error instanceof Error ? error.message : String(error),
+                  }));
+                  await edgeIdempotencyRelease(leaseContext).catch(() => {});
+                } finally {
+                  forgetLeaseToken(leaseContext);
+                }
               }
               return {
                 body,
@@ -1042,8 +1053,19 @@ async function streamEdgeAI(
             model: provider.model,
           };
           if (idempotencyContext) {
-            await edgeIdempotencyComplete(idempotencyContext, record);
-            forgetLeaseToken(idempotencyContext);
+            try {
+              await edgeIdempotencyComplete(idempotencyContext, record);
+            } catch (error) {
+              console.warn(JSON.stringify({
+                event: "edge_idempotency_complete_degraded",
+                request_id: requestId,
+                provider: provider.name,
+                error: error instanceof Error ? error.message : String(error),
+              }));
+              await edgeIdempotencyRelease(idempotencyContext).catch(() => {});
+            } finally {
+              forgetLeaseToken(idempotencyContext);
+            }
           }
           return {
             text: fullText,
