@@ -1741,77 +1741,59 @@ class MainActivity : Activity() {
 
     private fun checkConnectivity() {
         updateConnection(ConnectionState.CONNECTING)
-        executor.submit {
-            try {
-                val checks = executor.invokeAll(
-                    listOf(
-                        Callable { runCatching { Deep33Api.getFast("/health", store.sessionId) }.getOrNull() },
-                        Callable { runCatching { Deep33Api.getFast("/v1/connectivity/audit", store.sessionId) }.getOrNull() },
-                        Callable { runCatching { Deep33Api.getFast("/v1/ai/inference-check", store.sessionId) }.getOrNull() },
-                    ),
-                    10_000L,
-                    TimeUnit.MILLISECONDS
-                )
-                val health = checks.getOrNull(0)?.getOrNull()
-                val audit = checks.getOrNull(1)?.getOrNull()
-                val inference = checks.getOrNull(2)?.getOrNull()
-                val upstream = audit?.optJSONObject("upstream")
-                val inferencePass = inference?.optString("status").orEmpty() == "PASS" &&
-                    inference.optBoolean("text_ok", false)
-                val online = health?.optString("status").orEmpty() == "PASS" &&
-                    audit?.optString("status").orEmpty() == "PASS" &&
-                    audit.optString("edge") == "PASS" &&
-                    audit.optString("internet") == "PASS" &&
-                    upstream?.optBoolean("ready", false) == true &&
-                    inferencePass
-                val provider = inference.optString("provider", "")
-                val model = inference.optString("model", "")
-                val summary = if (online) {
-                    "ONLINE\nEDGE: PASS\nINTERNET: PASS\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nPROVIDER: " +
-                        provider + "\nMODEL: " + model
+        executor.execute {
+            val auditFuture = executor.submit {
+                runCatching { Deep33Api.getFast("/v1/connectivity/audit", store.sessionId) }.getOrNull()
+            }
+            val healthFuture = executor.submit {
+                runCatching { Deep33Api.getFast("/health", store.sessionId) }.getOrNull()
+            }
+
+            val futures = listOf(auditFuture, healthFuture)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(7)
+            while (futures.any { !it.isDone } && System.nanoTime() < deadline) {
+                Thread.sleep(40L)
+            }
+            futures.filter { !it.isDone }.forEach { it.cancel(true) }
+
+            val audit = auditFuture.takeIf { it.isDone && !it.isCancelled }?.let { runCatching { it.get() }.getOrNull() }
+            val health = healthFuture.takeIf { it.isDone && !it.isCancelled }?.let { runCatching { it.get() }.getOrNull() }
+            val checks = audit?.optJSONObject("checks")
+            val backendPass = checks?.optString("BACKEND") == "PASS" ||
+                audit?.optJSONObject("upstream")?.optBoolean("health", false) == true
+            val internetPass = checks?.optString("INTERNET") == "PASS" ||
+                audit?.optBoolean("internet", false) == true
+            val aiPass = checks?.optString("AI_GATEWAY") == "PASS" ||
+                audit?.optJSONObject("upstream")?.optBoolean("ready", false) == true
+            val modelPass = checks?.optString("MODEL") == "PASS"
+            val memoryPass = checks?.optString("MEMORY") == "PASS" ||
+                audit?.optJSONObject("memory")?.optBoolean("ok", false) == true
+            val healthPass = health?.optString("status") == "PASS" || audit?.optString("edge") == "PASS"
+            val dnsPass = checks?.optString("DNS") == "PASS"
+            val httpsPass = checks?.optString("HTTPS") == "PASS"
+            val online = healthPass && internetPass && backendPass && aiPass && modelPass && memoryPass
+
+            val summary = if (audit != null) {
+                "INTERNET: " + if (internetPass) "PASS" else "FAIL" +
+                    "\nDNS: " + if (dnsPass) "PASS" else "FAIL" +
+                    "\nHTTPS: " + if (httpsPass) "PASS" else "FAIL" +
+                    "\nBACKEND: " + if (backendPass) "PASS" else "FAIL" +
+                    "\nAI GATEWAY: " + if (aiPass) "PASS" else "FAIL" +
+                    "\nMODEL: " + if (modelPass) "PASS" else "FAIL" +
+                    "\nMEMORY: " + if (memoryPass) "PASS" else "FAIL" +
+                    "\nEDGE: " + if (healthPass) "PASS" else "FAIL" +
+                    "\nLATENCIA AUDITORÍA: " + audit.optLong("latency_ms", -1L) + " ms"
+            } else {
+                "DIAGNÓSTICO NO DISPONIBLE\nEl gateway no respondió dentro del límite."
+            }
+
+            runOnUiThread {
+                if (generationActive || store.loadPendingTurn() != null) {
+                    updateConnection(ConnectionState.CONNECTING)
                 } else {
-                    "OFFLINE\nLa cadena real de DEEP33 no está completamente verificada."
+                    updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
                 }
-                runOnUiThread {
-                    // Connectivity probes must not overwrite a live generation state
-                    // while the user has temporarily left and returned to the Activity.
-                    if (generationActive || store.loadPendingTurn() != null) {
-                        updateConnection(ConnectionState.CONNECTING)
-                    } else {
-                        updateConnection(if (online) ConnectionState.ONLINE else ConnectionState.OFFLINE)
-                    }
-                    if (::diagnosticsView.isInitialized) diagnosticsView.text = summary
-                }
-            } catch (e: Deep33ApiException) {
-                runOnUiThread {
-                    val pendingGeneration = generationActive || store.loadPendingTurn() != null
-                    if (pendingGeneration) {
-                        updateConnection(ConnectionState.CONNECTING)
-                        if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "PROCESANDO\nLa solicitud pendiente se conserva mientras se recupera la conexión."
-                        }
-                    } else {
-                        updateConnection(ConnectionState.OFFLINE)
-                        if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "OFFLINE\n" + (e.message ?: "Error de conectividad.")
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                runOnUiThread {
-                    val pendingGeneration = generationActive || store.loadPendingTurn() != null
-                    if (pendingGeneration) {
-                        updateConnection(ConnectionState.CONNECTING)
-                        if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "PROCESANDO\nLa solicitud pendiente se conserva mientras se recupera la conexión."
-                        }
-                    } else {
-                        updateConnection(ConnectionState.OFFLINE)
-                        if (::diagnosticsView.isInitialized) {
-                            diagnosticsView.text = "OFFLINE\nError inesperado de conectividad."
-                        }
-                    }
-                }
+                if (::diagnosticsView.isInitialized) diagnosticsView.text = summary
             }
         }
     }
