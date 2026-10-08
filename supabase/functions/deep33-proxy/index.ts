@@ -1983,7 +1983,7 @@ async function runPublicWebSearchQuery(query: string) {
     const results: Array<Record<string, string>> = [];
 
     if (provider.name === "bing_public") {
-      const items = [...html.matchAll(/<item>[sS]*?<title>([sS]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
+      const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
       for (const item of items.slice(0, 8)) {
         const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
         const url = decodeHtml(String(item[2] ?? "").trim());
