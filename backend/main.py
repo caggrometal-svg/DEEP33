@@ -12,6 +12,7 @@ from pathlib import Path
 import socket
 import time
 import uuid
+import httpx
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, AsyncIterator
@@ -42,7 +43,7 @@ from backend.search.engine import is_realtime_query
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 def _resolve_git_sha() -> str:
     runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
     if runtime:
@@ -70,12 +71,21 @@ NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
 RATE_LIMIT_WINDOW = max(10.0, float(os.getenv("DEEP33_RATE_LIMIT_WINDOW_SECONDS", "60")))
+AUTH_TIMEOUT_SECONDS = max(1.0, min(5.0, float(os.getenv("DEEP33_AUTH_TIMEOUT_SECONDS", "2.5"))))
+AUTH_CACHE_TTL_SECONDS = max(5.0, min(300.0, float(os.getenv("DEEP33_AUTH_CACHE_TTL_SECONDS", "60"))))
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_AUTH_KEY = os.getenv(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")),
+).strip()
 CLIENT_AUTH_TOKEN = os.getenv("DEEP33_CLIENT_AUTH_TOKEN", "").strip()
 DEEP33_WEB_TOOLS_ENABLED = os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip().lower() == "true"
 
 gateway = AIGateway()
 memory = MemoryClient()
 hybrid_search = HybridSearchClient()
+_auth_http_client: httpx.AsyncClient | None = None
+_auth_cache: dict[str, tuple[float, str]] = {}
 AI_GATEWAY_MODEL = gateway.config.model
 
 app = FastAPI(title=APP_NAME, version=APP_VERSION)
@@ -104,7 +114,7 @@ async def startup_warmup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_clients() -> None:
-    global _warmup_task
+    global _warmup_task, _auth_http_client
     if _warmup_task is not None and not _warmup_task.done():
         _warmup_task.cancel()
         await asyncio.gather(_warmup_task, return_exceptions=True)
@@ -112,6 +122,10 @@ async def shutdown_clients() -> None:
     await gateway.close()
     await memory.close()
     await hybrid_search.close()
+    if _auth_http_client is not None:
+        await _auth_http_client.aclose()
+        _auth_http_client = None
+    _auth_cache.clear()
     from tools.web_search import close_search_http_client
     from tools.web_fetch import close_fetch_http_client
     await close_search_http_client()
@@ -717,8 +731,10 @@ def session_id_from_request(request: Request) -> str:
 
 
 def memory_profile_id_from_request(request: Request) -> str | None:
-    value = request.headers.get("X-DEEP33-Memory-Profile-Id", "").strip()
-    return value[:128] if value else None
+    # The memory boundary is the authenticated Supabase user, never a client-supplied
+    # profile identifier. The caller must invoke enforce_client_controls first.
+    return getattr(request.state, "user_id", None)
+
 
 
 def request_id_from_request(request: Request) -> str:
@@ -762,19 +778,84 @@ def resolve_personality_request(request: ChatRequest, http_request: Request) -> 
     return request.model_copy(update={"personality": selected})
 
 
-def client_key(request: Request, session_id: str) -> str:
-    ip = request.client.host if request.client else "unknown"
-    return f"{ip}:{session_id[:64]}"
+async def authenticated_user_id(request: Request) -> str:
+    cached = getattr(request.state, "user_id", None)
+    if cached:
+        return cached
+
+    authorization = request.headers.get("Authorization", "").strip()
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+    token = authorization[len("Bearer "):].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_REQUIRED")
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = time.monotonic()
+    cached_entry = _auth_cache.get(token_hash)
+    if cached_entry and cached_entry[0] > now:
+        request.state.user_id = cached_entry[1]
+        return cached_entry[1]
+
+    if not SUPABASE_URL or not SUPABASE_AUTH_KEY:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_NOT_CONFIGURED")
+
+    global _auth_http_client
+    if _auth_http_client is None:
+        _auth_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(AUTH_TIMEOUT_SECONDS),
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=16, max_keepalive_connections=8, keepalive_expiry=30.0),
+        )
+
+    try:
+        response = await _auth_http_client.get(
+            f"{SUPABASE_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPABASE_AUTH_KEY,
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            timeout=AUTH_TIMEOUT_SECONDS,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_UNAVAILABLE") from exc
+
+    if response.status_code != 200:
+        if response.status_code in {401, 403}:
+            raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_UNAVAILABLE")
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="DEEP33_AUTH_INVALID_RESPONSE") from exc
+
+    user_id = str(body.get("id", "")).strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", user_id):
+        raise HTTPException(status_code=401, detail="DEEP33_AUTH_INVALID")
+
+    _auth_cache[token_hash] = (now + AUTH_CACHE_TTL_SECONDS, user_id)
+    if len(_auth_cache) > 2048:
+        oldest = sorted(_auth_cache.items(), key=lambda item: item[1][0])[:256]
+        for key, _ in oldest:
+            _auth_cache.pop(key, None)
+    request.state.user_id = user_id
+    return user_id
 
 
-def enforce_client_controls(request: Request, session_id: str) -> None:
-    if CLIENT_AUTH_TOKEN:
-        supplied = request.headers.get("Authorization", "")
-        if supplied != f"Bearer {CLIENT_AUTH_TOKEN}":
-            raise HTTPException(status_code=401, detail="DEEP33_CLIENT_AUTH_REQUIRED")
+def client_key(request: Request, session_id: str, user_id: str) -> str:
+    return f"user:{user_id}"
+
+
+async def enforce_client_controls(request: Request, session_id: str) -> None:
+    user_id = await authenticated_user_id(request)
+    claimed_profile = request.headers.get("X-DEEP33-Memory-Profile-Id", "").strip()
+    if claimed_profile and claimed_profile != user_id:
+        raise HTTPException(status_code=403, detail="DEEP33_PROFILE_SCOPE_MISMATCH")
 
     now = time.monotonic()
-    key = client_key(request, session_id)
+    key = client_key(request, session_id, user_id)
     window_start, count = _rate_state.get(key, (now, 0))
     if now - window_start >= RATE_LIMIT_WINDOW:
         _rate_state[key] = (now, 1)
@@ -1940,7 +2021,7 @@ async def hybrid_search_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.search(
             payload.query,
@@ -1965,7 +2046,7 @@ async def hybrid_index_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.index_document(
             payload.document_id,
@@ -2003,7 +2084,7 @@ async def web_status() -> dict:
 @app.get("/v1/web/search")
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2021,7 +2102,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2566,7 +2647,7 @@ async def generate(
 @app.post("/v1/ai/generate")
 async def ai_generate(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2591,7 +2672,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
 @app.post("/v1/chat")
 async def chat(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2615,7 +2696,7 @@ async def memory_context(http_request: Request) -> dict:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.context(session_id, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
@@ -2631,7 +2712,7 @@ async def memory_sync(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     messages = [
         message.model_dump()
         for message in payload.messages
@@ -2658,7 +2739,7 @@ async def memory_remember(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
@@ -2674,7 +2755,7 @@ async def memory_preferences(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.set_preferences(
             session_id,
@@ -2888,7 +2969,7 @@ async def stream_gateway(
 @app.post("/v1/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
