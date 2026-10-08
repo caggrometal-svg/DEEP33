@@ -1772,12 +1772,14 @@ class MainActivity : Activity() {
 
     private fun isLocationAwareQuery(text: String): Boolean {
         val normalized = VoiceConversationPolicy.normalizeForComparison(text)
-        return Regex(
-            "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|" +
-                "ubicacion|donde estoy|mi ubicacion|cerca de mi|near me|nearby)\\b"
-        ).containsMatchIn(normalized)
+        if (Regex("\\b(ubicacion|donde estoy|mi ubicacion|cerca de mi|cerca mio|near me|nearby)\\b").containsMatchIn(normalized)) {
+            return true
+        }
+        if (Regex("\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|viento|tormenta|paraguas|calor|frio|helado|helada)\\b").containsMatchIn(normalized)) {
+            return true
+        }
+        return Regex("\\b(hara|estara|como estara|que tan|que tal)\\b[^.?!]{0,60}\\b(calor|frio|helado|helada)\\b").containsMatchIn(normalized)
     }
-
     private fun hasLocationPermission(): Boolean =
         Deep33LocationProvider.hasPermission(this)
 
@@ -1810,11 +1812,6 @@ class MainActivity : Activity() {
             statusView.contentDescription = "Obteniendo ubicación GPS para esta consulta"
         }
 
-        val weatherQuery = VoiceConversationPolicy.normalizeForComparison(text).let {
-            Regex(
-                "\\b(clima|tiempo|temperatura|pronostico|lluvia|llover|humedad|calor|frio|viento|tormenta|paraguas)\\b"
-            ).containsMatchIn(it)
-        }
         Deep33LocationProvider.resolve(
             this,
             callback = { location ->
@@ -1823,7 +1820,7 @@ class MainActivity : Activity() {
                     if (location != null) {
                         Log.i(
                             "DEEP33_GPS",
-                            "GPS_LOCATION_READY lat=${location.latitude} lon=${location.longitude} label=${location.label.orEmpty()}"
+                            "GPS_LOCATION_READY label=${location.label.orEmpty()} accuracy_m=${location.accuracyMeters} age_ms=${location.ageMs}"
                         )
                     } else {
                         Log.w("DEEP33_GPS", "GPS_LOCATION_UNAVAILABLE")
