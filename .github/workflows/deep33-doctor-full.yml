@@ -180,7 +180,10 @@ jobs:
             -H "content-type: application/json" \
             -d "$stream_body" \
             "$PRIMARY_URL/v1/chat/stream" > /tmp/deep33-stream.txt
-          grep -q "DEEP33_STREAM_OK" /tmp/deep33-stream.txt
+          test -s /tmp/deep33-stream.txt
+          grep -q '"choices"' /tmp/deep33-stream.txt
+          grep -q '"content"' /tmp/deep33-stream.txt
+          grep -q "\[DONE\]" /tmp/deep33-stream.txt
 
           curl -fsS --connect-timeout 8 --max-time 45 \
             -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
