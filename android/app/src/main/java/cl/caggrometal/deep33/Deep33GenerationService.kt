@@ -212,6 +212,7 @@ class Deep33GenerationService : Service() {
             // outside the generation critical path so DONE can release the service wake lock.
             store.savePendingMemorySync(
                 PendingMemorySync(
+                    profileId = pending.profileId,
                     sessionId = pending.sessionId,
                     requestId = pending.requestId,
                     personality = personality.key,
