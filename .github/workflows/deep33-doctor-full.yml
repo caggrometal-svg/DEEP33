@@ -143,6 +143,16 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 45 "${auth[@]}" "$PRIMARY_URL/ready" | jq -e '.status=="PASS" and .ready==true'
                     audit_json="$(curl -fsS --connect-timeout 8 --max-time 90 "${auth[@]}" "$PRIMARY_URL/v1/connectivity/audit")"
           printf "%s\n" "$audit_json" | jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .search.ok==true'
+
+      - name: Validate realtime local news retrieval in production
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN")
+          query="situación actual de la comuna de Las Condes en Chile"
+          result="$(curl -fsS --connect-timeout 8 --max-time 90 "${auth[@]}" --get "$PRIMARY_URL/v1/web/search" --data-urlencode "q=$query")"
+          printf "%s\n" "$result" > /tmp/deep33-realtime-local.json
+          jq -e '.ok == true and .realtime == true and .fresh_request == true and .engine == "DEEP33 Search Engine" and .engine_version == "1.3.0" and (.queries | length) >= 3 and (.providers | length) >= 2 and (.retrieved_at | strings | length) > 10' /tmp/deep33-realtime-local.json
+          jq -e '(.queries | join(" ")) as $queries | ($queries | test("últimas noticias de hoy"))' /tmp/deep33-realtime-local.json
       - name: Validate direct tertiary backend
         run: |
           set -euo pipefail
