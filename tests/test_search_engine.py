@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
 
@@ -366,7 +367,7 @@ def test_realtime_search_plan_adds_current_date_variants():
     assert plan.depth == "realtime"
     assert plan.queries[0] == "Noticias mundiales"
     assert len(plan.queries) == 3
-    assert all("2026-10-06" in query for query in plan.queries[1:])
+    assert all(datetime.now(timezone.utc).date().isoformat() in query for query in plan.queries[1:])
 
 
 def test_realtime_weather_search_targets_local_conditions_and_official_source():
