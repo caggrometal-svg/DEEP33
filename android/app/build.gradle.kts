@@ -15,8 +15,8 @@ android {
         buildConfigField("boolean", "DEEP33_MULTIUSER_MODE", "true")
         buildConfigField("String", "DEEP33_SUPABASE_URL", "\"https://opocgzydeknuchtrqzfa.supabase.co\"")
         buildConfigField("String", "DEEP33_SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA\"")
-        versionCode = 8
-        versionName = "0.5.0"
+        versionCode = 9
+        versionName = "0.5.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -46,6 +46,10 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
             }
