@@ -419,12 +419,98 @@ def requires_memory_context(messages: list[dict[str, Any]], profile: str) -> boo
 def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
     shape = conversation_response_shape(messages)
     if shape == "SIMPLE_DIRECT":
-        return 6, 5000, "FAST"
+        return len(messages), 6000, "FAST"
     if shape == "EXPLICIT_DEPTH":
-        return 24, 18000, "DEEP"
+        return len(messages), 24000, "DEEP"
     if shape == "COMPLEX_NECESSARY":
-        return 16, 12000, "BALANCED"
-    return 12, 8000, "BALANCED"
+        return len(messages), 14000, "BALANCED"
+    return len(messages), 9000, "BALANCED"
+
+
+def adaptive_context_budget(messages: list[dict[str, Any]], profile: str) -> int:
+    """
+    Estimate the usable input window dynamically instead of truncating by message count.
+    The ceiling remains configurable to protect model context, but short conversations are
+    passed through in full.
+    """
+    normalized = str(profile or "BALANCED").upper()
+    minimums = {"FAST": 6000, "BALANCED": 9000, "DEEP": 14000}
+    ceilings = {"FAST": 24000, "BALANCED": 48000, "DEEP": 96000}
+    minimum = minimums.get(normalized, 9000)
+    ceiling = ceilings.get(normalized, 48000)
+    configured = max(6000, int(os.getenv("DEEP33_CONTEXT_MAX_CHARS", "48000")))
+    ceiling = min(ceiling, configured)
+    total_chars = sum(len(str(item.get("content", ""))) for item in messages)
+    growth = max(minimum, int(total_chars * 0.72))
+    return min(ceiling, growth)
+
+
+_CONTINUITY_TERMS = re.compile(
+    r"\b(memoria|recuerda|recordar|mi nombre|mi proyecto|preferencia|preferencias|"
+    r"importante|siempre|nunca|desde ahora|a partir de ahora|decision|decisión)\b",
+    re.IGNORECASE,
+)
+
+
+def compact_context_messages(
+    messages: list[dict[str, Any]],
+    budget_chars: int,
+) -> tuple[list[dict[str, str]], str]:
+    if not messages:
+        return [], ""
+    total = sum(len(str(item.get("content", ""))) for item in messages)
+    if total <= budget_chars:
+        return [dict(item) for item in messages], ""
+
+    latest_user = max(
+        (i for i, item in enumerate(messages) if item.get("role") == "user"),
+        default=len(messages) - 1,
+    )
+    critical_indices = [
+        i for i, item in enumerate(messages[:latest_user])
+        if item.get("role") == "user" and _CONTINUITY_TERMS.search(str(item.get("content", "")))
+    ]
+
+    keep: set[int] = {latest_user}
+    used = len(str(messages[latest_user].get("content", "")))
+    # Preserve critical continuity messages first, then fill remaining budget from newest history.
+    for i in reversed(critical_indices):
+        size = len(str(messages[i].get("content", "")))
+        if used + size <= budget_chars:
+            keep.add(i)
+            used += size
+
+    for i in range(len(messages) - 1, -1, -1):
+        if i in keep:
+            continue
+        size = len(str(messages[i].get("content", "")))
+        if used + size > budget_chars:
+            continue
+        keep.add(i)
+        used += size
+        if used >= budget_chars:
+            break
+
+    selected = [dict(messages[i]) for i in sorted(keep)]
+    omitted = [messages[i] for i in range(len(messages)) if i not in keep]
+    compact_lines: list[str] = []
+    for item in omitted:
+        text = re.sub(r"\s+", " ", str(item.get("content", ""))).strip()
+        if not text:
+            continue
+        prefix = "Usuario" if item.get("role") == "user" else "DEEP33"
+        compact_lines.append(f"{prefix}: {text[:220]}")
+        if sum(len(x) for x in compact_lines) >= 1800:
+            break
+
+    summary = ""
+    if compact_lines:
+        summary = (
+            "CONTINUIDAD COMPACTADA. Se omitió parte del historial por límite de contexto; "
+            "estos son extractos para conservar referencias antiguas necesarias:\n" +
+            "\n".join(compact_lines)
+        )
+    return selected, summary
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
@@ -2232,31 +2318,30 @@ async def prepare_messages(
         + f"\nCOMPLEXITY_MODE={profile}. Context window is adaptive for response speed.",
     }
     if not memory.enabled or not requires_memory_context(requested, profile):
-        selected_messages = requested[-max_messages:]
-        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
-            selected_messages.pop(0)
+        selected_messages, compacted_summary = compact_context_messages(
+            requested,
+            adaptive_context_budget(requested, profile),
+        )
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *selected_messages]
+        continuity_message = (
+            [{"role": "system", "content": compacted_summary}]
+            if compacted_summary
+            else []
+        )
+        result = [personality_control, *runtime_messages, *continuity_message, *selected_messages]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
     try:
         context = await memory.context(session_id, memory_profile_id=memory_profile_id)
         remote = extract_context_messages(context)
-        merged = merge_messages(remote, requested, limit=max_messages)
-        merged_chars = 0
-        bounded: list[dict[str, str]] = []
-        for item in reversed(merged):
-            next_chars = merged_chars + len(item.get("content", ""))
-            if bounded and next_chars > max_chars:
-                break
-            bounded.append(item)
-            merged_chars = next_chars
-        merged = list(reversed(bounded))
+        merged = merge_messages(remote, requested, limit=len(remote) + len(requested))
+        max_chars = adaptive_context_budget(merged, profile)
+        merged, compacted_summary = compact_context_messages(merged, max_chars)
         system_context = extract_context_system_message(context)
         if system_context:
             # Keep memory as a separate system message. The current personality
@@ -2271,6 +2356,11 @@ async def prepare_messages(
                 {"role": "system", "content": system_context},
                 personality_control,
                 *runtime_messages,
+                *(
+                    [{"role": "system", "content": compacted_summary}]
+                    if compacted_summary
+                    else []
+                ),
                 *merged,
             ]
             performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
@@ -2280,7 +2370,16 @@ async def prepare_messages(
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *merged]
+        result = [
+            personality_control,
+            *runtime_messages,
+            *(
+                [{"role": "system", "content": compacted_summary}]
+                if compacted_summary
+                else []
+            ),
+            *merged,
+        ]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
     except MemoryUnavailableError as exc:
