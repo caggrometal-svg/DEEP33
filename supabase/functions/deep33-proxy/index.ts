@@ -781,6 +781,56 @@ async function callEdgeAI(
             }
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
+            if (
+              provider.name === "render-backend-fallback" &&
+              response.status >= 500 &&
+              provider.stream_url
+            ) {
+              try {
+                const fallback = await completeViaStreamFallback(
+                  payload,
+                  requestId,
+                  provider,
+                  userAuthorization,
+                );
+                const fallbackText = extractProviderText(fallback.body);
+                if (fallbackText.trim()) {
+                  const record: EdgeIdempotencyRecord = {
+                    text: fallbackText,
+                    provider: fallback.provider,
+                    model: fallback.model,
+                  };
+                  if (leaseContext) {
+                    try {
+                      await edgeIdempotencyComplete(leaseContext, record);
+                    } catch (error) {
+                      console.warn(JSON.stringify({
+                        event: "edge_idempotency_complete_degraded",
+                        request_id: requestId,
+                        provider: provider.name,
+                        error: error instanceof Error ? error.message : String(error),
+                      }));
+                      await edgeIdempotencyRelease(leaseContext).catch(() => {});
+                    } finally {
+                      forgetLeaseToken(leaseContext);
+                    }
+                  }
+                  console.log(JSON.stringify({
+                    event: "edge_ai_provider_stream_fallback_complete",
+                    provider: provider.name,
+                    model: provider.model,
+                    request_id: requestId,
+                  }));
+                  return fallback;
+                }
+              } catch (fallbackError) {
+                lastError =
+                  provider.name +
+                  "_STREAM_FALLBACK_" +
+                  (fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+              }
+            }
+
             const providerError =
               typeof body.error === "object" && body.error
                 ? String(
@@ -847,6 +897,105 @@ async function callEdgeAI(
   }
   throw new Error(lastError);
 }
+async function completeViaStreamFallback(
+  payload: Record<string, unknown>,
+  requestId: string,
+  provider: EdgeAIProvider,
+  userAuthorization = "",
+): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
+  if (!provider.stream_url) {
+    throw new Error(provider.name + "_STREAM_FALLBACK_UNAVAILABLE");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+  let buffer = "";
+  let done = false;
+  let fullText = "";
+
+  try {
+    const response = await fetch(provider.stream_url, {
+      method: "POST",
+      headers: providerRequestHeaders(
+        provider,
+        requestId + "-stream-fallback",
+        "text/event-stream",
+        userAuthorization,
+      ),
+      body: JSON.stringify({
+        ...providerPayload(payload, true),
+        ...(provider.model ? { model: provider.model } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(provider.name + "_STREAM_FALLBACK_HTTP_" + response.status);
+    }
+    if (!response.body) {
+      throw new Error(provider.name + "_STREAM_FALLBACK_EMPTY");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    const consumeEvent = (event: string) => {
+      for (const line of event.split(/\r?\n/)) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === "[DONE]") {
+          done = true;
+          continue;
+        }
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+        const first = choices.length && typeof choices[0] === "object"
+          ? choices[0] as Record<string, unknown>
+          : {};
+        const delta = first.delta && typeof first.delta === "object"
+          ? first.delta as Record<string, unknown>
+          : {};
+        let chunk = typeof delta.content === "string" ? delta.content : "";
+        if (!chunk && first.message && typeof first.message === "object") {
+          const content = (first.message as Record<string, unknown>).content;
+          if (typeof content === "string") chunk = content;
+        }
+        if (chunk) fullText += chunk;
+      }
+    };
+
+    while (!done) {
+      const { value, done: readerDone } = await reader.read();
+      if (readerDone) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() || "";
+      for (const event of events) consumeEvent(event);
+    }
+    if (buffer.trim()) consumeEvent(buffer);
+
+    if (!done) throw new Error(provider.name + "_STREAM_FALLBACK_INCOMPLETE");
+    if (!fullText.trim()) throw new Error(provider.name + "_STREAM_FALLBACK_EMPTY_RESPONSE");
+
+    return {
+      body: {
+        choices: [{ message: { role: "assistant", content: fullText } }],
+        model: provider.model || "",
+      },
+      provider: provider.name,
+      model: provider.model || "",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function streamEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
