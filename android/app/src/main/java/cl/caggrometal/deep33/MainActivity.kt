@@ -140,6 +140,7 @@ class MainActivity : Activity() {
     private lateinit var cancelButton: ImageButton
     private lateinit var statusView: TextView
     private lateinit var currentPersonalityView: TextView
+    private lateinit var currentProfileView: TextView
     private lateinit var diagnosticsView: TextView
     private lateinit var voicePanel: LinearLayout
     private lateinit var voiceStateView: TextView
@@ -194,6 +195,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
+        Deep33Api.configureAuth(this)
         store.migrateNaturalVoiceDefault()
         conversation.addAll(store.loadMessages())
 
@@ -568,6 +570,23 @@ class MainActivity : Activity() {
         })
         panel.addView(header)
 
+        currentProfileView = TextView(this).apply {
+            text = "USUARIO · " + MultiUserIdentity.currentProfile(this@MainActivity).displayName
+            textSize = 13f
+            setTextColor(Deep33Theme.TEXT_MUTED)
+            setPadding(0, dp(10), 0, dp(4))
+        }
+        panel.addView(currentProfileView)
+
+        panel.addView(Button(this).apply {
+            text = "CAMBIAR USUARIO"
+            isAllCaps = false
+            setTextColor(Deep33Theme.TEXT)
+            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+            setOnClickListener { showProfileSwitcher() }
+            addPressFeedback(this)
+        }, ViewGroup.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
+
         panel.addView(Button(this).apply {
             text = "＋  NUEVO CHAT"
             isAllCaps = false
@@ -690,6 +709,64 @@ class MainActivity : Activity() {
                 }
                 addPressFeedback(this)
             })
+        }
+    }
+
+    private fun showProfileSwitcher() {
+        if (generationActive || store.loadPendingTurn() != null) return
+        val profiles = MultiUserIdentity.listProfiles(this)
+        if (profiles.isEmpty()) return
+        val names = profiles.map { it.displayName }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Usuario DEEP33")
+            .setSingleChoiceItems(names, profiles.indexOfFirst { it.id == store.profileId }.coerceAtLeast(0)) { dialog, which ->
+                dialog.dismiss()
+                switchActiveProfile(profiles[which].id)
+            }
+            .setNeutralButton("Nuevo usuario") { _, _ ->
+                createAndSwitchProfile()
+            }
+            .show()
+    }
+
+    private fun createAndSwitchProfile() {
+        val input = EditText(this).apply {
+            hint = "Nombre"
+            setSingleLine(true)
+            setTextColor(Deep33Theme.TEXT)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Nuevo usuario")
+            .setView(input)
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Crear") { _, _ ->
+                val profile = MultiUserIdentity.createProfile(this, input.text?.toString())
+                switchActiveProfile(profile.id)
+            }
+            .show()
+    }
+
+    private fun switchActiveProfile(profileId: String) {
+        if (generationActive || store.loadPendingTurn() != null) return
+        if (!MultiUserIdentity.switchProfile(this, profileId)) return
+
+        store = SessionStore(this)
+        Deep33Api.configureAuth(this)
+        conversation.clear()
+        conversation.addAll(store.loadMessages())
+        personalitySelectionGeneration++
+        applyPersonalityTheme(Personality.fromKey(store.personality))
+        currentProfileView.takeIf { ::currentProfileView.isInitialized }?.text =
+            "USUARIO · " + MultiUserIdentity.currentProfile(this).displayName
+        showTab(Tab.CHAT)
+        renderConversation()
+        refreshSidebarHistory()
+
+        executor.execute {
+            SupabaseAuthManager(this, store.profileId).ensureSession()
+            runOnUiThread {
+                if (activityVisible && !isDestroyed) loadRemoteContext()
+            }
         }
     }
 
@@ -1794,7 +1871,8 @@ class MainActivity : Activity() {
                 requestId = requestId,
                 idempotencyKey = idempotencyKey,
                 personality = requestPersonality.key,
-                payloadJson = payload.toString()
+                payloadJson = payload.toString(),
+                conversationJson = serializeConversation(conversation)
             )
         )
         lastRenderedGenerationOutput = ""
@@ -1890,6 +1968,19 @@ class MainActivity : Activity() {
         if (generationActive || store.loadPendingTurn() != null) {
             monitorGeneration()
         }
+    }
+
+    private fun serializeConversation(messages: List<UiMessage>): String {
+        val json = org.json.JSONArray()
+        messages.takeLast(80).forEach { message ->
+            if (message.role !in setOf("user", "assistant")) return@forEach
+            json.put(
+                org.json.JSONObject()
+                    .put("role", message.role)
+                    .put("content", message.content)
+            )
+        }
+        return json.toString()
     }
 
     private fun buildModelPayload(locationContext: Deep33LocationContext? = null): org.json.JSONArray {
