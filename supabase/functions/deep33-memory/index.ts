@@ -414,7 +414,7 @@ Deno.serve(async (req) => {
 
         const incoming = Array.isArray(body.messages) ? body.messages : [];
         const rows = [];
-        for (const message of incoming.slice(-50)) {
+        for (const message of incoming) {
           const role = String(message?.role || "");
           const content = sanitizeLocationText(String(message?.content || ""));
           if (!["user", "assistant"].includes(role) || !content.trim()) continue;
