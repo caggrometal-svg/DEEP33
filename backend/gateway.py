@@ -392,7 +392,7 @@ class AIGateway:
         return {
             "gateway": "TIMEOUT" if failures and all(":timeout" in item for item in failures) else "FAIL",
             "provider": None,
-            "model": self.model or None,
+            "model": self.config.providers[0].model if self.config.providers else None,
             "latency_ms": round((time.perf_counter() - started) * 1000, 2),
             "last_success": None,
             "last_error": ";".join(failures) if failures else "no providers configured",
