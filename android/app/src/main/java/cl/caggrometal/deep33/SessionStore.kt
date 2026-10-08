@@ -525,6 +525,26 @@ class SessionStore(
 
     private fun writeGenerationState(state: GenerationState, durable: Boolean) {
         synchronized(STORE_LOCK) {
+            val current = loadGenerationState()
+            // A queued asynchronous RUNNING checkpoint may already be in the flush
+            // thread when completeGeneration/cancelGeneration commits a terminal state.
+            // Never let that stale write roll DONE/CANCELLING/FAILED back to RUNNING.
+            if (
+                state.status == GenerationStatus.RUNNING &&
+                current?.requestId == state.requestId &&
+                current.status in setOf(
+                    GenerationStatus.CANCELLING,
+                    GenerationStatus.DONE,
+                    GenerationStatus.FAILED,
+                    GenerationStatus.CANCELLED
+                )
+            ) {
+                android.util.Log.w(
+                    "DEEP33_STATE",
+                    "IGNORED_STALE_RUNNING_CHECKPOINT request_id=${state.requestId} current=${current.status}"
+                )
+                return@synchronized
+            }
             val json = JSONObject()
                 .put("status", state.status.name)
                 .put("request_id", state.requestId)
