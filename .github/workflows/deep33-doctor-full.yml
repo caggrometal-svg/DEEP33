@@ -110,11 +110,12 @@ jobs:
       - name: Create authenticated session
         run: |
           set -euo pipefail
+          profile_id="doctor-${GITHUB_RUN_ID}"
           auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
-            -X POST "$SUPABASE_URL/auth/v1/signup" \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "content-type: application/json" \
-            -d "{\"data\":{\"deep33_doctor_run\":\"${GITHUB_RUN_ID}\"}}")"
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}")"
           token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_DOCTOR_TOKEN=$token" >> "$GITHUB_ENV"
