@@ -199,6 +199,15 @@ class MainActivity : Activity() {
         Deep33Api.configureAuth(this)
         store.migrateNaturalVoiceDefault()
         conversation.addAll(store.loadMessages())
+        // Warm the authenticated session before the first user turn. This keeps the
+        // unavoidable anonymous-auth handshake out of perceived chat latency.
+        executor.execute {
+            runCatching {
+                SupabaseAuthManager(this, store.profileId).ensureSession()
+            }.onFailure {
+                Log.w("DEEP33", "Auth warm-up unavailable: " + it.javaClass.simpleName)
+            }
+        }
 
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
