@@ -2384,15 +2384,25 @@ async def prepare_messages(
         return result, selected
     except MemoryUnavailableError as exc:
         logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
-        selected_messages = requested[-max_messages:]
-        while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
-            selected_messages.pop(0)
+        selected_messages, compacted_summary = compact_context_messages(
+            requested,
+            adaptive_context_budget(requested, profile),
+        )
         runtime_messages = (
             [{"role": "system", "content": runtime_clock_context()}]
             if (not compact or is_realtime_query(latest_user_query(requested)))
             else []
         )
-        result = [personality_control, *runtime_messages, *selected_messages]
+        result = [
+            personality_control,
+            *runtime_messages,
+            *(
+                [{"role": "system", "content": compacted_summary}]
+                if compacted_summary
+                else []
+            ),
+            *selected_messages,
+        ]
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
