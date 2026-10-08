@@ -320,7 +320,7 @@ class Deep33GenerationService : Service() {
                 requestId = requestId,
                 sessionId = pending.sessionId,
                 personality = personality.key,
-                partialOutput = checkpoint.takeLast(CHECKPOINT_TAIL_CHARS),
+                partialOutput = checkpoint.takeLast(CHECKPOINT_TAIL_CHARS).toString(),
                 durable = false
             )
             lastCheckpointAt = now
