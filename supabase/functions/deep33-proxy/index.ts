@@ -83,6 +83,9 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
+// Internal DEEP33 fallback: keep the client endpoint unchanged and reuse the existing
+// Render backend only when the direct edge provider cannot produce a safe response.
+const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";
 const EDGE_AI_REQUIRES_AUTH =
   (Deno.env.get("AI_GATEWAY_REQUIRES_AUTH") || "").trim().toLowerCase() === "true" ||
   EDGE_AI_PROVIDER.toLowerCase() === "kilo";
@@ -293,19 +296,22 @@ function isSecureHttpsUrl(value: string): boolean {
   }
 }
 
-type EdgeAIProvider = { name: string; url: string; api_key: string; model: string; requires_auth: boolean };
+type EdgeAIProvider = { name: string; url: string; stream_url?: string; api_key: string; model: string; requires_auth: boolean };
 
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
+
   if (isSecureHttpsUrl(EDGE_AI_URL) && (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY)) {
     providers.push({
       name: EDGE_AI_PROVIDER,
       url: EDGE_AI_URL,
+      stream_url: EDGE_AI_URL,
       api_key: EDGE_AI_KEY,
       model: EDGE_AI_MODEL,
       requires_auth: EDGE_AI_REQUIRES_AUTH,
     });
   }
+
   const raw = Deno.env.get("AI_GATEWAY_FALLBACKS_JSON") || "";
   if (raw) {
     try {
@@ -315,12 +321,14 @@ function edgeProviders(): EdgeAIProvider[] {
           if (!item || typeof item !== "object") continue;
           const value = item as Record<string, unknown>;
           const url = String(value.url || "").trim();
+          const stream_url = String(value.stream_url || url).trim();
           const api_key = String(value.api_key || "").trim();
           const requires_auth = Boolean(value.requires_auth ?? api_key);
-          if (!isSecureHttpsUrl(url) || (requires_auth && !api_key)) continue;
+          if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) || (requires_auth && !api_key)) continue;
           providers.push({
             name: String(value.name || "fallback").trim() || "fallback",
             url,
+            stream_url,
             api_key,
             model: String(value.model || "").trim(),
             requires_auth,
@@ -331,34 +339,21 @@ function edgeProviders(): EdgeAIProvider[] {
       // Optional fallback configuration is non-fatal.
     }
   }
-  const publicFallbacksDisabled =
-    (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
-  if (!publicFallbacksDisabled) {
-    // Independent emergency routes. They are never the primary and are used only
-    // when the configured provider rejects, rate-limits, or fails.
-    if (!providers.some((provider) => provider.url === "https://vireonix.ai/v1/chat/completions")) {
-      providers.push({
-        name: "vireonix-public-fallback",
-        url: "https://vireonix.ai/v1/chat/completions",
-        api_key: "",
-        model: "auto",
-        requires_auth: false,
-      });
-    }
-    if (!providers.some((provider) => provider.url === "https://api.llmfaucet.dev/v1/chat/completions")) {
-      providers.push({
-        name: "llmfaucet",
-        url: "https://api.llmfaucet.dev/v1/chat/completions",
-        api_key: "free",
-        model: "auto:fast",
-        requires_auth: true,
-      });
-    }
+
+  if (!providers.some((provider) => provider.name === "render-backend-fallback")) {
+    providers.push({
+      name: "render-backend-fallback",
+      url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
+      stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream",
+      api_key: "",
+      model: "kilo-auto/small",
+      requires_auth: true,
+    });
   }
 
   const seen = new Set<string>();
   return providers.filter((provider) => {
-    const signature = provider.name + "|" + provider.url;
+    const signature = provider.name + "|" + provider.url + "|" + String(provider.stream_url || "");
     if (seen.has(signature)) return false;
     seen.add(signature);
     return true;
@@ -405,13 +400,19 @@ function providerPayload(
   return providerPayload;
 }
 
-function providerRequestHeaders(provider: EdgeAIProvider, requestId: string, accept: string): Record<string, string> {
+function providerRequestHeaders(
+  provider: EdgeAIProvider,
+  requestId: string,
+  accept: string,
+  userAuthorization = "",
+): Record<string, string> {
+  const authorization = provider.api_key
+    ? "Bearer " + provider.api_key
+    : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
   return {
     "Content-Type": "application/json",
     "Accept": accept,
-    ...(provider.requires_auth && provider.api_key
-      ? { "Authorization": "Bearer " + provider.api_key }
-      : {}),
+    ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
     "X-Request-ID": requestId,
   };
 }
@@ -661,6 +662,7 @@ async function callEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
   idempotencyContext: EdgeIdempotencyContext | null = null,
+  userAuthorization = "",
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -693,7 +695,7 @@ async function callEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "application/json"),
+            headers: providerRequestHeaders(provider, requestId, "application/json", userAuthorization),
             body: JSON.stringify({
               ...providerPayload(payload, false),
               ...(provider.model ? { model: provider.model } : {}),
@@ -825,6 +827,7 @@ async function streamEdgeAI(
   onController: (controller: AbortController) => void,
   onChunk: (chunk: string) => void,
   idempotencyContext: EdgeIdempotencyContext | null = null,
+  userAuthorization = "",
 ): Promise<{ text: string; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -882,9 +885,9 @@ async function streamEdgeAI(
         let policyCheckTail = "";
 
         try {
-          const response = await fetch(provider.url, {
+          const response = await fetch(provider.stream_url || provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "text/event-stream"),
+            headers: providerRequestHeaders(provider, requestId, "text/event-stream", userAuthorization),
             body: JSON.stringify({
               ...providerPayload(payload, true),
               ...(provider.model ? { model: provider.model } : {}),
@@ -1834,7 +1837,7 @@ async function probeHealth(sessionId: string) {
   }
 }
 
-async function probeInference(sessionId: string) {
+async function probeInference(sessionId: string, userAuthorization = "") {
   if (!edgeAIConfigured()) {
     return {
       ok: false,
@@ -1854,7 +1857,7 @@ async function probeInference(sessionId: string) {
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId);
+    }, requestId, null, userAuthorization);
     const text = extractProviderText(response.body);
     const ok = text === "DEEP33_DIAGNOSTIC_OK";
     return {
@@ -2406,7 +2409,7 @@ Deno.serve(async (req) => {
           status: "FAIL",
           body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
         })),
-        Promise.resolve(probeInference(auditSession)).catch((error) => ({
+        Promise.resolve(probeInference(auditSession, req.headers.get("authorization") || "")).catch((error) => ({
           ok: false,
           status: "FAIL",
           body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
@@ -2592,6 +2595,7 @@ Deno.serve(async (req) => {
                   );
                 },
                 idempotencyContext,
+                req.headers.get("authorization") || "",
               );
 
               const responseText = sanitizeAssistantText(ai.text);
@@ -2900,6 +2904,7 @@ Deno.serve(async (req) => {
               { ...payload, messages: edgeMessages },
               requestId,
               idempotencyContext,
+              req.headers.get("authorization") || "",
             );
             const responseText = extractProviderText(ai.body);
             let memoryPersisted = false;
