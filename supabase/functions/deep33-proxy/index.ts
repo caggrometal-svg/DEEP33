@@ -405,6 +405,8 @@ function providerRequestHeaders(
   requestId: string,
   accept: string,
   userAuthorization = "",
+  sessionId = "",
+  idempotencyKey = "",
 ): Record<string, string> {
   const authorization = provider.api_key
     ? "Bearer " + provider.api_key
@@ -414,6 +416,8 @@ function providerRequestHeaders(
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
     "X-Request-ID": requestId,
+    ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
+    ...(idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {}),
   };
 }
 
@@ -695,7 +699,14 @@ async function callEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "application/json", userAuthorization),
+            headers: providerRequestHeaders(
+              provider,
+              requestId,
+              "application/json",
+              userAuthorization,
+              leaseContext?.sessionId || "",
+              leaseContext?.idempotencyKey || "",
+            ),
             body: JSON.stringify({
               ...providerPayload(payload, false),
               ...(provider.model ? { model: provider.model } : {}),
@@ -887,7 +898,14 @@ async function streamEdgeAI(
         try {
           const response = await fetch(provider.stream_url || provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "text/event-stream", userAuthorization),
+            headers: providerRequestHeaders(
+              provider,
+              requestId,
+              "text/event-stream",
+              userAuthorization,
+              idempotencyContext?.sessionId || "",
+              idempotencyContext?.idempotencyKey || "",
+            ),
             body: JSON.stringify({
               ...providerPayload(payload, true),
               ...(provider.model ? { model: provider.model } : {}),
@@ -1857,7 +1875,7 @@ async function probeInference(sessionId: string, userAuthorization = "") {
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId, null, userAuthorization);
+    }, requestId, null, userAuthorization, sessionId);
     const text = extractProviderText(response.body);
     const ok = text === "DEEP33_DIAGNOSTIC_OK";
     return {
