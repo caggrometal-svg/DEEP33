@@ -71,6 +71,8 @@ class SessionStore(
     val memoryProfileId: String
         get() = profileId
 
+    internal fun sanitizePersistedContent(value: String): String = sanitizeGpsText(value)
+
     private fun sanitizeGpsText(value: String): String {
         return value
             .replace(
