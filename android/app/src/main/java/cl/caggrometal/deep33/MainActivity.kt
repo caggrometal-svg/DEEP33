@@ -1743,10 +1743,10 @@ class MainActivity : Activity() {
     private fun checkConnectivity() {
         updateConnection(ConnectionState.CONNECTING)
         executor.execute {
-            val auditFuture = executor.submit {
+            val auditFuture: java.util.concurrent.Future<JSONObject?> = executor.submit<JSONObject?> {
                 runCatching { Deep33Api.getFast("/v1/connectivity/audit", store.sessionId) }.getOrNull()
             }
-            val healthFuture = executor.submit {
+            val healthFuture: java.util.concurrent.Future<JSONObject?> = executor.submit<JSONObject?> {
                 runCatching { Deep33Api.getFast("/health", store.sessionId) }.getOrNull()
             }
 
