@@ -134,6 +134,34 @@ class SessionStore(
                                     .put("memory_profile_id", profileId)
                                     .toString()
                             }
+                        } else if (key == KEY_PENDING_TURN) {
+                            runCatching {
+                                val pending = JSONObject(value).put("profile_id", profileId)
+                                val payload = JSONArray(pending.optString("payload", "[]"))
+                                val safePayload = JSONArray()
+                                val safeConversation = JSONArray()
+                                for (index in 0 until payload.length()) {
+                                    val item = payload.optJSONObject(index) ?: continue
+                                    val role = item.optString("role")
+                                    val safeContent = sanitizeGpsText(item.optString("content"))
+                                    safePayload.put(
+                                        JSONObject()
+                                            .put("role", role)
+                                            .put("content", safeContent)
+                                    )
+                                    if (role == "user" || role == "assistant") {
+                                        safeConversation.put(
+                                            JSONObject()
+                                                .put("role", role)
+                                                .put("content", safeContent)
+                                        )
+                                    }
+                                }
+                                migrated = pending
+                                    .put("payload", safePayload)
+                                    .put("conversation", safeConversation)
+                                    .toString()
+                            }
                         }
                         edit.putString(key, migrated)
                     }
