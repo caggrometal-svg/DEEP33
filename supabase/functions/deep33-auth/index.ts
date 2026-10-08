@@ -99,7 +99,17 @@ Deno.serve(async (req) => {
       if (lookupError) {
         return json({ error: "AUTH_PROFILE_LOOKUP_FAILED" }, 503);
       }
-      if (existingMapping?.user_id) {
+      // Supabase returns scalar SQL functions as the scalar value itself.
+      // Accept the UUID form produced by deep33_auth_profile_lookup while
+      // retaining compatibility with an object-shaped RPC response.
+      const existingUserId =
+        typeof existingMapping === "string"
+          ? existingMapping
+          : existingMapping && typeof existingMapping === "object" &&
+            "user_id" in existingMapping
+            ? String((existingMapping as Record<string, unknown>).user_id ?? "")
+            : "";
+      if (existingUserId) {
         return json({ error: "AUTH_PROFILE_ALREADY_BOUND" }, 409);
       }
 
