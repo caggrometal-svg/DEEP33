@@ -43,7 +43,7 @@ from backend.search.engine import is_realtime_query
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
     runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
     if runtime:
@@ -450,7 +450,10 @@ def complexity_profile(messages: list[dict[str, Any]]) -> tuple[int, int, str]:
             recent_chars * 3 + 4_000,
         ),
     )
-    return min(50, max(1, len(messages))), adaptive_budget, profile
+    # Preserve a usable conversational window even for a one-message client turn;
+    # the backend can then merge remote session history without silently reducing it to 1.
+    message_budget = min(50, max(16, len(messages)))
+    return message_budget, adaptive_budget, profile
 
 
 def model_for_profile(requested_model: str | None, profile: str) -> str:
