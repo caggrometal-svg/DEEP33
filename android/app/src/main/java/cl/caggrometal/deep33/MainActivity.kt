@@ -1805,7 +1805,8 @@ class MainActivity : Activity() {
                     sendMessageInternal(text, location)
                 }
             },
-            includeLabel = !weatherQuery
+            includeLabel = !weatherQuery,
+            shareCoordinatesWithInference = weatherQuery
         )
     }
 
