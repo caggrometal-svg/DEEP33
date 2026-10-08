@@ -43,7 +43,7 @@ def test_real_dialogue_protocol_requires_web_first_and_logical_continuation() ->
     messages = [{"role": "user", "content": "¿Qué pasó hoy con la tecnología de baterías?"}]
     prompt = main.dialogue_policy_prompt(messages)
 
-    assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
+    assert "DEEP33 REAL DIALOGUE PROTOCOL v2" in prompt
     assert "busca primero información pública relevante en Internet" in prompt
     assert "respuesta final debe ser una síntesis original" in prompt
     assert "Haz como máximo una pregunta por turno" in prompt
@@ -171,7 +171,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
 
     assert selected == "COMICO"
     assert messages[0]["role"] == "system"
-    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v5" in messages[0]["content"]
+    assert "DEEP33 DIALOGUE BEHAVIOR PROTOCOL v6" in messages[0]["content"]
     assert "SHAPE_SELECTED=CONVERSATIONAL" in messages[0]["content"]
     assert "ACTIVE_PERSONALITY=COMICO" in messages[0]["content"]
     conversation_messages = [
