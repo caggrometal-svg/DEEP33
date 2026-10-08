@@ -570,37 +570,49 @@ object Deep33Api {
 object SseTextParser {
     fun extractText(data: String): String? {
         return runCatching {
-            val json = JSONObject(data)
-            listOf(
-                json.opt("choices"),
-                json.opt("content"),
-                json.opt("output_text"),
-                json.opt("text"),
-            ).asSequence()
-                .mapNotNull { extractFromValue(it) }
-                .firstOrNull { it.isNotEmpty() }
-        }.getOrNull()
-    }
+            val root = JSONObject(data)
 
-    private fun extractFromValue(value: Any?): String? {
-        when (value) {
-            is String -> return value
-            is JSONArray -> {
-                val parts = buildList {
-                    for (i in 0 until value.length()) {
-                        extractFromValue(value.opt(i))?.takeIf { it.isNotEmpty() }?.let { add(it) }
+            fun contentValue(value: Any?): String? {
+                when (value) {
+                    is String -> return value
+                    is JSONArray -> {
+                        val out = StringBuilder()
+                        for (i in 0 until value.length()) {
+                            val item = value.opt(i)
+                            val piece = when (item) {
+                                is String -> item
+                                is JSONObject -> item.optString("text").ifBlank {
+                                    item.optString("content")
+                                }
+                                else -> ""
+                            }
+                            if (piece.isNotBlank()) out.append(piece)
+                        }
+                        return out.toString().ifBlank { null }
+                    }
+                    is JSONObject -> {
+                        return value.optString("text").ifBlank {
+                            value.optString("content")
+                        }.ifBlank { null }
                     }
                 }
-                return parts.joinToString("")
+                return null
             }
-            is JSONObject -> {
-                value.optString("text").takeIf { it.isNotEmpty() }?.let { return it }
-                value.optString("content").takeIf { it.isNotEmpty() }?.let { return it }
-                value.opt("delta")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
-                value.opt("message")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
-                value.opt("content")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
-            }
-        }
-        return null
+
+            val rootContent = contentValue(root.opt("content"))
+            if (!rootContent.isNullOrBlank()) return rootContent
+
+            val choices = root.optJSONArray("choices") ?: return null
+            val first = choices.optJSONObject(0) ?: return null
+
+            val deltaContent = contentValue(first.optJSONObject("delta")?.opt("content"))
+            if (!deltaContent.isNullOrBlank()) return deltaContent
+
+            val message = first.optJSONObject("message")
+            val messageContent = contentValue(message?.opt("content"))
+            if (!messageContent.isNullOrBlank()) return messageContent
+
+            contentValue(first.opt("content"))
+        }.getOrNull()
     }
 }
