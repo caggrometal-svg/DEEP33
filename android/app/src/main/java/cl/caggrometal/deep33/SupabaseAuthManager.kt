@@ -9,6 +9,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.net.ssl.HttpsURLConnection
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
 /**
@@ -31,32 +32,61 @@ class SupabaseAuthManager(
         private const val EXPIRES_AT = "expires_at"
         private const val USER_ID = "user_id"
         private const val TOKEN_SKEW_MS = 60_000L
+        private data class MemorySession(
+            val accessToken: String,
+            val refreshToken: String,
+            val expiresAtMs: Long,
+            val userId: String
+        )
+        private val memorySessions = ConcurrentHashMap<String, MemorySession>()
         private val lock = Any()
     }
 
     fun storedUserId(): String? = prefs.getString(USER_ID, null)?.takeIf { it.isNotBlank() }
 
     fun forceRefreshSession(): String? = synchronized(lock) {
+        val memory = memorySessions[profileId]
+        if (memory != null && memory.refreshToken.isNotBlank() && refreshToken(memory.refreshToken)) {
+            memorySessions[profileId]?.accessToken?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
+        }
+
         val refresh = secret(REFRESH_TOKEN)
         if (!refresh.isNullOrBlank() && refreshToken(refresh)) {
             secret(ACCESS_TOKEN)?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
+            memorySessions[profileId]?.accessToken?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
         }
-        if (bootstrapSession()) secret(ACCESS_TOKEN) else null
+
+        return@synchronized if (bootstrapSession()) {
+            memorySessions[profileId]?.accessToken ?: secret(ACCESS_TOKEN)
+        } else {
+            null
+        }
     }
 
     fun ensureSession(): String? = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        val memory = memorySessions[profileId]
+        if (memory != null && memory.accessToken.isNotBlank() && memory.expiresAtMs > now + TOKEN_SKEW_MS) {
+            return@synchronized memory.accessToken
+        }
+
         val existing = secret(ACCESS_TOKEN)
         val expiresAt = prefs.getLong(EXPIRES_AT, 0L)
-        if (!existing.isNullOrBlank() && expiresAt > System.currentTimeMillis() + TOKEN_SKEW_MS) {
+        if (!existing.isNullOrBlank() && expiresAt > now + TOKEN_SKEW_MS) {
             return@synchronized existing
         }
 
-        val refresh = secret(REFRESH_TOKEN)
+        val refresh = memory?.refreshToken?.takeIf { it.isNotBlank() } ?: secret(REFRESH_TOKEN)
         if (!refresh.isNullOrBlank() && refreshToken(refresh)) {
+            memorySessions[profileId]?.accessToken?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
             secret(ACCESS_TOKEN)?.takeIf { it.isNotBlank() }?.let { return@synchronized it }
         }
 
-        return@synchronized if (bootstrapSession()) secret(ACCESS_TOKEN) else null
+        return@synchronized if (bootstrapSession()) {
+            memorySessions[profileId]?.accessToken ?: secret(ACCESS_TOKEN)
+        } else {
+            null
+        }
     }
 
     private fun bootstrapSession(): Boolean {
@@ -96,12 +126,39 @@ class SupabaseAuthManager(
             System.currentTimeMillis() + expiresInSeconds * 1000L
         }
 
-        putSecret(ACCESS_TOKEN, access)
-        putSecret(REFRESH_TOKEN, refresh)
+        memorySessions[profileId] = MemorySession(
+            accessToken = access,
+            refreshToken = refresh,
+            expiresAtMs = expiresAtMs,
+            userId = userId
+        )
+
+        // Keystore persistence is preferred but must never discard a valid freshly
+        // issued session when the Android keystore is temporarily unavailable.
+        val accessPersisted = runCatching {
+            putSecret(ACCESS_TOKEN, access)
+            true
+        }.getOrElse {
+            android.util.Log.w("DEEP33_AUTH", "Access token secure persistence unavailable", it)
+            false
+        }
+        val refreshPersisted = runCatching {
+            putSecret(REFRESH_TOKEN, refresh)
+            true
+        }.getOrElse {
+            android.util.Log.w("DEEP33_AUTH", "Refresh token secure persistence unavailable", it)
+            false
+        }
         prefs.edit()
             .putLong(EXPIRES_AT, expiresAtMs)
             .putString(USER_ID, userId)
             .apply()
+        if (!accessPersisted || !refreshPersisted) {
+            android.util.Log.w(
+                "DEEP33_AUTH",
+                "Using process-local session cache for profile=$profileId"
+            )
+        }
         return true
     }
 
