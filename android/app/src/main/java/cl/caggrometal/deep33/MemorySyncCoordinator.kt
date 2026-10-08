@@ -36,31 +36,47 @@ object MemorySyncCoordinator {
 
     private fun process(context: Context) {
         try {
-            var store = SessionStore(context)
-            val pending = store.loadPendingMemorySync()
-            if (pending == null) {
+            val profiles = MultiUserIdentity.listProfiles(context)
+            var selectedStore: SessionStore? = null
+            var pending: PendingMemorySync? = null
+
+            for (profile in profiles) {
+                val candidate = SessionStore(context, profileIdOverride = profile.id)
+                val queuedPending = candidate.loadPendingMemorySync()
+                if (queuedPending != null) {
+                    selectedStore = candidate
+                    pending = queuedPending
+                    break
+                }
+            }
+
+            if (selectedStore == null || pending == null) {
                 queued.set(false)
                 return
             }
-            if (pending.profileId != store.profileId) {
-                store = SessionStore(context, profileIdOverride = pending.profileId)
-            }
-            val payload = JSONArray(pending.messagesJson)
+
+            val payload = JSONArray(pending!!.messagesJson)
+            Deep33Api.configureAuth(context)
             Deep33Api.syncMemory(
-                pending.sessionId,
+                pending!!.sessionId,
                 payload,
-                pending.personality,
-                requestId = pending.requestId,
-                memoryProfileId = pending.memoryProfileId
+                pending!!.personality,
+                requestId = pending!!.requestId,
+                memoryProfileId = pending!!.memoryProfileId
             )
-            store.clearPendingMemorySync(pending.requestId)
+            selectedStore!!.clearPendingMemorySync(pending!!.requestId)
             queued.set(false)
 
-            if (store.loadPendingMemorySync() != null) enqueue(context)
+            if (MultiUserIdentity.listProfiles(context).any {
+                    SessionStore(context, profileIdOverride = it.id).loadPendingMemorySync() != null
+                }) {
+                enqueue(context)
+            }
         } catch (e: Exception) {
             queued.set(false)
             Log.w("DEEP33", "Memory sync deferred: " + e.javaClass.simpleName)
             enqueue(context, RETRY_DELAY_MS)
         }
     }
+
 }
