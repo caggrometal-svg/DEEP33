@@ -137,7 +137,7 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
     class StubMemory:
         enabled = True
 
-        async def sync(self, session_id, messages, personality=None, preferences=None, memory_profile_id=None):
+        async def sync(self, session_id, messages, personality=None, preferences=None, memory_profile_id=None, owner_user_id=None):
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -157,7 +157,7 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
             ) as client:
                 response = await client.post(
                     "/v1/memory/sync",
-                    headers={"X-DEEP33-Session-Id": "memory-test-session"},
+                    headers={"Authorization": "Bearer test-client-token", "X-DEEP33-Session-Id": "memory-test-session"},
                     json={
                         "messages": [
                             {"role": "user", "content": "hola"},
