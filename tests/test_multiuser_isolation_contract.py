@@ -50,4 +50,5 @@ def test_memory_function_scopes_remote_data_to_profile() -> None:
     assert "scopeSession(memoryProfileId, clientSessionId)" in source
     assert '.in("session_id", messageSessionIds)' in source
     assert 'row.session_id: profileSessionId' not in source
-    assert 'session_id: profileSessionId' in source
+    assert 'session_id: sessionId' in source
+    assert 'memoryProfileId' in source
