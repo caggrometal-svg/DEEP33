@@ -70,37 +70,52 @@ jobs:
             --data-urlencode "q=$query")"
           printf '%s\n' "$result"
           printf '%s\n' "$result" | jq -e '.ok == true and .realtime == true and .fresh_request == true and .engine == "DEEP33 Search Engine" and .engine_version == "1.3.0" and (.queries | length) >= 1 and (.providers | length) >= 2 and (.verification.relevant_results // 0) >= 1 and (.retrieved_at | strings | length) > 10'
-      - name: Wait for TERTIARY backend readiness
+      - name: Wait for TERTIARY web tool readiness
         run: |
           set -euo pipefail
           ready=0
           for attempt in $(seq 1 18); do
-            echo "TERTIARY_READY_ATTEMPT=$attempt"
-            body="$(curl -sS --connect-timeout 8 --max-time 30 "$TERTIARY_URL/ready" || true)"
-            printf '%s\n' "$body"
-            if printf '%s' "$body" | jq -e '.status=="PASS" and .ready==true' >/dev/null 2>&1; then
+            echo "TERTIARY_WEB_STATUS_ATTEMPT=$attempt"
+            body="$(curl -sS --connect-timeout 8 --max-time 30 "$TERTIARY_URL/v1/web/status" || true)"
+            printf '%s\\n' "$body"
+            if printf '%s' "$body" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.3.0" and .tool_loop_enabled==true' >/dev/null 2>&1; then
               ready=1
               break
             fi
             sleep 5
           done
-          test "$ready" = "1" || {
-            echo "TERTIARY_READY_FAIL"
-            exit 1
-          }
-          echo "TERTIARY_READY_PASS"
+          test "$ready" = "1" || { echo "TERTIARY_WEB_STATUS_FAIL"; exit 1; }
+          echo "TERTIARY_WEB_STATUS_PASS"
 
       - name: Verify TERTIARY realtime search
         run: |
           set -euo pipefail
           query="situación actual de la comuna de Las Condes en Chile"
-          result="$(curl -fsS --connect-timeout 8 --max-time 90 \
-            -H "Authorization: Bearer $DEEP33_CI_TOKEN" \
-            -H "X-DEEP33-Session-Id: ci-production-realtime" \
-            --get "$TERTIARY_URL/v1/web/search" \
-            --data-urlencode "q=$query")"
-          printf '%s\n' "$result"
-          printf '%s\n' "$result" | jq -e '.ok == true and .realtime == true and .fresh_request == true and .engine == "DEEP33 Search Engine" and .engine_version == "1.3.0" and (.queries | length) >= 1 and (.providers | length) >= 1 and (.retrieved_at | strings | length) > 10'
+          session_id="ci-production-realtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+          status_code="000"
+          result=""
+          for attempt in $(seq 1 8); do
+            echo "TERTIARY_REALTIME_SEARCH_ATTEMPT=$attempt"
+            response="$(curl -sS --connect-timeout 8 --max-time 90 \\
+              -w '\\nDEEP33_HTTP_STATUS:%{http_code}' \\
+              -H "Authorization: Bearer $DEEP33_CI_TOKEN" \\
+              -H "X-DEEP33-Session-Id: $session_id" \\
+              --get "$TERTIARY_URL/v1/web/search" \\
+              --data-urlencode "q=$query" || true)"
+            status_code="${response##*DEEP33_HTTP_STATUS:}"
+            result="${response%$'\\n'DEEP33_HTTP_STATUS:*}"
+            if [ "$status_code" = "200" ] && printf '%s' "$result" | jq -e '.ok == true and .realtime == true and .fresh_request == true and .engine == "DEEP33 Search Engine" and .engine_version == "1.3.0" and (.queries | length) >= 1 and (.providers | length) >= 1 and (.retrieved_at | strings | length) > 10' >/dev/null 2>&1; then
+              printf '%s\\n' "$result"
+              echo "TERTIARY_REALTIME_SEARCH_PASS"
+              exit 0
+            fi
+            echo "TERTIARY_REALTIME_SEARCH_NOT_READY status=$status_code"
+            printf '%s\\n' "$result"
+            sleep 5
+          done
+          echo "TERTIARY_REALTIME_SEARCH_FAIL status=$status_code"
+          exit 1
+
   android_validation:
     needs: backend_unit
     runs-on: ubuntu-latest
