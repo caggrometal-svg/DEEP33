@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ANDROID_ROOT = REPO_ROOT / "android/app/src/main/java/cl/caggrometal/deep33"
 EDGE_FILES = (
@@ -10,44 +9,41 @@ EDGE_FILES = (
 MEMORY_FILE = REPO_ROOT / "supabase/functions/deep33-memory/index.ts"
 
 
-def test_android_uses_a_stable_opaque_profile_identity() -> None:
+def test_android_uses_explicit_per_profile_isolation() -> None:
     store = (ANDROID_ROOT / "SessionStore.kt").read_text(encoding="utf-8")
     identity = (ANDROID_ROOT / "MultiUserIdentity.kt").read_text(encoding="utf-8")
 
-    assert 'getSharedPreferences(name, Context.MODE_PRIVATE)' in store
-    assert 'KEY_MEMORY_PROFILE_ID' in store
-    assert 'MultiUserIdentity.newProfileId()' in store
-    assert 'MultiUserIdentity.newSessionId()' in store
+    assert 'name ?: PREFS_NAME + "_" + profileId' in store
+    assert 'profileIdOverride: String? = null' in store
     assert 'PROFILE_PREFIX = "profile-"' in identity
+    assert "createProfile(" in identity
+    assert "switchProfile(" in identity
 
 
-def test_android_sends_profile_scope_on_memory_requests() -> None:
+def test_android_auth_scopes_remote_transport_without_client_authority_header() -> None:
     api = (ANDROID_ROOT / "Deep33Api.kt").read_text(encoding="utf-8")
+    auth = (ANDROID_ROOT / "SupabaseAuthManager.kt").read_text(encoding="utf-8")
 
-    assert '"X-DEEP33-Memory-Profile-Id"' in api
-    assert "memoryProfileId: String?" in api
-    assert "memoryProfileId = memoryProfileId" in api
+    assert 'setRequestProperty("Authorization", "Bearer " + it)' in api
+    assert "class SupabaseAuthManager(" in auth
+    assert "AndroidKeyStore" in auth
+    assert '"X-DEEP33-Memory-Profile-Id"' not in api
 
 
-def test_edge_gateways_propagate_profile_scope_to_memory() -> None:
+def test_edge_gateways_derive_owner_from_jwt() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
 
-        assert '"x-deep33-memory-profile-id"' in source
-        assert "const memoryProfileId =" in source
-        assert "memoryProfileId?: string" in source
-        assert "memory_profile_id: memoryProfileId" not in source or "profileScope" in source
-        assert "profileScope" in source
-        assert 'memoryCall("context", sessionId, profileScope)' in source
-        assert 'memoryCall("sync", sessionId, {' in source
-        assert "...profileScope" in source
+        assert "Authorization" in source
+        assert "supabaseAdmin.auth.getUser" in source or "resolveOwnerId" in source
+        assert "scopedSession(" in source
 
 
-def test_memory_function_scopes_remote_data_to_profile() -> None:
+def test_memory_function_rejects_profile_spoofing() -> None:
     source = MEMORY_FILE.read_text(encoding="utf-8")
 
-    assert 'body.memory_profile_id' in source
-    assert 'const profileSessionId = memoryProfileId || sessionId;' in source
-    assert '.in("session_id", messageSessionIds)' in source
-    assert 'row.session_id: profileSessionId' not in source
-    assert 'session_id: profileSessionId' in source
+    assert "resolveOwnerId(" in source
+    assert "MEMORY_AUTH_REQUIRED" in source
+    assert "claimed !== userId" in source
+    assert "scopeSession(" in source
+    assert 'const messageSessionIds = [sessionId];' in source
