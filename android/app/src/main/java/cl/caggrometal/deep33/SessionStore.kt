@@ -3,6 +3,11 @@ package cl.caggrometal.deep33
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 data class UiMessage(
     val role: String,
@@ -302,6 +307,7 @@ class SessionStore(
         error: String = "",
         durable: Boolean = false
     ) {
+        cancelQueuedGenerationCheckpoint(requestId)
         val state = GenerationState(
             status = status,
             requestId = requestId,
@@ -311,25 +317,92 @@ class SessionStore(
             finalText = finalText,
             error = error
         )
+        writeGenerationState(state, durable)
+        generationStateListeners.forEach { listener ->
+            runCatching { listener(state) }
+        }
+    }
+
+    /**
+     * Queue a RUNNING checkpoint without blocking the SSE receiver on disk I/O.
+     * Only the latest checkpoint is persisted; listeners receive the state immediately.
+     */
+    fun queueGenerationCheckpoint(
+        status: GenerationStatus,
+        requestId: String,
+        sessionId: String,
+        personality: String,
+        partialOutput: String = "",
+        error: String = ""
+    ) {
+        val state = GenerationState(
+            status = status,
+            requestId = requestId,
+            sessionId = sessionId,
+            personality = personality,
+            partialOutput = partialOutput,
+            finalText = "",
+            error = error
+        )
+        pendingGenerationCheckpoint.set(state)
+        generationStateListeners.forEach { listener ->
+            runCatching { listener(state) }
+        }
+        scheduleGenerationCheckpointFlush()
+    }
+
+    /**
+     * Force the newest queued checkpoint to disk. Used only at service teardown,
+     * outside the normal SSE callback path.
+     */
+    fun flushGenerationCheckpoint(requestId: String? = null) {
+        val pending = pendingGenerationCheckpoint.get()
+        if (pending != null && (requestId == null || pending.requestId == requestId)) {
+            if (pendingGenerationCheckpoint.compareAndSet(pending, null)) {
+                writeGenerationState(pending, durable = true)
+            }
+        }
+        generationCheckpointFlushScheduled.set(false)
+    }
+
+    private fun scheduleGenerationCheckpointFlush() {
+        if (!generationCheckpointFlushScheduled.compareAndSet(false, true)) return
+        generationCheckpointExecutor.schedule({
+            generationCheckpointFlushScheduled.set(false)
+            val pending = pendingGenerationCheckpoint.getAndSet(null)
+            if (pending != null) {
+                writeGenerationState(pending, durable = false)
+            }
+            if (pendingGenerationCheckpoint.get() != null) {
+                scheduleGenerationCheckpointFlush()
+            }
+        }, CHECKPOINT_FLUSH_DELAY_MS, TimeUnit.MILLISECONDS)
+    }
+
+    private fun cancelQueuedGenerationCheckpoint(requestId: String) {
+        val pending = pendingGenerationCheckpoint.get()
+        if (pending?.requestId == requestId) {
+            pendingGenerationCheckpoint.compareAndSet(pending, null)
+        }
+    }
+
+    private fun writeGenerationState(state: GenerationState, durable: Boolean) {
         synchronized(STORE_LOCK) {
             val json = JSONObject()
-                .put("status", status.name)
-                .put("request_id", requestId)
-                .put("session_id", sessionId)
-                .put("personality", personality)
-                .put("partial_output", partialOutput)
-                .put("final_text", finalText)
-                .put("error", error)
+                .put("status", state.status.name)
+                .put("request_id", state.requestId)
+                .put("session_id", state.sessionId)
+                .put("personality", state.personality)
+                .put("partial_output", state.partialOutput)
+                .put("final_text", state.finalText)
+                .put("error", state.error)
             val edit = prefs.edit().putString(KEY_GENERATION_STATE, json.toString())
             if (durable) {
-                // DONE/FAILED/CANCELLED are recovery boundaries; commit them synchronously.
+                // Terminal/recovery boundaries are synchronous by design.
                 edit.commit()
             } else {
                 edit.apply()
             }
-        }
-        generationStateListeners.forEach { listener ->
-            runCatching { listener(state) }
         }
     }
 
@@ -471,5 +544,12 @@ class SessionStore(
         private const val MAX_CHAT_SUMMARIES = 30
         private const val MAX_PENDING_MEMORY_SYNCS = 10
         private val generationStateListeners = java.util.concurrent.CopyOnWriteArrayList<(GenerationState) -> Unit>()
+        private const val CHECKPOINT_FLUSH_DELAY_MS = 750L
+        private val generationCheckpointExecutor: ScheduledExecutorService =
+            Executors.newSingleThreadScheduledExecutor { runnable ->
+                Thread(runnable, "DEEP33-GenerationCheckpoint").apply { isDaemon = true }
+            }
+        private val generationCheckpointFlushScheduled = AtomicBoolean(false)
+        private val pendingGenerationCheckpoint = AtomicReference<GenerationState?>(null)
     }
 }
