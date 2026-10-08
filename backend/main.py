@@ -2759,6 +2759,7 @@ async def generate(
 async def ai_generate(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2773,6 +2774,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
             in {"1", "true", "yes", "on"}
         ),
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -2809,7 +2811,11 @@ async def memory_context(http_request: Request) -> dict:
     memory_profile_id = memory_profile_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.context(session_id, memory_profile_id=memory_profile_id)
+        return await memory.context(
+            session_id,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -2852,7 +2858,13 @@ async def memory_remember(
     memory_profile_id = memory_profile_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
+        return await memory.remember(
+            session_id,
+            payload.kind,
+            payload.content,
+            memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -2873,6 +2885,7 @@ async def memory_preferences(
             personality=payload.personality,
             preferences=payload.preferences,
             memory_profile_id=memory_profile_id,
+            owner_user_id=auth_user_id_from_request(http_request),
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
@@ -2915,6 +2928,7 @@ async def _finalize_stream(
     lease_token: str,
     assistant_text: str,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     output = {
         "request_id": request_id,
@@ -2941,6 +2955,7 @@ async def _finalize_stream(
         session_id,
         extract_deep33_self_name(assistant_text),
         memory_profile_id=memory_profile_id,
+        owner_user_id=owner_user_id,
     )
     performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
@@ -3081,6 +3096,7 @@ async def stream_gateway(
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
+    owner_user_id = auth_user_id_from_request(http_request)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -3120,6 +3136,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             session_id,
             memory_profile_id,
             request_id=request_id,
+            owner_user_id=owner_user_id,
         )
     )
     raw_messages = [
