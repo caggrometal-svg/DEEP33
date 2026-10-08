@@ -149,8 +149,64 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 45 "${auth[@]}" "$TERTIARY_URL/health" | jq -e '.status=="PASS"'
           curl -fsS --connect-timeout 8 --max-time 60 "${auth[@]}" "$TERTIARY_URL/ready" | jq -e '.status=="PASS" and .ready==true'
 
-  evidence:
-    needs: [backend, android, instrumentation, production]
+      - name: Validate real inference, SSE, memory and feedback
+        run: |
+          set -euo pipefail
+          session_id="doctor-${GITHUB_RUN_ID}"
+          request_id="doctor-inference-${GITHUB_RUN_ID}"
+          idempotency_key="doctor-idem-${GITHUB_RUN_ID}"
+          body='{"messages":[{"role":"user","content":"Responde exactamente: DEEP33_DOCTOR_OK"}],"personality":"NEUTRO"}'
+          curl -fsS --connect-timeout 8 --max-time 120 \
+            -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
+            -H "X-DEEP33-Session-Id: $session_id" \
+            -H "X-Request-ID: $request_id" \
+            -H "X-Idempotency-Key: $idempotency_key" \
+            -H "content-type: application/json" \
+            -d "$body" \
+            "$PRIMARY_URL/v1/ai/generate" > /tmp/deep33-generate.json
+          jq -e '.result.text | strings | contains("DEEP33_DOCTOR_OK")' /tmp/deep33-generate.json
+          response_hash="$(jq -r '.result.text' /tmp/deep33-generate.json | sha256sum | awk '{print $1}')"
+          test -n "$response_hash"
+
+          stream_request_id="doctor-stream-${GITHUB_RUN_ID}"
+          stream_idem="doctor-stream-idem-${GITHUB_RUN_ID}"
+          stream_body='{"messages":[{"role":"user","content":"Responde exactamente: DEEP33_STREAM_OK"}],"personality":"NEUTRO"}'
+          curl -fsSN --connect-timeout 8 --max-time 120 \
+            -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
+            -H "X-DEEP33-Session-Id: $session_id" \
+            -H "X-Request-ID: $stream_request_id" \
+            -H "X-Idempotency-Key: $stream_idem" \
+            -H "content-type: application/json" \
+            -d "$stream_body" \
+            "$PRIMARY_URL/v1/chat/stream" > /tmp/deep33-stream.txt
+          grep -q "DEEP33_STREAM_OK" /tmp/deep33-stream.txt
+
+          curl -fsS --connect-timeout 8 --max-time 45 \
+            -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
+            -H "X-DEEP33-Session-Id: $session_id" \
+            "$PRIMARY_URL/v1/memory/context" > /tmp/deep33-context.json
+          jq -e 'has("messages") and has("memories")' /tmp/deep33-context.json
+
+          sync_request_id="doctor-memory-${GITHUB_RUN_ID}"
+          sync_idem="doctor-memory-idem-${GITHUB_RUN_ID}"
+          sync_body='{"messages":[{"role":"user","content":"DEEP33_MEMORY_DOCTOR"},{"role":"assistant","content":"DEEP33_MEMORY_OK"}],"personality":"NEUTRO","preferences":{"doctor":"true"}}'
+          curl -fsS --connect-timeout 8 --max-time 60 \
+            -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
+            -H "X-DEEP33-Session-Id: $session_id" \
+            -H "X-Request-ID: $sync_request_id" \
+            -H "X-Idempotency-Key: $sync_idem" \
+            -H "content-type: application/json" \
+            -d "$sync_body" \
+            "$PRIMARY_URL/v1/memory/sync" | jq -e '.ok == true'
+
+          curl -fsS --connect-timeout 8 --max-time 45 \
+            -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
+            -H "X-DEEP33-Session-Id: $session_id" \
+            -H "content-type: application/json" \
+            -d "{\"rating\":\"positive\",\"request_id\":\"$request_id\",\"response_hash\":\"$response_hash\"}" \
+            "$PRIMARY_URL/v1/feedback" | jq -e '.ok == true and .persisted == true'
+
+  evidence:    needs: [backend, android, instrumentation, production]
     runs-on: ubuntu-latest
     steps:
       - run: |
