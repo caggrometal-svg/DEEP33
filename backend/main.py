@@ -325,6 +325,7 @@ async def persist_deep33_self_name(
     session_id: str,
     self_name: str | None,
     memory_profile_id: str | None = None,
+    owner_user_id: str | None = None,
 ) -> None:
     if not self_name or not memory.enabled:
         return
@@ -335,6 +336,7 @@ async def persist_deep33_self_name(
             "context",
             content,
             memory_profile_id=memory_profile_id,
+            owner_user_id=owner_user_id,
         )
         logger.info("deep33_self_name_persisted session_id=%s name=%s", session_id, self_name)
     except MemoryUnavailableError as exc:
