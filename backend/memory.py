@@ -126,6 +126,10 @@ class MemoryClient:
             "apikey": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # Server-to-server memory access uses the service role key as the
+            # explicit internal credential; the end-user ID is carried only in
+            # the scoped body field after backend authentication.
+            "X-DEEP33-Internal-Token": self.api_key,
         }
 
         for attempt in range(self.max_retries + 1):
