@@ -59,3 +59,15 @@ def test_deep33_auth_bootstrap_contract():
     assert 'memory_profile_id' in source
     assert "[functions.deep33-auth]" in config
     assert "verify_jwt = false" in config
+def test_deep33_auth_accepts_scalar_profile_lookup_result():
+    source = (ROOT / "supabase/functions/deep33-auth/index.ts").read_text(encoding="utf-8")
+    assert "typeof existingMapping === \"string\"" in source
+    assert "existingUserId" in source
+
+
+def test_auth_profile_rpc_migration_is_tracked():
+    migration = ROOT / "supabase/migrations/20261008154530_deep33_auth_profile_rpc.sql"
+    source = migration.read_text(encoding="utf-8")
+    assert "deep33_auth_profile_lookup" in source
+    assert "deep33_auth_profile_bind" in source
+    assert "grant execute" in source.lower()
