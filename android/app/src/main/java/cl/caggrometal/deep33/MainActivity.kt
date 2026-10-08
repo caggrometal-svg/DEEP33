@@ -2549,8 +2549,8 @@ class MainActivity : Activity() {
             }
         )
 
-        lateinit var likeButton: ImageButton
-        lateinit var dislikeButton: ImageButton
+        var likeButton: ImageButton? = null
+        var dislikeButton: ImageButton? = null
 
         likeButton = actionButton(
             R.drawable.ic_action_like,
@@ -2560,11 +2560,11 @@ class MainActivity : Activity() {
                 content = content,
                 rating = "useful",
                 selectedButton = button,
-                otherButton = dislikeButton,
+                otherButton = dislikeButton ?: button,
             )
             dislikeButtonTint(normalTint, likeButton = button, other = null)
         }
-        row.addView(likeButton)
+        row.addView(likeButton ?: error("like button not created"))
 
         dislikeButton = actionButton(
             R.drawable.ic_action_dislike,
@@ -2574,11 +2574,11 @@ class MainActivity : Activity() {
                 content = content,
                 rating = "not_useful",
                 selectedButton = button,
-                otherButton = likeButton,
+                otherButton = likeButton ?: button,
             )
             dislikeButtonTint(normalTint, likeButton = null, other = button)
         }
-        row.addView(dislikeButton)
+        row.addView(dislikeButton ?: error("dislike button not created"))
 
         // One final compact action, matching the common response-action pattern.
         row.addView(
