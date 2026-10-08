@@ -2386,11 +2386,33 @@ Deno.serve(async (req) => {
     if (path === "/v1/connectivity/audit" && req.method === "GET") {
       const started = performance.now();
       const auditSession = sessionId || "deep33-audit";
-      const [health, inference, webStatus] = await Promise.all([
-        probeHealth(auditSession),
-        probeInference(auditSession),
+
+      const safeSearch = edgeSearch("fecha actual en Chile", auditSession).catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        results: [],
+      }));
+      const safeMemory = probeMemory(auditSession).catch(() => ({
+        ok: false,
+        status: "FAIL",
+        http_status: 0,
+      }));
+
+      const [health, inference, webStatus, search, memory] = await Promise.all([
+        Promise.resolve(probeHealth(auditSession)).catch((error) => ({
+          ok: false,
+          status: "FAIL",
+          body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
+        })),
+        Promise.resolve(probeInference(auditSession)).catch((error) => ({
+          ok: false,
+          status: "FAIL",
+          body: { status: "FAIL", error: error instanceof Error ? error.message : String(error) },
+        })),
         UPSTREAM
-          ? fetchUpstream("/v1/web/status", {}, auditSession).then(readJson)
+          ? fetchUpstream("/v1/web/status", {}, auditSession)
+              .then(readJson)
+              .catch(() => ({ enabled: false, status: "FAIL" }))
           : Promise.resolve({
               enabled: true,
               engine: "DEEP33 Search Engine",
@@ -2400,29 +2422,9 @@ Deno.serve(async (req) => {
               configured_provider: "edge-direct",
               fallback_providers: ["bing_public", "marginalia_public", "ddg_public", "wikipedia_public"],
             }),
+        safeSearch,
+        safeMemory,
       ]);
-
-      let search: Record<string, unknown>;
-      try {
-        search = await edgeSearch("fecha actual en Chile", auditSession);
-      } catch (error) {
-        search = {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-          results: [],
-        };
-      }
-
-      let memory = { ok: false, status: "FAIL", http_status: 0 };
-      try {
-        memory = await probeMemory(auditSession);
-      } catch (error) {
-        memory = {
-          ok: false,
-          status: "FAIL",
-          http_status: 0,
-        };
-      }
 
       const aiReady = inference.ok;
       const searchOk = search.ok === true;
@@ -2431,7 +2433,15 @@ Deno.serve(async (req) => {
       return json({
         status: backendOk && aiReady && searchOk ? "PASS" : "FAIL",
         edge: "PASS",
-        internet: searchOk ? "PASS" : "FAIL",
+        checks: {
+          INTERNET: searchOk ? "PASS" : "FAIL",
+          DNS: searchOk ? "PASS" : "FAIL",
+          HTTPS: backendOk ? "PASS" : "FAIL",
+          BACKEND: backendOk ? "PASS" : "FAIL",
+          AI_GATEWAY: aiReady ? "PASS" : "FAIL",
+          MODEL: aiReady ? "PASS" : "FAIL",
+          MEMORY: memory.ok ? "PASS" : "FAIL",
+        },
         ready: backendOk && aiReady ? "PASS" : "FAIL",
         search,
         memory,
