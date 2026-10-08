@@ -2121,6 +2121,8 @@ function edgeRealtimeQuery(query: string): boolean {
   const lowered = query.toLowerCase();
   if (/\b(?:15\d{2}|16\d{2}|17\d{2}|18\d{2}|19\d{2}|200\d|201\d)\b/.test(lowered) &&
       !/(hoy|ahora|actual|latest|current|today)/i.test(lowered)) return false;
+  if (/\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered)) return true;
+  if (/\b(?:cómo estará el día|como estara el dia|cómo estará mañana|como estara manana|cómo estará hoy|como estara hoy)\b/i.test(lowered)) return true;
   return [
     "noticia","noticias","última hora","ultima hora","actualidad","actual","actualmente",
     "ahora","hoy","último","últimos","última","últimas","reciente","recientes",
@@ -2139,23 +2141,23 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
   if (!realtime) return { original, queries: [normalized], depth: "standard" };
   const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const lowered = original.toLowerCase();
-  const variants = lowered.includes("clima") || lowered.includes("tiempo") || lowered.includes("temperatura")
+  const weatherSemantic = /\b(?:clima|tiempo|temperatura|pronóstico|pronostico|lluvia|llover|humedad|viento|calor|frío|frio|helado|helada)\b/i.test(lowered) || /\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered);
+  const variants = weatherSemantic
     ? [
-        `${normalized} temperatura humedad lluvia condiciones actuales hoy ${localDate}`,
-        `site:meteochile.gob.cl ${normalized} temperatura pronóstico ${localDate}`,
+        normalized + " temperatura humedad lluvia condiciones actuales hoy " + localDate,
+        "site:meteochile.gob.cl " + normalized + " temperatura pronóstico " + localDate,
       ]
     : lowered.includes("noticia") || lowered.includes("guerra")
       ? [
-          `${normalized} últimas noticias de hoy ${localDate}`,
-          `${normalized} última hora y actualización ${localDate}`,
+          normalized + " últimas noticias de hoy " + localDate,
+          normalized + " última hora y actualización " + localDate,
         ]
       : [
-          `${normalized} actualización de hoy ${localDate}`,
-          `${normalized} información más reciente ${localDate}`,
+          normalized + " actualización de hoy " + localDate,
+          normalized + " información más reciente " + localDate,
         ];
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
-
 async function publicWebSearchUncached(
   query: string,
   plan = edgeSearchQueries(query),
@@ -2266,7 +2268,7 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   try {
     const res = await fetchUpstream(
       "/v1/web/search?q=" + encodeURIComponent(q),
-      {},
+      { signal: AbortSignal.timeout(6000) },
       sessionId,
     );
     const data = await readJson(res);
