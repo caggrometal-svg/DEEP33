@@ -30,8 +30,8 @@ async function sha256(value: string): Promise<string> {
 
 function sanitizeLocationText(value: string): string {
   return value
-    .replace(/\\[(?:UBICACIÓN|UBICACION) GPS ACTUAL[^\\]]*\\]/giu, "[contexto local eliminado por privacidad]")
-    .replace(/\\[(?:CONTEXTO) LOCAL ACTUAL[^\\]]*\\]/giu, "[contexto local]");
+    .replace(/\[(?:UBICACIÓN|UBICACION) GPS ACTUAL[^\]]*\]/giu, "[contexto local eliminado por privacidad]")
+    .replace(/\[(?:CONTEXTO) LOCAL ACTUAL[^\]]*\]/giu, "[contexto local]");
 }
 
 function validUserId(value: string): boolean {
