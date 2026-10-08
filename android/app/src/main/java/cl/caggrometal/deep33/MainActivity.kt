@@ -2549,22 +2549,33 @@ class MainActivity : Activity() {
             }
         )
 
-        val likeButton = actionButton(
+        lateinit var likeButton: ImageButton
+        lateinit var dislikeButton: ImageButton
+
+        likeButton = actionButton(
             R.drawable.ic_action_like,
             "Respuesta útil"
         ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
+            submitResponseFeedback(
+                content = content,
+                rating = "useful",
+                selectedButton = button,
+                otherButton = dislikeButton,
+            )
             dislikeButtonTint(normalTint, likeButton = button, other = null)
         }
         row.addView(likeButton)
 
-        val dislikeButton = actionButton(
+        dislikeButton = actionButton(
             R.drawable.ic_action_dislike,
             "Respuesta no útil"
         ) { button ->
-            button.imageTintList =
-                android.content.res.ColorStateList.valueOf(activeTint)
+            submitResponseFeedback(
+                content = content,
+                rating = "not_useful",
+                selectedButton = button,
+                otherButton = likeButton,
+            )
             dislikeButtonTint(normalTint, likeButton = null, other = button)
         }
         row.addView(dislikeButton)
@@ -2586,6 +2597,41 @@ class MainActivity : Activity() {
                 dp(40)
             )
         )
+    }
+
+    private fun submitResponseFeedback(
+        content: String,
+        rating: String,
+        selectedButton: ImageButton,
+        otherButton: ImageButton,
+    ) {
+        selectedButton.isEnabled = false
+        otherButton.isEnabled = false
+        val expectedProfileId = store.profileId
+        executor.execute {
+            val result = runCatching {
+                Deep33Api.submitFeedback(
+                    sessionId = store.sessionId,
+                    rating = rating,
+                    responseText = content,
+                    memoryProfileId = expectedProfileId,
+                )
+            }
+            runOnUiThread {
+                if (store.profileId != expectedProfileId) return@runOnUiThread
+                if (result.isSuccess) {
+                    selectedButton.imageTintList =
+                        android.content.res.ColorStateList.valueOf(
+                            Personality.fromKey(store.personality).accent
+                        )
+                } else {
+                    selectedButton.imageTintList =
+                        android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(120, 120, 128))
+                    selectedButton.isEnabled = true
+                    otherButton.isEnabled = true
+                }
+            }
+        }
     }
 
     private fun dislikeButtonTint(
