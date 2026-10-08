@@ -62,7 +62,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
   performance_gate:
     needs: [backend_unit, android_validation]
