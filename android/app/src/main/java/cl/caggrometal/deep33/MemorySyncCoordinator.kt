@@ -36,13 +36,15 @@ object MemorySyncCoordinator {
 
     private fun process(context: Context) {
         try {
-            val store = SessionStore(context)
+            var store = SessionStore(context)
             val pending = store.loadPendingMemorySync()
             if (pending == null) {
                 queued.set(false)
                 return
             }
-
+            if (pending.profileId != store.profileId) {
+                store = SessionStore(context, profileIdOverride = pending.profileId)
+            }
             val payload = JSONArray(pending.messagesJson)
             Deep33Api.syncMemory(
                 pending.sessionId,
