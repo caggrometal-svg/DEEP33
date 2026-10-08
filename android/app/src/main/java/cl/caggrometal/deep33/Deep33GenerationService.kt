@@ -62,10 +62,17 @@ class Deep33GenerationService : Service() {
             }
 
             ACTION_CANCEL -> {
-                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
-                if (requestId.isNullOrBlank() || requestId == runningRequestId) {
+                val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: runningRequestId
+                if (!requestId.isNullOrBlank() && (requestId == runningRequestId || runningRequestId == null)) {
+                    val store = SessionStore(this)
+                    val pending = store.loadPendingTurn()
+                    if (pending == null || pending.requestId == requestId) {
+                        val sessionId = pending?.sessionId ?: store.sessionId
+                        val personality = pending?.personality ?: store.personality
+                        store.requestGenerationCancellation(requestId, sessionId, Personality.fromKey(personality).key)
+                    }
                     userCancelled.set(true)
-                    Deep33Api.cancelActiveStream(requestId ?: runningRequestId)
+                    Deep33Api.cancelActiveStream(requestId)
                 }
                 return START_REDELIVER_INTENT
             }
@@ -145,6 +152,9 @@ class Deep33GenerationService : Service() {
                 payload = payload
             )
 
+            if (userCancelled.get() || store.loadGenerationState()?.status == GenerationStatus.CANCELLING) {
+                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+            }
             if (finalText.isBlank()) {
                 throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
             }
@@ -174,11 +184,16 @@ class Deep33GenerationService : Service() {
                 add(UiMessage("assistant", finalText))
             }
             store.activateSession(pending.sessionId)
-            // Establish the recovery boundary before touching any non-critical remote
-            // services. If the process dies immediately after this point, the exact
-            // conversation and DONE marker are already durable and the pending marker
-            // can be safely removed.
-            store.saveMessages(messages, durable = true)
+            if (!store.completeGeneration(
+                    requestId = requestId,
+                    sessionId = pending.sessionId,
+                    personality = personality.key,
+                    messages = messages,
+                    finalText = finalText
+                )
+            ) {
+                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+            }
 
             val title = messages.firstOrNull { it.role == "user" }
                 ?.content
@@ -188,17 +203,6 @@ class Deep33GenerationService : Service() {
             if (!title.isNullOrBlank()) {
                 store.saveChatSummary(title)
             }
-
-            store.saveGenerationState(
-                status = GenerationStatus.DONE,
-                requestId = requestId,
-                sessionId = pending.sessionId,
-                personality = personality.key,
-                partialOutput = finalText,
-                finalText = finalText,
-                durable = true
-            )
-            store.clearPendingTurn(requestId)
 
             val memoryPayload = JSONArray()
             messages.takeLast(50).forEach {
@@ -222,16 +226,8 @@ class Deep33GenerationService : Service() {
             )
             MemorySyncCoordinator.enqueue(this)
         } catch (e: Deep33ApiException) {
-            if (userCancelled.get()) {
-                store.clearPendingTurn(requestId)
-                store.saveGenerationState(
-                    status = GenerationStatus.CANCELLED,
-                    requestId = requestId,
-                    sessionId = pending.sessionId,
-                    personality = personality.key,
-                    error = "Generación cancelada.",
-                    durable = true
-                )
+            if (userCancelled.get() || store.loadGenerationState()?.status == GenerationStatus.CANCELLING) {
+                store.finalizeGenerationCancellation(requestId, pending.sessionId, personality.key)
             } else if (!stoppingBySystem) {
                 // All transport recovery is handled by streamWithBackgroundRecovery().
                 // When that bounded loop is exhausted, fail this generation exactly once
