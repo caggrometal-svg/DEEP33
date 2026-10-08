@@ -103,6 +103,12 @@ class SessionStore(
         }
     }
 
+    fun isGenerationCancelled(requestId: String): Boolean =
+        synchronized(STORE_LOCK) {
+            val state = loadGenerationState()
+            state?.requestId == requestId && state.status == GenerationStatus.CANCELLED
+        }
+
     fun cancelGenerationAtomically(
         requestId: String?,
         sessionId: String,
