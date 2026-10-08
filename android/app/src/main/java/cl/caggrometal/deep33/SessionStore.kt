@@ -134,35 +134,40 @@ class SessionStore(
                 if (key == KEY_MEMORY_PROFILE_ID) return@forEach
                 when (value) {
                     is String -> {
-                        var migrated = value
-                        var migratedValue = value
-                        if (key == KEY_PENDING_MEMORY_SYNC) {
-                            runCatching {
-                                migratedValue = JSONObject(value)
-                                    .put("profile_id", profileId)
-                                    .put("memory_profile_id", profileId)
-                                    .toString()
-                            }
-                        } else if (key == KEY_PENDING_TURN) {
-                            runCatching {
-                                val pending = JSONObject(value).put("profile_id", profileId)
-                                val payload = JSONArray(pending.optString("payload", "[]"))
-                                val safePayload = JSONArray()
-                                val safeConversation = JSONArray()
-                                for (index in 0 until payload.length()) {
-                                    val item = payload.optJSONObject(index) ?: continue
-                                    val role = item.optString("role")
-                                    val safeContent = sanitizeGpsText(item.optString("content"))
-                                    safePayload.put(JSONObject().put("role", role).put("content", safeContent))
-                                    if (role == "user" || role == "assistant") {
-                                        safeConversation.put(JSONObject().put("role", role).put("content", safeContent))
-                                    }
+                        var migratedValue: String
+                        try {
+                            migratedValue = when {
+                                key == KEY_PENDING_MEMORY_SYNC -> {
+                                    JSONObject(value)
+                                        .put("profile_id", profileId)
+                                        .put("memory_profile_id", profileId)
+                                        .toString()
                                 }
-                                migratedValue = pending
-                                    .put("payload", safePayload)
-                                    .put("conversation", safeConversation)
-                                    .toString()
+                                key == KEY_PENDING_TURN -> {
+                                    val pending = JSONObject(value).put("profile_id", profileId)
+                                    val payload = JSONArray(pending.optString("payload", "[]"))
+                                    val safePayload = JSONArray()
+                                    val safeConversation = JSONArray()
+                                    for (index in 0 until payload.length()) {
+                                        val item = payload.optJSONObject(index) ?: continue
+                                        val role = item.optString("role")
+                                        val safeContent = sanitizeGpsText(item.optString("content"))
+                                        safePayload.put(JSONObject().put("role", role).put("content", safeContent))
+                                        if (role == "user" || role == "assistant") {
+                                            safeConversation.put(
+                                                JSONObject().put("role", role).put("content", safeContent)
+                                            )
+                                        }
+                                    }
+                                    pending
+                                        .put("payload", safePayload)
+                                        .put("conversation", safeConversation)
+                                        .toString()
+                                }
+                                else -> value
                             }
+                        } catch (_: Exception) {
+                            migratedValue = sanitizeGpsText(value)
                         }
                         edit.putString(key, migratedValue)
                     }
