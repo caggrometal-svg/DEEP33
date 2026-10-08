@@ -141,8 +141,8 @@ jobs:
           auth=(-H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN")
           curl -fsS --connect-timeout 8 --max-time 45 "${auth[@]}" "$PRIMARY_URL/health" | jq -e '.status=="PASS"'
           curl -fsS --connect-timeout 8 --max-time 45 "${auth[@]}" "$PRIMARY_URL/ready" | jq -e '.status=="PASS" and .ready==true'
-          audit_json="$(curl -fsS --connect-timeout 8 --max-time 90 "${auth[@]}" "$PRIMARY_URL/v1/connectivity/audit")"
-printf "%s\n" "$audit_json" | jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .search.ok==true'
+                    audit_json="$(curl -fsS --connect-timeout 8 --max-time 90 "${auth[@]}" "$PRIMARY_URL/v1/connectivity/audit")"
+          printf "%s\n" "$audit_json" | jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .search.ok==true'
       - name: Validate direct tertiary backend
         run: |
           set -euo pipefail
