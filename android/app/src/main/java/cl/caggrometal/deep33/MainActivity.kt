@@ -34,6 +34,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONObject
 import java.util.Locale
 import java.security.MessageDigest
 import java.util.UUID
@@ -1855,8 +1856,7 @@ class MainActivity : Activity() {
                     }
                     sendMessageInternal(text, location)
                 }
-            },
-            includeLabel = !weatherQuery
+            }
         )
     }
 
@@ -1920,6 +1920,7 @@ class MainActivity : Activity() {
 
         store.savePendingTurn(
             PendingTurn(
+                profileId = store.profileId,
                 sessionId = sessionId,
                 requestId = requestId,
                 idempotencyKey = idempotencyKey,
