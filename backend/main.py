@@ -75,9 +75,16 @@ AUTH_TIMEOUT_SECONDS = max(1.0, min(5.0, float(os.getenv("DEEP33_AUTH_TIMEOUT_SE
 AUTH_CACHE_TTL_SECONDS = max(5.0, min(300.0, float(os.getenv("DEEP33_AUTH_CACHE_TTL_SECONDS", "60"))))
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+# Authentication tokens are issued by the DEEP33 auth project, which can differ
+# from the project used for remote memory/vector storage. Keep the auth endpoint
+# and its publishable key independently configurable to avoid cross-project 503s.
+SUPABASE_AUTH_URL = os.getenv("DEEP33_AUTH_SUPABASE_URL", SUPABASE_URL).strip().rstrip("/")
 SUPABASE_AUTH_KEY = os.getenv(
-    "SUPABASE_SERVICE_ROLE_KEY",
-    os.getenv("SUPABASE_PUBLISHABLE_KEY", os.getenv("SUPABASE_ANON_KEY", "")),
+    "DEEP33_AUTH_API_KEY",
+    os.getenv(
+        "SUPABASE_PUBLISHABLE_KEY",
+        os.getenv("SUPABASE_ANON_KEY", os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")),
+    ),
 ).strip()
 CLIENT_AUTH_TOKEN = os.getenv("DEEP33_CLIENT_AUTH_TOKEN", "").strip()
 DEEP33_WEB_TOOLS_ENABLED = os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip().lower() == "true"
@@ -819,7 +826,7 @@ async def authenticated_user_id(request: Request) -> str:
         request.state.user_id = cached_entry[1]
         return cached_entry[1]
 
-    if not SUPABASE_URL or not SUPABASE_AUTH_KEY:
+    if not SUPABASE_AUTH_URL or not SUPABASE_AUTH_KEY:
         raise HTTPException(status_code=503, detail="DEEP33_AUTH_NOT_CONFIGURED")
 
     global _auth_http_client
@@ -832,7 +839,7 @@ async def authenticated_user_id(request: Request) -> str:
 
     try:
         response = await _auth_http_client.get(
-            f"{SUPABASE_URL}/auth/v1/user",
+            f"{SUPABASE_AUTH_URL}/auth/v1/user",
             headers={
                 "apikey": SUPABASE_AUTH_KEY,
                 "Authorization": f"Bearer {token}",
