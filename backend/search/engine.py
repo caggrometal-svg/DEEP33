@@ -35,8 +35,13 @@ REALTIME_TERMS = (
 )
 
 REALTIME_NEWS_TERMS = (
-    "noticia", "noticias", "última hora", "ultima hora", "actualidad", "en desarrollo",
-    "qué pasó", "que paso", "qué está pasando", "que esta pasando", "guerra",
+    "noticia", "noticias", "última hora", "ultima hora", "actualidad", "actual",
+    "situación actual", "situacion actual", "estado actual",
+    "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+    "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
+    "incidentes", "contingencia", "contingencias", "suceso", "sucesos",
+    "ocurre", "ocurriendo", "sucede", "sucediendo", "alerta", "afectado", "afectada",
+    "guerra",
 )
 
 CONTROVERSIAL_TERMS = (
@@ -52,6 +57,20 @@ _STOPWORDS = {
     "para", "como", "que", "qué", "una", "uno", "los", "las", "del", "con",
     "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
 }
+
+_REALTIME_QUERY_FILLERS = {
+    "situación", "situacion", "actual", "actualmente", "ahora", "mismo", "hoy", "ayer",
+    "último", "últimos", "última", "últimas", "ultimo", "ultimos", "ultima", "ultimas",
+    "noticia", "noticias", "actualidad", "reciente", "recientes", "información", "informacion",
+    "actualización", "actualizacion", "novedad", "novedades", "desarrollo", "estado",
+    "pasa", "pasando", "ocurre", "ocurriendo", "sucede", "sucediendo", "en", "vivo",
+}
+
+def _realtime_anchor_tokens(query: str) -> set[str]:
+    return {
+        token for token in _tokens(query)
+        if token not in _REALTIME_QUERY_FILLERS and len(token) >= 3
+    }
 _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
 MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "2"))))
 REALTIME_CORROBORATION_WINDOW_SECONDS = max(
@@ -260,24 +279,51 @@ def _freshness_score(item: dict) -> float:
         return 0.0
 
 
-def rank_results(query: str, results: list[dict]) -> list[dict]:
+def rank_results(
+    query: str,
+    results: list[dict],
+    *,
+    realtime: bool = False,
+) -> list[dict]:
     query_tokens = _tokens(query)
+    anchor_tokens = _realtime_anchor_tokens(query) if realtime else set()
     support = _corroboration_counts(results)
     ranked = []
     for item in results:
         url = str(item.get("url") or "").strip()
         if not url:
             continue
+        evidence_tokens = _token_set(_evidence_text(item))
+        anchor_hits = len(anchor_tokens & evidence_tokens)
+        if realtime and anchor_tokens and anchor_hits == 0:
+            # Current evidence with no mention of the requested entity/location
+            # is not evidence for that request and must not reach the model.
+            continue
         relevance = _text_score(query_tokens, item)
+        anchor_score = (
+            min(1.0, anchor_hits / max(1, min(2, len(anchor_tokens))))
+            if anchor_tokens
+            else 0.0
+        )
         quality = _domain_quality(url)
         freshness = _freshness_score(item)
         corroboration = min(1.0, support.get(id(item), 0) / 2.0)
-        score = relevance * 0.50 + quality * 0.20 + freshness * 0.10 + corroboration * 0.20
+        if realtime:
+            score = (
+                relevance * 0.42
+                + anchor_score * 0.28
+                + quality * 0.15
+                + freshness * 0.05
+                + corroboration * 0.10
+            )
+        else:
+            score = relevance * 0.50 + quality * 0.20 + freshness * 0.10 + corroboration * 0.20
         ranked.append({
             **item,
             "score": round(score, 6),
             "corroboration_count": support.get(id(item), 0),
             "corroborated": support.get(id(item), 0) >= 1,
+            "anchor_hits": anchor_hits,
             "source_domain": _host(url),
         })
     ranked.sort(
@@ -517,16 +563,14 @@ class SearchEngine:
             return successful, errors, attempted
 
         if plan_depth in {"deep", "realtime"}:
-            # Deep research keeps independent-provider verification. Realtime search
-            # remains multi-provider when the first provider is weak, but returns
-            # immediately once one provider has enough current results. A tiny
-            # opportunistic window collects a provider that is already finishing
-            # without making a slow provider block the user's response.
+            # Deep/realtime requests require evidence relevant to the requested
+            # entity. Realtime also requires independent-provider corroboration
+            # whenever more than one provider is configured.
             if not providers:
                 return successful, errors, attempted
             tasks = [asyncio.create_task(call(name)) for name in providers]
             provider_results = 0
-            total_results = 0
+            total_relevant_results = 0
             min_provider_successes = 1 if len(providers) == 1 else 2
             required_results = (
                 min(3, self.max_results)
@@ -538,32 +582,19 @@ class SearchEngine:
                     name, results, provider_errors = await task
                     attempted.append(name)
                     errors.extend(provider_errors)
-                    if results:
+                    relevant_results = rank_results(
+                        planned_query,
+                        results,
+                        realtime=plan_depth == "realtime",
+                    )
+                    if relevant_results:
                         successful.append((name, results))
                         provider_results += 1
-                        total_results += len(results)
-
-                    if plan_depth == "realtime" and len(results) >= required_results:
-                        pending = [other for other in tasks if not other.done()]
-                        if pending and REALTIME_CORROBORATION_WINDOW_SECONDS > 0:
-                            done, _ = await asyncio.wait(
-                                pending,
-                                timeout=REALTIME_CORROBORATION_WINDOW_SECONDS,
-                            )
-                            for other in done:
-                                other_name, other_results, other_errors = await other
-                                attempted.append(other_name)
-                                errors.extend(other_errors)
-                                if other_results:
-                                    successful.append((other_name, other_results))
-                        for other in tasks:
-                            if not other.done():
-                                other.cancel()
-                        break
+                        total_relevant_results += len(relevant_results)
 
                     if (
                         provider_results >= min_provider_successes
-                        and total_results >= required_results
+                        and total_relevant_results >= required_results
                     ):
                         for other in tasks:
                             if not other.done():
@@ -659,11 +690,23 @@ class SearchEngine:
             first_batch = await run_planned(planned_queries[0])
             planned_batches = [first_batch]
             first_results, _first_errors, _first_attempted = first_batch[1]
-            first_provider_count = len({
-                name for name, items in first_results if items
-            })
+            first_relevant_by_provider = [
+                (
+                    name,
+                    rank_results(
+                        plan.original_query,
+                        items,
+                        realtime=plan.depth == "realtime",
+                    ),
+                )
+                for name, items in first_results
+            ]
+            first_relevant_by_provider = [
+                (name, items) for name, items in first_relevant_by_provider if items
+            ]
+            first_provider_count = len(first_relevant_by_provider)
             first_result_count = sum(
-                len(items) for _name, items in first_results
+                len(items) for _name, items in first_relevant_by_provider
             )
             required_results = (
                 min(3, self.max_results)
@@ -694,7 +737,7 @@ class SearchEngine:
             for provider_used, items in batch:
                 successful.append((planned_query, provider_used, items))
 
-        executed_queries = list(planned_queries)
+        executed_queries = [query for query, _batch in planned_batches]
         if not successful:
             tokens = _tokens(plan.original_query)
             rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
@@ -721,7 +764,11 @@ class SearchEngine:
                     "provider": name,
                 })
 
-        ranked = rank_results(plan.original_query, merged)
+        ranked = rank_results(
+            plan.original_query,
+            merged,
+            realtime=plan.depth == "realtime",
+        )
         selected = deduplicate(ranked, self.max_results)
         distinct_domains = sorted({
             _host(str(item.get("url") or ""))
@@ -747,6 +794,9 @@ class SearchEngine:
             "provider_independent": True,
             "query": plan.original_query,
             "depth": plan.depth,
+            "realtime_news": any(
+                term in plan.original_query.lower() for term in REALTIME_NEWS_TERMS
+            ),
             "queries": executed_queries,
             "providers_attempted": providers_attempted,
             "providers": providers_used,

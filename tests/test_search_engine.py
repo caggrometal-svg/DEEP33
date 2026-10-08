@@ -355,6 +355,36 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     assert calls["count"] == 2
 
 
+def test_realtime_policy_detects_local_current_situation_as_news_intent():
+    query = "situación actual de la comuna de Las Condes en Chile"
+    assert is_realtime_query(query)
+    plan = SearchEngine(max_queries=3).plan(query)
+    assert plan.depth == "realtime"
+    assert any("últimas noticias de hoy" in q.lower() for q in plan.queries[1:])
+
+
+def test_realtime_rank_drops_unrelated_current_results():
+    results = [
+        {
+            "title": "Las Condes registra emergencia por lluvias",
+            "url": "https://news.example/las-condes",
+            "snippet": "Actualización de la situación en Las Condes.",
+        },
+        {
+            "title": "Actualización de Windows",
+            "url": "https://tech.example/windows",
+            "snippet": "Novedades y cambios actuales del sistema operativo.",
+        },
+    ]
+    ranked = rank_results(
+        "situación actual de la comuna de Las Condes en Chile",
+        results,
+        realtime=True,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["url"] == "https://news.example/las-condes"
+
+
 def test_realtime_policy_catches_news_weather_and_politics():
     assert is_realtime_query("Noticias mundiales")
     assert is_realtime_query("¿Cómo está el clima hoy?")
@@ -391,21 +421,21 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
         return [{
             "title": "Live Tavily",
             "url": "https://tavily.example/live",
-            "snippet": "latest current news",
+            "snippet": "latest current news about noticias mundiales",
         }]
 
     async def fake_bing(query, timeout_seconds, max_results):
         return [{
             "title": "Live Bing",
             "url": "https://bing.example/live",
-            "snippet": "latest current news",
+            "snippet": "latest current news about noticias mundiales",
         }]
 
     async def fake_ddg(query, timeout_seconds, max_results):
         return [{
             "title": "Live DDG",
             "url": "https://ddg.example/live",
-            "snippet": "latest current news",
+            "snippet": "latest current news about noticias mundiales",
         }]
 
     monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)

@@ -236,6 +236,21 @@ def _unwrap_bing_url(value):
     return ""
 
 
+def _looks_realtime_news(query: str) -> bool:
+    lowered = " ".join(str(query or "").split()).strip().lower()
+    return any(
+        term in lowered
+        for term in (
+            "situación actual", "situacion actual", "estado actual",
+            "noticia", "noticias", "última hora", "ultima hora", "actualidad",
+            "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+            "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
+            "incidentes", "contingencia", "suceso", "sucesos", "alerta", "ocurriendo",
+            "sucede", "sucediendo", "último", "últimos", "última", "últimas",
+        )
+    )
+
+
 def _safe_search_result_url(value: str) -> str:
     candidate = value.strip()
     parsed = urlparse(candidate)
@@ -273,7 +288,12 @@ def _normalise_results(results, limit):
             "url": url[:2000],
             "snippet": snippet[:1500],
         }
-        published = item.get("published_at") or item.get("published") or item.get("date")
+        published = (
+            item.get("published_at")
+            or item.get("published_date")
+            or item.get("published")
+            or item.get("date")
+        )
         if published:
             normalized["published_at"] = str(published)[:100]
         out.append(normalized)
@@ -283,16 +303,24 @@ def _normalise_results(results, limit):
 
 
 async def _tavily_search(query, api_key, timeout_seconds, max_results):
+    realtime_news = _looks_realtime_news(query)
     payload = {
         "query": query,
         "search_depth": "basic",
-        "topic": "general",
+        "topic": "news" if realtime_news else "general",
         "max_results": max_results,
         "include_answer": False,
         "include_raw_content": False,
         "include_images": False,
         "safe_search": False,
     }
+    if realtime_news:
+        # Current-event requests are time-bounded at the provider itself.
+        payload.update({
+            "time_range": "day",
+            "include_published_date": True,
+            "filter_by_published_date": True,
+        })
     client = await _search_http_client()
     response = await client.post(
         os.getenv("WEB_SEARCH_API_URL", DEFAULT_TAVILY_URL),
@@ -315,9 +343,14 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
 
 async def _duckduckgo_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
+    realtime_news = _looks_realtime_news(query)
     response = await client.get(
         DUCKDUCKGO_URL,
-        params={"q": query, "kl": "wt-wt"},
+        params={
+            "q": query,
+            "kl": "wt-wt",
+            **({"df": "d"} if realtime_news else {}),
+        },
         headers={
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
@@ -477,6 +510,7 @@ async def search_web(
             time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
             copy.deepcopy(result),
         )
+        result["fresh_request"] = bool(fresh)
         return copy.deepcopy(result)
     finally:
         if _SEARCH_INFLIGHT.get(cache_key) is task:

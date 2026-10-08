@@ -26,6 +26,51 @@ def test_tavily_normalisation(monkeypatch):
     assert result["engine"] == "DEEP33 Search Engine"
     assert result["provider"] == "tavily"
 
+def test_tavily_realtime_news_is_time_bounded(monkeypatch):
+    import tools.web_search as module
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "results": [{
+                    "title": "Las Condes current event",
+                    "url": "https://example.com/news",
+                    "content": "Las Condes incident today",
+                    "published_date": "2026-10-08T20:00:00Z",
+                }]
+            }
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            captured["json"] = kwargs["json"]
+            return Response()
+
+    async def fake_client():
+        return Client()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+
+    result = asyncio.run(
+        module._tavily_search(
+            "situación actual de Las Condes",
+            "tvly-test",
+            5,
+            5,
+        )
+    )
+
+    assert captured["json"]["topic"] == "news"
+    assert captured["json"]["time_range"] == "day"
+    assert captured["json"]["filter_by_published_date"] is True
+    assert captured["json"]["include_published_date"] is True
+    assert result[0]["published_at"].startswith("2026-10-08")
+
+
 def test_tavily_falls_back_to_ddg(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)

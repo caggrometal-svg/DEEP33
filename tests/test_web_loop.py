@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from backend import main
+from backend.search.engine import is_realtime_query
 
 
 def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: pytest.MonkeyPatch):
@@ -316,6 +317,12 @@ def test_stream_gateway_forwards_provider_chunks_before_stream_completion(monkey
         assert observed[-1] == "provider-finished"
 
     asyncio.run(exercise())
+
+
+def test_local_current_situation_forces_realtime_web_lookup():
+    query = "¿Cuál es la situación actual de la comuna de Las Condes en Chile?"
+    assert main.should_force_web([{"role": "user", "content": query}]) is True
+    assert is_realtime_query(query)
 
 
 def test_web_routing_skips_stable_chat_and_uses_fresh_external_signals():
