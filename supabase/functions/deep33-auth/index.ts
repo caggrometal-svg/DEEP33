@@ -116,11 +116,13 @@ Deno.serve(async (req) => {
       let session: { access_token: string; refresh_token: string; expires_in: number; expires_at?: number | null } | null = null;
       let userId = "";
       let createdFallbackUserId: string | null = null;
+      let createdAnonymousUserId: string | null = null;
 
       const anonymous = await supabase.auth.signInAnonymously();
       if (!anonymous.error && anonymous.data.session && anonymous.data.user) {
         session = anonymous.data.session;
         userId = anonymous.data.user.id;
+        createdAnonymousUserId = userId;
       } else {
         const syntheticEmail = "p_" + localProfileId + "@deep33.invalid";
         const syntheticPassword = crypto.randomUUID() + crypto.randomUUID();
@@ -170,7 +172,10 @@ Deno.serve(async (req) => {
       );
 
       if (mapError || bound !== true) {
-        if (createdFallbackUserId) await admin.auth.admin.deleteUser(createdFallbackUserId);
+        const cleanupUserId = createdFallbackUserId ?? createdAnonymousUserId;
+        if (cleanupUserId) {
+          await admin.auth.admin.deleteUser(cleanupUserId).catch(() => {});
+        }
         return json({ error: "AUTH_PROFILE_BINDING_FAILED" }, 503);
       }
 

@@ -265,3 +265,6 @@ def test_generation_memory_sync_is_not_on_generation_service_critical_path():
     assert "Deep33Api.syncMemory(" not in service
     assert "MemorySyncCoordinator.enqueue(this)" in service
     assert "Deep33Api.syncMemory(" in coordinator
+    assert "Every queued profile gets one attempt per processing cycle." in coordinator
+    assert "for (profile in profiles)" in coordinator
+    assert "hadFailure" in coordinator

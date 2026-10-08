@@ -16,6 +16,7 @@ def test_feedback_is_validated_and_owned_by_authenticated_user():
     source = BACKEND.read_text(encoding="utf-8")
     assert '@app.post("/v1/feedback")' in source
     assert "response_hash" in source
-    assert "positive|negative" in source
+    assert "positive|negative|useful|not_useful" in source
     assert "user_id" in source
     assert "deep33_feedback" in source
+    assert '{"positive": "useful", "negative": "not_useful"}' in source

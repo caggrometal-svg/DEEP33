@@ -719,7 +719,7 @@ class MemoryRememberRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    rating: str = Field(pattern="^(positive|negative)$")
+    rating: str = Field(pattern="^(positive|negative|useful|not_useful)$")
     request_id: str = Field(min_length=1, max_length=128)
     response_hash: str | None = Field(default=None, max_length=128)
 
@@ -2692,7 +2692,7 @@ async def submit_feedback(payload: FeedbackRequest, http_request: Request) -> di
         "user_id": user_id,
         "session_id": session_id,
         "request_id": payload.request_id.strip(),
-        "rating": payload.rating,
+        "rating": {"positive": "useful", "negative": "not_useful"}.get(payload.rating, payload.rating),
         "response_hash": response_hash or None,
     }
     try:

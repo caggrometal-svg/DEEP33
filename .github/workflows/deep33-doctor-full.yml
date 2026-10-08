@@ -203,7 +203,7 @@ jobs:
             -H "Authorization: Bearer $DEEP33_DOCTOR_TOKEN" \
             -H "X-DEEP33-Session-Id: $session_id" \
             -H "content-type: application/json" \
-            -d "{\"rating\":\"positive\",\"request_id\":\"$request_id\",\"response_hash\":\"$response_hash\"}" \
+            -d "{\"rating\":\"useful\",\"request_id\":\"$request_id\",\"response_hash\":\"$response_hash\"}" \
             "$PRIMARY_URL/v1/feedback" | jq -e '.ok == true and .persisted == true'
 
   evidence:

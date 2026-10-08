@@ -11,6 +11,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Durable remote-memory queue processor. It is intentionally independent of the
  * foreground generation service and never owns a generation wake lock.
+ *
+ * Every queued profile gets one attempt per processing cycle. A failed profile
+ * cannot starve a different profile's pending memory.
  */
 object MemorySyncCoordinator {
     private const val RETRY_DELAY_MS = 5_000L
@@ -35,48 +38,44 @@ object MemorySyncCoordinator {
     }
 
     private fun process(context: Context) {
-        try {
-            val profiles = MultiUserIdentity.listProfiles(context)
-            var selectedStore: SessionStore? = null
-            var pending: PendingMemorySync? = null
+        val profiles = MultiUserIdentity.listProfiles(context)
+        var hadPending = false
+        var hadFailure = false
 
-            for (profile in profiles) {
-                val candidate = SessionStore(context, profileIdOverride = profile.id)
-                val queuedPending = candidate.loadPendingMemorySync()
-                if (queuedPending != null) {
-                    selectedStore = candidate
-                    pending = queuedPending
-                    break
-                }
+        for (profile in profiles) {
+            val store = SessionStore(context, profileIdOverride = profile.id)
+            val pending = store.loadPendingMemorySync() ?: continue
+            hadPending = true
+
+            try {
+                val payload = JSONArray(pending.messagesJson)
+                Deep33Api.configureAuth(context)
+                Deep33Api.syncMemory(
+                    pending.sessionId,
+                    payload,
+                    pending.personality,
+                    requestId = pending.requestId,
+                    memoryProfileId = pending.memoryProfileId
+                )
+                store.clearPendingMemorySync(pending.requestId)
+            } catch (e: Exception) {
+                hadFailure = true
+                Log.w(
+                    "DEEP33",
+                    "Memory sync deferred profile=${profile.id}: ${e.javaClass.simpleName}"
+                )
             }
+        }
 
-            if (selectedStore == null || pending == null) {
-                queued.set(false)
-                return
-            }
+        queued.set(false)
 
-            val payload = JSONArray(pending!!.messagesJson)
-            Deep33Api.configureAuth(context)
-            Deep33Api.syncMemory(
-                pending!!.sessionId,
-                payload,
-                pending!!.personality,
-                requestId = pending!!.requestId,
-                memoryProfileId = pending!!.memoryProfileId
-            )
-            selectedStore!!.clearPendingMemorySync(pending!!.requestId)
-            queued.set(false)
+        if (!hadPending) return
 
-            if (MultiUserIdentity.listProfiles(context).any {
-                    SessionStore(context, profileIdOverride = it.id).loadPendingMemorySync() != null
-                }) {
-                enqueue(context)
-            }
-        } catch (e: Exception) {
-            queued.set(false)
-            Log.w("DEEP33", "Memory sync deferred: " + e.javaClass.simpleName)
-            enqueue(context, RETRY_DELAY_MS)
+        val remaining = MultiUserIdentity.listProfiles(context).any {
+            SessionStore(context, profileIdOverride = it.id).loadPendingMemorySync() != null
+        }
+        if (remaining) {
+            enqueue(context, if (hadFailure) RETRY_DELAY_MS else 0L)
         }
     }
-
 }
