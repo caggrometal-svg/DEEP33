@@ -194,9 +194,8 @@ class Deep33GenerationService : Service() {
                         .put("content", it.content)
                 )
             }
-            // Queue remote memory durably before attempting the network write. The local
-            // conversation is already safe; this marker guarantees that memory sync can
-            // be retried after process death, network loss, or a temporary backend outage.
+            // Queue remote memory durably. Network synchronization is deliberately
+            // outside the generation critical path so DONE can release the service wake lock.
             store.savePendingMemorySync(
                 PendingMemorySync(
                     sessionId = pending.sessionId,
@@ -206,18 +205,7 @@ class Deep33GenerationService : Service() {
                     messagesJson = memoryPayload.toString()
                 )
             )
-            try {
-                Deep33Api.syncMemory(
-                    pending.sessionId,
-                    memoryPayload,
-                    personality.key,
-                    requestId = pending.requestId,
-                    memoryProfileId = store.memoryProfileId
-                )
-                store.clearPendingMemorySync(pending.requestId)
-            } catch (_: Exception) {
-                // The durable memory-sync marker remains for MainActivity startup recovery.
-            }
+            MemorySyncCoordinator.enqueue(this)
         } catch (e: Deep33ApiException) {
             if (userCancelled.get()) {
                 store.clearPendingTurn(requestId)
@@ -273,6 +261,8 @@ class Deep33GenerationService : Service() {
     ): String {
         var lastError: Deep33ApiException? = null
         val checkpoint = StringBuilder()
+        val generationDeadlineNanos =
+            System.nanoTime() + GENERATION_DEADLINE_MS * 1_000_000L
         var lastCheckpointAt = 0L
         var lastCheckpointChars = 0
 
@@ -280,16 +270,15 @@ class Deep33GenerationService : Service() {
             // Recovery checkpoints are throttled. Final delivery remains idempotent and
             // durable; streaming UI state is carried in-memory/event-driven.
             val now = android.os.SystemClock.elapsedRealtime()
-            val enoughTime = now - lastCheckpointAt >= 500L
-            val enoughText = checkpoint.length - lastCheckpointChars >= 1200
+            val enoughTime = now - lastCheckpointAt >= 750L
+            val enoughText = checkpoint.length - lastCheckpointChars >= 1600
             if (!force && !enoughTime && !enoughText) return
-            store.saveGenerationState(
+            store.queueGenerationCheckpoint(
                 status = GenerationStatus.RUNNING,
                 requestId = requestId,
                 sessionId = pending.sessionId,
                 personality = personality.key,
-                partialOutput = checkpoint.toString(),
-                durable = true
+                partialOutput = checkpoint.toString()
             )
             lastCheckpointAt = now
             lastCheckpointChars = checkpoint.length
@@ -298,6 +287,12 @@ class Deep33GenerationService : Service() {
         for (attempt in 0..MAX_STREAM_RECOVERY_RETRIES) {
             if (userCancelled.get() || Thread.currentThread().isInterrupted) {
                 throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+            }
+
+            val remainingBeforeAttemptMs =
+                (generationDeadlineNanos - System.nanoTime()) / 1_000_000L
+            if (remainingBeforeAttemptMs <= 250L) {
+                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
             }
 
             try {
@@ -320,7 +315,8 @@ class Deep33GenerationService : Service() {
                     onText = { chunk ->
                         checkpoint.append(chunk)
                         persistCheckpoint()
-                    }
+                    },
+                    deadlineAtNanos = generationDeadlineNanos
                 )
                 persistCheckpoint(force = true)
                 return result
@@ -347,8 +343,17 @@ class Deep33GenerationService : Service() {
                     partialOutput = ""
                 )
                 updateForegroundNotification("Reconectando…")
+                val remainingBeforeBackoffMs =
+                    (generationDeadlineNanos - System.nanoTime()) / 1_000_000L
+                if (remainingBeforeBackoffMs <= 250L) {
+                    throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
+                }
+                val backoffMs = minOf(
+                    RETRY_DELAYS_MS[attempt],
+                    remainingBeforeBackoffMs - 100L
+                ).coerceAtLeast(1L)
                 try {
-                    Thread.sleep(RETRY_DELAYS_MS[attempt])
+                    Thread.sleep(backoffMs)
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
@@ -586,6 +591,7 @@ class Deep33GenerationService : Service() {
         val pending = SessionStore(this).loadPendingTurn()
         if (!userCancelled.get()) {
             pending?.takeIf { it.requestId == runningRequestId }?.let {
+                SessionStore(this).flushGenerationCheckpoint(it.requestId)
                 persistRecoveryCheckpoint(it)
             }
         }
@@ -603,6 +609,7 @@ class Deep33GenerationService : Service() {
         private const val CHANNEL_ID = "deep33_generation"
         private const val NOTIFICATION_ID = 3301
         private const val MAX_STREAM_RECOVERY_RETRIES = 5
+        private const val GENERATION_DEADLINE_MS = 180_000L
         private const val NETWORK_RECOVERY_GRACE_MS = 350L
         private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
