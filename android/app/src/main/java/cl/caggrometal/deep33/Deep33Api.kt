@@ -230,12 +230,13 @@ object Deep33Api {
         idempotencyKey: String = requestId,
         memoryProfileId: String? = null,
         isCancelled: () -> Boolean = { false },
-        onText: (String) -> Unit
+        onText: (String) -> Unit,
+        deadlineAtNanos: Long? = null
     ): String {
         val activePersonality = personality.trim().uppercase().let {
             if (it in setOf("AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO")) it else "NEUTRO"
         }
-        val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
+        val deadline = deadlineAtNanos ?: (System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L)
         var lastError: Deep33ApiException? = null
 
         for (endpoint in normalizedEndpoints()) {
