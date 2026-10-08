@@ -429,7 +429,6 @@ Deno.serve(async (req) => {
 
     if (action === "sync") {
       return await runIdempotentWrite(sessionId, body, "deep33.memory.sync", async () => {
-        const profileSessionId = ownerUserId;
         const sessionPatch: Record<string, unknown> = {
           session_id: sessionId,
           updated_at: new Date().toISOString(),
@@ -479,7 +478,7 @@ Deno.serve(async (req) => {
           if (error) throw error;
         }
 
-        return { body: { ok: true, session_id: sessionId, memory_profile_id: ownerUserId, saved: rows.length }, status: 200 };
+        return { body: { ok: true, session_id: sessionId, memory_profile_id: memoryProfileId, saved: rows.length }, status: 200 };
       });
     }
 
