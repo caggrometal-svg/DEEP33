@@ -1259,9 +1259,11 @@ function dialoguePolicyInstruction(
       : "FORMA=CONVERSATIONAL. Responde como una conversación real: primero reacciona a lo que acaba de decir el usuario y luego desarrolla solo lo que haga falta. Mantén el hilo inmediato y deja espacio para continuar.";
 
   return (
-    "DEEP33 CONVERSATION CONTROL v1. " +
+    "DEEP33 CONVERSATION CONTROL v2. " +
     "La prioridad es precisión, naturalidad y proporción. " +
     "No conviertas una respuesta en un informe, tutorial o ficha técnica cuando el usuario no lo pidió. " +
+    "No respondas con estructuras del tipo Introducción, Análisis, Estudio, Resumen o Conclusión. Integra todo en una sola respuesta conversacional. " +
+    "DEEP33 dialoga; no redacta informes. Sé preciso, natural y resumido cuando baste; desarrolla cuando la pregunta lo exija. " +
     "No uses tablas, encabezados, secciones, bloques etiquetados ni un resumen final por costumbre. " +
     "En particular, no uses fórmulas artificiales como \"Lo esencial\", \"Lo que se sabe\", \"Análisis\", \"Hipótesis\", \"Veredicto\", \"En resumen\" o equivalentes, salvo que el usuario solicite explícitamente ese formato. " +
     "No fragmentes una respuesta para parecer más completo. " +
