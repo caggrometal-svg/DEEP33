@@ -11,3 +11,11 @@ with check (true);
 revoke execute on function public.deep33_idempotency_claim(text, text, text, integer) from anon, authenticated;
 revoke execute on function public.deep33_idempotency_complete(text, text, text, integer, jsonb) from anon, authenticated;
 revoke execute on function public.deep33_idempotency_status(text, text) from anon, authenticated;
+
+
+revoke execute on function public.deep33_idempotency_claim(text, text, text, integer) from public;
+revoke execute on function public.deep33_idempotency_complete(text, text, text, integer, jsonb) from public;
+revoke execute on function public.deep33_idempotency_status(text, text) from public;
+grant execute on function public.deep33_idempotency_claim(text, text, text, integer) to service_role;
+grant execute on function public.deep33_idempotency_complete(text, text, text, integer, jsonb) to service_role;
+grant execute on function public.deep33_idempotency_status(text, text) to service_role;
