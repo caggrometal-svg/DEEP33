@@ -18,6 +18,24 @@ class SseTextParserTest {
     }
 
     @Test
+    fun extractsArrayContent() {
+        val data = """{"choices":[{"delta":{"content":[{"type":"text","text":"hola "},{"type":"text","text":"mundo"}]}}]}"""
+        assertEquals("hola mundo", SseTextParser.extractText(data))
+    }
+
+    @Test
+    fun extractsRootContent() {
+        val data = """{"content":[{"type":"text","text":"raiz"}]}"""
+        assertEquals("raiz", SseTextParser.extractText(data))
+    }
+
+    @Test
+    fun auxiliaryEventWithoutTextIsIgnored() {
+        val data = """{"choices":[{"delta":{"tool_calls":[{"id":"1"}]}}]}"""
+        assertNull(SseTextParser.extractText(data))
+    }
+
+    @Test
     fun invalidPayloadIsIgnored() {
         assertNull(SseTextParser.extractText("not-json"))
     }
