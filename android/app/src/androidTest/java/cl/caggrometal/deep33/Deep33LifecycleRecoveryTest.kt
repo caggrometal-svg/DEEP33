@@ -42,12 +42,17 @@ class Deep33LifecycleRecoveryTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = SessionStore(context)
         store.resetSession()
+        val requestId = "lifecycle-e2e-${java.util.UUID.randomUUID()}"
         val pending = PendingTurn(
             sessionId = store.sessionId,
-            requestId = "lifecycle-e2e-request",
-            idempotencyKey = "chat-lifecycle-e2e-request",
+            requestId = requestId,
+            idempotencyKey = "chat-$requestId",
             personality = "NEUTRO",
             payloadJson = """[{"role":"user","content":"Responde exactamente: OK"}]"""
+        )
+        assertTrue(
+            "Recovery fixture payload must be valid JSON",
+            runCatching { org.json.JSONArray(pending.payloadJson) }.isSuccess
         )
         store.savePendingTurn(pending)
 
@@ -131,10 +136,11 @@ class Deep33LifecycleRecoveryTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = SessionStore(context)
         store.resetSession()
+        val requestId = "lifecycle-process-${java.util.UUID.randomUUID()}"
         val pending = PendingTurn(
             sessionId = store.sessionId,
-            requestId = "lifecycle-test-request",
-            idempotencyKey = "chat-lifecycle-test-request",
+            requestId = requestId,
+            idempotencyKey = "chat-$requestId",
             personality = "NEUTRO",
             payloadJson = """[{"role":"user","content":"lifecycle test"}]"""
         )
