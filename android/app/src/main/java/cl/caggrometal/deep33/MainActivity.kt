@@ -2769,14 +2769,18 @@ class MainActivity : Activity() {
         if (response.isBlank()) return
         val sessionId = store.sessionId
         val responseHash = MessageDigest.getInstance("SHA-256")
-            .digest((sessionId + "\u0000" + response).toByteArray(Charsets.UTF_8))
+            .digest(response.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
+        val requestId = store.loadGenerationState()
+            ?.takeIf { it.sessionId == sessionId && it.finalText == response }
+            ?.requestId
+            ?: responseHash
         executor.execute {
             runCatching {
                 Deep33Api.sendFeedback(
                     sessionId = sessionId,
-                    requestId = responseHash,
-                    rating = if (useful) "positive" else "negative",
+                    requestId = requestId,
+                    rating = if (useful) "useful" else "not_useful",
                     responseHash = responseHash,
                 )
             }.onFailure {
