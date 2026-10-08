@@ -42,8 +42,11 @@ def test_android_stream_checkpoint_is_throttled():
         / "deep33"
         / "Deep33GenerationService.kt"
     ).read_text(encoding="utf-8")
-    assert "now - lastCheckpointAt >= 500L" in source
-    assert "checkpoint.length - lastCheckpointChars >= 1200" in source
+    assert "now - lastCheckpointAt >= 750L" in source
+    assert "checkpoint.length - lastCheckpointChars >= 1600" in source
+    assert "queueGenerationCheckpoint(" in source
+    assert "deadlineAtNanos = generationDeadlineNanos" in source
+    assert "GENERATION_DEADLINE_MS = 180_000L" in source
 
 
 def test_fast_turn_skips_remote_memory_unless_memory_is_requested():
@@ -233,3 +236,32 @@ def test_edge_runtime_performance_contract():
     assert "edgeSearchCache" in source
     assert "edgeSearchInflight" in source
     assert "policyCheckTail = policySample.slice(-512)" in source
+
+def test_generation_memory_sync_is_not_on_generation_service_critical_path():
+    service = (
+        ROOT
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "cl"
+        / "caggrometal"
+        / "deep33"
+        / "Deep33GenerationService.kt"
+    ).read_text(encoding="utf-8")
+    coordinator = (
+        ROOT
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "cl"
+        / "caggrometal"
+        / "deep33"
+        / "MemorySyncCoordinator.kt"
+    ).read_text(encoding="utf-8")
+    assert "Deep33Api.syncMemory(" not in service
+    assert "MemorySyncCoordinator.enqueue(this)" in service
+    assert "Deep33Api.syncMemory(" in coordinator
