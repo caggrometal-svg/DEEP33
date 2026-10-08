@@ -20,11 +20,27 @@ jobs:
   backend_gate:
     runs-on: ubuntu-latest
     steps:
+      - name: Create CI anonymous auth session
+        env:
+          SUPABASE_AUTH_URL: https://opocgzydeknuchtrqzfa.supabase.co/auth/v1
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
+        run: |
+          set -euo pipefail
+          body="$(curl -fsS --connect-timeout 8 --max-time 20 \
+            "$SUPABASE_AUTH_URL/signup" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"data":{"deep33_ci":true}}')"
+          token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
+          test -n "$token"
+          echo "DEEP33_CI_ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Verify DEEP33 edge backend
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 45 "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
-          curl -fsS --connect-timeout 8 --max-time 90 "$DEEP33_PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
+          headers=(-H "Authorization: Bearer $DEEP33_CI_ACCESS_TOKEN")
+          curl -fsS --connect-timeout 8 --max-time 45 "${headers[@]}" "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
+          curl -fsS --connect-timeout 8 --max-time 90 "${headers[@]}" "$DEEP33_PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
           echo "DEEP33_EDGE_GATE_PASS"
 
 
