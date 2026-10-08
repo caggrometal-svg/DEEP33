@@ -2096,7 +2096,8 @@ async def ai_edge_status(request: Request) -> dict:
 
 
 @app.get("/v1/search/hybrid/status")
-async def hybrid_search_status() -> dict:
+async def hybrid_search_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     return hybrid_search.status()
 
 
@@ -2153,7 +2154,8 @@ async def hybrid_index_endpoint(
 
 
 @app.get("/v1/web/status")
-async def web_status() -> dict:
+async def web_status(request: Request) -> dict:
+    await require_authenticated_request(request)
     status = web_search_status()
     status["tool_loop_enabled"] = DEEP33_WEB_TOOLS_ENABLED
     status["realtime_policy_enabled"] = True
