@@ -2113,7 +2113,7 @@ async def hybrid_index_endpoint(
     http_request: Request,
 ) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await hybrid_search.index_document(
             payload.document_id,
@@ -2151,7 +2151,7 @@ async def web_status() -> dict:
 @app.get("/v1/web/search")
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2169,7 +2169,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
-    enforce_client_controls(request, session_id)
+    await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
     try:
@@ -2737,7 +2737,7 @@ async def generate(
 @app.post("/v1/ai/generate")
 async def ai_generate(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2762,7 +2762,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
 @app.post("/v1/chat")
 async def chat(request: ChatRequest, http_request: Request, response: Response) -> dict:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
@@ -2786,7 +2786,7 @@ async def memory_context(http_request: Request) -> dict:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.context(session_id, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
@@ -2802,7 +2802,7 @@ async def memory_sync(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     messages = [
         message.model_dump()
         for message in payload.messages
@@ -2829,7 +2829,7 @@ async def memory_remember(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
     except MemoryUnavailableError as exc:
@@ -2845,7 +2845,7 @@ async def memory_preferences(
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
     memory_profile_id = memory_profile_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     try:
         return await memory.set_preferences(
             session_id,
@@ -3059,7 +3059,7 @@ async def stream_gateway(
 @app.post("/v1/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
     session_id = session_id_from_request(http_request)
-    enforce_client_controls(http_request, session_id)
+    await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
