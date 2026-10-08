@@ -349,6 +349,10 @@ object Deep33Api {
                     connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         lines.forEach { line ->
                             if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                            // [DONE] marks the end of content, not the end of the HTTP body.
+                            // Drain to EOF before closing the reader; returning early can
+                            // reset the socket while the edge gateway is still closing SSE.
+                            if (sawDone) return@forEach
                             if (line.startsWith("event:")) {
                                 eventType = line.substringAfter(":", "").trim()
                                 return@forEach
@@ -363,7 +367,7 @@ object Deep33Api {
                             if (eventType == "error") throw mapStreamError(data)
                             if (data == "[DONE]") {
                                 sawDone = true
-                                return@useLines
+                                return@forEach
                             }
                             val chunk = SseTextParser.extractText(data).orEmpty()
                             if (chunk.isNotEmpty()) {
