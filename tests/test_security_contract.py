@@ -44,3 +44,9 @@ def test_android_does_not_ship_provider_secret_or_client_profile_authority():
     assert "AndroidKeyStore" in auth
     assert "DEEP33_SUPABASE_PUBLISHABLE_KEY" in build
     assert "SUPABASE_SERVICE_ROLE_KEY" not in build
+
+def test_android_auth_uses_deep33_bootstrap_and_not_direct_signup():
+    source = (ANDROID / "SupabaseAuthManager.kt").read_text(encoding="utf-8")
+    assert "/functions/v1/deep33-auth" in source
+    assert '"/signup"' not in source
+    assert '"/token?grant_type=refresh_token"' in source
