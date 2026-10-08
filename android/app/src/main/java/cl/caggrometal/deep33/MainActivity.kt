@@ -1981,7 +1981,7 @@ class MainActivity : Activity() {
             input.isEnabled = true
             micButton.isEnabled = true
             cancelButton.visibility = View.INVISIBLE
-            updateConnection(ConnectionState.OFFLINE)
+            updateConnection(ConnectionState.CONNECTING)
             return
         }
 
@@ -2148,7 +2148,7 @@ class MainActivity : Activity() {
                 micButton.isEnabled = true
                 cancelButton.visibility = View.INVISIBLE
                 setGenerationIndicator(thinking = false)
-                updateConnection(ConnectionState.OFFLINE)
+                updateConnection(ConnectionState.CONNECTING)
                 setVoiceState(AvatarState.IDLE)
                 refreshVoiceStopControl()
                 if (!voiceModeActive) setVoiceModeUi(false)
@@ -2259,15 +2259,33 @@ class MainActivity : Activity() {
             setStroke(dp(1), stroke)
         }
 
+    private fun isGenerationRecoveryActive(): Boolean {
+        if (store.loadPendingTurn() != null) return true
+        val state = store.loadGenerationState() ?: return false
+        return state.sessionId == store.sessionId && state.status in setOf(
+            GenerationStatus.RUNNING,
+            GenerationStatus.CANCELLING,
+            GenerationStatus.RETRYABLE
+        )
+    }
+
     private fun updateConnection(state: ConnectionState) {
-        val text = when (state) {
+        // A pending generation is a recoverable transport state, not proof that
+        // the device or DEEP33 is offline. Keep the UI in CONNECTING until the
+        // service reaches a terminal state or a real health probe confirms failure.
+        val visibleState = if (state == ConnectionState.OFFLINE && isGenerationRecoveryActive()) {
+            ConnectionState.CONNECTING
+        } else {
+            state
+        }
+        val text = when (visibleState) {
             ConnectionState.CONNECTING -> "● CONECTANDO"
             ConnectionState.ONLINE -> "● ONLINE"
             ConnectionState.OFFLINE -> "● OFFLINE"
         }
         if (::statusView.isInitialized) {
             statusView.text = text
-            setHeaderStatusStyle(statusView, state)
+            setHeaderStatusStyle(statusView, visibleState)
         }
     }
 
