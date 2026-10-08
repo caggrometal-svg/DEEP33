@@ -50,3 +50,11 @@ def test_android_auth_uses_deep33_bootstrap_and_not_direct_signup():
     assert "/functions/v1/deep33-auth" in source
     assert '"/signup"' not in source
     assert '"/token?grant_type=refresh_token"' in source
+def test_deep33_auth_bootstrap_contract():
+    source = (ROOT / "supabase/functions/deep33-auth/index.ts").read_text(encoding="utf-8")
+    config = CONFIG
+    assert "SUPABASE_SERVICE_ROLE_KEY" in source
+    assert '.schema("private").from("deep33_user_profiles")' in source
+    assert 'memory_profile_id' in source
+    assert "[functions.deep33-auth]" in config
+    assert "verify_jwt = false" in config
