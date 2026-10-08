@@ -206,7 +206,8 @@ jobs:
             -d "{\"rating\":\"positive\",\"request_id\":\"$request_id\",\"response_hash\":\"$response_hash\"}" \
             "$PRIMARY_URL/v1/feedback" | jq -e '.ok == true and .persisted == true'
 
-  evidence:    needs: [backend, android, instrumentation, production]
+  evidence:
+    needs: [backend, android, instrumentation, production]
     runs-on: ubuntu-latest
     steps:
       - run: |
