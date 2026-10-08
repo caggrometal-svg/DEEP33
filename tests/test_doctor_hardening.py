@@ -73,7 +73,7 @@ def test_sse_accepts_clean_close_and_modern_content():
     assert "_normalize_stream_content_value" in source
     assert "A clean provider close is valid" in source
     assert "sawStreamData" in api
-    assert "message?.let" in api
+    assert 'choice.opt("message")' in api
     assert "extractContentValue" in api
 
 
