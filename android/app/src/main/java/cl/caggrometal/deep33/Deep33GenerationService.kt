@@ -160,25 +160,13 @@ class Deep33GenerationService : Service() {
             }
 
             val messages = buildList {
-                runCatching {
-                    val conversationJson = JSONArray(pending.conversationJson)
-                    for (i in 0 until conversationJson.length()) {
-                        val item = conversationJson.optJSONObject(i) ?: continue
-                        val role = item.optString("role")
-                        val content = item.optString("content")
-                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
-                            add(UiMessage(role, content))
-                        }
-                    }
-                }
-                if (isEmpty()) {
-                    for (i in 0 until payload.length()) {
-                        val item = payload.optJSONObject(i) ?: continue
-                        val role = item.optString("role")
-                        val content = item.optString("content")
-                        if (role in setOf("user", "assistant") && content.isNotBlank()) {
-                            add(UiMessage(role, content))
-                        }
+                val conversationJson = JSONArray(pending.conversationJson)
+                for (i in 0 until conversationJson.length()) {
+                    val item = conversationJson.optJSONObject(i) ?: continue
+                    val role = item.optString("role")
+                    val content = store.sanitizePersistedContent(item.optString("content"))
+                    if (role in setOf("user", "assistant") && content.isNotBlank()) {
+                        add(UiMessage(role, content))
                     }
                 }
                 add(UiMessage("assistant", finalText))
@@ -205,7 +193,7 @@ class Deep33GenerationService : Service() {
             }
 
             val memoryPayload = JSONArray()
-            messages.takeLast(50).forEach {
+            messages.forEach {
                 memoryPayload.put(
                     org.json.JSONObject()
                         .put("role", it.role)
