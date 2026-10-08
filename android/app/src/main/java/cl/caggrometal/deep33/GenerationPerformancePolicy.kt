@@ -1,55 +1,90 @@
 package cl.caggrometal.deep33
 
 /**
- * Context selection is adaptive rather than tied to fixed FAST/BALANCED/DEEP
- * message-count ceilings. Conversation persistence remains bounded separately.
+ * Builds an inference window from the actual conversation size instead of fixed message
+ * counts. Older content is compacted only when the current conversation exceeds a safe
+ * transport budget; recent and continuity-critical turns remain intact.
  */
 object GenerationPerformancePolicy {
-    private const val RECENT_MESSAGES_TO_PRESERVE = 14
-    private const val HARD_CONTEXT_CHARS = 100_000
-
-    // Kept as compatibility constants for older tests/callers; they are no longer
-    // used as the primary context-selection policy.
-    const val FAST_MAX_MESSAGES = 10
-    const val FAST_MAX_CHARS = 7_000
-    const val BALANCED_MAX_MESSAGES = 16
-    const val BALANCED_MAX_CHARS = 12_000
-    const val DEEP_MAX_MESSAGES = 32
-    const val DEEP_MAX_CHARS = 24_000
+    private const val NORMAL_SAFE_CHARS = 48_000
+    private const val COMPLEX_SAFE_CHARS = 80_000
+    private const val DEEP_SAFE_CHARS = 120_000
+    private const val SUMMARY_CHARS = 6_000
 
     fun selectModelContext(conversation: List<UiMessage>): List<UiMessage> {
         if (conversation.isEmpty()) return emptyList()
-        val all = conversation.takeLast(50)
-        val totalChars = all.sumOf { it.content.length }
-        if (totalChars <= HARD_CONTEXT_CHARS) return all
 
-        val latest = all.lastOrNull { it.role == "user" }?.content.orEmpty()
-        val complex = latest.length > 700 || latest.count { it == '?' } >= 2
-        val dynamicBudget = (48_000 + latest.length * if (complex) 10 else 6)
-            .coerceAtMost(HARD_CONTEXT_CHARS)
+        val latestUserIndex = conversation.indexOfLast { it.role == "user" }
+        val latestText = if (latestUserIndex >= 0) conversation[latestUserIndex].content else ""
+        val lowered = latestText.lowercase()
+        val deep = Regex(
+            "\\b(en profundidad|a fondo|muy detallado|paso a paso|explica todo|desarrolla|profundiza|investiga|analiza|compara|evidencia)\\b"
+        ).containsMatchIn(lowered)
+        val complex = deep || latestText.length > 700 || latestText.count { it == '?' } >= 3
+        val totalChars = conversation.sumOf { it.content.length }
+        val safeChars = when {
+            deep -> DEEP_SAFE_CHARS
+            complex -> COMPLEX_SAFE_CHARS
+            else -> NORMAL_SAFE_CHARS
+        }
 
-        val recent = all.takeLast(RECENT_MESSAGES_TO_PRESERVE).toMutableList()
-        val selected = mutableListOf<UiMessage>()
-        val seen = mutableSetOf<Pair<String, String>>()
+        if (totalChars <= safeChars) return conversation.toList()
+
+        val selected = ArrayList<Pair<Int, UiMessage>>()
+        val included = HashSet<Int>()
         var chars = 0
 
-        // Preserve the first turn as continuity anchor when possible.
-        all.firstOrNull()?.let {
-            selected.add(it)
-            seen.add(it.role to it.content)
-            chars += it.content.length
+        fun add(index: Int) {
+            if (index !in conversation.indices || index in included) return
+            val message = conversation[index]
+            if (message.content.isBlank()) return
+            if (chars + message.content.length > safeChars && selected.isNotEmpty()) return
+            selected.add(index to message)
+            included.add(index)
+            chars += message.content.length
         }
 
-        for (message in all.dropLast(RECENT_MESSAGES_TO_PRESERVE).asReversed()) {
-            if ((message.role to message.content) in seen) continue
-            val next = chars + message.content.length
-            if (selected.size > 1 && next + recent.sumOf { it.content.length } > dynamicBudget) break
-            selected.add(message)
-            seen.add(message.role to message.content)
-            chars = next
+        conversation.forEachIndexed { index, message ->
+            if (message.role == "system") add(index)
+        }
+        val firstUser = conversation.indexOfFirst { it.role == "user" }
+        if (firstUser >= 0) add(firstUser)
+        if (latestUserIndex >= 0) add(latestUserIndex)
+
+        for (index in conversation.lastIndex downTo 0) {
+            if (index in included) continue
+            add(index)
+            if (chars >= safeChars) break
         }
 
-        selected.addAll(recent.filterNot { (it.role to it.content) in seen })
-        return selected.takeLast(50)
+        val omitted = conversation.indices.filter {
+            it !in included && conversation[it].role in setOf("user", "assistant")
+        }
+        if (omitted.isNotEmpty()) {
+            val summaryParts = ArrayList<String>()
+            var remaining = SUMMARY_CHARS
+            for (index in omitted) {
+                if (remaining <= 0) break
+                val message = conversation[index]
+                val snippet = message.content
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                    .take(remaining.coerceAtMost(1_200))
+                if (snippet.isNotBlank()) {
+                    summaryParts.add(message.role + ": " + snippet)
+                    remaining -= snippet.length + 10
+                }
+            }
+            if (summaryParts.isNotEmpty()) {
+                selected.add(
+                    -1 to UiMessage(
+                        "system",
+                        "[CONTEXTO ANTERIOR COMPACTADO]\n" + summaryParts.joinToString("\n")
+                    )
+                )
+            }
+        }
+
+        return selected.sortedBy { it.first }.map { it.second }
     }
 }
