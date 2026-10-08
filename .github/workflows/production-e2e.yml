@@ -27,13 +27,14 @@ jobs:
         run: |
           set -euo pipefail
           auth_json="$(curl -fsS --connect-timeout 8 --max-time 30 \
-            -X POST "$SUPABASE_URL/auth/v1/signup" \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "content-type: application/json" \
-            -d '{"data":{"deep33_profile_id":"e2e-${GITHUB_RUN_ID}"}}')"
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"e2e-${GITHUB_RUN_ID}\"}")"
           token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Verify every production transport node
         run: |
           set -euo pipefail
