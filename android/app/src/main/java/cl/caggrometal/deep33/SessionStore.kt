@@ -21,14 +21,17 @@ data class ChatSummary(
 )
 
 data class PendingTurn(
+    val profileId: String,
     val sessionId: String,
     val requestId: String,
     val idempotencyKey: String,
     val personality: String,
-    val payloadJson: String
+    val payloadJson: String,
+    val conversationJson: String = "[]"
 )
 
 data class PendingMemorySync(
+    val profileId: String,
     val sessionId: String,
     val requestId: String,
     val personality: String,
@@ -50,19 +53,58 @@ data class GenerationState(
 
 class SessionStore(
     context: Context,
-    name: String = PREFS_NAME
+    name: String? = null,
+    profileIdOverride: String? = null
 ) {
-    private val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    val profileId: String = profileIdOverride ?: MultiUserIdentity.ensureActiveProfileId(appContext)
+    private val prefs = appContext.getSharedPreferences(
+        name ?: PREFS_NAME + "_" + profileId,
+        Context.MODE_PRIVATE
+    )
 
-    /** Stable per-installation user identity. Conversation session IDs can change; this one must not. */
+    init {
+        if (name == null && profileIdOverride == null) migrateLegacyInstallState(appContext)
+    }
+
     val memoryProfileId: String
-        get() = synchronized(STORE_LOCK) {
-            val existing = prefs.getString(KEY_MEMORY_PROFILE_ID, null)
-            if (!existing.isNullOrBlank()) return@synchronized existing
-            val created = MultiUserIdentity.newProfileId()
-            prefs.edit().putString(KEY_MEMORY_PROFILE_ID, created).commit()
-            created
+        get() = profileId
+
+    private fun migrateLegacyInstallState(context: Context) {
+        if (prefs.getBoolean(KEY_LEGACY_MIGRATED, false)) return
+        val legacy = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (legacy.all.isEmpty()) {
+            prefs.edit().putBoolean(KEY_LEGACY_MIGRATED, true).apply()
+            return
         }
+        synchronized(STORE_LOCK) {
+            if (prefs.getBoolean(KEY_LEGACY_MIGRATED, false)) return@synchronized
+            val edit = prefs.edit()
+            legacy.all.forEach { (key, value) ->
+                if (key == KEY_MEMORY_PROFILE_ID) return@forEach
+                when (value) {
+                    is String -> {
+                        var migrated = value
+                        if (key == KEY_PENDING_MEMORY_SYNC) {
+                            runCatching {
+                                migrated = JSONObject(value)
+                                    .put("profile_id", profileId)
+                                    .put("memory_profile_id", profileId)
+                                    .toString()
+                            }
+                        }
+                        edit.putString(key, migrated)
+                    }
+                    is Boolean -> edit.putBoolean(key, value)
+                    is Int -> edit.putInt(key, value)
+                    is Long -> edit.putLong(key, value)
+                    is Float -> edit.putFloat(key, value)
+                    is Set<*> -> edit.putStringSet(key, value.filterIsInstance<String>().toSet())
+                }
+            }
+            edit.putBoolean(KEY_LEGACY_MIGRATED, true).commit()
+        }
+    }
 
     val sessionId: String
         get() = synchronized(STORE_LOCK) {
@@ -200,13 +242,22 @@ class SessionStore(
             val session = json.optString("session_id")
             val requestId = json.optString("request_id")
             val idempotencyKey = json.optString("idempotency_key")
+            val profileId = json.optString("profile_id", this@SessionStore.profileId)
             val personality = json.optString("personality", "NEUTRO")
             val payload = json.optString("payload")
-            if (session.isBlank() || requestId.isBlank() || idempotencyKey.isBlank() || payload.isBlank()) {
+            val conversation = json.optString("conversation", "[]")
+            if (
+                profileId != this@SessionStore.profileId ||
+                session.isBlank() ||
+                requestId.isBlank() ||
+                idempotencyKey.isBlank() ||
+                payload.isBlank()
+            ) {
                 null
             } else {
                 JSONArray(payload)
-                PendingTurn(session, requestId, idempotencyKey, personality, payload)
+                JSONArray(conversation)
+                PendingTurn(profileId, session, requestId, idempotencyKey, personality, payload, conversation)
             }
         } catch (_: Exception) {
             null
@@ -231,6 +282,7 @@ class SessionStore(
             queued.take(MAX_PENDING_MEMORY_SYNCS).forEach {
                 json.put(
                     JSONObject()
+                        .put("profile_id", it.profileId)
                         .put("session_id", it.sessionId)
                         .put("request_id", it.requestId)
                         .put("personality", it.personality)
@@ -255,14 +307,20 @@ class SessionStore(
             buildList {
                 for (i in 0 until json.length()) {
                     val item = json.optJSONObject(i) ?: continue
+                    val profileId = item.optString("profile_id", this@SessionStore.profileId)
                     val sessionId = item.optString("session_id")
                     val requestId = item.optString("request_id")
                     val personality = item.optString("personality", "NEUTRO")
-                    val memoryProfileId = item.optString("memory_profile_id")
+                    val memoryProfileId = item.optString("memory_profile_id", profileId)
                     val messagesJson = item.optString("messages")
-                    if (sessionId.isBlank() || requestId.isBlank() || memoryProfileId.isBlank() || messagesJson.isBlank()) continue
+                    if (
+                        profileId != this@SessionStore.profileId ||
+                        sessionId.isBlank() ||
+                        requestId.isBlank() ||
+                        messagesJson.isBlank()
+                    ) continue
                     runCatching { JSONArray(messagesJson) }.getOrNull() ?: continue
-                    add(PendingMemorySync(sessionId, requestId, personality, memoryProfileId, messagesJson))
+                    add(PendingMemorySync(profileId, sessionId, requestId, personality, memoryProfileId, messagesJson))
                 }
             }
         } catch (_: Exception) {
@@ -530,6 +588,7 @@ class SessionStore(
         private const val PREFS_NAME = "deep33_session"
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
+        private const val KEY_LEGACY_MIGRATED = "legacy_migrated"
         private const val KEY_MESSAGES_LEGACY = "messages_json"
         private const val KEY_APP_BACKGROUNDED = "app_backgrounded"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
