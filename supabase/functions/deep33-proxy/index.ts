@@ -2414,10 +2414,11 @@ Deno.serve(async (req) => {
 
     if (path === "/v1/chat/stream" && req.method === "POST") {
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-      if (memoryProfileId) payload.memory_profile_id = memoryProfileId;
-      const messages = Array.isArray(payload.messages)
-        ? payload.messages as Array<Record<string, unknown>>
-        : [];
+      const validation = validateChatPayload(payload);
+      if (!validation.ok) throw new Deep33HttpError(400, validation.error);
+      enforceEdgeRateLimit(ownerUserId, "chat_stream", 20);
+      payload.memory_profile_id = memoryProfileId;
+      const messages = validation.messages;
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const activePersonality = normalizePersonality(payload.personality);
@@ -2743,6 +2744,10 @@ Deno.serve(async (req) => {
 
     if (path === "/v1/ai/generate" && req.method === "POST") {
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const validation = validateChatPayload(payload);
+      if (!validation.ok) throw new Deep33HttpError(400, validation.error);
+      enforceEdgeRateLimit(ownerUserId, "ai_generate", 20);
+      payload.memory_profile_id = memoryProfileId;
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       const idempotencyKey = req.headers.get("x-idempotency-key") || requestId;
       const messages = Array.isArray(payload.messages)
@@ -3016,12 +3021,14 @@ return json({
     }
 
     if (path === "/v1/web/search" && req.method === "GET") {
+      enforceEdgeRateLimit(ownerUserId, "web_search", 60);
       const query = url.searchParams.get("q") || url.searchParams.get("query") || "";
       const result = await edgeSearch(query, sessionId);
       return json(result, result.ok ? 200 : 503);
     }
 
     if (path === "/v1/search" && req.method === "GET") {
+      enforceEdgeRateLimit(ownerUserId, "web_search", 60);
       return json(
         await edgeSearch(
           url.searchParams.get("q") ||
