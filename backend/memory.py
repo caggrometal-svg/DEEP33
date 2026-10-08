@@ -325,7 +325,6 @@ class MemoryClient:
 def merge_messages(
     remote_messages: list[dict[str, Any]],
     requested_messages: list[dict[str, Any]],
-    limit: int = 50,
 ) -> list[dict[str, str]]:
     merged: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -342,7 +341,7 @@ def merge_messages(
             seen.add(key)
             merged.append({"role": role, "content": content})
 
-    return merged[-limit:]
+    return merged
 
 
 INTERNAL_CONTEXT_PREFIX = "DEEP33 internal context."
