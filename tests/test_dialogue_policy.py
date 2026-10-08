@@ -140,7 +140,7 @@ def test_dialogue_policy_is_common_to_all_personalities() -> None:
 
     for personality in main.PERSONALITIES:
         prompt = main.personality_prompt(personality) + "\n\n" + policy
-        assert "DEEP33 REAL DIALOGUE PROTOCOL v1" in prompt
+        assert "DEEP33 REAL DIALOGUE PROTOCOL v2" in prompt
         assert "la personalidad modifica el estilo" in prompt
 
 
