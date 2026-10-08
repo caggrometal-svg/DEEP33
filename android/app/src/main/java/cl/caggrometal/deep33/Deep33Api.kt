@@ -56,6 +56,7 @@ object Deep33FailoverPolicy {
 
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
+    private const val MEMORY_SYNC_TIMEOUT_MS = 8_000L
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
@@ -184,6 +185,7 @@ object Deep33Api {
         personality: String = "NEUTRO",
         requestId: String = UUID.randomUUID().toString(),
         memoryProfileId: String? = null,
+        timeoutMs: Long = MEMORY_SYNC_TIMEOUT_MS,
     ): JSONObject =
         request(
             "POST",
@@ -195,6 +197,7 @@ object Deep33Api {
             requestId,
             "memory-sync-" + requestId,
             memoryProfileId = memoryProfileId,
+            timeoutMs = timeoutMs,
         )
 
     fun remember(sessionId: String, kind: String, content: String, memoryProfileId: String? = null): JSONObject =
@@ -229,13 +232,15 @@ object Deep33Api {
         requestId: String = UUID.randomUUID().toString(),
         idempotencyKey: String = requestId,
         memoryProfileId: String? = null,
+        timeoutMs: Long = GLOBAL_TIMEOUT_MS.toLong(),
         isCancelled: () -> Boolean = { false },
         onText: (String) -> Unit
     ): String {
         val activePersonality = personality.trim().uppercase().let {
             if (it in setOf("AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO")) it else "NEUTRO"
         }
-        val deadline = System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L
+        val boundedTimeoutMs = timeoutMs.coerceIn(1_000L, GLOBAL_TIMEOUT_MS.toLong())
+        val deadline = System.nanoTime() + boundedTimeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
 
         for (endpoint in normalizedEndpoints()) {
