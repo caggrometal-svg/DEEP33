@@ -348,7 +348,8 @@ object Deep33Api {
                             }
                         }
                     }
-                    if (!sawDone) throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE)
+                    // A clean EOF is a valid SSE termination even when the provider omits
+                    // an explicit [DONE]. The caller will still reject an actually empty answer.
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
@@ -568,19 +569,38 @@ object Deep33Api {
 
 object SseTextParser {
     fun extractText(data: String): String? {
-        return try {
+        return runCatching {
             val json = JSONObject(data)
-            val choices = json.optJSONArray("choices") ?: return null
-            val first = choices.optJSONObject(0) ?: return null
+            listOf(
+                json.opt("choices"),
+                json.opt("content"),
+                json.opt("output_text"),
+                json.opt("text"),
+            ).asSequence()
+                .mapNotNull { extractFromValue(it) }
+                .firstOrNull { it.isNotEmpty() }
+        }.getOrNull()
+    }
 
-            val delta = first.optJSONObject("delta")
-            val deltaContent = delta?.optString("content").orEmpty()
-            if (deltaContent.isNotEmpty()) return deltaContent
-
-            val messageContent = first.optJSONObject("message")?.optString("content").orEmpty()
-            messageContent.ifEmpty { null }
-        } catch (_: Exception) {
-            null
+    private fun extractFromValue(value: Any?): String? {
+        when (value) {
+            is String -> return value
+            is JSONArray -> {
+                val parts = buildList {
+                    for (i in 0 until value.length()) {
+                        extractFromValue(value.opt(i))?.takeIf { it.isNotEmpty() }?.let { add(it) }
+                    }
+                }
+                return parts.joinToString("")
+            }
+            is JSONObject -> {
+                value.optString("text").takeIf { it.isNotEmpty() }?.let { return it }
+                value.optString("content").takeIf { it.isNotEmpty() }?.let { return it }
+                value.opt("delta")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
+                value.opt("message")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
+                value.opt("content")?.let { extractFromValue(it) }?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
         }
+        return null
     }
 }
