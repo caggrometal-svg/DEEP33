@@ -386,6 +386,10 @@ function extractProviderText(body: Record<string, unknown>): string {
   if (typeof first.text === "string") return first.text;
   if (typeof body.output_text === "string") return body.output_text;
   if (typeof body.text === "string") return body.text;
+  const result = body.result && typeof body.result === "object"
+    ? body.result as Record<string, unknown>
+    : null;
+  if (result && typeof result.text === "string") return result.text;
   return "";
 }
 
