@@ -65,10 +65,43 @@ class SessionStore(
 
     init {
         if (name == null && profileIdOverride == null) migrateLegacyInstallState(appContext)
+        if (name == null) migrateGpsPrivacyState()
     }
 
     val memoryProfileId: String
         get() = profileId
+
+    private fun sanitizeGpsText(value: String): String {
+        return value
+            .replace(
+                Regex("\\[(?:UBICACIÓN|UBICACION) GPS ACTUAL[^\\]]*\\]", RegexOption.IGNORE_CASE),
+                "[contexto local eliminado por privacidad]"
+            )
+            .replace(
+                Regex("\\[(?:CONTEXTO|CONTEXTO) LOCAL ACTUAL[^\\]]*\\]", RegexOption.IGNORE_CASE),
+                "[contexto local]"
+            )
+    }
+
+    private fun migrateGpsPrivacyState() {
+        if (prefs.getBoolean(KEY_GPS_PRIVACY_MIGRATED, false)) return
+        synchronized(STORE_LOCK) {
+            if (prefs.getBoolean(KEY_GPS_PRIVACY_MIGRATED, false)) return@synchronized
+            val edit = prefs.edit()
+            var changed = false
+            prefs.all.forEach { (key, value) ->
+                if (value is String) {
+                    val sanitized = sanitizeGpsText(value)
+                    if (sanitized != value) {
+                        edit.putString(key, sanitized)
+                        changed = true
+                    }
+                }
+            }
+            edit.putBoolean(KEY_GPS_PRIVACY_MIGRATED, true)
+            if (changed) edit.commit() else edit.apply()
+        }
+    }
 
     private fun migrateLegacyInstallState(context: Context) {
         if (prefs.getBoolean(KEY_LEGACY_MIGRATED, false)) return
@@ -710,6 +743,7 @@ class SessionStore(
         private const val KEY_SESSION_ID = "session_id"
         private const val KEY_MEMORY_PROFILE_ID = "memory_profile_id"
         private const val KEY_LEGACY_MIGRATED = "legacy_migrated"
+        private const val KEY_GPS_PRIVACY_MIGRATED = "gps_privacy_migrated"
         private const val KEY_MESSAGES_LEGACY = "messages_json"
         private const val KEY_APP_BACKGROUNDED = "app_backgrounded"
         private const val KEY_VOICE_ENABLED = "voice_enabled"
