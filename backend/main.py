@@ -244,8 +244,8 @@ PERSONALITIES: dict[str, dict[str, str]] = {
 }
 DEFAULT_PERSONALITY = "NEUTRO"
 PERSONALITY_PROTOCOL_VERSION = "5"
-DIALOGUE_POLICY_VERSION = "5"
-REAL_DIALOGUE_PROTOCOL_VERSION = "1"
+DIALOGUE_POLICY_VERSION = "6"
+REAL_DIALOGUE_PROTOCOL_VERSION = "2"
 
 _rate_state: dict[str, tuple[float, int]] = {}
 _idempotency_cache: dict[str, tuple[float, str, dict]] = {}
