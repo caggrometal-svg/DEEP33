@@ -1150,6 +1150,31 @@ class MainActivity : Activity() {
             setMargins(dp(2), 0, dp(2), dp(10))
         })
 
+        val profileBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        profileBody.addView(TextView(this).apply {
+            text = "PERFIL ACTIVO · " + store.activeProfileName
+            textSize = 13f
+            setTextColor(Personality.fromKey(store.personality).accent)
+            setPadding(0, 0, 0, dp(10))
+        })
+        profileBody.addView(Button(this).apply {
+            text = "CAMBIAR / CREAR USUARIO"
+            isAllCaps = false
+            setTextColor(Deep33Theme.TEXT)
+            setBackground(neonPanel(Deep33Theme.SURFACE_2, Deep33Theme.LINE_SOFT))
+            setOnClickListener { manageUserProfiles() }
+            addPressFeedback(this)
+        })
+        box.addView(section(
+            "Usuario",
+            "Cada usuario tiene memoria local, historial, personalidad y sincronización remota independientes.",
+            profileBody
+        ), LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(2), 0, dp(2), dp(10))
+        })
+
         val sessionBody = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -1317,6 +1342,60 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun switchToUserProfile(profileId: String) {
+        if (generationActive) return
+        val normalized = profileId.trim()
+        if (normalized.isBlank() || normalized == store.profileId) return
+        saveCurrentSummary()
+        stopVoiceInput()
+        interruptAssistantSpeech(resumeListening = false)
+        if (!store.activateUserProfile(normalized)) return
+
+        store = SessionStore(this, profileIdOverride = normalized)
+        conversation.clear()
+        conversation.addAll(store.loadMessages())
+        applyPersonalityTheme(Personality.fromKey(store.personality))
+        showTab(Tab.CHAT)
+        renderConversation()
+        refreshSidebarHistory()
+        loadRemoteContext()
+    }
+
+    private fun manageUserProfiles() {
+        val profiles = store.listUserProfiles()
+        val labels = profiles.map { it.name }.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("PERFIL DE USUARIO")
+            .setSingleChoiceItems(
+                labels,
+                profiles.indexOfFirst { it.id == store.profileId }
+            ) { dialog, which ->
+                val selected = profiles.getOrNull(which)
+                dialog.dismiss()
+                selected?.let { switchToUserProfile(it.id) }
+            }
+            .setNeutralButton("NUEVO USUARIO") { _, _ ->
+                val field = EditText(this).apply {
+                    hint = "Nombre del usuario"
+                    setSingleLine(true)
+                }
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("NUEVO PERFIL")
+                    .setView(field)
+                    .setNegativeButton("CANCELAR", null)
+                    .setPositiveButton("CREAR") { _, _ ->
+                        val created = store.createUserProfile(
+                            field.text?.toString(),
+                            switchTo = false
+                        )
+                        switchToUserProfile(created.id)
+                    }
+                    .show()
+            }
+            .setNegativeButton("CERRAR", null)
+            .show()
     }
 
     private fun startNewSession() {
@@ -1794,7 +1873,8 @@ class MainActivity : Activity() {
                 requestId = requestId,
                 idempotencyKey = idempotencyKey,
                 personality = requestPersonality.key,
-                payloadJson = payload.toString()
+                payloadJson = payload.toString(),
+                memoryProfileId = store.profileId
             )
         )
         lastRenderedGenerationOutput = ""
@@ -2019,14 +2099,14 @@ class MainActivity : Activity() {
         generationActive = true
         activeRequestId = requestId
         activeIdempotencyKey = idempotencyKey
-        Deep33GenerationService.start(this, requestId)
+        Deep33GenerationService.start(this, requestId, store.profileId)
         startGenerationMonitor()
     }
 
     private fun cancelGeneration() {
         if (!generationActive) return
         val requestId = activeRequestId ?: store.loadPendingTurn()?.requestId
-        Deep33GenerationService.cancel(this, requestId)
+        Deep33GenerationService.cancel(this, requestId, store.profileId)
         store.clearPendingTurn(requestId)
         store.clearGenerationState(requestId)
         generationActive = false
