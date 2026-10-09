@@ -639,14 +639,18 @@ class SearchEngine:
                     )
                     for task in done:
                         record_provider_result(task)
+                        if len(successful) >= 2:
+                            break
                     if has_relevant:
-                        if pending:
+                        if pending and len(successful) < 2:
                             more_done, pending = await asyncio.wait(
                                 pending,
                                 timeout=REALTIME_CORROBORATION_WINDOW_SECONDS,
                             )
                             for task in more_done:
                                 record_provider_result(task)
+                                if len(successful) >= 2:
+                                    break
                         break
             finally:
                 for task in pending:
