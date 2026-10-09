@@ -215,7 +215,7 @@ function isSecureHttpsUrl(value: string): boolean {
   }
 }
 
-type EdgeAIProvider = { name: string; url: string; api_key: string; model: string; requires_auth: boolean };
+type EdgeAIProvider = { name: string; url: string; stream_url?: string; api_key: string; model: string; requires_auth: boolean };
 
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
@@ -223,6 +223,7 @@ function edgeProviders(): EdgeAIProvider[] {
     providers.push({
       name: EDGE_AI_PROVIDER,
       url: EDGE_AI_URL,
+      stream_url: EDGE_AI_URL,
       api_key: EDGE_AI_KEY,
       model: EDGE_AI_MODEL,
       requires_auth: EDGE_AI_REQUIRES_AUTH,
@@ -237,12 +238,14 @@ function edgeProviders(): EdgeAIProvider[] {
           if (!item || typeof item !== "object") continue;
           const value = item as Record<string, unknown>;
           const url = String(value.url || "").trim();
+          const stream_url = String(value.stream_url || url).trim();
           const api_key = String(value.api_key || "").trim();
           const requires_auth = Boolean(value.requires_auth ?? api_key);
-          if (!isSecureHttpsUrl(url) || (requires_auth && !api_key)) continue;
+          if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) || (requires_auth && !api_key)) continue;
           providers.push({
             name: String(value.name || "fallback").trim() || "fallback",
             url,
+            stream_url,
             api_key,
             model: String(value.model || "").trim(),
             requires_auth,
@@ -259,6 +262,7 @@ function edgeProviders(): EdgeAIProvider[] {
     providers.push({
       name: "render-backend-fallback",
       url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
+      stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream",
       api_key: "",
       model: "kilo-auto/small",
       requires_auth: true,
@@ -292,7 +296,7 @@ function edgeProviders(): EdgeAIProvider[] {
 
   const seen = new Set<string>();
   return providers.filter((provider) => {
-    const signature = provider.name + "|" + provider.url;
+    const signature = provider.name + "|" + provider.url + "|" + String(provider.stream_url || "");
     if (seen.has(signature)) return false;
     seen.add(signature);
     return true;
@@ -831,7 +835,7 @@ async function streamEdgeAI(
         let fullText = "";
 
         try {
-          const response = await fetch(provider.url, {
+          const response = await fetch(provider.stream_url || provider.url, {
             method: "POST",
             headers: providerRequestHeaders(provider, requestId, "text/event-stream", userAuthorization),
             body: JSON.stringify({

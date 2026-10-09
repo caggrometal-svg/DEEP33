@@ -262,3 +262,10 @@ def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None
         '?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }'
     ) == 2
 
+def test_secondary_edge_render_fallback_supports_streaming() -> None:
+    source = read("supabase/functions/deep33-tertiary/index.ts")
+    assert "stream_url?: string" in source
+    assert 'stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream"' in source
+    assert 'fetch(provider.stream_url || provider.url, {' in source
+    assert 'const stream_url = String(value.stream_url || url).trim();' in source
+    assert 'if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url)' in source
