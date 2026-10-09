@@ -2576,7 +2576,7 @@ function edgeFilterSearchResults(
       const genericLandingPage = path === "/" ||
         /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
       if (genericLandingPage) return false;
-      if (googleNewsStory) return true;
+      if (googleNewsStory) return !countryIntent || /\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) || host.endsWith(".cl");
       const hasNewsEvidence = /\b(?:noticia|noticias|actualidad|última hora|ultima hora|news|breaking|emergencia|alerta|incidente|aluvión|aluvion|santiago|las condes|internacional|international|global|globales|mundial|mundiales|mundo|world|worldwide|diplomacia|diplomacy|geopolítica|geopolitics|conflicto|conflict)\b/i.test(evidence);
       if (!hasNewsEvidence) return false;
       if (!countryIntent) return true;
