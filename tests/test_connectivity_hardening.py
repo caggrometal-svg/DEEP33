@@ -212,3 +212,12 @@ def test_production_e2e_requires_relevant_live_search_results() -> None:
     assert '.checks.INTERNET=="PASS"' in source
     assert '.checks.DNS=="PASS"' in source
     assert source.count("(.search.verification.relevant_results // 0) >= 1") == 2
+
+
+def test_secondary_memory_calls_send_internal_token() -> None:
+    source = read("supabase/functions/deep33-tertiary/index.ts")
+    memory_call = source.split("async function memoryCall(", 1)[1].split(
+        "\nasync function hybridCall(", 1
+    )[0]
+    assert '"x-deep33-internal-token": SUPABASE_SECRET_KEY' in memory_call
+    assert 'Authorization: "Bearer " + SUPABASE_SECRET_KEY' in memory_call
