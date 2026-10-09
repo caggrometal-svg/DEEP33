@@ -2473,7 +2473,8 @@ function edgeSearchVerification(
     relevant_results: items.length,
   };
 }
-\nfunction edgeRealtimeQuery(query: string): boolean {
+
+function edgeRealtimeQuery(query: string): boolean {
   const lowered = query.toLowerCase();
   if (/\b(?:15\d{2}|16\d{2}|17\d{2}|18\d{2}|19\d{2}|200\d|201\d)\b/.test(lowered) &&
       !/(hoy|ahora|actual|latest|current|today)/i.test(lowered)) return false;

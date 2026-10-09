@@ -2093,7 +2093,8 @@ function edgeSearchVerification(
     relevant_results: items.length,
   };
 }
-\nfunction edgeSearchQueries(query: string): { original: string; queries: string[]; depth: string } {
+
+function edgeSearchQueries(query: string): { original: string; queries: string[]; depth: string } {
   const original = query.trim();
   const normalized = normalizeEdgeSearchQuery(original) || original;
   if (!edgeRealtimeQuery(original)) return { original, queries: [normalized], depth: "standard" };
