@@ -60,3 +60,13 @@ def test_realtime_search_does_not_discard_all_undated_current_results() -> None:
         source = path.read_text(encoding="utf-8")
         assert "const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);" in source
         assert "googleNewsStory || publicationDateUnknown" in source
+
+
+def test_current_date_time_search_has_targeted_clock_sources() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "function edgeCurrentDateTimeQuery(query: string): boolean" in source
+        assert "site:timeanddate.com/worldclock/chile/santiago" in source
+        assert "site:time.is/Santiago" in source
+        assert "if (edgeCurrentDateTimeQuery(query)) {" in source
+        assert "timeAndDateSantiago || timeIsSantiago" in source

@@ -2442,6 +2442,14 @@ function edgeExtractLocality(query: string): string {
   return match?.[1]?.trim().replace(/\s+/g, " ") || "";
 }
 
+function edgeCurrentDateTimeQuery(query: string): boolean {
+  const lowered = query.toLowerCase();
+  const temporalIntent = /\b(?:fecha|d[ií]a|hora|reloj|date|time|zona horaria|time zone)\b/i.test(lowered);
+  const currentIntent = /\b(?:actual|actualmente|hoy|ahora|presente|en este momento|today|now|current|currently)\b/i.test(lowered) ||
+    /\b(?:qué|que|what)\s+(?:fecha|día|dia|hora|date|time)\s+(?:es|son|is|are)\b/i.test(lowered);
+  return temporalIntent && currentIntent;
+}
+
 function edgeFilterSearchResults(
   query: string,
   items: Array<Record<string, unknown>>,
@@ -2465,6 +2473,37 @@ function edgeFilterSearchResults(
       return false;
     }
   });
+  if (edgeCurrentDateTimeQuery(query)) {
+    const countryIntent = /\bchile\b/i.test(query);
+    return liveItems.filter((item) => {
+      let parsed: URL;
+      try {
+        parsed = new URL(String(item.url || ""));
+      } catch {
+        return false;
+      }
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const evidence = (
+        String(item.title || "") + " " +
+        String(item.snippet || "") + " " +
+        host + " " + path
+      ).toLowerCase();
+      const timeAndDateSantiago =
+        (host === "timeanddate.com" || host.endsWith(".timeanddate.com")) &&
+        path.startsWith("/worldclock/chile/santiago");
+      const timeIsSantiago =
+        (host === "time.is" || host === "www.time.is") &&
+        path.startsWith("/santiago");
+      if (timeAndDateSantiago || timeIsSantiago) return true;
+
+      const temporalEvidence = /\b(?:fecha|hora|time|clock|date|horario|santiago|chile|time zone|timezone)\b/i.test(evidence);
+      if (!temporalEvidence) return false;
+      if (!countryIntent) return true;
+      return /\bchile\b|\bsantiago\b/i.test(evidence) || host.endsWith(".cl");
+    });
+  }
+
   const tokens = new Set(
     (normalizeEdgeSearchQuery(query).toLowerCase().match(/[a-záéíóúüñ]{3,}/gi) || [])
       .filter((token) => !EDGE_REALTIME_FILLERS.has(token)),
@@ -2552,11 +2591,17 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
     day: "2-digit",
   }).format(new Date());
   const lowered = original.toLowerCase();
+  const currentDateTime = edgeCurrentDateTimeQuery(original);
   const weatherSemantic = /\b(?:clima|tiempo|temperatura|pronóstico|pronostico|lluvia|llover|humedad|viento|calor|frío|frio|helado|helada)\b/i.test(lowered)
     || /\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered);
   const currentNews = /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|guerra|alerta)\b/i.test(lowered);
   const locality = edgeExtractLocality(original);
-  const variants = weatherSemantic
+  const variants = currentDateTime
+    ? [
+        "site:timeanddate.com/worldclock/chile/santiago " + normalized + " fecha y hora " + localDate,
+        "site:time.is/Santiago " + normalized + " " + localDate,
+      ]
+    : weatherSemantic
     ? [
         normalized + " temperatura humedad lluvia condiciones actuales hoy " + localDate,
         "site:meteochile.gob.cl " + normalized + " temperatura pronóstico " + localDate,
