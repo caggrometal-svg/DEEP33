@@ -2214,8 +2214,8 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
   const locality = edgeExtractLocality(original);
   const variants = currentDateTime
     ? [
-        \`site:timeanddate.com/worldclock/chile/santiago \${normalized} fecha y hora \${localDate}\`,
-        \`site:time.is/Santiago \${normalized} \${localDate}\`,
+        "site:timeanddate.com/worldclock/chile/santiago " + normalized + " fecha y hora " + localDate,
+        "site:time.is/Santiago " + normalized + " " + localDate,
       ]
     : weather
     ? [`${normalized} temperatura humedad lluvia condiciones actuales hoy ${localDate}`,
