@@ -403,12 +403,17 @@ def test_realtime_rank_rejects_country_only_match_for_named_locality():
     assert [item["url"] for item in ranked] == ["https://news.example/las-condes-live"]
 
 
-def test_realtime_country_news_uses_country_as_fallback_anchor():
+def test_realtime_broad_country_news_does_not_require_a_country_anchor():
     results = [
         {
-            "title": "Noticias de Chile hoy",
-            "url": "https://news.example/chile",
-            "snippet": "Últimas noticias nacionales de Chile.",
+            "title": "Noticias de Chile hoy: autoridades anuncian nuevas medidas",
+            "url": "https://news.example/chile-live",
+            "snippet": "Actualización de última hora publicada hoy.",
+        },
+        {
+            "title": "Partido Republicano de Chile",
+            "url": "https://en.wikipedia.org/?curid=61114536",
+            "snippet": "Información enciclopédica histórica sobre un partido.",
         },
         {
             "title": "Actualización de Windows",
@@ -417,7 +422,24 @@ def test_realtime_country_news_uses_country_as_fallback_anchor():
         },
     ]
     ranked = rank_results("noticias recientes en Chile", results, realtime=True)
-    assert [item["url"] for item in ranked] == ["https://news.example/chile"]
+    assert [item["url"] for item in ranked] == ["https://news.example/chile-live"]
+
+
+def test_realtime_world_news_does_not_overfit_to_literal_world_synonyms():
+    results = [
+        {
+            "title": "Partido Republicano de Chile",
+            "url": "https://en.wikipedia.org/?curid=61114536",
+            "snippet": "Información enciclopédica.",
+        },
+        {
+            "title": "International leaders meet for a new agreement",
+            "url": "https://news.example/world",
+            "snippet": "Últimas noticias internacionales publicadas hoy.",
+        },
+    ]
+    ranked = rank_results("noticias mundiales", results, realtime=True)
+    assert [item["url"] for item in ranked] == ["https://news.example/world"]
 
 
 def test_realtime_policy_catches_news_weather_and_politics():

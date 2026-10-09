@@ -161,3 +161,20 @@ def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() ->
     assert 'DNS: dnsOk ? "PASS" : "FAIL"' in source
     assert 'SEARCH: searchOk ? "PASS" : "FAIL"' in source
     assert "audit_attempts" in source
+
+
+def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    assert 'idempotencyContext,\n            req.headers.get("authorization") || "",\n          );' in source
+    assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
+
+
+def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert 'host.endsWith(".wikipedia.org")' in source
+        assert "edgeFilterSearchResults" in source
+        assert "edgeProvidersForResults" in source

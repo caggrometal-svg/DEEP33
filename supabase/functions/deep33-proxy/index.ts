@@ -2406,7 +2406,74 @@ function normalizeEdgeSearchQuery(query: string): string {
     .trim();
 }
 
-function edgeRealtimeQuery(query: string): boolean {
+const EDGE_REALTIME_FILLERS = new Set([
+  "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
+  "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
+  "noticia","noticias","actualidad","reciente","recientes","información","informacion",
+  "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
+  "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
+  "contingencia","suceso","sucesos","en","vivo","de","del","la","las","los","el","al",
+  "comuna","comunas","municipio","municipios","municipalidad","municipalidades",
+  "región","region","regiones","chile","mundial","mundiales","internacional",
+  "internacionales","global","globales","mundo","world","worldwide","news","breaking","latest",
+]);
+
+function edgeExtractLocality(query: string): string {
+  const match = query.match(
+    /\b(?:comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\s+(?:de|del)\s+(.+?)(?:\s+en\s+chile\b|[,;.!?]|$)/i,
+  );
+  return match?.[1]?.trim().replace(/\s+/g, " ") || "";
+}
+
+function edgeFilterSearchResults(
+  query: string,
+  items: Array<Record<string, unknown>>,
+  realtime: boolean,
+): Array<Record<string, unknown>> {
+  if (!realtime) return items;
+  const liveItems = items.filter((item) => {
+    try {
+      const host = new URL(String(item.url || "")).hostname.toLowerCase();
+      return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org");
+    } catch {
+      return false;
+    }
+  });
+  const tokens = new Set(
+    (normalizeEdgeSearchQuery(query).toLowerCase().match(/[a-záéíóúüñ]{3,}/gi) || [])
+      .filter((token) => !EDGE_REALTIME_FILLERS.has(token)),
+  );
+  if ([...tokens].some((token) => token !== "chile")) tokens.delete("chile");
+  if (!tokens.size) return liveItems;
+  const requiredHits = Math.min(2, tokens.size);
+  return liveItems.filter((item) => {
+    const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
+    let hits = 0;
+    for (const token of tokens) if (evidence.includes(token)) hits++;
+    return hits >= requiredHits;
+  });
+}
+
+function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
+  return [...new Set(items.map((item) => String(item.provider || "").trim()).filter(Boolean))];
+}
+
+function edgeSearchVerification(
+  items: Array<Record<string, unknown>>,
+  providers: string[],
+): Record<string, unknown> {
+  const domains = new Set(items.map((item) => {
+    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+  }).filter(Boolean));
+  return {
+    level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
+    distinct_domains: domains.size,
+    distinct_providers: providers.length,
+    corroborated_results: 0,
+    relevant_results: items.length,
+  };
+}
+\nfunction edgeRealtimeQuery(query: string): boolean {
   const lowered = query.toLowerCase();
   if (/\b(?:15\d{2}|16\d{2}|17\d{2}|18\d{2}|19\d{2}|200\d|201\d)\b/.test(lowered) &&
       !/(hoy|ahora|actual|latest|current|today)/i.test(lowered)) return false;
@@ -2441,20 +2508,26 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
   const weatherSemantic = /\b(?:clima|tiempo|temperatura|pronóstico|pronostico|lluvia|llover|humedad|viento|calor|frío|frio|helado|helada)\b/i.test(lowered)
     || /\b(?:hará|hara|estará|estara|cómo estará|como estara|qué tan|que tan)\b[^.?!]{0,80}\b(?:calor|frío|frio|helado|helada)\b/i.test(lowered);
   const currentNews = /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|guerra|alerta)\b/i.test(lowered);
+  const locality = edgeExtractLocality(original);
   const variants = weatherSemantic
     ? [
         normalized + " temperatura humedad lluvia condiciones actuales hoy " + localDate,
         "site:meteochile.gob.cl " + normalized + " temperatura pronóstico " + localDate,
       ]
-    : currentNews
+    : currentNews && locality
       ? [
-          normalized + " últimas noticias de hoy " + localDate,
-          normalized + " última hora y actualización de hoy " + localDate,
+          locality + " Chile últimas noticias de hoy " + localDate,
+          locality + " Chile actualidad alertas de hoy " + localDate,
         ]
-      : [
-          normalized + " actualización de hoy " + localDate,
-          normalized + " información más reciente de hoy " + localDate,
-        ];
+      : currentNews
+        ? [
+            normalized + " últimas noticias de hoy " + localDate,
+            normalized + " última hora y actualización de hoy " + localDate,
+          ]
+        : [
+            normalized + " actualización de hoy " + localDate,
+            normalized + " información más reciente de hoy " + localDate,
+          ];
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
 async function publicWebSearchUncached(
@@ -2465,64 +2538,31 @@ async function publicWebSearchUncached(
   const batches: Array<{ query: string; data: Record<string, unknown> }> = [];
   const first = await runPublicWebSearchQuery(plan.queries[0]);
   batches.push({ query: plan.queries[0], data: first });
-  const firstResults = Array.isArray(first.results) ? first.results : [];
-  const firstProviders = Array.isArray(first.providers) ? first.providers : [];
+  const firstResults = Array.isArray(first.results) ? first.results as Array<Record<string, unknown>> : [];
+  const firstRelevant = edgeFilterSearchResults(plan.original, firstResults, plan.depth === "realtime");
+  const firstProviders = edgeProvidersForResults(firstRelevant);
   const required = plan.depth === "realtime" ? 2 : 3;
-  if (
-    plan.queries.length > 1 &&
-    (firstProviders.length < 2 || firstResults.length < required)
-  ) {
-    const remaining = plan.queries.slice(1, 3);
-    const more = await Promise.all(remaining.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })));
+  if (plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
+    const more = await Promise.all(
+      plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
+    );
     batches.push(...more);
   }
 
   const merged = new Map<string, Record<string, unknown>>();
-  const providers = new Set<string>();
   for (const batch of batches) {
-    const data = batch.data;
-    for (const provider of (Array.isArray(data.providers) ? data.providers : [])) providers.add(String(provider));
-    for (const item of (Array.isArray(data.results) ? data.results : [])) {
+    for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
       const url = String(value.url || "").trim();
       if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
     }
   }
-  const allResults = [...merged.values()];
-  const anchorTokens = plan.depth === "realtime"
-    ? new Set(
-        normalizeEdgeSearchQuery(plan.original)
-          .toLowerCase()
-          .match(/[a-záéíóúüñ]{3,}/gi) || [],
-      )
-    : new Set<string>();
-  const realtimeFiller = new Set([
-    "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
-    "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
-    "noticia","noticias","actualidad","reciente","recientes","información","informacion",
-    "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
-    "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
-    "contingencia","suceso","sucesos","en","vivo","de","del","la","las","los","el","al","comuna","municipio","municipalidad","región","region",
-  ]);
-  const entityTokens = new Set([...anchorTokens].filter(token => !realtimeFiller.has(token)));
-  // Generic geography words should not suppress otherwise-local results. For a
-  // locality inside Chile, require the locality/topic entity, not both the
-  // municipality label and country name to appear in every headline.
-  const countryContextTokens = new Set(["chile"]);
-  if ([...entityTokens].some(token => !countryContextTokens.has(token))) {
-    for (const token of countryContextTokens) entityTokens.delete(token);
-  }
-  const relevant = plan.depth === "realtime" && entityTokens.size
-    ? allResults.filter(item => {
-        const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
-        return [...entityTokens].filter(token => evidence.includes(token)).length >=
-          Math.min(2, entityTokens.size);
-      })
-    : allResults;
-  const results = (relevant.length ? relevant : plan.depth === "realtime" ? [] : allResults).slice(0, 8);
+  const finalResults = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+  const providerNames = edgeProvidersForResults(finalResults);
+  const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
-    ok: results.length > 0,
+    ok: publicResults.length > 0,
     realtime: plan.depth === "realtime",
     fresh_request: true,
     realtime_news: /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|alerta|guerra)\b/i.test(plan.original),
@@ -2533,19 +2573,11 @@ async function publicWebSearchUncached(
     query: plan.original,
     depth: plan.depth,
     queries: batches.map((item) => item.query),
-    providers: [...providers],
-    provider: providers.size === 1 ? [...providers][0] : providers.size > 1 ? "multi" : null,
-    results,
-    sources: results,
-    verification: {
-      level: providers.size > 1 ? "multi-source" : results.length ? "single-source" : "none",
-      distinct_domains: new Set(results.map((item) => {
-        try { return new URL(String(item.url)).hostname; } catch { return ""; }
-      }).filter(Boolean)).size,
-      distinct_providers: providers.size,
-      corroborated_results: 0,
-      relevant_results: results.length,
-    },
+    providers: providerNames,
+    provider: providerNames.length === 1 ? providerNames[0] : providerNames.length > 1 ? "multi" : null,
+    results: publicResults,
+    sources: publicResults,
+    verification: edgeSearchVerification(finalResults, providerNames),
     latency_ms: Math.round(performance.now() - started),
   };
 }
@@ -2593,10 +2625,7 @@ async function publicWebSearch(query: string): Promise<Record<string, unknown>> 
 async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
-
-  if (!UPSTREAM) {
-    return await publicWebSearch(q);
-  }
+  if (!UPSTREAM) return await publicWebSearch(q);
 
   try {
     const res = await fetchUpstream(
@@ -2606,7 +2635,21 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
     );
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
-      return data;
+      const realtime = data.realtime === true || edgeRealtimeQuery(q);
+      const filtered = edgeFilterSearchResults(q, data.results as Array<Record<string, unknown>>, realtime).slice(0, 8);
+      if (filtered.length > 0) {
+        const providers = edgeProvidersForResults(filtered);
+        const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
+        return {
+          ...data,
+          ok: true,
+          providers,
+          provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+          results: publicResults,
+          sources: publicResults,
+          verification: edgeSearchVerification(filtered, providers),
+        };
+      }
     }
 
     const fallback = await publicWebSearch(q);
@@ -3038,7 +3081,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId);
+        }, requestId, null, req.headers.get("authorization") || "");
         const text = extractProviderText(response.body);
         const ok = text === "DEEP33_DIAGNOSTIC_OK";
         return json({
@@ -3081,7 +3124,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId);
+        }, requestId, null, req.headers.get("authorization") || "");
         const text = extractProviderText(response.body);
         inference = {
           status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
@@ -3340,6 +3383,7 @@ return json({
             { ...payload, messages: edgeMessages },
             requestId,
             idempotencyContext,
+            req.headers.get("authorization") || "",
           );
           const responseText = extractProviderText(ai.body);
           let memoryPersisted = false;

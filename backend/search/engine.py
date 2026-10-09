@@ -65,21 +65,28 @@ _REALTIME_QUERY_FILLERS = {
     "noticia", "noticias", "actualidad", "reciente", "recientes", "información", "informacion",
     "actualización", "actualizacion", "novedad", "novedades", "desarrollo", "estado",
     "pasa", "pasando", "ocurre", "ocurriendo", "sucede", "sucediendo", "en", "vivo",
-    "chile", "comuna", "municipio", "municipalidad", "región", "region",
+    "chile", "comuna", "comunas", "municipio", "municipios", "municipalidad",
+    "municipalidades", "región", "region", "regiones", "mundial", "mundiales",
+    "internacional", "internacionales", "global", "globales", "mundo", "world",
+    "worldwide", "news", "breaking", "latest", "las", "los", "del", "de", "la", "al",
 }
 
-_REALTIME_COUNTRY_TOKENS = {"chile"}
-
 def _realtime_anchor_tokens(query: str) -> set[str]:
-    tokens = _tokens(query)
-    anchors = {
-        token for token in tokens
+    # Broad current-news searches have no named entity to force-match.
+    return {
+        token for token in _tokens(query)
         if token not in _REALTIME_QUERY_FILLERS and len(token) >= 3
     }
-    # Country name is a fallback anchor only when there is no named locality/topic.
-    if anchors:
-        return anchors
-    return {token for token in tokens if token in _REALTIME_COUNTRY_TOKENS}
+
+
+def _extract_realtime_locality(query: str) -> str:
+    match = re.search(
+        r"\b(?:comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)"
+        r"\s+(?:de|del)\s+(.+?)(?:\s+en\s+chile\b|[,;.!?]|$)",
+        query,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(match.group(1).strip().split()) if match else ""
 _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
 MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "2"))))
 REALTIME_CORROBORATION_WINDOW_SECONDS = max(
@@ -169,7 +176,11 @@ def is_realtime_query(query: str) -> bool:
 def _realtime_query_variants(lookup_query: str, lowered: str, local_date: str) -> list[str]:
     variants: list[str] = []
     is_news = any(term in lowered for term in REALTIME_NEWS_TERMS)
-    if is_news:
+    locality = _extract_realtime_locality(lookup_query)
+    if is_news and locality:
+        variants.append(f"{locality} Chile últimas noticias de hoy {local_date}".strip())
+        variants.append(f"{locality} Chile actualidad alertas de hoy {local_date}".strip())
+    elif is_news:
         variants.append(f"{lookup_query} últimas noticias de hoy {local_date}".strip())
         variants.append(f"{lookup_query} última hora y actualización {local_date}".strip())
     elif any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico")):
@@ -301,6 +312,9 @@ def rank_results(
     for item in results:
         url = str(item.get("url") or "").strip()
         if not url:
+            continue
+        if realtime and _host(url).endswith("wikipedia.org"):
+            # Static encyclopedia content is not live/current evidence.
             continue
         evidence_tokens = _token_set(_evidence_text(item))
         anchor_hits = len(anchor_tokens & evidence_tokens)
