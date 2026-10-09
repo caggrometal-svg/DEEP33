@@ -221,3 +221,11 @@ def test_secondary_memory_calls_send_internal_token() -> None:
     )[0]
     assert '"x-deep33-internal-token": SUPABASE_SECRET_KEY' in memory_call
     assert 'Authorization: "Bearer " + SUPABASE_SECRET_KEY' in memory_call
+
+def test_production_e2e_retries_transient_real_inference_failures() -> None:
+    source = read(".github/workflows/production-e2e.yml")
+    assert "for attempt in $(seq 1 4); do" in source
+    assert 'DEEP33_REAL_INFERENCE_NOT_READY attempt=$attempt http=$status' in source
+    assert 'DEEP33_REAL_INFERENCE_PASS' in source
+    assert 'X-Idempotency-Key: prod-${GITHUB_RUN_ID}-${attempt}' in source
+

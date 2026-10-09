@@ -140,12 +140,26 @@ jobs:
           test "$audit_ok" = "1" || { cat /tmp/audit-recheck.json 2>/dev/null || true; exit 1; }
           curl -fsS --connect-timeout 8 --max-time 120 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
-          curl -fsS --connect-timeout 8 --max-time 120 \
-            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
-            -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}" \
-            -H "X-Request-ID: prod-${GITHUB_RUN_ID}" \
-            -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}" \
-            -H 'content-type: application/json' \
-            -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}' \
-            "$PRIMARY_URL/v1/ai/generate" |
-            jq -e '((.result.text // .response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))'
+          inference_ok=0
+          for attempt in $(seq 1 4); do
+            echo "DEEP33_REAL_INFERENCE_ATTEMPT=$attempt"
+            status="$(curl -sS --connect-timeout 8 --max-time 120 \
+              -o /tmp/generate-response.json -w "%{http_code}" \
+              -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+              -H "X-DEEP33-Session-Id: prod-e2e-${GITHUB_RUN_ID}-${attempt}" \
+              -H "X-Request-ID: prod-${GITHUB_RUN_ID}-${attempt}" \
+              -H "X-Idempotency-Key: prod-${GITHUB_RUN_ID}-${attempt}" \
+              -H 'content-type: application/json' \
+              -d '{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_E2E_OK"}]}' \
+              "$PRIMARY_URL/v1/ai/generate" || true)"
+            if [ "$status" = "200" ] && jq -e '((.result.text // .response.choices[0].message.content // "") | contains("DEEP33_E2E_OK"))' /tmp/generate-response.json >/dev/null 2>&1; then
+              cat /tmp/generate-response.json | jq -c '{inference:"PASS", response:(.result.text // .response.choices[0].message.content)}'
+              inference_ok=1
+              break
+            fi
+            echo "DEEP33_REAL_INFERENCE_NOT_READY attempt=$attempt http=$status"
+            jq -c '{error:(.error // .detail // .message // "non-json-or-empty-response"), code:(.code // null)}' /tmp/generate-response.json 2>/dev/null || true
+            if [ "$attempt" -lt 4 ]; then sleep 5; fi
+          done
+          test "$inference_ok" = "1" || { echo "DEEP33_REAL_INFERENCE_FAIL"; exit 1; }
+          echo "DEEP33_REAL_INFERENCE_PASS"
