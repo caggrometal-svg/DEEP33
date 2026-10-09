@@ -580,8 +580,10 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-    needs: [production_gate, android_validation, change_scope]
+    # Run connectivity E2E even when production_gate fails: it supplies independent
+    # diagnostics. Only the Android build and change-scope prerequisites are required.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -813,8 +815,9 @@ jobs:
 
 
   release_gate:
-    needs: recovery_gate
-    if: ${{ github.event_name == 'push' && success() }}
+    needs: [production_gate, recovery_gate]
+    # A release must never be tagged unless both production and recovery gates passed.
+    if: ${{ always() && github.event_name == 'push' && needs.production_gate.result == 'success' && needs.recovery_gate.result == 'success' }}
     permissions:
       contents: write
       actions: write
