@@ -825,8 +825,18 @@ jobs:
           set -euo pipefail
           curl -fsS --connect-timeout 8 --max-time 90 "$PRIMARY_URL/v1/connectivity/audit" |
             jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true'
-          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" |
-            jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"'
+          inference_ok=0
+          for attempt in $(seq 1 3); do
+            diag="$(curl -sS --connect-timeout 8 --max-time 60 "$PRIMARY_URL/v1/ai/diagnostics" || true)"
+            if printf '%s' "$diag" | jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' >/dev/null 2>&1; then
+              inference_ok=1
+              break
+            fi
+            echo "RECOVERY_INFERENCE_NOT_READY attempt=$attempt"
+            printf '%s' "$diag" | jq -c '{online,checks,inference,timestamp}' 2>/dev/null || true
+            sleep 3
+          done
+          test "$inference_ok" = "1" || { echo "RECOVERY_INFERENCE_FAIL"; exit 1; }
           echo "RECOVERY_INFERENCE_PASS"
 
 

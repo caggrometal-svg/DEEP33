@@ -315,3 +315,22 @@ def test_country_scoped_news_search_rejects_unrelated_google_news_stories() -> N
             r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
             '|| host.endsWith(".cl");'
         ) in source
+
+
+def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert source.count('const ok = text.trim() === "DEEP33_DIAGNOSTIC_OK";') == 2
+        assert 'const ok = text === "DEEP33_DIAGNOSTIC_OK";' not in source
+
+    source = read(".github/workflows/ci.yml")
+    recovery = source.split("  recovery_gate:", 1)[1].split("  release_gate:", 1)[0]
+    assert "for attempt in $(seq 1 3)" in recovery
+    assert "RECOVERY_INFERENCE_NOT_READY attempt=$attempt" in recovery
+    assert (
+        ".online==true and .checks.MODEL==\\"PASS\\" and .checks.CHAT==\\"PASS\\""
+    ) in recovery
+    assert 'test "$inference_ok" = "1"' in recovery
