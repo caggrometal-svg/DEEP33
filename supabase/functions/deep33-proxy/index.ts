@@ -424,6 +424,10 @@ function providerRequestHeaders(
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
+    // The edge gateway already ran web search and appended evidence before entering
+    // the provider loop. Prevent the Render fallback from launching a second nested
+    // web-tool loop, which can turn a valid researched response into a 502/503.
+    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {}),
