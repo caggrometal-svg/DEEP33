@@ -40,6 +40,14 @@ class Deep33LifecycleRecoveryTest {
     @Test
     fun pendingTurnSurvivesBackgroundForegroundAndGetsResponse() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        // This live recovery test needs its own Supabase identity. Other instrumentation
+        // tests can leave the emulator's active profile already bound at the auth edge,
+        // in which case a lost local token cannot be bootstrapped again (HTTP 409).
+        val recoveryProfile = MultiUserIdentity.createProfile(context, "CI Lifecycle Recovery")
+        assertTrue(
+            "Could not activate an isolated lifecycle recovery profile",
+            MultiUserIdentity.switchProfile(context, recoveryProfile.id)
+        )
         val store = SessionStore(context)
         store.resetSession()
         val requestId = "lifecycle-e2e-${java.util.UUID.randomUUID()}"
