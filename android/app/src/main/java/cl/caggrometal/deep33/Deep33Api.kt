@@ -522,6 +522,7 @@ object Deep33Api {
                     connection.instanceFollowRedirects = false
                     connection.setRequestProperty("Accept", "application/json")
                     connection.setRequestProperty("X-DEEP33-Session-Id", sessionId)
+                    connection.setRequestProperty("apikey", BuildConfig.DEEP33_SUPABASE_PUBLISHABLE_KEY)
                     authorizationToken(forceRefresh = authRetryUsed)
                         ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
