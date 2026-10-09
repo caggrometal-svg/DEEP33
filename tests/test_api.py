@@ -354,8 +354,8 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
         completion_state = kwargs.get("completion_state")
         if completion_state is not None:
             completion_state["assistant_text"] = "Respuesta directa"
-        yield b'data: {"choices":[{"delta":{"content":"Respuesta directa"}}]}\\n\\n'
-        yield b"data: [DONE]\\n\\n"
+        yield b'data: {"choices":[{"delta":{"content":"Respuesta directa"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
 
     monkeypatch.setattr(main, "stream_gateway", fake_stream_gateway)
     response = client.post(
