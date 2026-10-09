@@ -148,8 +148,9 @@ def test_edge_connectivity_audit_scopes_internal_memory_probe_to_authenticated_u
 
 def test_edge_realtime_search_does_not_require_generic_geography_words_in_every_result() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
-    assert '"comuna","municipio","municipalidad","región","region"' in source
-    assert 'const countryContextTokens = new Set(["chile"])' in source
+    assert "function edgeFilterSearchResults(" in source
+    assert '"comuna","comunas","municipio","municipios","municipalidad","municipalidades"' in source
+    assert 'tokens.delete("chile")' in source
     assert '"noticias recientes en Chile"' in source
 
 
