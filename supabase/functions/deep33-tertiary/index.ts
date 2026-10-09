@@ -331,9 +331,14 @@ function providerRequestHeaders(
   accept: string,
   userAuthorization = "",
 ): Record<string, string> {
-  const authorization = provider.api_key
-    ? "Bearer " + provider.api_key
-    : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
+  const renderBackendFallback =
+    provider.name === "render-backend-fallback" ||
+    provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+    ? userAuthorization
+    : provider.api_key
+      ? "Bearer " + provider.api_key
+      : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
   return {
     "Content-Type": "application/json",
     "Accept": accept,

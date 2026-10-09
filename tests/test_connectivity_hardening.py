@@ -168,6 +168,9 @@ def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert 'idempotencyContext,\n            req.headers.get("authorization") || "",\n          );' in source
     assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
+    assert 'provider.name === "render-backend-fallback"' in source
+    assert 'provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/")' in source
+    assert 'const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
 def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers() -> None:
@@ -179,3 +182,6 @@ def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers
         assert 'host.endsWith(".wikipedia.org")' in source
         assert "edgeFilterSearchResults" in source
         assert "edgeProvidersForResults" in source
+        assert "provider: item.value.name" in source
+        if path.endswith("deep33-proxy/index.ts"):
+            assert 'results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider }))' in source

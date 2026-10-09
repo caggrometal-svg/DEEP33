@@ -412,9 +412,14 @@ function providerRequestHeaders(
   sessionId = "",
   idempotencyKey = "",
 ): Record<string, string> {
-  const authorization = provider.api_key
-    ? "Bearer " + provider.api_key
-    : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
+  const renderBackendFallback =
+    provider.name === "render-backend-fallback" ||
+    provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+    ? userAuthorization
+    : provider.api_key
+      ? "Bearer " + provider.api_key
+      : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
   return {
     "Content-Type": "application/json",
     "Accept": accept,
@@ -2380,7 +2385,7 @@ async function runPublicWebSearchQuery(query: string) {
       engine_version: "1.3.0",
       provider_independent: true,
       providers: providerNames,
-      results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result),
+      results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
         distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
