@@ -330,7 +330,5 @@ def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> No
     recovery = source.split("  recovery_gate:", 1)[1].split("  release_gate:", 1)[0]
     assert "for attempt in $(seq 1 3)" in recovery
     assert "RECOVERY_INFERENCE_NOT_READY attempt=$attempt" in recovery
-    assert (
-        ".online==true and .checks.MODEL==\\"PASS\\" and .checks.CHAT==\\"PASS\\""
-    ) in recovery
+    assert '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' in recovery
     assert 'test "$inference_ok" = "1"' in recovery
