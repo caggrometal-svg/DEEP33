@@ -388,7 +388,9 @@ async def _parse_bing_rss(response, max_results):
                 or item.findtext("{*}title")
                 or ""
             ).strip()
-            link_node = item.find("link") or item.find("{*}link")
+            link_node = item.find("link")
+            if link_node is None:
+                link_node = item.find("{*}link")
             url = ""
             if link_node is not None:
                 url = (link_node.text or link_node.attrib.get("href") or "").strip()
