@@ -453,15 +453,20 @@ jobs:
       - name: Verify PRIMARY real inference
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 120 "$PRIMARY_URL/v1/ai/diagnostics" >/tmp/diag.json
-          python - <<'PY'
-          import json
-          body=json.load(open("/tmp/diag.json"))
-          assert body["online"] is True, body
-          assert body["checks"]["MODEL"]=="PASS", body
-          assert body["checks"]["CHAT"]=="PASS", body
-          print("PRIMARY_INFERENCE_PASS", body["inference"])
-          PY
+          diagnostics_ok=0
+          for attempt in $(seq 1 3); do
+            status="$(curl -sS --connect-timeout 8 --max-time 60 -o /tmp/diag.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/diagnostics" || true)"
+            if [ "$status" = "200" ] && jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json >/dev/null 2>&1; then
+              diagnostics_ok=1
+              break
+            fi
+            echo "PRIMARY_INFERENCE_NOT_READY attempt=$attempt http=$status"
+            jq -c '{online,checks,inference,timestamp}' /tmp/diag.json 2>/dev/null || true
+            sleep 3
+          done
+          test "$diagnostics_ok" = "1" || { echo "PRIMARY_INFERENCE_FAIL"; cat /tmp/diag.json 2>/dev/null || true; exit 1; }
+          jq -c '{online,checks,inference}' /tmp/diag.json
+          echo "PRIMARY_INFERENCE_PASS"
 
 
       - name: Verify PRIMARY Hybrid Search + pgvector
