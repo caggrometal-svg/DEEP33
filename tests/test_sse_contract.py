@@ -17,3 +17,10 @@ def test_clean_eof_is_accepted():
     source = (ANDROID / "Deep33Api.kt").read_text(encoding="utf-8")
     assert "clean SSE termination" in source
     assert "if (!sawDone) throw Deep33ApiException" not in source
+
+def test_stream_does_not_fail_over_after_emitting_partial_text():
+    source = (ANDROID / "Deep33Api.kt").read_text(encoding="utf-8")
+    stream = source.split("    fun stream(", 1)[1].split("    fun cancelActiveStream(", 1)[0]
+    assert stream.count("emitted ||") == 3
+    assert "Deep33ApiException.Kind.AUTH &&\n                        !emitted &&" in stream
+    assert "partialOutput = true" in stream
