@@ -302,3 +302,16 @@ def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
     assert "leaseContext?.sessionId || sessionId || \"\"" in source
     assert source.count('req.headers.get("x-deep33-session-id") || ""') >= 2
     assert "sessionId," in source
+
+
+def test_country_scoped_news_search_rejects_unrelated_google_news_stories() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert (
+            'if (googleNewsStory) return !countryIntent || '
+            r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
+            '|| host.endsWith(".cl");'
+        ) in source
