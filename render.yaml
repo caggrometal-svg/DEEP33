@@ -18,13 +18,23 @@ services:
       - key: WEB_SEARCH_FALLBACK_DDG
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "6"
+        value: "3"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "12"
-      - key: WEB_SEARCH_PROVIDER_RETRIES
+        value: "5"
+      - key: WEB_SEARCH_PROVIDER
+        value: "auto"
+      - key: WEB_SEARCH_PARALLEL_PROVIDERS
+        value: "true"
+      - key: WEB_SEARCH_MAX_QUERIES
         value: "1"
+      - key: WEB_SEARCH_MAX_QUERY_FANOUT
+        value: "1"
+      - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
+        value: "2"
+      - key: WEB_SEARCH_PROVIDER_RETRIES
+        value: "0"
       - key: WEB_SEARCH_RETRY_BACKOFF_SECONDS
-        value: "0.2"
+        value: "0.1"
 
   - type: web
     name: deep33-backup
@@ -33,6 +43,31 @@ services:
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: DEEP33_WEB_TOOLS_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_PROVIDER
+        value: "auto"
+      - key: WEB_SEARCH_BING_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_FALLBACK_DDG
+        value: "true"
+      - key: WEB_SEARCH_PARALLEL_PROVIDERS
+        value: "true"
+      - key: WEB_SEARCH_TIMEOUT_SECONDS
+        value: "3"
+      - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
+        value: "5"
+      - key: WEB_SEARCH_MAX_QUERIES
+        value: "1"
+      - key: WEB_SEARCH_MAX_QUERY_FANOUT
+        value: "1"
+      - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
+        value: "2"
+      - key: WEB_SEARCH_PROVIDER_RETRIES
+        value: "0"
+      - key: WEB_SEARCH_RETRY_BACKOFF_SECONDS
+        value: "0.1"
 
   - type: web
     name: deep33-api
@@ -41,3 +76,28 @@ services:
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: DEEP33_WEB_TOOLS_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_PROVIDER
+        value: "auto"
+      - key: WEB_SEARCH_BING_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_FALLBACK_DDG
+        value: "true"
+      - key: WEB_SEARCH_PARALLEL_PROVIDERS
+        value: "true"
+      - key: WEB_SEARCH_TIMEOUT_SECONDS
+        value: "3"
+      - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
+        value: "5"
+      - key: WEB_SEARCH_MAX_QUERIES
+        value: "1"
+      - key: WEB_SEARCH_MAX_QUERY_FANOUT
+        value: "1"
+      - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
+        value: "2"
+      - key: WEB_SEARCH_PROVIDER_RETRIES
+        value: "0"
+      - key: WEB_SEARCH_RETRY_BACKOFF_SECONDS
+        value: "0.1"
