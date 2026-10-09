@@ -1302,6 +1302,7 @@ async function memoryCall(
     headers: {
       Authorization: "Bearer " + SUPABASE_SECRET_KEY,
       apikey: SUPABASE_SECRET_KEY,
+      "x-deep33-internal-token": SUPABASE_SECRET_KEY,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
