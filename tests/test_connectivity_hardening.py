@@ -200,11 +200,11 @@ def test_secondary_edge_idempotency_is_scoped_to_authenticated_owner() -> None:
         r"buildEdgeIdempotencyContext\(([\s\S]*?)\n\s*\);",
         source,
     )
-    assert len(idempotency_calls) == 3
-    assert all(
-        re.search(r"\bsessionId,\s+memoryProfileId,\s+idempotencyKey,", call)
+    assert len(idempotency_calls) == 4  # Builder declaration plus three calls.
+    assert sum(
+        bool(re.search(r"\bsessionId,\s+memoryProfileId,\s+idempotencyKey,", call))
         for call in idempotency_calls
-    )
+    ) == 3
 
 
 def test_production_e2e_requires_relevant_live_search_results() -> None:
