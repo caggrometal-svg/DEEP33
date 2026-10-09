@@ -642,7 +642,18 @@ async function callEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      if (Date.now() < circuit.openUntil) continue;
+      const criticalRenderFallback =
+        provider.name === "render-backend-fallback" ||
+        provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+        console.warn(JSON.stringify({
+          event: "edge_ai_provider_circuit_skip",
+          provider: provider.name,
+          request_id: requestId,
+          open_until: circuit.openUntil,
+        }));
+        continue;
+      }
 
       for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
         const started = performance.now();
@@ -830,7 +841,18 @@ async function streamEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      if (Date.now() < circuit.openUntil) continue;
+      const criticalRenderFallback =
+        provider.name === "render-backend-fallback" ||
+        provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+        console.warn(JSON.stringify({
+          event: "edge_ai_provider_circuit_skip",
+          provider: provider.name,
+          request_id: requestId,
+          open_until: circuit.openUntil,
+        }));
+        continue;
+      }
 
       for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
         const started = performance.now();
