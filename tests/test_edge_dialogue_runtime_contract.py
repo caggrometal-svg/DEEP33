@@ -46,3 +46,17 @@ def test_web_final_style_lock_reasserts_conversation_policy() -> None:
             'dialoguePolicyInstruction(enrichedMessages) +\n'
             '            " This conversation-control block is authoritative for response shape."'
         ) in source
+
+
+def test_edge_provider_fallback_url_is_declared_before_use() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        if "EDGE_AI_UPSTREAM_URL" in source:
+            assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";' in source
+
+
+def test_realtime_search_does_not_discard_all_undated_current_results() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);" in source
+        assert "googleNewsStory || publicationDateUnknown" in source

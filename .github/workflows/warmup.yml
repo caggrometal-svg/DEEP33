@@ -54,7 +54,7 @@ jobs:
                 last_ready="$(curl -sS --connect-timeout 8 --max-time 30 "$url/health" || true)"
                 if printf "%s" "$last_ready" | jq -e '.status=="PASS"' >/dev/null 2>&1; then ready=1; break; fi
               else
-                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$url/v1/web/status" || true)"
+                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$url/v1/web/status" || true)"
                 if printf "%s" "$last_ready" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then ready=1; break; fi
               fi
               echo "${name}_WARM_NOT_READY attempt=${attempt}"

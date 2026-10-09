@@ -2451,9 +2451,16 @@ function edgeFilterSearchResults(
   const currentNews = edgeCurrentNewsQuery(query);
   const liveItems = items.filter((item) => {
     try {
-      const host = new URL(String(item.url || "")).hostname.toLowerCase();
+      const parsedUrl = new URL(String(item.url || ""));
+      const host = parsedUrl.hostname.toLowerCase();
+      const googleNewsStory = host === "news.google.com" &&
+        parsedUrl.pathname.toLowerCase().startsWith("/rss/articles/");
+      const publishedAt = String(item.published_at ?? "").trim();
+      const publicationTimestamp = Date.parse(publishedAt);
+      const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
       return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org") &&
-        (!currentNews || hasRecentPublication(item.published_at, 7));
+        (!currentNews || hasRecentPublication(publishedAt, 7) ||
+          googleNewsStory || publicationDateUnknown);
     } catch {
       return false;
     }
