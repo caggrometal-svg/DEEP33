@@ -342,3 +342,13 @@ def test_production_gate_retries_transient_inference_failures() -> None:
     assert "PRIMARY_INFERENCE_NOT_READY attempt=$attempt" in production
     assert 'test "$diagnostics_ok" = "1"' in production
     assert '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' in production
+
+def test_release_gate_requests_workflow_write_permission() -> None:
+    source = read(".github/workflows/ci.yml")
+    release = source.split("  release_gate:", 1)[1].split(
+        "# Full certification trigger", 1
+    )[0]
+    permissions = release.split("    runs-on:", 1)[0]
+    assert "      contents: write" in permissions
+    assert "      actions: write" in permissions
+    assert "      workflows: write" in permissions
