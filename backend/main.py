@@ -3099,6 +3099,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         for message in request.messages
         if message.role in {"user", "assistant"}
     ]
+    skip_web_tools = (
+        http_request.headers.get("x-deep33-skip-web-tools", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     weather_task = (
         asyncio.create_task(
             resolve_gps_weather(
@@ -3106,7 +3110,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             )
         )
-        if DEEP33_WEB_TOOLS_ENABLED and is_weather_query(latest_user_query(raw_messages))
+        if DEEP33_WEB_TOOLS_ENABLED
+        and not skip_web_tools
+        and is_weather_query(latest_user_query(raw_messages))
         else None
     )
     try:
@@ -3160,7 +3166,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     )
 
     try:
-        if DEEP33_WEB_TOOLS_ENABLED and (
+        if not skip_web_tools and DEEP33_WEB_TOOLS_ENABLED and (
             should_force_web(messages) or should_deep_web(messages, personality)
         ):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)

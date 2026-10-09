@@ -333,3 +333,42 @@ def test_personality_catalog() -> None:
         "COMICO",
         "CONSPIRANOICO",
     ]
+
+def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
+    patch_memory(monkeypatch)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    async def fake_prepare_messages(request, session_id, memory_profile_id=None, request_id=None):
+        return ([{"role": "user", "content": "noticias de hoy"}], "NEUTRO")
+
+    monkeypatch.setattr(main, "prepare_messages", fake_prepare_messages)
+    web_called = {"value": False}
+
+    async def reject_nested_web_search(*args, **kwargs):
+        web_called["value"] = True
+        raise AssertionError("Render fallback must not start a second web search")
+
+    monkeypatch.setattr(main, "prepare_web_evidence", reject_nested_web_search)
+
+    async def fake_stream_gateway(payload, session_id, personality, **kwargs):
+        completion_state = kwargs.get("completion_state")
+        if completion_state is not None:
+            completion_state["assistant_text"] = "Respuesta directa"
+        yield b'data: {"choices":[{"delta":{"content":"Respuesta directa"}}]}\\n\\n'
+        yield b"data: [DONE]\\n\\n"
+
+    monkeypatch.setattr(main, "stream_gateway", fake_stream_gateway)
+    response = client.post(
+        "/v1/chat/stream",
+        json={"messages": [{"role": "user", "content": "noticias de hoy"}]},
+        headers={
+            "X-DEEP33-Session-Id": "test-stream-skip-web",
+            "X-DEEP33-Skip-Web-Tools": "true",
+            "X-Request-ID": "test-stream-skip-web-request",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "data: [DONE]" in response.text
+    assert web_called["value"] is False
+
