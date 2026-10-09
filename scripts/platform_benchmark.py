@@ -62,6 +62,12 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "statuses": statuses,
         "p50_ms": percentile(times, 0.50),
         "p95_ms": percentile(times, 0.95),
+        "first_content_p50_ms": percentile(
+            [float(row["first_content_ms"]) for row in rows
+             if row.get("first_content_ms") is not None], 0.50),
+        "first_content_p95_ms": percentile(
+            [float(row["first_content_ms"]) for row in rows
+             if row.get("first_content_ms") is not None], 0.95),
         "max_ms": round(max(times), 2) if times else None,
         "raw": rows,
     }
@@ -268,8 +274,18 @@ def main() -> int:
 
     fault_url = os.getenv("DEEP33_BENCH_FAULT_URL", "").strip().rstrip("/")
     if fault_url:
-        # The URL must point to a separate, staging-only instance with an
-        # intentionally invalid AI_GATEWAY_API_KEY. Do not use a prod URL here.
+        # Fault injection must target a separate origin to protect live services.
+        fault_host = urllib.parse.urlsplit(fault_url).netloc.lower()
+        production_hosts = {
+            urllib.parse.urlsplit(url).netloc.lower()
+            for url in targets.values() if url
+        }
+        if not fault_host or fault_host in production_hosts:
+            raise RuntimeError(
+                "DEEP33_BENCH_FAULT_URL must be a separate staging origin, "
+                "not either comparison target"
+            )
+        # Configure this isolated instance with an intentionally invalid AI_GATEWAY_API_KEY.
         token, profile = make_session("railway-fault")
         failed = request(
             "POST",
