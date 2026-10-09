@@ -73,8 +73,26 @@ jobs:
           for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
-            curl -fsS --connect-timeout 8 --max-time 30 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/health" | jq -e '.status=="PASS"' >/dev/null
-            curl -fsS --connect-timeout 8 --max-time 45 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            node_ready=0
+            last_health_code=0
+            last_ready_code=0
+            for attempt in $(seq 1 12); do
+              last_health_code="$(curl -sS --connect-timeout 8 --max-time 30 -o "/tmp/${name,,}-health.json" -w "%{http_code}" -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/health" || true)"
+              if [ "$last_health_code" = "200" ] && jq -e '.status=="PASS"' "/tmp/${name,,}-health.json" >/dev/null 2>&1; then
+                last_ready_code="$(curl -sS --connect-timeout 8 --max-time 45 -o "/tmp/${name,,}-ready.json" -w "%{http_code}" -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$url/ready" || true)"
+                if [ "$last_ready_code" = "200" ] && jq -e '.status=="PASS" and .ready==true' "/tmp/${name,,}-ready.json" >/dev/null 2>&1; then
+                  node_ready=1
+                  break
+                fi
+              fi
+              echo "${name}_PRODUCTION_NODE_NOT_READY attempt=$attempt health_http=$last_health_code ready_http=$last_ready_code"
+              sleep 10
+            done
+            if [ "$node_ready" != "1" ]; then
+              echo "${name}_PRODUCTION_NODE_FAIL"
+              cat "/tmp/${name,,}-health.json" "/tmp/${name,,}-ready.json" 2>/dev/null || true
+              exit 1
+            fi
             echo "${name}_PRODUCTION_NODE_PASS"
           done
           test "$PRIMARY_URL" != "$SECONDARY_URL"
