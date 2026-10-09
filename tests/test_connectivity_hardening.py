@@ -189,3 +189,26 @@ def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers
         assert "genericLandingPage" in source
         if path.endswith("deep33-proxy/index.ts"):
             assert 'results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider }))' in source
+
+
+def test_secondary_edge_idempotency_is_scoped_to_authenticated_owner() -> None:
+    source = read("supabase/functions/deep33-tertiary/index.ts")
+    assert "memory_profile_id: context.memoryProfileId" in source
+    assert "owner_user_id: context.memoryProfileId" in source
+    assert "memoryProfileId: string;" in source
+    idempotency_calls = re.findall(
+        r"buildEdgeIdempotencyContext\(([\s\S]*?)\n\s*\);",
+        source,
+    )
+    assert len(idempotency_calls) == 3
+    assert all(
+        re.search(r"\bsessionId,\s+memoryProfileId,\s+idempotencyKey,", call)
+        for call in idempotency_calls
+    )
+
+
+def test_production_e2e_requires_relevant_live_search_results() -> None:
+    source = read(".github/workflows/production-e2e.yml")
+    assert '.checks.INTERNET=="PASS"' in source
+    assert '.checks.DNS=="PASS"' in source
+    assert source.count("(.search.verification.relevant_results // 0) >= 1") == 2

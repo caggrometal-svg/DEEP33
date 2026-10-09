@@ -108,7 +108,7 @@ jobs:
           for attempt in $(seq 1 5); do
             echo "DEEP33_EDGE_AUDIT_ATTEMPT=$attempt"
             curl -sS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" -o /tmp/audit.json || true
-            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null 2>&1; then
+            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true and (.search.results|length)>=1 and (.search.verification.relevant_results // 0) >= 1' /tmp/audit.json >/dev/null 2>&1; then
               audit_ok=1
               break
             fi
@@ -130,7 +130,7 @@ jobs:
           audit_ok=0
           for attempt in $(seq 1 3); do
             curl -sS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" -o /tmp/audit-recheck.json || true
-            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true' /tmp/audit-recheck.json >/dev/null 2>&1; then
+            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true and (.search.results|length)>=1 and (.search.verification.relevant_results // 0) >= 1' /tmp/audit-recheck.json >/dev/null 2>&1; then
               audit_ok=1
               break
             fi
