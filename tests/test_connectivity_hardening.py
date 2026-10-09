@@ -269,3 +269,16 @@ def test_secondary_edge_render_fallback_supports_streaming() -> None:
     assert 'fetch(provider.stream_url || provider.url, {' in source
     assert 'const stream_url = String(value.stream_url || url).trim();' in source
     assert 'if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url)' in source
+
+def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None:
+    primary = read("supabase/functions/deep33-proxy/index.ts")
+    secondary = read("supabase/functions/deep33-tertiary/index.ts")
+    for source in (primary, secondary):
+        assert '"X-DEEP33-Session-Id": sessionId' in source
+        assert '"X-Idempotency-Key": idempotencyKey' in source
+        assert '"X-DEEP33-Skip-Web-Tools": "true"' in source
+    assert 'leaseContext?.sessionId || sessionId' in secondary
+    assert 'idempotencyContext?.sessionId || ""' in secondary
+    assert 'leaseContext?.sessionId || ""' in primary
+    assert 'leaseContext?.idempotencyKey || ""' in primary
+    assert 'requestId + "-stream-fallback"' in primary

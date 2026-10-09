@@ -348,6 +348,8 @@ function providerRequestHeaders(
   requestId: string,
   accept: string,
   userAuthorization = "",
+  sessionId = "",
+  idempotencyKey = "",
 ): Record<string, string> {
   const renderBackendFallback =
     provider.name === "render-backend-fallback" ||
@@ -361,7 +363,10 @@ function providerRequestHeaders(
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
+    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
     "X-Request-ID": requestId,
+    ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
+    ...(idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {}),
   };
 }
 
@@ -614,6 +619,7 @@ async function callEdgeAI(
   requestId: string,
   idempotencyContext: EdgeIdempotencyContext | null = null,
   userAuthorization = "",
+  sessionId = "",
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -646,7 +652,14 @@ async function callEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "application/json", userAuthorization),
+            headers: providerRequestHeaders(
+              provider,
+              requestId,
+              "application/json",
+              userAuthorization,
+              leaseContext?.sessionId || sessionId,
+              leaseContext?.idempotencyKey || "",
+            ),
             body: JSON.stringify({
               ...providerPayload(payload, false),
               ...(provider.model ? { model: provider.model } : {}),
@@ -837,7 +850,14 @@ async function streamEdgeAI(
         try {
           const response = await fetch(provider.stream_url || provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "text/event-stream", userAuthorization),
+            headers: providerRequestHeaders(
+              provider,
+              requestId,
+              "text/event-stream",
+              userAuthorization,
+              idempotencyContext?.sessionId || "",
+              idempotencyContext?.idempotencyKey || "",
+            ),
             body: JSON.stringify({
               ...providerPayload(payload, true),
               ...(provider.model ? { model: provider.model } : {}),
@@ -2793,7 +2813,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId, null, req.headers.get("authorization") || "");
+        }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
         const text = extractProviderText(response.body);
         const ok = text === "DEEP33_DIAGNOSTIC_OK";
         return json({
@@ -2836,7 +2856,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId, null, req.headers.get("authorization") || "");
+        }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
         const text = extractProviderText(response.body);
         inference = {
           status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",

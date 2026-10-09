@@ -801,6 +801,8 @@ async function callEdgeAI(
                   requestId,
                   provider,
                   userAuthorization,
+                  leaseContext?.sessionId || "",
+                  leaseContext?.idempotencyKey || "",
                 );
                 const fallbackText = extractProviderText(fallback.body);
                 if (fallbackText.trim()) {
@@ -911,6 +913,8 @@ async function completeViaStreamFallback(
   requestId: string,
   provider: EdgeAIProvider,
   userAuthorization = "",
+  sessionId = "",
+  idempotencyKey = "",
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   if (!provider.stream_url) {
     throw new Error(provider.name + "_STREAM_FALLBACK_UNAVAILABLE");
@@ -930,6 +934,8 @@ async function completeViaStreamFallback(
         requestId + "-stream-fallback",
         "text/event-stream",
         userAuthorization,
+        sessionId,
+        idempotencyKey,
       ),
       body: JSON.stringify({
         ...providerPayload(payload, true),
