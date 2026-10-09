@@ -332,3 +332,15 @@ def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> No
     assert "RECOVERY_INFERENCE_NOT_READY attempt=$attempt" in recovery
     assert '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' in recovery
     assert 'test "$inference_ok" = "1"' in recovery
+
+
+def test_production_gate_retries_transient_inference_failures() -> None:
+    source = read(".github/workflows/ci.yml")
+    production = source.split("  production_gate:", 1)[1].split(
+        "  android_e2e:", 1
+    )[0]
+    assert "PRIMARY_INFERENCE_NOT_READY attempt=$attempt" in production
+    assert 'test "$diagnostics_ok" = "1"' in production
+    assert (
+        '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS'
+    ) in production
