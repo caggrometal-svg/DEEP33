@@ -241,3 +241,15 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "DEEP33_RELEASE_BLOCKED" in release
     assert 'DEEP33_ANDROID_E2E_RESULT: ${{ needs.android_e2e.result }}' in release
 
+def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
+    source = read("supabase/functions/deep33-tertiary/index.ts")
+    providers = source.split("function edgeProviders()", 1)[1].split(
+        "\nfunction edgeAIConfigured()", 1
+    )[0]
+    assert 'name: "render-backend-fallback"' in providers
+    assert 'url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate"' in providers
+    assert 'model: "kilo-auto/small"' in providers
+    assert "requires_auth: true" in providers
+    assert 'provider.name === "render-backend-fallback"' in source
+    assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com"' in source
+

@@ -253,6 +253,18 @@ function edgeProviders(): EdgeAIProvider[] {
       // Optional fallback configuration is non-fatal.
     }
   }
+  // Keep secondary real inference available when the configured/public providers
+  // reject the request or are temporarily unreachable, matching primary failover.
+  if (!providers.some((provider) => provider.name === "render-backend-fallback")) {
+    providers.push({
+      name: "render-backend-fallback",
+      url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
+      api_key: "",
+      model: "kilo-auto/small",
+      requires_auth: true,
+    });
+  }
+
   const publicFallbacksDisabled =
     (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
   if (!publicFallbacksDisabled) {
