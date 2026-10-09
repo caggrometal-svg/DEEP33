@@ -35,7 +35,7 @@ jobs:
             echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$GITHUB_SHA"
             exit 1
           }
-          python -m pip install --disable-pip-version-check --no-input pytest==8.4.1
+          python -m pip install --disable-pip-version-check --no-input -r backend/requirements.txt
           python -m pytest tests/test_connectivity_hardening.py -q
           echo "APK_CERTIFICATION_GATE_PASS"
 

@@ -80,7 +80,7 @@ jobs:
             exit 1
           }
           echo "RELEASE_CERTIFIED $certified"
-          python -m pip install --disable-pip-version-check --no-input pytest==8.4.1
+          python -m pip install --disable-pip-version-check --no-input -r backend/requirements.txt
           python -m pytest tests/test_connectivity_hardening.py -q
           echo "RELEASE_CERTIFICATION_GATE_PASS"
 
