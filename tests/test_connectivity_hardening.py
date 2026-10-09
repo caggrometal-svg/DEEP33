@@ -183,5 +183,9 @@ def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers
         assert "edgeFilterSearchResults" in source
         assert "edgeProvidersForResults" in source
         assert "provider: item.value.name" in source
+        assert "function rssText(itemXml: string, tag: string)" in source
+        assert "function hasRecentPublication(value: unknown, maxAgeDays = 7)" in source
+        assert 'path.startsWith("/rss/articles/")' in source
+        assert "genericLandingPage" in source
         if path.endswith("deep33-proxy/index.ts"):
             assert 'results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider }))' in source

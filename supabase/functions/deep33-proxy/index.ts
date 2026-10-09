@@ -2204,6 +2204,27 @@ function decodeHtml(value: string): string {
     });
 }
 
+function rssText(itemXml: string, tag: string): string {
+  const match = itemXml.match(new RegExp("<" + tag + "\\b[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "i"));
+  if (!match) return "";
+  return decodeHtml(String(match[1] ?? "")
+    .replace(/^\s*<!\[CDATA\[/i, "")
+    .replace(/\]\]>\s*$/, "")
+    .replace(/<[^>]*>/g, " ")
+    .trim());
+}
+
+function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
+  const timestamp = Date.parse(String(value ?? "").trim());
+  if (!Number.isFinite(timestamp)) return false;
+  const ageMs = Date.now() - timestamp;
+  return ageMs >= -60 * 60 * 1000 && ageMs <= maxAgeDays * 24 * 60 * 60 * 1000;
+}
+
+function edgeCurrentNewsQuery(query: string): boolean {
+  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra)\b/i.test(query);
+}
+
 async function runPublicWebSearchQuery(query: string) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
@@ -2265,24 +2286,15 @@ async function runPublicWebSearchQuery(query: string) {
     const html = await response.text();
     const results: Array<Record<string, string>> = [];
 
-    if (provider.name === "google_news_public") {
-      const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?(?:<pubDate>([\s\S]*?)<\/pubDate>)?[\s\S]*?<\/item>/gi)];
+    if (provider.name === "google_news_public" || provider.name === "bing_public") {
+      const items = [...html.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)];
       for (const item of items.slice(0, 8)) {
-        const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
-        const url = decodeHtml(String(item[2] ?? "").trim());
-        const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
-        const published_at = decodeHtml(String(item[4] ?? "").trim());
-        if (title && /^https?:\/\//i.test(url)) {
-          results.push({ title, url, snippet, published_at });
-        }
-      }
-    } else if (provider.name === "bing_public") {
-      const items = [...html.matchAll(/<item>[\s\S]*?<title>([\s\S]*?)<\/title>[\s\S]*?<link>([\s\S]*?)<\/link>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<\/item>/gi)];
-      for (const item of items.slice(0, 8)) {
-        const title = decodeHtml(String(item[1] ?? "").replace(/<[^>]*>/g, "").trim());
-        const url = decodeHtml(String(item[2] ?? "").trim());
-        const snippet = decodeHtml(String(item[3] ?? "").replace(/<[^>]*>/g, "").trim());
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet });
+        const itemXml = String(item[1] ?? "");
+        const title = rssText(itemXml, "title");
+        const url = rssText(itemXml, "link");
+        const snippet = rssText(itemXml, "description");
+        const published_at = rssText(itemXml, "pubDate");
+        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -2436,10 +2448,12 @@ function edgeFilterSearchResults(
   realtime: boolean,
 ): Array<Record<string, unknown>> {
   if (!realtime) return items;
+  const currentNews = edgeCurrentNewsQuery(query);
   const liveItems = items.filter((item) => {
     try {
       const host = new URL(String(item.url || "")).hostname.toLowerCase();
-      return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org");
+      return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org") &&
+        (!currentNews || hasRecentPublication(item.published_at, 7));
     } catch {
       return false;
     }
@@ -2449,7 +2463,27 @@ function edgeFilterSearchResults(
       .filter((token) => !EDGE_REALTIME_FILLERS.has(token)),
   );
   if ([...tokens].some((token) => token !== "chile")) tokens.delete("chile");
-  if (!tokens.size) return liveItems;
+  if (!tokens.size) {
+    if (!currentNews) return liveItems;
+    const countryIntent = /\bchile\b/i.test(query);
+    return liveItems.filter((item) => {
+      const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
+      let parsed: URL;
+      try { parsed = new URL(String(item.url || "")); } catch { return false; }
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const googleNewsStory = host === "news.google.com" && path.startsWith("/rss/articles/");
+      const genericLandingPage = path === "/" ||
+        /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
+      if (genericLandingPage) return false;
+      if (googleNewsStory) return true;
+      const hasNewsEvidence = /\b(?:noticia|noticias|actualidad|última hora|ultima hora|news|breaking|emergencia|alerta|incidente|aluvión|aluvion|santiago|las condes)\b/i.test(evidence);
+      if (!hasNewsEvidence) return false;
+      if (!countryIntent) return true;
+      return /\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) ||
+        host.endsWith(".cl");
+    });
+  }
   const requiredHits = Math.min(2, tokens.size);
   return liveItems.filter((item) => {
     const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
