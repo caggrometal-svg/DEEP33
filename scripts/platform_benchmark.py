@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import statistics
 import sys
 import time
 import urllib.error
@@ -140,30 +139,24 @@ def make_session(target_name: str) -> tuple[str, str]:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required")
     profile = f"benchmark-{target_name}-{uuid.uuid4().hex}"
-    response = request(
-        "POST",
-        f"{SUPABASE_URL}/functions/v1/deep33-auth",
-        headers={"apikey": SUPABASE_KEY},
-        payload={"action": "session", "memory_profile_id": profile},
-    )
-    if response.get("status") != 200:
-        raise RuntimeError(
-            f"Could not create benchmark auth session (HTTP {response.get('status')})"
-        )
-    # Auth response is re-fetched directly so tokens are not added to the report.
-    body = json.dumps({"action": "session", "memory_profile_id": profile}).encode()
+    body = json.dumps({"action": "session", "memory_profile_id": profile}).encode("utf-8")
     req = urllib.request.Request(
         f"{SUPABASE_URL}/functions/v1/deep33-auth",
         data=body,
         headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-        token = json.loads(resp.read().decode("utf-8")).get("access_token", "")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Auth session creation failed (HTTP {resp.status})")
+            auth_body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Auth session creation failed (HTTP {exc.code})") from None
+    token = auth_body.get("access_token", "")
     if not token:
         raise RuntimeError("Auth endpoint did not return an access_token")
     return token, profile
-
 
 def auth_headers(token: str, label: str) -> dict[str, str]:
     return {
