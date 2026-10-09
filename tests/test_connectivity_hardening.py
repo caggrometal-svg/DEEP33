@@ -341,6 +341,4 @@ def test_production_gate_retries_transient_inference_failures() -> None:
     )[0]
     assert "PRIMARY_INFERENCE_NOT_READY attempt=$attempt" in production
     assert 'test "$diagnostics_ok" = "1"' in production
-    assert (
-        '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS'
-    ) in production
+    assert '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' in production
