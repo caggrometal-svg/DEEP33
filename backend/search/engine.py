@@ -600,36 +600,87 @@ class SearchEngine:
                     successful.append((name, results))
             return successful, errors, attempted
 
-        if plan_depth in {"deep", "realtime"}:
-            # Deep/realtime requests require evidence relevant to the requested
-            # entity. Realtime also requires independent-provider corroboration
-            # whenever more than one provider is configured.
+        if plan_depth == "realtime":
+            # Realtime answers must not be held hostage by a dead secondary
+            # provider. Accept one relevant provider and give other providers a
+            # short corroboration window before cancelling stragglers.
+            if not providers:
+                return successful, errors, attempted
+            pending = {
+                asyncio.create_task(call(name))
+                for name in providers
+            }
+            has_relevant = False
+
+            def record_provider_result(task: asyncio.Task) -> bool:
+                nonlocal has_relevant
+                name, results, provider_errors = task.result()
+                attempted.append(name)
+                errors.extend(provider_errors)
+                relevant_results = rank_results(
+                    planned_query,
+                    results,
+                    realtime=True,
+                )
+                if relevant_results:
+                    successful.append((name, results))
+                    has_relevant = True
+                elif results:
+                    errors.append(f"{name}:no_relevant_results:{len(results)}")
+                elif not provider_errors:
+                    errors.append(f"{name}:no_results")
+                return bool(relevant_results)
+
+            try:
+                while pending:
+                    done, pending = await asyncio.wait(
+                        pending,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in done:
+                        record_provider_result(task)
+                    if has_relevant:
+                        if pending:
+                            more_done, pending = await asyncio.wait(
+                                pending,
+                                timeout=REALTIME_CORROBORATION_WINDOW_SECONDS,
+                            )
+                            for task in more_done:
+                                record_provider_result(task)
+                        break
+            finally:
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+            return successful, errors, attempted
+
+        if plan_depth == "deep":
+            # Deep research continues to require independent evidence when
+            # several providers are configured; realtime is handled above with
+            # a bounded corroboration window.
             if not providers:
                 return successful, errors, attempted
             tasks = [asyncio.create_task(call(name)) for name in providers]
             provider_results = 0
             total_relevant_results = 0
             min_provider_successes = 1 if len(providers) == 1 else 2
-            required_results = (
-                min(3, self.max_results)
-                if plan_depth == "deep"
-                else min(MIN_VERIFIED_RESULTS, self.max_results)
-            )
+            required_results = min(3, self.max_results)
             try:
                 for task in asyncio.as_completed(tasks):
                     name, results, provider_errors = await task
                     attempted.append(name)
                     errors.extend(provider_errors)
-                    relevant_results = rank_results(
-                        planned_query,
-                        results,
-                        realtime=plan_depth == "realtime",
-                    )
+                    relevant_results = rank_results(planned_query, results)
                     if relevant_results:
                         successful.append((name, results))
                         provider_results += 1
                         total_relevant_results += len(relevant_results)
-
+                    elif results:
+                        errors.append(f"{name}:no_relevant_results:{len(results)}")
+                    elif not provider_errors:
+                        errors.append(f"{name}:no_results")
                     if (
                         provider_results >= min_provider_successes
                         and total_relevant_results >= required_results

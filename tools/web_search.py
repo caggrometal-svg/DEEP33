@@ -376,13 +376,41 @@ async def _parse_bing_rss(response, max_results):
         from xml.etree import ElementTree
 
         root = ElementTree.fromstring(response.text)
+        items = (
+            root.findall(".//item")
+            or root.findall(".//{*}item")
+            or root.findall(".//{*}entry")
+        )
         rss_results = []
-        for item in root.findall(".//item"):
-            title = item.findtext("title") or ""
-            url = item.findtext("link") or ""
-            snippet = item.findtext("description") or ""
-            rss_results.append({"title": title, "url": url, "snippet": snippet})
-        return _normalise_results(rss_results, max_results)
+        for item in items:
+            title = (
+                item.findtext("title")
+                or item.findtext("{*}title")
+                or ""
+            ).strip()
+            link_node = item.find("link") or item.find("{*}link")
+            url = ""
+            if link_node is not None:
+                url = (link_node.text or link_node.attrib.get("href") or "").strip()
+            snippet = (
+                item.findtext("description")
+                or item.findtext("{*}description")
+                or item.findtext("{*}summary")
+                or item.findtext("{*}content")
+                or ""
+            ).strip()
+            if title and url:
+                rss_results.append({"title": title, "url": url, "snippet": snippet})
+        normalized = _normalise_results(rss_results, max_results)
+        if not normalized:
+            root_name = str(root.tag).rsplit("}", 1)[-1].lower()
+            if root_name not in {"rss", "feed", "rdf"}:
+                raise WebSearchError(
+                    f"WEB_SEARCH_BING_RSS_UNEXPECTED_ROOT:{root_name[:50]}"
+                )
+        return normalized
+    except WebSearchError:
+        raise
     except Exception as exc:
         raise WebSearchError("WEB_SEARCH_BING_RSS_INVALID_RESPONSE") from exc
 

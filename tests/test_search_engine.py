@@ -520,6 +520,47 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["verification"]["distinct_providers"] == 2
 
 
+def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch):
+    import backend.search.engine as module
+
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setattr(module, "REALTIME_CORROBORATION_WINDOW_SECONDS", 0.03)
+
+    cancelled = {"ddg": False}
+
+    async def fast_bing(query, timeout_seconds, max_results):
+        return [{
+            "title": "Las Condes: alertas locales publicadas hoy",
+            "url": "https://news.example/las-condes/alertas-hoy",
+            "snippet": "Actualización local con información municipal.",
+        }]
+
+    async def hanging_ddg(query, timeout_seconds, max_results):
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled["ddg"] = True
+            raise
+
+    monkeypatch.setattr("tools.web_search._bing_search", fast_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", hanging_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5, max_queries=1).search(
+            "situación actual de la comuna de Las Condes en Chile",
+            provider="auto",
+            api_key="",
+            timeout_seconds=3,
+            fallback_ddg=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"
+    assert "bing" in result["providers"]
+    assert cancelled["ddg"] is True
+
+
 def test_realtime_locality_anchor_can_be_found_in_destination_url_path():
     ranked = rank_results(
         "situación actual de la comuna de Las Condes en Chile",
