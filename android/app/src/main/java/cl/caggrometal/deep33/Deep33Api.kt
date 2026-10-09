@@ -75,6 +75,8 @@ object Deep33Api {
     private fun refreshAuthorizationToken(): Boolean =
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
+    private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
@@ -294,8 +296,8 @@ object Deep33Api {
 
                 try {
                     connection.requestMethod = "POST"
-                    connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
-                    connection.readTimeout = remainingMs.toInt()
+                    connection.connectTimeout = minOf(STREAM_CONNECT_TIMEOUT_MS.toLong(), remainingMs).toInt()
+                    connection.readTimeout = minOf(STREAM_FIRST_TEXT_TIMEOUT_MS.toLong(), remainingMs).toInt()
                     connection.useCaches = false
                     connection.doInput = true
                     connection.doOutput = true
@@ -372,6 +374,11 @@ object Deep33Api {
                             }
                             val chunk = SseTextParser.extractText(data).orEmpty()
                             if (chunk.isNotEmpty()) {
+                                if (!emitted) {
+                                    val remainingAfterFirstTextMs =
+                                        ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                                    connection.readTimeout = minOf(remainingAfterFirstTextMs, Int.MAX_VALUE.toLong()).toInt()
+                                }
                                 emitted = true
                                 output.append(chunk)
                                 onText(chunk)
