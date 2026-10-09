@@ -1,9 +1,11 @@
 package cl.caggrometal.deep33
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetAddress
@@ -15,6 +17,14 @@ import java.util.UUID
 class Deep33ConnectivityTest {
     private val baseUrl = BuildConfig.DEEP33_PRIMARY_URL
     private val sessionId = "android-e2e-" + UUID.randomUUID()
+
+    @Before
+    fun configureAuthenticatedApi() {
+        // Instrumentation tests call Deep33Api directly without launching MainActivity.
+        // Configure the per-profile auth manager so all production endpoints receive a JWT.
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        Deep33Api.configureAuth(context)
+    }
 
     @Test
     fun allFailoverEndpointHostsResolveInsideAndroid() {
