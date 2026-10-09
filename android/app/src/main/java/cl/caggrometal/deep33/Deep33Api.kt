@@ -385,6 +385,7 @@ object Deep33Api {
                     lastError = e
                     if (
                         e.kind == Deep33ApiException.Kind.AUTH &&
+                        !emitted &&
                         !authRetryUsed &&
                         refreshAuthorizationToken()
                     ) {
@@ -393,6 +394,7 @@ object Deep33Api {
                         continue
                     }
                     if (
+                        emitted ||
                         e.kind == Deep33ApiException.Kind.CANCELLED ||
                         !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, e.kind, idempotentRequest = true)
                     ) {
@@ -405,7 +407,7 @@ object Deep33Api {
                     if (attempt >= ENDPOINT_ATTEMPTS) break
                 } catch (e: SocketTimeoutException) {
                     lastError = Deep33ApiException(Deep33ApiException.Kind.TIMEOUT, cause = e)
-                    if (!Deep33FailoverPolicy.canFailover(
+                    if (emitted || !Deep33FailoverPolicy.canFailover(
                             "POST",
                             requestBodyStarted,
                             Deep33ApiException.Kind.TIMEOUT,
@@ -430,6 +432,7 @@ object Deep33Api {
                         Deep33ApiException(Deep33ApiException.Kind.NETWORK, cause = e)
                     }
                     if (
+                        emitted ||
                         lastError.kind == Deep33ApiException.Kind.CANCELLED ||
                         !Deep33FailoverPolicy.canFailover("POST", requestBodyStarted, lastError.kind, idempotentRequest = true)
                     ) {
