@@ -70,3 +70,15 @@ def test_current_date_time_search_has_targeted_clock_sources() -> None:
         assert "site:time.is/Santiago" in source
         assert "if (edgeCurrentDateTimeQuery(query)) {" in source
         assert "timeAndDateSantiago || timeIsSantiago" in source
+
+
+def test_empty_current_date_time_search_has_live_verified_clock_fallback() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "async function runCurrentDateTimeSourceFallback(" in source
+        assert 'url: "https://www.timeanddate.com/worldclock/chile/santiago"' in source
+        assert 'url: "https://time.is/Santiago"' in source
+        assert "if (!finalResults.length && edgeCurrentDateTimeQuery(plan.original)) {" in source or \
+               "if (!results.length && edgeCurrentDateTimeQuery(plan.original)) {" in source
+        assert "if (!response.ok) return null;" in source
+        assert "if (!trustedClockPath) return null;" in source

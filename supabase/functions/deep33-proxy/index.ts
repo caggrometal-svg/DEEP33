@@ -2622,6 +2622,65 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
           ];
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
+async function runCurrentDateTimeSourceFallback(
+  query: string,
+): Promise<Array<Record<string, string>>> {
+  if (!edgeCurrentDateTimeQuery(query)) return [];
+  const sources = [
+    {
+      provider: "timeanddate_clock",
+      url: "https://www.timeanddate.com/worldclock/chile/santiago",
+      kind: "timeanddate",
+    },
+    {
+      provider: "time_is_clock",
+      url: "https://time.is/Santiago",
+      kind: "time-is",
+    },
+  ];
+  const settled = await Promise.allSettled(sources.map(async (source) => {
+    const response = await fetch(source.url, {
+      headers: {
+        "User-Agent": "DEEP33-EdgeSearch/1.3",
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!response.ok) return null;
+    const canonicalUrl = response.url || source.url;
+    const parsed = new URL(canonicalUrl);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const trustedClockPath = source.kind === "timeanddate"
+      ? (host === "timeanddate.com" || host.endsWith(".timeanddate.com")) &&
+        path.startsWith("/worldclock/chile/santiago")
+      : (host === "time.is" || host === "www.time.is") &&
+        path.startsWith("/santiago");
+    if (!trustedClockPath) return null;
+
+    const html = await response.text();
+    const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    const title = decodeHtml(String(titleMatch?.[1] ?? "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim());
+    if (!title || !/(?:current|local|time|clock|santiago|chile)/i.test(title)) {
+      return null;
+    }
+    return {
+      title: title.slice(0, 300),
+      url: parsed.href,
+      snippet: "",
+      provider: source.provider,
+      domain: host,
+    };
+  }));
+  return settled.flatMap((result) =>
+    result.status === "fulfilled" && result.value ? [result.value] : []
+  );
+}
+
 async function publicWebSearchUncached(
   query: string,
   plan = edgeSearchQueries(query),
@@ -2650,7 +2709,15 @@ async function publicWebSearchUncached(
       if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
     }
   }
-  const finalResults = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+  let finalResults = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+  if (!finalResults.length && edgeCurrentDateTimeQuery(plan.original)) {
+    const clockResults = await runCurrentDateTimeSourceFallback(plan.original);
+    finalResults = edgeFilterSearchResults(
+      plan.original,
+      [...merged.values(), ...clockResults],
+      plan.depth === "realtime",
+    ).slice(0, 8);
+  }
   const providerNames = edgeProvidersForResults(finalResults);
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
