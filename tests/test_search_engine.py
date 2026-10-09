@@ -518,3 +518,64 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert len(result["queries"]) == 3
     assert len(result["providers"]) == 2
     assert result["verification"]["distinct_providers"] == 2
+
+
+def test_realtime_locality_anchor_can_be_found_in_destination_url_path():
+    ranked = rank_results(
+        "situación actual de la comuna de Las Condes en Chile",
+        [
+            {
+                "title": "Alertas locales publicadas hoy",
+                "url": "https://news.example/las-condes/alertas-hoy",
+                "snippet": "Actualización local con información municipal.",
+            },
+            {
+                "title": "Actualización del sistema operativo",
+                "url": "https://tech.example/windows",
+                "snippet": "Noticias de tecnología publicadas hoy.",
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["url"] for item in ranked] == [
+        "https://news.example/las-condes/alertas-hoy"
+    ]
+
+
+def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
+    from datetime import datetime, timezone
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        if query.startswith("Las Condes Chile noticias hoy "):
+            return [
+                {
+                    "title": "Alertas locales publicadas hoy",
+                    "url": "https://news.example/las-condes/alertas-hoy",
+                    "snippet": "Actualización local con información municipal.",
+                }
+            ]
+        return []
+
+    async def fake_ddg(query, timeout_seconds, max_results):
+        return await fake_bing(query, timeout_seconds, max_results)
+
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+    monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5, max_queries=3).search(
+            "situación actual de la comuna de Las Condes en Chile",
+            provider="auto",
+            api_key="",
+            timeout_seconds=5,
+            fallback_ddg=True,
+        )
+    )
+    expected_rescue = (
+        "Las Condes Chile noticias hoy "
+        + datetime.now(timezone.utc).date().isoformat()
+    )
+    assert result["ok"] is True
+    assert expected_rescue in result["queries_executed"]
+    assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"

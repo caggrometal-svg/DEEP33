@@ -321,7 +321,15 @@ def rank_results(
         if realtime and _host(url).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
-        evidence_tokens = _token_set(_evidence_text(item))
+        parsed_url = urlparse(url)
+        anchor_evidence = (
+            _evidence_text(item)
+            + " "
+            + (parsed_url.hostname or "")
+            + " "
+            + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
+        )
+        evidence_tokens = _token_set(anchor_evidence)
         anchor_hits = len(anchor_tokens & evidence_tokens)
         required_anchor_hits = min(2, len(anchor_tokens))
         if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
@@ -767,8 +775,13 @@ class SearchEngine:
 
         executed_queries = [query for query, _batch in planned_batches]
         if not successful:
-            tokens = _tokens(plan.original_query)
-            rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
+            locality = _extract_realtime_locality(plan.original_query)
+            if plan.depth == "realtime" and locality:
+                local_date = datetime.now(timezone.utc).date().isoformat()
+                rescue = f"{locality} Chile noticias hoy {local_date}"
+            else:
+                tokens = _tokens(plan.original_query)
+                rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
             if rescue and rescue.lower() != plan.original_query.lower():
                 executed_queries.append(rescue)
                 _rescue_query, rescue_result = await run_planned(rescue)
