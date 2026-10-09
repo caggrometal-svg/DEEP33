@@ -680,6 +680,7 @@ async function callEdgeAI(
   requestId: string,
   idempotencyContext: EdgeIdempotencyContext | null = null,
   userAuthorization = "",
+  sessionId = "",
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -717,7 +718,7 @@ async function callEdgeAI(
               requestId,
               "application/json",
               userAuthorization,
-              leaseContext?.sessionId || "",
+              leaseContext?.sessionId || sessionId || "",
               leaseContext?.idempotencyKey || "",
             ),
             body: JSON.stringify({
@@ -3276,7 +3277,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId, null, req.headers.get("authorization") || "");
+        }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
         const text = extractProviderText(response.body);
         const ok = text === "DEEP33_DIAGNOSTIC_OK";
         return json({
@@ -3319,7 +3320,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId, null, req.headers.get("authorization") || "");
+        }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
         const text = extractProviderText(response.body);
         inference = {
           status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",

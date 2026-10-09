@@ -282,3 +282,13 @@ def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None
     assert 'leaseContext?.sessionId || ""' in primary
     assert 'leaseContext?.idempotencyKey || ""' in primary
     assert 'requestId + "-stream-fallback"' in primary
+
+def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    signature = source.split("async function callEdgeAI(", 1)[1].split(
+        "): Promise<{ body:", 1
+    )[0]
+    assert 'sessionId = ""' in signature
+    assert "leaseContext?.sessionId || sessionId || \"\"" in source
+    assert source.count('req.headers.get("x-deep33-session-id") || ""') >= 2
+    assert "sessionId," in source
