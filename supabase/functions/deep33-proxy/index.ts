@@ -2454,6 +2454,10 @@ function edgeCurrentDateTimeQuery(query: string): boolean {
   return temporalIntent && currentIntent;
 }
 
+function edgeBroadWorldNewsQuery(query: string): boolean {
+  return /\\b(?:noticias?\\s+(?:mundiales?|internacionales?|globales?)|noticias?\\s+del\\s+mundo|world\\s+news|global\\s+news|international\\s+news|news\\s+from\\s+around\\s+the\\s+world)\\b/i.test(query);
+}
+
 function edgeFilterSearchResults(
   query: string,
   items: Array<Record<string, unknown>>,
@@ -2505,6 +2509,23 @@ function edgeFilterSearchResults(
       if (!temporalEvidence) return false;
       if (!countryIntent) return true;
       return /\bchile\b|\bsantiago\b/i.test(evidence) || host.endsWith(".cl");
+    });
+  }
+
+  // Broad world-news queries have no stable keyword anchor after filler removal.
+  // Keep fresh, specific article pages returned by the search providers instead of
+  // rejecting every story whose headline does not literally say "world/news".
+  if (currentNews && edgeBroadWorldNewsQuery(query)) {
+    return liveItems.filter((item) => {
+      try {
+        const parsed = new URL(String(item.url || ""));
+        const path = parsed.pathname.toLowerCase();
+        const genericLandingPage = path === "/" ||
+          /^\\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\\/?$/.test(path);
+        return !genericLandingPage && String(item.title || "").trim().length >= 8;
+      } catch {
+        return false;
+      }
     });
   }
 
@@ -2615,11 +2636,16 @@ function edgeSearchQueries(query: string): { original: string; queries: string[]
           locality + " Chile últimas noticias de hoy " + localDate,
           locality + " Chile actualidad alertas de hoy " + localDate,
         ]
-      : currentNews
+      : currentNews && edgeBroadWorldNewsQuery(original)
         ? [
-            normalized + " últimas noticias de hoy " + localDate,
-            normalized + " última hora y actualización de hoy " + localDate,
+            "world news headlines international latest today " + localDate,
+            "noticias internacionales y globales de hoy " + localDate,
           ]
+        : currentNews
+          ? [
+              normalized + " últimas noticias de hoy " + localDate,
+              normalized + " última hora y actualización de hoy " + localDate,
+            ]
         : [
             normalized + " actualización de hoy " + localDate,
             normalized + " información más reciente de hoy " + localDate,
