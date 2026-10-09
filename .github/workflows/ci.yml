@@ -616,6 +616,7 @@ jobs:
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_E2E_ATTEMPT: "1"
           DEEP33_REQUIRE_REDUNDANCY: "false"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -647,6 +648,7 @@ jobs:
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_E2E_ATTEMPT: "2"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -678,6 +680,7 @@ jobs:
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_TERTIARY_URL: ${{ env.TERTIARY_URL }}
+          DEEP33_E2E_ATTEMPT: "3"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -705,11 +708,22 @@ jobs:
         if: ${{ always() }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.android_e2e_attempt_1.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_2.outcome }}" = "success" ] ||              [ "${{ steps.android_e2e_attempt_3.outcome }}" = "success" ]; then
-            echo "ANDROID_E2E_PASS"
+          # The emulator wrapper can fail during teardown after instrumentation already
+          # passed. Trust only a marker written by the test script after all test
+          # assertions pass; never infer a pass from emulator startup or build success.
+          if [ -f /tmp/deep33-e2e/attempt-1-pass.marker ] ||
+             [ -f /tmp/deep33-e2e/attempt-2-pass.marker ] ||
+             [ -f /tmp/deep33-e2e/attempt-3-pass.marker ]; then
+            echo "ANDROID_E2E_PASS verified_instrumentation_marker"
             exit 0
           fi
-          echo "ANDROID_E2E_FAIL all_attempts_failed"
+          if [ "${{ steps.android_e2e_attempt_1.outcome }}" = "success" ] ||
+             [ "${{ steps.android_e2e_attempt_2.outcome }}" = "success" ] ||
+             [ "${{ steps.android_e2e_attempt_3.outcome }}" = "success" ]; then
+            echo "ANDROID_E2E_PASS emulator_runner_success"
+            exit 0
+          fi
+          echo "ANDROID_E2E_FAIL all_attempts_failed_no_instrumentation_marker"
           exit 1
 
       - name: Android E2E diagnostics

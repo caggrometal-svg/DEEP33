@@ -2,6 +2,13 @@
 set -euo pipefail
 
 mkdir -p /tmp/deep33-e2e
+attempt="${DEEP33_E2E_ATTEMPT:-1}"
+case "$attempt" in
+  1|2|3) ;;
+  *) echo "ANDROID_E2E_INVALID_ATTEMPT=$attempt"; exit 2 ;;
+esac
+pass_marker="/tmp/deep33-e2e/attempt-${attempt}-pass.marker"
+rm -f "$pass_marker"
 
 echo "=== ADB DEVICE ==="
 for i in $(seq 1 60); do
@@ -74,4 +81,8 @@ if grep -q "FAILURES!!!" /tmp/deep33-e2e/instrumentation.log ||
   exit 1
 fi
 
-echo "ANDROID_INSTRUMENTATION_PASS tests_verified"
+# Persist proof before the emulator wrapper performs teardown. The workflow can
+# distinguish a real passing instrumentation suite from an ADB/emulator shutdown error.
+touch "$pass_marker"
+echo "ANDROID_INSTRUMENTATION_PASS tests_verified attempt=${attempt}"
+echo "ANDROID_INSTRUMENTATION_PASS_MARKER=${pass_marker}"
