@@ -1,15 +1,24 @@
 package cl.caggrometal.deep33
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class Deep33FailoverTest {
+    @Before
+    fun configureAuthenticatedApi() {
+        // Failover tests exercise protected production routes without launching the UI.
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        Deep33Api.configureAuth(context)
+    }
+
     @Test
     fun primaryDownFallsBackToSecondary() {
         val sessionId = "android-failover-" + UUID.randomUUID()
