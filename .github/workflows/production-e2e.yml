@@ -12,6 +12,11 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/production-e2e.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/warmup.yml"
+      - "backend/search/engine.py"
+      - "tests/test_search_engine.py"
+      - "render.yaml"
       - "supabase/functions/deep33-proxy/index.ts"
       - "supabase/functions/deep33-tertiary/index.ts"
       - "tests/test_connectivity_hardening.py"
@@ -81,14 +86,40 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS --connect-timeout 8 --max-time 60 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
-          curl -fsS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" | tee /tmp/audit.json
-          jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json
+          audit_ok=0
+          for attempt in $(seq 1 5); do
+            echo "DEEP33_EDGE_AUDIT_ATTEMPT=$attempt"
+            curl -sS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" -o /tmp/audit.json || true
+            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null 2>&1; then
+              audit_ok=1
+              break
+            fi
+            echo "DEEP33_EDGE_AUDIT_NOT_READY"
+            jq -c '{status,checks,search_ok:.search.ok,results:(.search.results|length),timestamp}' /tmp/audit.json 2>/dev/null || true
+            sleep 5
+          done
+          if [ "$audit_ok" != "1" ]; then
+            echo "DEEP33_EDGE_AUDIT_FAIL"
+            cat /tmp/audit.json 2>/dev/null || true
+            exit 1
+          fi
+          cat /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
       - name: Verify edge audit and real inference
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
+          audit_ok=0
+          for attempt in $(seq 1 3); do
+            curl -sS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" -o /tmp/audit-recheck.json || true
+            if jq -e '.edge=="PASS" and .checks.INTERNET=="PASS" and .checks.DNS=="PASS" and .checks.SEARCH=="PASS" and .search.ok==true' /tmp/audit-recheck.json >/dev/null 2>&1; then
+              audit_ok=1
+              break
+            fi
+            echo "DEEP33_EDGE_AUDIT_RECHECK_NOT_READY attempt=$attempt"
+            sleep 5
+          done
+          test "$audit_ok" = "1" || { cat /tmp/audit-recheck.json 2>/dev/null || true; exit 1; }
           curl -fsS --connect-timeout 8 --max-time 120 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
           jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
           curl -fsS --connect-timeout 8 --max-time 120 \

@@ -17,6 +17,14 @@ services:
         value: "true"
       - key: WEB_SEARCH_FALLBACK_DDG
         value: "true"
+      - key: WEB_SEARCH_TIMEOUT_SECONDS
+        value: "6"
+      - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
+        value: "12"
+      - key: WEB_SEARCH_PROVIDER_RETRIES
+        value: "1"
+      - key: WEB_SEARCH_RETRY_BACKOFF_SECONDS
+        value: "0.2"
 
   - type: web
     name: deep33-backup

@@ -95,7 +95,7 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000;
-const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "2500")));
+const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 const EDGE_SEARCH_CACHE_TTL_MS = Math.max(0, Math.min(120000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_CACHE_TTL_MS") || "45000")));
 const edgeSearchCache = new Map<string, { expiresAt: number; data: Record<string, unknown> }>();
 const edgeSearchInflight = new Map<string, Promise<Record<string, unknown>>>();
@@ -2004,6 +2004,68 @@ async function handleMemoryRequest(
   return json({ error: "MEMORY_ROUTE_NOT_FOUND" }, 404);
 }
 
+async function probeInternetConnectivity(): Promise<Record<string, unknown>> {
+  const httpsTargets = [
+    { name: "google_generate_204", url: "https://www.google.com/generate_204" },
+    { name: "cloudflare_trace", url: "https://www.cloudflare.com/cdn-cgi/trace" },
+    { name: "example_https", url: "https://example.com/" },
+  ];
+  const dnsTargets = [
+    { name: "cloudflare_doh", url: "https://cloudflare-dns.com/dns-query?name=www.google.com&type=A" },
+    { name: "google_doh", url: "https://dns.google/resolve?name=www.google.com&type=A" },
+  ];
+  const httpsProbes = await Promise.all(httpsTargets.map(async (target) => {
+    try {
+      const response = await fetch(target.url, { redirect: "error", signal: AbortSignal.timeout(4000) });
+      return { name: target.name, ok: response.ok, status: response.status };
+    } catch {
+      return { name: target.name, ok: false, status: 0 };
+    }
+  }));
+  const dnsProbes = await Promise.all(dnsTargets.map(async (target) => {
+    try {
+      const response = await fetch(target.url, {
+        headers: { "Accept": "application/dns-json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(4000),
+      });
+      const body = await response.json() as Record<string, unknown>;
+      const answers = Array.isArray(body.Answer) ? body.Answer : [];
+      return { name: target.name, ok: response.ok && Number(body.Status) === 0 && answers.length > 0 };
+    } catch {
+      return { name: target.name, ok: false };
+    }
+  }));
+  return {
+    internet: httpsProbes.some((probe) => probe.ok),
+    dns: dnsProbes.some((probe) => probe.ok),
+    https_probes: httpsProbes,
+    dns_probes: dnsProbes,
+  };
+}
+
+async function auditSearch(sessionId: string): Promise<Record<string, unknown>> {
+  const candidates = [
+    "noticias recientes en Chile",
+    "últimas noticias de Chile hoy",
+    "noticias Chile últimas horas",
+  ];
+  let last: Record<string, unknown> = { ok: false, results: [] };
+  for (let index = 0; index < candidates.length; index++) {
+    try {
+      const result = await edgeSearch(candidates[index], sessionId);
+      const results = Array.isArray(result.results) ? result.results : [];
+      if (result.ok === true && results.length > 0) {
+        return { ...result, audit_query: candidates[index], audit_attempts: index + 1 };
+      }
+      last = { ...result, ok: false, results };
+    } catch (error) {
+      last = { ok: false, error: error instanceof Error ? error.message : String(error), results: [] };
+    }
+  }
+  return { ...last, ok: false, audit_attempts: candidates.length };
+}
+
 async function probeHealth(sessionId: string) {
   if (!UPSTREAM) {
     return {
@@ -2441,7 +2503,7 @@ async function publicWebSearchUncached(
     "noticia","noticias","actualidad","reciente","recientes","información","informacion",
     "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
     "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
-    "contingencia","suceso","sucesos","en","vivo","comuna","municipio","municipalidad","región","region",
+    "contingencia","suceso","sucesos","en","vivo","de","del","la","las","los","el","al","comuna","municipio","municipalidad","región","region",
   ]);
   const entityTokens = new Set([...anchorTokens].filter(token => !realtimeFiller.has(token)));
   // Generic geography words should not suppress otherwise-local results. For a
@@ -2660,18 +2722,15 @@ Deno.serve(async (req) => {
       const started = performance.now();
       const auditSession = sessionId || "deep33-audit";
 
-      const safeSearch = edgeSearch("noticias recientes en Chile", auditSession).catch((error) => ({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-        results: [],
-      }));
+      const safeSearch = auditSearch(auditSession);
       const safeMemory = probeMemory(auditSession, memoryProfileId).catch(() => ({
         ok: false,
         status: "FAIL",
         http_status: 0,
       }));
+      const safeConnectivity = probeInternetConnectivity();
 
-      const [health, inference, webStatus, search, memory] = await Promise.all([
+      const [health, inference, webStatus, search, memory, connectivity] = await Promise.all([
         Promise.resolve(probeHealth(auditSession)).catch((error) => ({
           ok: false,
           status: "FAIL",
@@ -2697,18 +2756,24 @@ Deno.serve(async (req) => {
             }),
         safeSearch,
         safeMemory,
+        safeConnectivity,
       ]);
 
-      const aiReady = inference.ok;
-      const searchOk = search.ok === true;
-      const backendOk = health.ok;
+      const aiReady = inference.ok === true;
+      const searchOk = search.ok === true && Array.isArray(search.results) && search.results.length > 0;
+      const backendOk = health.ok === true;
+      const internetOk = connectivity.internet === true;
+      const dnsOk = connectivity.dns === true;
 
       return json({
-        status: backendOk && aiReady && searchOk ? "PASS" : "FAIL",
+        status: backendOk && aiReady && internetOk && dnsOk && searchOk ? "PASS" : "FAIL",
         edge: "PASS",
+        internet: internetOk ? "PASS" : "FAIL",
+        dns: dnsOk ? "PASS" : "FAIL",
         checks: {
-          INTERNET: searchOk ? "PASS" : "FAIL",
-          DNS: searchOk ? "PASS" : "FAIL",
+          INTERNET: internetOk ? "PASS" : "FAIL",
+          DNS: dnsOk ? "PASS" : "FAIL",
+          SEARCH: searchOk ? "PASS" : "FAIL",
           HTTPS: backendOk ? "PASS" : "FAIL",
           BACKEND: backendOk ? "PASS" : "FAIL",
           AI_GATEWAY: aiReady ? "PASS" : "FAIL",
@@ -2718,6 +2783,7 @@ Deno.serve(async (req) => {
         ready: backendOk && aiReady ? "PASS" : "FAIL",
         search,
         memory,
+        connectivity,
         upstream: {
           health: backendOk,
           ready: aiReady,

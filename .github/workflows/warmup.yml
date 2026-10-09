@@ -14,11 +14,89 @@ env:
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
   TERTIARY_URL: https://deep33-backend.onrender.com
+  SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+  SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
 
 jobs:
   warmup:
     runs-on: ubuntu-latest
     steps:
+      - name: Create authenticated warmup session
+        run: |
+          set -euo pipefail
+          token=""
+          for attempt in $(seq 1 3); do
+            profile_id="warmup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-${attempt}"
+            response="$(curl -sS --connect-timeout 8 --max-time 30 \
+              -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
+              -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "content-type: application/json" \
+              -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            status="${response##*DEEP33_HTTP_STATUS:}"
+            auth_json="${response%
+        run: |
+          set -euo pipefail
+          entries=("PRIMARY|$PRIMARY_URL" "SECONDARY|$SECONDARY_URL" "TERTIARY|$TERTIARY_URL")
+          for entry in "${entries[@]}"; do
+            name="${entry%%|*}"
+            url="${entry#*|}"
+            ready=0
+            last_ready=""
+            for attempt in $(seq 1 6); do
+              if [ "$name" = "TERTIARY" ]; then
+                health="$(curl -sS --connect-timeout 8 --max-time 30 "$url/health" || true)"
+                if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
+                  last_ready="$health"
+                  if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
+                    ready=1
+                    break
+                  fi
+                fi
+              else
+                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$url/v1/web/status" || true)"
+                if printf "%s" "$last_ready" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then
+                  ready=1
+                  break
+                fi
+              fi
+              echo "${name}_WARM_NOT_READY attempt=${attempt}"
+              sleep 10
+            done
+            if [ "$ready" != "1" ]; then
+              echo "${name}_WARM_FAIL"
+              printf "%s\n" "$last_ready"
+              exit 1
+            fi
+            echo "${name}_WARM_PASS"
+          done
+
+          web_ok=0
+          for attempt in $(seq 1 3); do
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$PRIMARY_URL/v1/web/status" || true)"
+            if printf "%s" "$status" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then
+              web_ok=1
+              break
+            fi
+            echo "DEEP33_WEB_STATUS_NOT_READY attempt=${attempt}"
+            sleep 10
+          done
+          test "$web_ok" = "1"
+          echo "DEEP33_WARM_PASS"
+
+\n'DEEP33_HTTP_STATUS:*}"
+            if [ "$status" = "200" ]; then
+              token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
+              break
+            fi
+            if [ "$status" = "409" ]; then echo "WARMUP_AUTH_PROFILE_COLLISION attempt=$attempt"; continue; fi
+            echo "WARMUP_AUTH_SESSION_FAILED status=$status"
+            printf '%s\n' "$auth_json" | jq -c '{error: (.error // "unknown")}' || true
+            exit 1
+          done
+          test -n "$token" || { echo "WARMUP_AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
+          echo "DEEP33_WARMUP_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Keep every DEEP33 transport node warm
         run: |
           set -euo pipefail
@@ -39,7 +117,7 @@ jobs:
                   fi
                 fi
               else
-                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 "$url/v1/web/status" || true)"
+                last_ready="$(curl -sS --connect-timeout 8 --max-time 45 -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$url/v1/web/status" || true)"
                 if printf "%s" "$last_ready" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then
                   ready=1
                   break
@@ -58,7 +136,7 @@ jobs:
 
           web_ok=0
           for attempt in $(seq 1 3); do
-            status="$(curl -sS --connect-timeout 8 --max-time 30 "$PRIMARY_URL/v1/web/status" || true)"
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -H "Authorization: Bearer $DEEP33_WARMUP_TOKEN" "$PRIMARY_URL/v1/web/status" || true)"
             if printf "%s" "$status" | jq -e '.enabled==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.3.0"' >/dev/null 2>&1; then
               web_ok=1
               break

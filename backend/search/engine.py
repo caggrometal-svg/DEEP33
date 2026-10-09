@@ -54,8 +54,9 @@ CONTROVERSIAL_TERMS = (
 
 
 _STOPWORDS = {
-    "para", "como", "que", "qué", "una", "uno", "los", "las", "del", "con",
-    "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
+    "para", "como", "que", "qué", "una", "uno", "los", "las", "del", "de", "la", "al",
+    "el", "a", "y", "e", "o", "u", "se", "su", "sus", "mi", "tu", "lo", "le", "les",
+    "es", "con", "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
 }
 
 _REALTIME_QUERY_FILLERS = {
@@ -64,13 +65,21 @@ _REALTIME_QUERY_FILLERS = {
     "noticia", "noticias", "actualidad", "reciente", "recientes", "información", "informacion",
     "actualización", "actualizacion", "novedad", "novedades", "desarrollo", "estado",
     "pasa", "pasando", "ocurre", "ocurriendo", "sucede", "sucediendo", "en", "vivo",
+    "chile", "comuna", "municipio", "municipalidad", "región", "region",
 }
 
+_REALTIME_COUNTRY_TOKENS = {"chile"}
+
 def _realtime_anchor_tokens(query: str) -> set[str]:
-    return {
-        token for token in _tokens(query)
+    tokens = _tokens(query)
+    anchors = {
+        token for token in tokens
         if token not in _REALTIME_QUERY_FILLERS and len(token) >= 3
     }
+    # Country name is a fallback anchor only when there is no named locality/topic.
+    if anchors:
+        return anchors
+    return {token for token in tokens if token in _REALTIME_COUNTRY_TOKENS}
 _TRUSTED_SUFFIXES = {".gov": 1.0, ".edu": 0.95, ".org": 0.80}
 MIN_FALLBACK_RESULTS = max(1, min(5, int(os.getenv("WEB_SEARCH_MIN_FALLBACK_RESULTS", "2"))))
 REALTIME_CORROBORATION_WINDOW_SECONDS = max(
@@ -295,9 +304,9 @@ def rank_results(
             continue
         evidence_tokens = _token_set(_evidence_text(item))
         anchor_hits = len(anchor_tokens & evidence_tokens)
-        if realtime and anchor_tokens and anchor_hits == 0:
-            # Current evidence with no mention of the requested entity/location
-            # is not evidence for that request and must not reach the model.
+        required_anchor_hits = min(2, len(anchor_tokens))
+        if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
+            # Country/currentness words alone do not prove relevance to a named locality.
             continue
         relevance = _text_score(query_tokens, item)
         anchor_score = (

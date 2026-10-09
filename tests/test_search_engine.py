@@ -385,6 +385,41 @@ def test_realtime_rank_drops_unrelated_current_results():
     assert ranked[0]["url"] == "https://news.example/las-condes"
 
 
+def test_realtime_rank_rejects_country_only_match_for_named_locality():
+    query = "situación actual de la comuna de Las Condes en Chile"
+    results = [
+        {
+            "title": "Hospedaje en Copiapó, Chile",
+            "url": "https://travel.example/copiapo",
+            "snippet": "Hospedaje cerca de la universidad en Copiapó, Chile.",
+        },
+        {
+            "title": "Aluvión afecta San Carlos de Apoquindo en Las Condes",
+            "url": "https://news.example/las-condes-live",
+            "snippet": "Emergencia local en Las Condes tras las lluvias.",
+        },
+    ]
+    ranked = rank_results(query, results, realtime=True)
+    assert [item["url"] for item in ranked] == ["https://news.example/las-condes-live"]
+
+
+def test_realtime_country_news_uses_country_as_fallback_anchor():
+    results = [
+        {
+            "title": "Noticias de Chile hoy",
+            "url": "https://news.example/chile",
+            "snippet": "Últimas noticias nacionales de Chile.",
+        },
+        {
+            "title": "Actualización de Windows",
+            "url": "https://tech.example/windows",
+            "snippet": "Novedades del sistema operativo.",
+        },
+    ]
+    ranked = rank_results("noticias recientes en Chile", results, realtime=True)
+    assert [item["url"] for item in ranked] == ["https://news.example/chile"]
+
+
 def test_realtime_policy_catches_news_weather_and_politics():
     assert is_realtime_query("Noticias mundiales")
     assert is_realtime_query("¿Cómo está el clima hoy?")

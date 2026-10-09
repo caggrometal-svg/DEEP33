@@ -151,3 +151,13 @@ def test_edge_realtime_search_does_not_require_generic_geography_words_in_every_
     assert '"comuna","municipio","municipalidad","región","region"' in source
     assert 'const countryContextTokens = new Set(["chile"])' in source
     assert '"noticias recientes en Chile"' in source
+
+
+def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    assert "async function probeInternetConnectivity()" in source
+    assert "async function auditSearch(sessionId: string)" in source
+    assert 'INTERNET: internetOk ? "PASS" : "FAIL"' in source
+    assert 'DNS: dnsOk ? "PASS" : "FAIL"' in source
+    assert 'SEARCH: searchOk ? "PASS" : "FAIL"' in source
+    assert "audit_attempts" in source
