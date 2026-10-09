@@ -2130,7 +2130,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             fresh=True,
         )
     except Exception as exc:
-        logger.warning("web_search_endpoint_failed request_id=%s error=%s", request_id_from_request(request), type(exc).__name__)
+        logger.warning("web_search_endpoint_failed request_id=%s error=%s detail=%s", request_id_from_request(request), type(exc).__name__, str(exc).replace("\\n", " ")[:400])
         raise HTTPException(status_code=502, detail="WEB_SEARCH_FAILED") from exc
 
 

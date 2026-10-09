@@ -390,6 +390,8 @@ async def _parse_bing_rss(response, max_results):
 async def _bing_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
     html_error = None
+    html_results = []
+    realtime_news = _looks_realtime_news(query)
     try:
         response = await client.get(
             os.getenv("WEB_SEARCH_BING_URL", BING_URL),
@@ -407,28 +409,48 @@ async def _bing_search(query, timeout_seconds, max_results):
         parser = BingParser()
         parser.feed(response.text)
         parser.close()
-        results = _normalise_results(parser.results, max_results)
-        if results:
-            return results
+        html_results = _normalise_results(parser.results, max_results)
+        # Current-event HTML can be syntactically valid but fail the stricter
+        # locality/relevance filter. Enrich it with Bing RSS before ranking.
+        if html_results and not realtime_news:
+            return html_results
     except Exception as exc:
         html_error = exc
 
     rss_timeout = min(timeout_seconds, 2.5)
-    rss = await client.get(
-        os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-        params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
-        headers={
-            "User-Agent": "DEEP33-WebSearch/1.0",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-        timeout=_http_timeout(rss_timeout),
-    )
     try:
-        return await _parse_bing_rss(rss, max_results)
+        rss = await client.get(
+            os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
+            headers={
+                "User-Agent": "DEEP33-WebSearch/1.0",
+                "Accept": "application/rss+xml,application/xml,text/xml",
+            },
+            timeout=_http_timeout(rss_timeout),
+        )
+        rss_results = await _parse_bing_rss(rss, max_results)
     except Exception as rss_error:
+        if html_results:
+            return html_results
         if html_error is not None:
             raise WebSearchError(f"{html_error};{rss_error}") from rss_error
         raise
+
+    if rss_results:
+        # Interleave sources so one result format cannot crowd out the other
+        # before the relevance ranker evaluates them.
+        combined = []
+        for index in range(max(len(rss_results), len(html_results))):
+            if index < len(rss_results):
+                combined.append(rss_results[index])
+            if index < len(html_results):
+                combined.append(html_results[index])
+        return _normalise_results(combined, max_results)
+    if html_results:
+        return html_results
+    if html_error is not None:
+        raise WebSearchError(str(html_error)) from html_error
+    return []
 
 
 async def search_web(

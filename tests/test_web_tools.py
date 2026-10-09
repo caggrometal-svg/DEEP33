@@ -108,6 +108,70 @@ def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     assert result["results"][0]["url"] == "https://example.org/deep33"
 
 
+def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypatch):
+    import tools.web_search as module
+
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
+    monkeypatch.setenv("WEB_SEARCH_PROVIDER", "bing")
+    monkeypatch.setenv("WEB_SEARCH_MAX_QUERIES", "1")
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+    module._SEARCH_CACHE.clear()
+    module._SEARCH_INFLIGHT.clear()
+    module._SEARCH_HTTP_CLIENT = None
+    module._SEARCH_HTTP_LOOP = None
+    requested = []
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                requested.append(str(request.url))
+                if request.url.params.get("format") == "rss":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        headers={"content-type": "application/rss+xml"},
+                        content=(
+                            b"<?xml version=\"1.0\"?><rss><channel><item>"
+                            b"<title>Las Condes: alertas locales publicadas hoy</title>"
+                            b"<link>https://news.example/las-condes/alertas-hoy</link>"
+                            b"<description>Situaci\xc3\xb3n actual de Las Condes en Chile; "
+                            b"informaci\xc3\xb3n municipal de hoy.</description>"
+                            b"</item></channel></rss>"
+                        ),
+                    )
+                return httpx.Response(
+                    200,
+                    request=request,
+                    headers={"content-type": "text/html"},
+                    content=(
+                        b"<html><body><li class=\"b_algo\"><h2>"
+                        b"<a href=\"https://tech.example/windows\">Windows update</a>"
+                        b"</h2><div class=\"b_caption\"><p>Operating system update.</p>"
+                        b"</div></li></body></html>"
+                    ),
+                )
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+    result = asyncio.run(
+        module.search_web(
+            "situación actual de la comuna de Las Condes en Chile",
+            provider="bing",
+            api_key="",
+            timeout_seconds=3,
+            fresh=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert any("format=rss" in url for url in requested)
+    assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"
+
+
+
 def test_redirect_to_private_is_blocked(monkeypatch):
     import tools.web_fetch as module
     monkeypatch.setattr(
