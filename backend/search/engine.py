@@ -75,7 +75,9 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
     tokens = _tokens(query)
     anchors = {
         token for token in tokens
-        if token not in _REALTIME_QUERY_FILLERS and len(token) >= 3
+        if token not in _REALTIME_QUERY_FILLERS
+        and len(token) >= 3
+        and not token.isdigit()
     }
     if anchors:
         return anchors

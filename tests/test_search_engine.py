@@ -579,3 +579,12 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
     assert result["ok"] is True
     assert expected_rescue in result["queries_executed"]
     assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"
+
+
+def test_realtime_anchor_tokens_ignore_numeric_date_suffixes():
+    from backend.search.engine import _realtime_anchor_tokens
+
+    anchors = _realtime_anchor_tokens("Las Condes Chile noticias hoy 2026-10-09")
+    assert "condes" in anchors
+    assert "2026" not in anchors
+    assert "10" not in anchors
