@@ -2960,7 +2960,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/ready" && req.method === "GET") {
-      const body = await readinessResponse(sessionId);
+      const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");
       return json(body, body.ready ? 200 : 503);
     }
 

@@ -109,3 +109,8 @@ def test_readiness_inference_passes_scoped_session_to_render_fallback() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "}, requestId, null, userAuthorization, sessionId);" in source
+
+def test_readiness_probe_forwards_authenticated_bearer_to_all_fallbacks() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert 'const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");' in source
