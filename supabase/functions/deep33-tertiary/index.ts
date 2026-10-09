@@ -1849,7 +1849,7 @@ async function probeInference(sessionId: string, userAuthorization = "") {
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId, null, userAuthorization);
+    }, requestId, null, userAuthorization, sessionId);
     const text = extractProviderText(response.body);
     const ok = text === "DEEP33_DIAGNOSTIC_OK";
     return {
