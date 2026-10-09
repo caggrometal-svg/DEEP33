@@ -2455,7 +2455,7 @@ function edgeCurrentDateTimeQuery(query: string): boolean {
 }
 
 function edgeBroadWorldNewsQuery(query: string): boolean {
-  return /\\b(?:noticias?\\s+(?:mundiales?|internacionales?|globales?)|noticias?\\s+del\\s+mundo|world\\s+news|global\\s+news|international\\s+news|news\\s+from\\s+around\\s+the\\s+world)\\b/i.test(query);
+  return /\b(?:noticias?\s+(?:mundiales?|internacionales?|globales?)|noticias?\s+del\s+mundo|world\s+news|global\s+news|international\s+news|news\s+from\s+around\s+the\s+world)\b/i.test(query);
 }
 
 function edgeFilterSearchResults(
@@ -2521,7 +2521,7 @@ function edgeFilterSearchResults(
         const parsed = new URL(String(item.url || ""));
         const path = parsed.pathname.toLowerCase();
         const genericLandingPage = path === "/" ||
-          /^\\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\\/?$/.test(path);
+          /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
         return !genericLandingPage && String(item.title || "").trim().length >= 8;
       } catch {
         return false;
