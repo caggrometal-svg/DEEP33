@@ -818,10 +818,23 @@ jobs:
           for entry in "${entries[@]}"; do
             name="${entry%%|*}"
             url="${entry#*|}"
-            health="$(curl -fsS --connect-timeout 8 --max-time 30 "$url/health")"
-            ready="$(curl -fsS --connect-timeout 8 --max-time 45 "$url/ready")"
-            printf '%s' "$health" | jq -e '.status=="PASS"' >/dev/null
-            printf '%s' "$ready" | jq -e '.status=="PASS" and .ready==true' >/dev/null
+            node_ok=0
+            for attempt in $(seq 1 3); do
+              health_code="$(curl -sS --connect-timeout 8 --max-time 20 -o "/tmp/${name,,}-recovery-health.json" -w "%{http_code}" "$url/health" || true)"
+              ready_code="$(curl -sS --connect-timeout 8 --max-time 30 -o "/tmp/${name,,}-recovery-ready.json" -w "%{http_code}" "$url/ready" || true)"
+              if [ "$health_code" = "200" ] &&
+                 jq -e '.status=="PASS"' "/tmp/${name,,}-recovery-health.json" >/dev/null 2>&1 &&
+                 [ "$ready_code" = "200" ] &&
+                 jq -e '.status=="PASS" and .ready==true' "/tmp/${name,,}-recovery-ready.json" >/dev/null 2>&1; then
+                node_ok=1
+                break
+              fi
+              echo "${name}_RECOVERY_NOT_READY attempt=$attempt health=$health_code ready=$ready_code"
+              jq -c '{status,service,timestamp}' "/tmp/${name,,}-recovery-health.json" 2>/dev/null || true
+              jq -c '{status,ready,checks,timestamp}' "/tmp/${name,,}-recovery-ready.json" 2>/dev/null || true
+              sleep 3
+            done
+            test "$node_ok" = "1" || { echo "${name}_RECOVERY_FAIL"; exit 1; }
             echo "${name}_RECOVERY_PASS"
           done
 
