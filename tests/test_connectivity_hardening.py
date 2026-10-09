@@ -229,3 +229,15 @@ def test_production_e2e_retries_transient_real_inference_failures() -> None:
     assert 'DEEP33_REAL_INFERENCE_PASS' in source
     assert 'X-Idempotency-Key: prod-${GITHUB_RUN_ID}-${attempt}' in source
 
+def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> None:
+    source = read(".github/workflows/ci.yml")
+    recovery = source.split("  recovery_gate:", 1)[1].split("  release_gate:", 1)[0]
+    release = source.split("  release_gate:", 1)[1]
+    assert "needs: [android_e2e, android_validation, change_scope]" in recovery
+    assert "always()" in recovery
+    assert "needs.android_validation.result == 'success'" in recovery
+    assert "needs: [production_gate, android_e2e, recovery_gate]" in release
+    assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
+    assert "DEEP33_RELEASE_BLOCKED" in release
+    assert 'DEEP33_ANDROID_E2E_RESULT: ${{ needs.android_e2e.result }}' in release
+

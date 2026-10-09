@@ -752,7 +752,9 @@ jobs:
           if-no-files-found: warn
 
   recovery_gate:
-    needs: android_e2e
+    needs: [android_e2e, android_validation, change_scope]
+    # Always collect recovery evidence after E2E, even when E2E itself fails.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
 
@@ -815,9 +817,9 @@ jobs:
 
 
   release_gate:
-    needs: [production_gate, recovery_gate]
-    # A release must never be tagged unless both production and recovery gates passed.
-    if: ${{ always() && github.event_name == 'push' && needs.production_gate.result == 'success' && needs.recovery_gate.result == 'success' }}
+    needs: [production_gate, android_e2e, recovery_gate]
+    # Run on every main push; fail explicitly when a required gate did not pass.
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
       contents: write
       actions: write
@@ -826,6 +828,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Require all production and Android gates
+        env:
+          DEEP33_PRODUCTION_GATE_RESULT: ${{ needs.production_gate.result }}
+          DEEP33_ANDROID_E2E_RESULT: ${{ needs.android_e2e.result }}
+          DEEP33_RECOVERY_GATE_RESULT: ${{ needs.recovery_gate.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$DEEP33_PRODUCTION_GATE_RESULT" != "success" || "$DEEP33_ANDROID_E2E_RESULT" != "success" || "$DEEP33_RECOVERY_GATE_RESULT" != "success" ]]; then
+            echo "DEEP33_RELEASE_BLOCKED production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
+            exit 1
+          fi
+          echo "DEEP33_RELEASE_PRECONDITIONS_PASS $GITHUB_SHA"
       - name: Mark exact release PASS
         env:
           GH_TOKEN: ${{ github.token }}
