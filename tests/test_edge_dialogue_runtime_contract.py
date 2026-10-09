@@ -89,3 +89,23 @@ def test_edge_current_news_filter_recognizes_global_reporting_synonyms() -> None
         source = path.read_text(encoding="utf-8")
         assert "|internacional|international|global|globales|mundial|mundiales|mundo|world|worldwide|" in source
         assert "if (!hasNewsEvidence) return false;" in source
+
+def test_edge_fallback_accepts_native_deep33_response_text() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert 'const result = body.result && typeof body.result === "object"' in source
+        assert 'if (result && typeof result.text === "string") return result.text;' in source
+
+
+def test_critical_render_fallback_is_not_skipped_by_open_provider_circuit() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "const criticalRenderFallback =" in source
+        assert 'provider.name === "render-backend-fallback"' in source
+        assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
+
+
+def test_readiness_inference_passes_scoped_session_to_render_fallback() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "}, requestId, null, userAuthorization, sessionId);" in source
