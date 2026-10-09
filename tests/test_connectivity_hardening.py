@@ -253,3 +253,12 @@ def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     assert 'provider.name === "render-backend-fallback"' in source
     assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com"' in source
 
+def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None:
+    source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
+    assert source.count(
+        'connection.setRequestProperty("apikey", BuildConfig.DEEP33_SUPABASE_PUBLISHABLE_KEY)'
+    ) == 2
+    assert source.count(
+        '?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }'
+    ) == 2
+

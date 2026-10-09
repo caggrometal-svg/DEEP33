@@ -308,6 +308,7 @@ object Deep33Api {
                     // Remote ownership is derived from the authenticated Supabase subject.
                     // The legacy client-provided memory-profile header is intentionally no
                     // longer authoritative and is not sent to the server.
+                    connection.setRequestProperty("apikey", BuildConfig.DEEP33_SUPABASE_PUBLISHABLE_KEY)
                     authorizationToken(forceRefresh = authRetryUsed)
                         ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
