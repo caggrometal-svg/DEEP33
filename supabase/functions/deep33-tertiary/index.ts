@@ -325,13 +325,19 @@ function providerPayload(
   return providerPayload;
 }
 
-function providerRequestHeaders(provider: EdgeAIProvider, requestId: string, accept: string): Record<string, string> {
+function providerRequestHeaders(
+  provider: EdgeAIProvider,
+  requestId: string,
+  accept: string,
+  userAuthorization = "",
+): Record<string, string> {
+  const authorization = provider.api_key
+    ? "Bearer " + provider.api_key
+    : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
   return {
     "Content-Type": "application/json",
     "Accept": accept,
-    ...(provider.requires_auth && provider.api_key
-      ? { "Authorization": "Bearer " + provider.api_key }
-      : {}),
+    ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
     "X-Request-ID": requestId,
   };
 }
@@ -579,6 +585,7 @@ async function callEdgeAI(
   payload: Record<string, unknown>,
   requestId: string,
   idempotencyContext: EdgeIdempotencyContext | null = null,
+  userAuthorization = "",
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -611,7 +618,7 @@ async function callEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "application/json"),
+            headers: providerRequestHeaders(provider, requestId, "application/json", userAuthorization),
             body: JSON.stringify({
               ...providerPayload(payload, false),
               ...(provider.model ? { model: provider.model } : {}),
@@ -743,6 +750,7 @@ async function streamEdgeAI(
   onController: (controller: AbortController) => void,
   onChunk: (chunk: string) => void,
   idempotencyContext: EdgeIdempotencyContext | null = null,
+  userAuthorization = "",
 ): Promise<{ text: string; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -801,7 +809,7 @@ async function streamEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(provider, requestId, "text/event-stream"),
+            headers: providerRequestHeaders(provider, requestId, "text/event-stream", userAuthorization),
             body: JSON.stringify({
               ...providerPayload(payload, true),
               ...(provider.model ? { model: provider.model } : {}),
@@ -1750,7 +1758,7 @@ async function probeHealth(sessionId: string) {
   }
 }
 
-async function probeInference(sessionId: string) {
+async function probeInference(sessionId: string, userAuthorization = "") {
   if (!edgeAIConfigured()) {
     return {
       ok: false,
@@ -1770,7 +1778,7 @@ async function probeInference(sessionId: string) {
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId);
+    }, requestId, null, userAuthorization);
     const text = extractProviderText(response.body);
     const ok = text === "DEEP33_DIAGNOSTIC_OK";
     return {
@@ -1987,7 +1995,7 @@ async function runPublicWebSearchQuery(query: string) {
       engine_version: "1.3.0",
       provider_independent: true,
       providers: providerNames,
-      results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result),
+      results: finalResults,
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
         distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
@@ -2018,34 +2026,114 @@ function edgeRealtimeQuery(query: string): boolean {
       !/(hoy|ahora|actual|latest|current|today)/i.test(lowered)) return false;
   return ["noticia","noticias","última hora","ultima hora","actualidad","actual","actualmente","ahora","hoy","último","últimos","última","últimas","reciente","recientes","clima","tiempo","temperatura","pronóstico","pronostico","política","politica","presidente","elecciones","gobierno","congreso","senado","mercado","bolsa","dólar","dolar","euro","precio","cotización","cotizacion","resultados","marcador","horario","tráfico","trafico","vuelo","vuelos","alerta","terremoto","tsunami","incendio","guerra","fecha","hora","vigente","en vivo","live","breaking","latest","current"].some((term) => lowered.includes(term));
 }
-function edgeSearchQueries(query: string): { original: string; queries: string[]; depth: string } {
+const EDGE_REALTIME_FILLERS = new Set([
+  "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
+  "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
+  "noticia","noticias","actualidad","reciente","recientes","información","informacion",
+  "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
+  "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
+  "contingencia","suceso","sucesos","en","vivo","de","del","la","las","los","el","al",
+  "comuna","comunas","municipio","municipios","municipalidad","municipalidades",
+  "región","region","regiones","chile","mundial","mundiales","internacional",
+  "internacionales","global","globales","mundo","world","worldwide","news","breaking","latest",
+]);
+
+function edgeExtractLocality(query: string): string {
+  const match = query.match(
+    /\b(?:comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\s+(?:de|del)\s+(.+?)(?:\s+en\s+chile\b|[,;.!?]|$)/i,
+  );
+  return match?.[1]?.trim().replace(/\s+/g, " ") || "";
+}
+
+function edgeFilterSearchResults(
+  query: string,
+  items: Array<Record<string, unknown>>,
+  realtime: boolean,
+): Array<Record<string, unknown>> {
+  if (!realtime) return items;
+  const liveItems = items.filter((item) => {
+    try {
+      const host = new URL(String(item.url || "")).hostname.toLowerCase();
+      return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org");
+    } catch {
+      return false;
+    }
+  });
+  const tokens = new Set(
+    (normalizeEdgeSearchQuery(query).toLowerCase().match(/[a-záéíóúüñ]{3,}/gi) || [])
+      .filter((token) => !EDGE_REALTIME_FILLERS.has(token)),
+  );
+  if ([...tokens].some((token) => token !== "chile")) tokens.delete("chile");
+  if (!tokens.size) return liveItems;
+  const requiredHits = Math.min(2, tokens.size);
+  return liveItems.filter((item) => {
+    const evidence = (String(item.title || "") + " " + String(item.snippet || "")).toLowerCase();
+    let hits = 0;
+    for (const token of tokens) if (evidence.includes(token)) hits++;
+    return hits >= requiredHits;
+  });
+}
+
+function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
+  return [...new Set(items.map((item) => String(item.provider || "").trim()).filter(Boolean))];
+}
+
+function edgeSearchVerification(
+  items: Array<Record<string, unknown>>,
+  providers: string[],
+): Record<string, unknown> {
+  const domains = new Set(items.map((item) => {
+    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+  }).filter(Boolean));
+  return {
+    level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
+    distinct_domains: domains.size,
+    distinct_providers: providers.length,
+    corroborated_results: 0,
+    relevant_results: items.length,
+  };
+}
+\nfunction edgeSearchQueries(query: string): { original: string; queries: string[]; depth: string } {
   const original = query.trim();
   const normalized = normalizeEdgeSearchQuery(original) || original;
   if (!edgeRealtimeQuery(original)) return { original, queries: [normalized], depth: "standard" };
-  const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const localDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
   const lowered = original.toLowerCase();
-  const variants = lowered.includes("clima") || lowered.includes("tiempo") || lowered.includes("temperatura")
-    ? [`${normalized} temperatura humedad lluvia condiciones actuales hoy ${localDate}`, `site:meteochile.gob.cl ${normalized} temperatura pronóstico ${localDate}`]
-    : lowered.includes("noticia") || lowered.includes("guerra")
-      ? [`${normalized} últimas noticias de hoy ${localDate}`, `${normalized} última hora y actualización ${localDate}`]
-      : [`${normalized} actualización de hoy ${localDate}`, `${normalized} información más reciente ${localDate}`];
+  const weather = lowered.includes("clima") || lowered.includes("tiempo") || lowered.includes("temperatura");
+  const currentNews = lowered.includes("noticia") || lowered.includes("guerra") ||
+    lowered.includes("situación actual") || lowered.includes("situacion actual") ||
+    lowered.includes("estado actual") || lowered.includes("última hora") || lowered.includes("ultima hora");
+  const locality = edgeExtractLocality(original);
+  const variants = weather
+    ? [`${normalized} temperatura humedad lluvia condiciones actuales hoy ${localDate}`,
+       `site:meteochile.gob.cl ${normalized} temperatura pronóstico ${localDate}`]
+    : currentNews && locality
+      ? [`${locality} Chile últimas noticias de hoy ${localDate}`,
+         `${locality} Chile actualidad alertas de hoy ${localDate}`]
+      : currentNews
+        ? [`${normalized} últimas noticias de hoy ${localDate}`,
+           `${normalized} última hora y actualización ${localDate}`]
+        : [`${normalized} actualización de hoy ${localDate}`,
+           `${normalized} información más reciente de hoy ${localDate}`];
   return { original, queries: [normalized, ...variants], depth: "realtime" };
 }
+
 async function publicWebSearch(query: string) {
   const started = performance.now();
   const plan = edgeSearchQueries(query);
   const first = await runPublicWebSearchQuery(plan.queries[0]);
+  const firstResults = Array.isArray(first.results) ? first.results as Array<Record<string, unknown>> : [];
+  const firstRelevant = edgeFilterSearchResults(plan.original, firstResults, plan.depth === "realtime");
+  const firstProviders = edgeProvidersForResults(firstRelevant);
   const batches: Array<{ query: string; data: Record<string, unknown> }> = [{ query: plan.queries[0], data: first }];
-  const firstResults = Array.isArray(first.results) ? first.results : [];
-  const firstProviders = Array.isArray(first.providers) ? first.providers : [];
   const required = plan.depth === "realtime" ? 2 : 3;
-  if (plan.queries.length > 1 && (firstProviders.length < 2 || firstResults.length < required)) {
+  if (plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
     batches.push(...await Promise.all(plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))));
   }
   const merged = new Map<string, Record<string, unknown>>();
-  const providers = new Set<string>();
   for (const batch of batches) {
-    for (const provider of (Array.isArray(batch.data.providers) ? batch.data.providers : [])) providers.add(String(provider));
     for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
@@ -2053,10 +2141,14 @@ async function publicWebSearch(query: string) {
       if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
     }
   }
-  const results = [...merged.values()].slice(0, 8);
+  const results = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+  const providers = edgeProvidersForResults(results);
+  const publicResults = results.map(({ provider: _provider, domain: _domain, ...result }) => result);
+  const verification = edgeSearchVerification(results, providers);
   return {
-    ok: results.length > 0,
+    ok: publicResults.length > 0,
     realtime: plan.depth === "realtime",
+    fresh_request: true,
     retrieved_at: new Date().toISOString(),
     engine: "DEEP33 Search Engine",
     engine_version: "1.3.0",
@@ -2064,16 +2156,11 @@ async function publicWebSearch(query: string) {
     query: plan.original,
     depth: plan.depth,
     queries: batches.map((item) => item.query),
-    providers: [...providers],
-    provider: providers.size === 1 ? [...providers][0] : providers.size > 1 ? "multi" : null,
-    results,
-    sources: results,
-    verification: {
-      level: providers.size > 1 ? "multi-source" : results.length ? "single-source" : "none",
-      distinct_domains: new Set(results.map((item) => { try { return new URL(String(item.url)).hostname; } catch { return ""; } }).filter(Boolean)).size,
-      distinct_providers: providers.size,
-      corroborated_results: 0,
-    },
+    providers,
+    provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+    results: publicResults,
+    sources: publicResults,
+    verification,
     latency_ms: Math.round(performance.now() - started),
   };
 }
@@ -2081,42 +2168,43 @@ async function publicWebSearch(query: string) {
 async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
-
   try {
-    const res = await fetchUpstream(
-      "/v1/web/search?q=" + encodeURIComponent(q),
-      {},
-      sessionId,
-    );
+    const res = await fetchUpstream("/v1/web/search?q=" + encodeURIComponent(q), {}, sessionId);
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
-      return data;
+      const realtime = data.realtime === true || edgeRealtimeQuery(q);
+      const filtered = edgeFilterSearchResults(q, data.results as Array<Record<string, unknown>>, realtime).slice(0, 8);
+      if (filtered.length > 0) {
+        const providers = edgeProvidersForResults(filtered);
+        const verification = edgeSearchVerification(filtered, providers);
+        const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
+        return {
+          ...data,
+          ok: true,
+          providers: providers.length ? providers : (Array.isArray(data.providers) ? data.providers : []),
+          results: publicResults,
+          sources: publicResults,
+          verification: {
+            ...verification,
+            distinct_providers: providers.length || Number((data.verification as Record<string, unknown> | undefined)?.distinct_providers || 0),
+          },
+        };
+      }
     }
-
     const fallback = await publicWebSearch(q);
     return fallback.ok ? fallback : {
-      ...data,
-      ok: false,
-      error: "SEARCH_HTTP_" + res.status,
-      results: [],
-      upstream: data,
+      ...data, ok: false, error: "SEARCH_HTTP_" + res.status, results: [], upstream: data,
     };
   } catch (error) {
     const fallback = await publicWebSearch(q);
-    return fallback.ok
-      ? fallback
-      : {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-          results: [],
-        };
+    return fallback.ok ? fallback : { ok: false, error: error instanceof Error ? error.message : String(error), results: [] };
   }
 }
 
-async function readinessResponse(sessionId: string) {
+async function readinessResponse(sessionId: string, userAuthorization = "") {
   const [health, inference] = await Promise.all([
     probeHealth(sessionId),
-    probeInference(sessionId),
+    probeInference(sessionId, userAuthorization),
   ]);
 
   const ready = health.ok && inference.ok;
@@ -2183,7 +2271,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/ready" && req.method === "GET") {
-      const body = await readinessResponse(sessionId);
+      const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");
       return json(body, body.ready ? 200 : 503);
     }
 
@@ -2207,7 +2295,7 @@ Deno.serve(async (req) => {
       const auditSession = sessionId || "deep33-audit";
       const [health, inference, webStatus] = await Promise.all([
         probeHealth(auditSession),
-        probeInference(auditSession),
+        probeInference(auditSession, req.headers.get("authorization") || ""),
         UPSTREAM
           ? fetchUpstream("/v1/web/status", {}, auditSession).then(readJson)
           : Promise.resolve({
@@ -2397,6 +2485,7 @@ Deno.serve(async (req) => {
                   );
                 },
                 idempotencyContext,
+                req.headers.get("authorization") || "",
               );
 
               const responseText = sanitizeAssistantText(ai.text);
@@ -2503,7 +2592,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId);
+        }, requestId, null, req.headers.get("authorization") || "");
         const text = extractProviderText(response.body);
         const ok = text === "DEEP33_DIAGNOSTIC_OK";
         return json({
@@ -2546,7 +2635,7 @@ Deno.serve(async (req) => {
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId);
+        }, requestId, null, req.headers.get("authorization") || "");
         const text = extractProviderText(response.body);
         inference = {
           status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
@@ -2700,6 +2789,7 @@ Deno.serve(async (req) => {
               { ...payload, messages: edgeMessages },
               requestId,
               idempotencyContext,
+              req.headers.get("authorization") || "",
             );
             const responseText = extractProviderText(ai.body);
             let memoryPersisted = false;
@@ -2796,6 +2886,7 @@ return json({
             { ...payload, messages: edgeMessages },
             requestId,
             idempotencyContext,
+            req.headers.get("authorization") || "",
           );
           const responseText = extractProviderText(ai.body);
           let memoryPersisted = false;
