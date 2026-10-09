@@ -236,10 +236,20 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "needs: [android_e2e, android_validation, change_scope]" in recovery
     assert "always()" in recovery
     assert "needs.android_validation.result == 'success'" in recovery
-    assert "needs: [production_gate, android_e2e, recovery_gate]" in release
+    assert (
+        "needs: [change_scope, backend_unit, production_realtime_search, "
+        "android_validation, performance_gate, android_feature_instrumentation, "
+        "production_gate, android_e2e, recovery_gate]"
+    ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
-    assert 'DEEP33_ANDROID_E2E_RESULT: ${{ needs.android_e2e.result }}' in release
+    for gate in (
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "ANDROID_VALIDATION",
+        "PERFORMANCE_GATE", "ANDROID_FEATURE", "PRODUCTION_GATE",
+        "ANDROID_E2E", "RECOVERY_GATE",
+    ):
+        assert f"DEEP33_{gate}_RESULT" in release
+    assert '"success success success success success success success success success"' in release
 
 def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
