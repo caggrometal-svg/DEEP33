@@ -352,3 +352,12 @@ def test_release_gate_requests_workflow_write_permission() -> None:
     assert "      contents: write" in permissions
     assert "      actions: write" in permissions
     assert "      workflows: write" in permissions
+
+
+def test_recovery_gate_retries_transient_node_readiness_failures() -> None:
+    source = read(".github/workflows/ci.yml")
+    recovery = source.split("  recovery_gate:", 1)[1].split("  release_gate:", 1)[0]
+    assert "RECOVERY_NOT_READY attempt=$attempt health=$health_code ready=$ready_code" in recovery
+    assert 'test "$node_ok" = "1"' in recovery
+    assert '.status=="PASS" and .ready==true' in recovery
+    assert 'test "$inference_ok" = "1"' in recovery
