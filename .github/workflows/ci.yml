@@ -817,7 +817,7 @@ jobs:
 
 
   release_gate:
-    needs: [production_gate, android_e2e, recovery_gate]
+    needs: [change_scope, backend_unit, production_realtime_search, android_validation, performance_gate, android_feature_instrumentation, production_gate, android_e2e, recovery_gate]
     # Run on every main push; fail explicitly when a required gate did not pass.
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
@@ -830,13 +830,30 @@ jobs:
           fetch-depth: 0
       - name: Require all production and Android gates
         env:
+          DEEP33_CHANGE_SCOPE_RESULT: ${{ needs.change_scope.result }}
+          DEEP33_BACKEND_UNIT_RESULT: ${{ needs.backend_unit.result }}
+          DEEP33_REALTIME_SEARCH_RESULT: ${{ needs.production_realtime_search.result }}
+          DEEP33_ANDROID_VALIDATION_RESULT: ${{ needs.android_validation.result }}
+          DEEP33_PERFORMANCE_GATE_RESULT: ${{ needs.performance_gate.result }}
+          DEEP33_ANDROID_FEATURE_RESULT: ${{ needs.android_feature_instrumentation.result }}
           DEEP33_PRODUCTION_GATE_RESULT: ${{ needs.production_gate.result }}
           DEEP33_ANDROID_E2E_RESULT: ${{ needs.android_e2e.result }}
           DEEP33_RECOVERY_GATE_RESULT: ${{ needs.recovery_gate.result }}
         run: |
           set -euo pipefail
-          if [[ "$DEEP33_PRODUCTION_GATE_RESULT" != "success" || "$DEEP33_ANDROID_E2E_RESULT" != "success" || "$DEEP33_RECOVERY_GATE_RESULT" != "success" ]]; then
-            echo "DEEP33_RELEASE_BLOCKED production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
+          results=(
+            "$DEEP33_CHANGE_SCOPE_RESULT"
+            "$DEEP33_BACKEND_UNIT_RESULT"
+            "$DEEP33_REALTIME_SEARCH_RESULT"
+            "$DEEP33_ANDROID_VALIDATION_RESULT"
+            "$DEEP33_PERFORMANCE_GATE_RESULT"
+            "$DEEP33_ANDROID_FEATURE_RESULT"
+            "$DEEP33_PRODUCTION_GATE_RESULT"
+            "$DEEP33_ANDROID_E2E_RESULT"
+            "$DEEP33_RECOVERY_GATE_RESULT"
+          )
+          if [[ "${results[*]}" != "success success success success success success success success success" ]]; then
+            echo "DEEP33_RELEASE_BLOCKED change_scope=$DEEP33_CHANGE_SCOPE_RESULT backend_unit=$DEEP33_BACKEND_UNIT_RESULT realtime_search=$DEEP33_REALTIME_SEARCH_RESULT android_validation=$DEEP33_ANDROID_VALIDATION_RESULT performance_gate=$DEEP33_PERFORMANCE_GATE_RESULT android_feature_instrumentation=$DEEP33_ANDROID_FEATURE_RESULT production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
             exit 1
           fi
           echo "DEEP33_RELEASE_PRECONDITIONS_PASS $GITHUB_SHA"
