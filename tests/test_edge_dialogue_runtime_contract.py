@@ -82,3 +82,10 @@ def test_empty_current_date_time_search_has_live_verified_clock_fallback() -> No
                "if (!results.length && edgeCurrentDateTimeQuery(plan.original)) {" in source
         assert "if (!response.ok) return null;" in source
         assert "if (!trustedClockPath) return null;" in source
+
+
+def test_edge_current_news_filter_recognizes_global_reporting_synonyms() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "|internacional|international|global|globales|mundial|mundiales|mundo|world|worldwide|" in source
+        assert "if (!hasNewsEvidence) return false;" in source
