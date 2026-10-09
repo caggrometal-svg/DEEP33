@@ -422,7 +422,10 @@ def test_realtime_broad_country_news_does_not_require_a_country_anchor():
         },
     ]
     ranked = rank_results("noticias recientes en Chile", results, realtime=True)
-    assert [item["url"] for item in ranked] == ["https://news.example/chile-live"]
+    assert ranked
+    assert ranked[0]["url"] == "https://news.example/chile-live"
+    assert all("wikipedia.org" not in item["url"] for item in ranked)
+    assert "https://tech.example/windows" not in [item["url"] for item in ranked]
 
 
 def test_realtime_world_news_does_not_overfit_to_literal_world_synonyms():

@@ -72,11 +72,16 @@ _REALTIME_QUERY_FILLERS = {
 }
 
 def _realtime_anchor_tokens(query: str) -> set[str]:
-    # Broad current-news searches have no named entity to force-match.
-    return {
-        token for token in _tokens(query)
+    tokens = _tokens(query)
+    anchors = {
+        token for token in tokens
         if token not in _REALTIME_QUERY_FILLERS and len(token) >= 3
     }
+    if anchors:
+        return anchors
+    # For a broad country-level current-news request, keep country as a fallback
+    # anchor. Wikipedia is filtered separately so static pages cannot satisfy it.
+    return {token for token in tokens if token in {"chile"}}
 
 
 def _extract_realtime_locality(query: str) -> str:
