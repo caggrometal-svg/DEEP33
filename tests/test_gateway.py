@@ -406,10 +406,10 @@ def test_stream_ttft_measures_first_visible_text_not_metadata_chunk() -> None:
 
     class MetadataThenTextStream(httpx.AsyncByteStream):
         async def __aiter__(self):
-            yield b'data: {"choices":[{"delta":{"role":"assistant"}}]}\\n\\n'
+            yield b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
             await asyncio.sleep(0.04)
-            yield b'data: {"choices":[{"delta":{"content":"VISIBLE_FIRST_TOKEN"}}]}\\n\\n'
-            yield b"data: [DONE]\\n\\n"
+            yield b'data: {"choices":[{"delta":{"content":"VISIBLE_FIRST_TOKEN"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
 
         async def aclose(self) -> None:
             return None
