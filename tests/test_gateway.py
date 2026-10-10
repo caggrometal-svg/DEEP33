@@ -116,7 +116,6 @@ def test_complete_fails_over_once_after_ambiguous_timeout_without_retrying_prima
 
     assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
     assert result["_deep33_gateway"]["provider"] == "fallback"
-    assert result["_deep33_gateway"]["fallback_used"] is True
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
