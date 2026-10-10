@@ -659,6 +659,14 @@ class AIGateway:
                                 error_class = self._classify_http_status(status)
                                 saw_http_error = True
                                 transient_failure = self._is_retryable_status(status)
+                                if status in {404, 410}:
+                                    # Missing endpoint/model is deterministic: count it
+                                    # toward the circuit so streaming skips the bad route
+                                    # after repeated failures instead of paying its latency.
+                                    circuit.failure(
+                                        self.config.circuit_failure_threshold,
+                                        self.config.circuit_cooldown_seconds,
+                                    )
                                 logger.warning(
                                     "ai_stream_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
                                     request_id,

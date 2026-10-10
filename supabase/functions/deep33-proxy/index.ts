@@ -1275,7 +1275,10 @@ async function streamEdgeAI(
               );
               continue;
             }
-            if (response.status >= 500 || response.status === 429) {
+            if (
+              response.status >= 500 || response.status === 429 ||
+              response.status === 404 || response.status === 410
+            ) {
               recordProviderFailure(provider);
             }
             break;

@@ -450,3 +450,16 @@ def test_realtime_edge_search_uses_lazy_fallback_and_bounded_rss_retries() -> No
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "providerTimeoutMs?: number" in source
         assert "providerTimeoutMs ??" in source
+
+
+def test_edge_stream_records_404_and_410_provider_failures() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        stream = source.split("async function streamEdgeAI(", 1)[1].split(
+            "function normalizePersonality(", 1
+        )[0]
+        assert "response.status === 404 || response.status === 410" in stream
+        assert "recordProviderFailure(provider);" in stream
