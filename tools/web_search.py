@@ -526,7 +526,7 @@ async def search_web(
     if len(cleaned) > MAX_QUERY_CHARS:
         # Last-resort bound for verbose but legitimate requests. Normalization
         # above normally removes response instructions before this point.
-        first_sentence = re.split(r"(?<=[.!?])\\s+", cleaned, maxsplit=1)[0].strip()
+        first_sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0].strip()
         if first_sentence and len(first_sentence) <= MAX_QUERY_CHARS:
             cleaned = first_sentence
         else:
