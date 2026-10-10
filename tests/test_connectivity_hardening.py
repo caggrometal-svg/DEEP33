@@ -392,6 +392,7 @@ def test_production_e2e_measures_multiple_real_search_latencies() -> None:
     workflow = read(".github/workflows/production-e2e.yml")
     assert "Measure live production search latency (10 independent requests)" in workflow
     assert "for sample in $(seq 1 10)" in workflow
-    assert "PRODUCTION_SEARCH_LATENCY samples=" in workflow
+    assert '"PRODUCTION_SEARCH_LATENCY "' in workflow
+    assert "p95_ms={p95:.2f}" in workflow
     assert "(.results | length) >= 1" in workflow
     assert "(.providers | length) >= 1" in workflow

@@ -127,7 +127,7 @@ jobs:
       - name: Measure live production search latency (10 independent requests)
         run: |
           set -euo pipefail
-          query="noticias recientes de Chile hoy"
+          query="últimas noticias de Chile hoy"
           : > /tmp/deep33-search-latency-ms.txt
           for sample in $(seq 1 10); do
             response_file="/tmp/deep33-search-${sample}.json"
