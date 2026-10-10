@@ -24,7 +24,11 @@ MAX_QUERY_CHARS = 1000
 SEARCH_CACHE_TTL_SECONDS = max(
     5.0, min(300.0, float(os.getenv("WEB_SEARCH_CACHE_TTL_SECONDS", "90")))
 )
+REALTIME_NEWS_CACHE_TTL_SECONDS = max(
+    1.0, min(15.0, float(os.getenv("WEB_SEARCH_REALTIME_CACHE_TTL_SECONDS", "10")))
+)
 _SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
+_REALTIME_SEARCH_CACHE: dict[str, tuple[float, float, dict]] = {}
 _SEARCH_INFLIGHT: dict[str, asyncio.Task] = {}
 _SEARCH_HTTP_CLIENT: httpx.AsyncClient | None = None
 _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
@@ -546,13 +550,26 @@ async def search_web(
         cleaned, selected_provider, key, timeout_seconds, max_results
     )
     now = time.monotonic()
-    cached = _SEARCH_CACHE.get(cache_key)
-    # Explicit/current web requests must reach the Internet on every call.
-    # Cache remains available only for non-fresh repeated searches.
-    if not fresh and cached and cached[0] > now:
-        return copy.deepcopy(cached[1])
-
     started = time.perf_counter()
+    realtime_news = bool(fresh and _looks_realtime_news(cleaned))
+    if realtime_news:
+        live_cached = _REALTIME_SEARCH_CACHE.get(cache_key)
+        if live_cached and live_cached[0] > now:
+            fetched_at, cached_result = live_cached[1], copy.deepcopy(live_cached[2])
+            cached_result["fresh_request"] = False
+            cached_result["cache_hit"] = True
+            cached_result["cache_age_ms"] = max(0, int((now - fetched_at) * 1000))
+            cached_result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
+            return cached_result
+        if live_cached:
+            _REALTIME_SEARCH_CACHE.pop(cache_key, None)
+
+    cached = _SEARCH_CACHE.get(cache_key)
+    if not fresh and cached and cached[0] > now:
+        response = copy.deepcopy(cached[1])
+        response.setdefault("cache_hit", True)
+        response.setdefault("cache_age_ms", 0)
+        return response
     inflight = _SEARCH_INFLIGHT.get(cache_key)
     if inflight is not None and not inflight.done():
         shared = await inflight
@@ -582,11 +599,26 @@ async def search_web(
             raise WebSearchError(
                 "WEB_SEARCH_FAILED:" + ",".join(result.get("errors") or ["NO_RESULTS"])
             )
-        _SEARCH_CACHE[cache_key] = (
-            time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
-            copy.deepcopy(result),
-        )
         result["fresh_request"] = bool(fresh)
+        result["cache_hit"] = False
+        if realtime_news:
+            fetched_at = time.monotonic()
+            if len(_REALTIME_SEARCH_CACHE) >= 128 and cache_key not in _REALTIME_SEARCH_CACHE:
+                for expired_key, entry in list(_REALTIME_SEARCH_CACHE.items()):
+                    if entry[0] <= fetched_at:
+                        _REALTIME_SEARCH_CACHE.pop(expired_key, None)
+                if len(_REALTIME_SEARCH_CACHE) >= 128:
+                    _REALTIME_SEARCH_CACHE.pop(next(iter(_REALTIME_SEARCH_CACHE)))
+            _REALTIME_SEARCH_CACHE[cache_key] = (
+                fetched_at + REALTIME_NEWS_CACHE_TTL_SECONDS,
+                fetched_at,
+                copy.deepcopy(result),
+            )
+        else:
+            _SEARCH_CACHE[cache_key] = (
+                time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
+                copy.deepcopy(result),
+            )
         return copy.deepcopy(result)
     finally:
         if _SEARCH_INFLIGHT.get(cache_key) is task:
