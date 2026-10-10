@@ -51,3 +51,6 @@ Both `deep33-proxy` and `deep33-tertiary` should use the same default `AI_PROVID
 The public Vireonix and LLMFaucet endpoints are **disabled by default**. They are only added to the provider chain when the server-side Edge Function secret `DEEP33_ENABLE_PUBLIC_FALLBACKS=true` is explicitly set. `DEEP33_DISABLE_PUBLIC_FALLBACKS=true` remains a hard stop even when the enable flag is present.
 
 Do not enable these endpoints for user conversations until their data-processing, retention, training/use, and billing conditions have been reviewed. Vireonix's current terms grant a broad, perpetual license to process and use submitted inputs, outputs, conversation history, tool calls, metadata, and feedback for service operation, quality, and model training/improvement (https://vireonix.ai/terms). LLMFaucet's applicable privacy/retention and billing terms have not been verified in this review; it therefore also remains disabled by default. Public endpoints must not receive user prompts merely because another provider fails.
+
+
+The opt-in gate also filters Vireonix and LLMFaucet when either is configured as the primary provider or in `AI_GATEWAY_FALLBACKS_JSON`. That prevents a legacy environment setting from bypassing the default-off policy. The internal Render backend fallback remains in the chain; client endpoint URLs are unchanged.

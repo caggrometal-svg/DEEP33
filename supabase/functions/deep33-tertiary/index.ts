@@ -275,14 +275,31 @@ function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
 }
 
 
-function addPublicInferenceProviders(providers: EdgeAIProvider[]): void {
-  // Public inference vendors remain off until their retention, training, and billing terms
-  // are reviewed and an operator explicitly opts in for user traffic.
-  const publicFallbacksEnabled =
+function publicInferenceProvidersEnabled(): boolean {
+  const enabled =
     (Deno.env.get("DEEP33_ENABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
-  const publicFallbacksDisabled =
+  const disabled =
     (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
-  if (!publicFallbacksEnabled || publicFallbacksDisabled) return;
+  return enabled && !disabled;
+}
+
+function isUnreviewedPublicProvider(name: string, url: string): boolean {
+  if (publicInferenceProvidersEnabled()) return false;
+  const normalizedName = name.trim().toLowerCase();
+  if (normalizedName.includes("vireonix") || normalizedName.includes("llmfaucet")) return true;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "vireonix.ai" || host.endsWith(".vireonix.ai") ||
+      host === "llmfaucet.dev" || host.endsWith(".llmfaucet.dev");
+  } catch {
+    return false;
+  }
+}
+
+function addPublicInferenceProviders(providers: EdgeAIProvider[]): void {
+  // Public vendors remain disabled until their retention, training, and billing terms
+  // are reviewed and an operator explicitly opts in for user traffic.
+  if (!publicInferenceProvidersEnabled()) return;
 
   const vireonixUrl = "https://vireonix.ai/v1/chat/completions";
   if (!providers.some((provider) => provider.url === vireonixUrl)) {
@@ -311,7 +328,11 @@ function addPublicInferenceProviders(providers: EdgeAIProvider[]): void {
 
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
-  if (isSecureHttpsUrl(EDGE_AI_URL) && (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY)) {
+  if (
+    isSecureHttpsUrl(EDGE_AI_URL) &&
+    (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY) &&
+    !isUnreviewedPublicProvider(EDGE_AI_PROVIDER, EDGE_AI_URL)
+  ) {
     providers.push({
       name: EDGE_AI_PROVIDER,
       url: EDGE_AI_URL,
@@ -333,9 +354,15 @@ function edgeProviders(): EdgeAIProvider[] {
           const stream_url = String(value.stream_url || url).trim();
           const api_key = String(value.api_key || "").trim();
           const requires_auth = Boolean(value.requires_auth ?? api_key);
-          if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) || (requires_auth && !api_key)) continue;
+          const name = String(value.name || "fallback").trim() || "fallback";
+          if (
+            !isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) ||
+            (requires_auth && !api_key) ||
+            isUnreviewedPublicProvider(name, url) ||
+            isUnreviewedPublicProvider(name, stream_url)
+          ) continue;
           providers.push({
-            name: String(value.name || "fallback").trim() || "fallback",
+            name,
             url,
             stream_url,
             api_key,

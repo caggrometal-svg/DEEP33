@@ -109,6 +109,21 @@ def test_public_inference_fallbacks_require_explicit_opt_in(path: Path) -> None:
     assert "if (!publicFallbacksEnabled || publicFallbacksDisabled) return;" in policy
 
 
+@pytest.mark.parametrize("path", EDGE_PATHS)
+def test_unreviewed_public_provider_is_filtered_from_primary_and_configured_fallbacks(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    start = source.index("function edgeProviders(): EdgeAIProvider[] {")
+    end = source.index("\nfunction edgeAIConfigured()", start)
+    providers = source[start:end]
+
+    assert "!isUnreviewedPublicProvider(EDGE_AI_PROVIDER, EDGE_AI_URL)" in providers
+    assert "isUnreviewedPublicProvider(name, url)" in providers
+    assert "isUnreviewedPublicProvider(name, stream_url)" in providers
+    assert "return enabled && !disabled;" in source
+    assert 'host === "vireonix.ai"' in source
+    assert 'host.endsWith(".llmfaucet.dev")' in source
+
+
 def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
     import asyncio
     from tools import web_search
