@@ -2988,7 +2988,7 @@ async function publicWebSearchUncached(
       ? "noticias internacionales de hoy"
       : locality
         ? `${locality} noticias de hoy`
-        : /\\b(?:chile|chileno|chilena)\\b/i.test(plan.original)
+        : /\b(?:chile|chileno|chilena)\b/i.test(plan.original)
           ? "Chile noticias hoy"
           : `${normalizeEdgeSearchQuery(plan.original)} actualidad de hoy`;
     const data = await runPublicWebSearchQuery(
