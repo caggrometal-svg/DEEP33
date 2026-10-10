@@ -325,3 +325,60 @@ def test_default_model_is_explicitly_free(monkeypatch):
     config = GatewayConfig.from_env()
 
     assert config.model == "google/gemma-4-26b-a4b-it:free"
+
+
+def test_stream_fails_over_after_empty_200_without_forwarding_empty_chunks() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(
+                200,
+                request=request,
+                headers={"content-type": "text/event-stream"},
+                content=b"data: [DONE]\n\n",
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"FALLBACK_STREAM_NON_EMPTY"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def one_stream() -> bytes:
+        output = bytearray()
+        async for part in gateway.stream({"messages": [{"role": "user", "content": "hi"}]}):
+            output.extend(part)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        import asyncio
+        output = asyncio.run(one_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
+    assert output.count(b"FALLBACK_STREAM_NON_EMPTY") == 1
+    assert output.count(b"data: [DONE]") == 1
