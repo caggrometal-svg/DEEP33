@@ -281,8 +281,8 @@ def test_edge_realtime_news_uses_bounded_parallel_rss_first_path() -> None:
         assert "1800" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
-        assert "const realtimeNewsPlan = plan.depth === " in source
-        assert "const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3)" in source
+        assert "const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);" in source
+        assert "plan.queries.slice(1, 3)" not in source
         assert "initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))" in source
         assert "2500" in source
         assert "socialPublisherSuffix" in source
@@ -308,7 +308,7 @@ def test_edge_realtime_news_runs_query_variants_in_parallel_before_broad_fallbac
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
-        assert "const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3)" in source
+        assert "const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);" in source
         assert "const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(" in source
-        assert "const realtimeNewsPlan = plan.depth === " in source
+        assert "plan.queries.slice(1, 3)" not in source
         assert "results.length < 1" in source or "finalResults.length < 1" in source
