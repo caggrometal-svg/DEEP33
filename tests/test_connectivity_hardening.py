@@ -386,3 +386,12 @@ def test_recovery_gate_retries_transient_node_readiness_failures() -> None:
     assert 'test "$node_ok" = "1"' in recovery
     assert '.status=="PASS" and .ready==true' in recovery
     assert 'test "$inference_ok" = "1"' in recovery
+
+
+def test_production_e2e_measures_multiple_real_search_latencies() -> None:
+    workflow = read(".github/workflows/production-e2e.yml")
+    assert "Measure live production search latency (10 independent requests)" in workflow
+    assert "for sample in $(seq 1 10)" in workflow
+    assert "PRODUCTION_SEARCH_LATENCY samples=" in workflow
+    assert "(.results | length) >= 1" in workflow
+    assert "(.providers | length) >= 1" in workflow

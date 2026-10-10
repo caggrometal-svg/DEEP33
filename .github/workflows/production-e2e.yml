@@ -124,6 +124,47 @@ jobs:
           cat /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
+      - name: Measure live production search latency (10 independent requests)
+        run: |
+          set -euo pipefail
+          query="noticias recientes de Chile hoy"
+          : > /tmp/deep33-search-latency-ms.txt
+          for sample in $(seq 1 10); do
+            response_file="/tmp/deep33-search-${sample}.json"
+            measurement="$(curl -sS --connect-timeout 8 --max-time 45 \
+              -o "$response_file" -w '%{http_code} %{time_total}' \
+              -G "$PRIMARY_URL/v1/web/search" \
+              -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+              -H "Cache-Control: no-cache" \
+              -H "X-DEEP33-Session-Id: search-bench-${GITHUB_RUN_ID}-${sample}" \
+              -H "X-Request-ID: search-bench-${GITHUB_RUN_ID}-${sample}" \
+              --data-urlencode "q=$query" || true)"
+            status="${measurement%% *}"
+            seconds="${measurement#* }"
+            if [ "$status" != "200" ] || ! jq -e '.ok == true and .realtime == true and .fresh_request == true and (.results | length) >= 1 and (.providers | length) >= 1 and (.retrieved_at | strings | length) > 10' "$response_file" >/dev/null 2>&1; then
+              echo "PRODUCTION_SEARCH_SAMPLE_FAIL sample=$sample http=$status"
+              jq -c '{ok,realtime,fresh_request,providers,results:(.results|length),retrieved_at,errors}' "$response_file" 2>/dev/null || true
+              exit 1
+            fi
+            milliseconds="$(awk -v seconds="$seconds" 'BEGIN { printf "%.2f", seconds * 1000 }')"
+            printf '%s\n' "$milliseconds" >> /tmp/deep33-search-latency-ms.txt
+            echo "PRODUCTION_SEARCH_SAMPLE_PASS sample=$sample latency_ms=$milliseconds"
+          done
+          python - <<'PY'
+          import math
+          from pathlib import Path
+          values = sorted(float(line) for line in Path("/tmp/deep33-search-latency-ms.txt").read_text().splitlines() if line.strip())
+          if len(values) != 10:
+              raise SystemExit(f"PRODUCTION_SEARCH_SAMPLE_COUNT_FAIL n={len(values)}")
+          p50 = (values[4] + values[5]) / 2
+          p95 = values[math.ceil(0.95 * len(values)) - 1]
+          print(
+              "PRODUCTION_SEARCH_LATENCY "
+              f"samples={len(values)} p50_ms={p50:.2f} p95_ms={p95:.2f} "
+              f"min_ms={values[0]:.2f} max_ms={values[-1]:.2f}"
+          )
+          PY
+
       - name: Verify edge audit and real inference
         run: |
           set -euo pipefail

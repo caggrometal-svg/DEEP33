@@ -444,6 +444,15 @@ class AIGateway:
                         error_class = self._classify_http_status(status)
                         saw_http_error = True
                         provider_failed_transiently = self._is_retryable_status(status)
+                        if status in {404, 410}:
+                            # A missing endpoint/model is unambiguous and should not
+                            # be retried indefinitely on every request. Open the
+                            # circuit after repeated misses, while this request still
+                            # proceeds to the configured fallback provider.
+                            circuit.failure(
+                                self.config.circuit_failure_threshold,
+                                self.config.circuit_cooldown_seconds,
+                            )
                         logger.warning(
                             "ai_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
                             request_id,

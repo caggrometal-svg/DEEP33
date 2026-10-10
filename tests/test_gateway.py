@@ -183,6 +183,60 @@ def test_complete_fails_over_after_primary_rate_limit() -> None:
     assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
 
 
+def test_complete_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(404, request=request, json={"error": "model or route not found"})
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "model": "fallback-model",
+                "choices": [{"message": {"role": "assistant", "content": "FALLBACK_NON_EMPTY"}}],
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+        circuit_failure_threshold=3,
+        circuit_cooldown_seconds=30,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def exercise() -> list[dict]:
+        return [
+            await gateway.complete({"messages": [{"role": "user", "content": "hi"}]})
+            for _ in range(4)
+        ]
+
+    httpx.AsyncClient = Client
+    try:
+        import asyncio
+        outputs = asyncio.run(exercise())
+    finally:
+        httpx.AsyncClient = original
+
+    assert all(output["choices"][0]["message"]["content"] == "FALLBACK_NON_EMPTY" for output in outputs)
+    assert calls.count("https://primary.test/chat") == 3
+    assert calls.count("https://fallback.test/chat") == 4
+    assert gateway._circuit(config.providers[0]).opened_until > 0
+
+
 def test_stream_provider_order_prefers_ttft_after_learning():
     primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
     fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
