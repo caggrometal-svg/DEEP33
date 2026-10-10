@@ -132,7 +132,7 @@ def _normalise_lookup_query(query: str) -> str:
     # Search engines need the topic, not the user's full operating instructions.
     # Trim instruction clauses even when the prompt is longer than provider limits.
     instruction_clause = (
-        r"\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
+        r"(?<=[.!?;:])\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
         r"incluye|resume|cita|describe|presenta|informa|muestra|señala|"
         r"no inventes|no afirmes|no supongas|responde en|responde una sola vez|"
         r"formato de salida|resultado de cada prueba|"
