@@ -103,7 +103,7 @@ class GatewayConfig:
                 "https://api.kilo.ai/api/gateway/models",
             ).strip(),
             api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
-            model=os.getenv("AI_GATEWAY_MODEL", "kilo-auto/free").strip(),
+            model=os.getenv("AI_GATEWAY_MODEL", "google/gemma-4-26b-a4b-it:free").strip(),
         )
 
         providers = [primary]
