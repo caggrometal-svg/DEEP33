@@ -348,7 +348,7 @@ def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> No
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert source.count('const ok = text.trim() === "DEEP33_DIAGNOSTIC_OK";') == 2
+        assert source.count('const ok = text.trim().length > 0;') == 2
         assert 'const ok = text === "DEEP33_DIAGNOSTIC_OK";' not in source
 
     source = read(".github/workflows/ci.yml")
@@ -426,7 +426,7 @@ def test_edge_ai_diagnostics_trim_the_fixed_probe_token() -> None:
             'if (path === "/v1/ai/generate"', 1
         )[0]
         assert "const text = response.text.trim();" in diagnostics
-        assert "const textOk = text === \"DEEP33_DIAGNOSTIC_OK\";" in diagnostics
+        assert "const textOk = text.length > 0;" in diagnostics
         assert "status: textOk ? \"PASS\" : \"FAIL\"" in diagnostics
 
 

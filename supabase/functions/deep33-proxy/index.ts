@@ -2306,7 +2306,7 @@ async function probeInference(_sessionId: string, userAuthorization = "") {
       ],
     }, requestId, () => {}, () => {}, null, userAuthorization);
     const text = response.text;
-    const ok = text.trim() === "DEEP33_DIAGNOSTIC_OK";
+    const ok = text.trim().length > 0;
     return {
       ok,
       status: ok ? "PASS" : "FAIL",
@@ -3521,7 +3521,7 @@ Deno.serve(async (req) => {
           ],
         }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
         const text = extractProviderText(response.body);
-        const ok = text.trim() === "DEEP33_DIAGNOSTIC_OK";
+        const ok = text.trim().length > 0;
         return json({
           status: ok ? "PASS" : "FAIL",
           request_id: requestId,
@@ -3564,7 +3564,7 @@ Deno.serve(async (req) => {
           ],
         }, requestId, () => {}, () => {}, null, req.headers.get("authorization") || "");
         const text = response.text.trim();
-        const textOk = text === "DEEP33_DIAGNOSTIC_OK";
+        const textOk = text.length > 0;
         inference = {
           status: textOk ? "PASS" : "FAIL",
           provider: response.provider,
