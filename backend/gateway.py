@@ -396,7 +396,10 @@ class AIGateway:
         """Return a bounded provider error message without logging request/prompt data."""
         try:
             payload = response.json()
-        except ValueError:
+        except (ValueError, httpx.ResponseNotRead):
+            # Streaming HTTP error bodies have not been consumed yet. Reading
+            # them here raises ResponseNotRead and can abort the ASGI response
+            # before the configured fallback provider is attempted.
             payload = {}
 
         hint = ""
