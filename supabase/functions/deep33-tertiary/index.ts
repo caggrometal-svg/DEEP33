@@ -2261,6 +2261,8 @@ function edgeFilterSearchResults(
       const title = String(item.title || "").trim();
       const socialPublisherSuffix = /(?:\s[-–|]\s*)(?:facebook|instagram|tiktok|reddit|youtube)(?:\s|$)/i.test(title);
       if (googleNewsStory && socialPublisherSuffix) return false;
+      const pathYear = parsedUrl.pathname.match(/(?:^|\/)((?:19|20)\d{2})(?:\/|$)/);
+      if (currentNews && !googleNewsStory && pathYear && Number(pathYear[1]) < new Date().getFullYear()) return false;
       const publishedAt = String(item.published_at ?? "").trim();
       const publicationTimestamp = Date.parse(publishedAt);
       const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
