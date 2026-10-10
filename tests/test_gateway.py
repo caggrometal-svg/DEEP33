@@ -260,6 +260,75 @@ def test_stream_provider_order_prefers_ttft_after_learning():
     assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "fallback"
 
 
+def test_stream_fails_over_on_provider_policy_block_text_before_emitting_it() -> None:
+    calls: list[str] = []
+
+    class PolicyBlockStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"Automated bulk"}}]}\n\n'
+            yield b'data: {"choices":[{"delta":{"content":" tasks detected. Future requests will be blocked."}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(
+                200,
+                request=request,
+                headers={"content-type": "text/event-stream"},
+                stream=PolicyBlockStream(),
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"FALLBACK_STREAM_NON_EMPTY"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+        circuit_failure_threshold=3,
+        circuit_cooldown_seconds=30,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def one_stream() -> bytes:
+        output = bytearray()
+        async for part in gateway.stream({"messages": [{"role": "user", "content": "hi"}]}):
+            output.extend(part)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        import asyncio
+        output = asyncio.run(one_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
+    assert b"Automated bulk tasks detected" not in output
+    assert output.count(b"FALLBACK_STREAM_NON_EMPTY") == 1
+    assert output.count(b"data: [DONE]") == 1
+
+
 def test_stream_opens_circuit_on_first_primary_404_and_uses_fallback() -> None:
     calls: list[str] = []
 

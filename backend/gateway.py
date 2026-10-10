@@ -17,6 +17,17 @@ from urllib.parse import urlsplit
 logger = logging.getLogger(__name__)
 
 
+_PROVIDER_POLICY_BLOCK_PHRASES = (
+    "automated bulk tasks detected",
+    "future requests will be blocked",
+    "tos violation",
+    "terms of service violation",
+    "contact for a custom policy",
+    "automated abuse detected",
+    "request blocked by the provider",
+)
+
+
 class GatewayTimeoutError(Exception):
     pass
 
@@ -359,22 +370,54 @@ class AIGateway:
         return False
 
     @staticmethod
+    def _stream_text_content(buffer: bytes) -> str:
+        """Extract accumulated assistant text from complete SSE frames."""
+        parts: list[str] = []
+        for line in buffer.splitlines():
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == b"[DONE]":
+                continue
+            try:
+                event = json.loads(payload)
+            except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            choices = event.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                message = choice.get("message")
+                content = (
+                    delta.get("content")
+                    if isinstance(delta, dict)
+                    else message.get("content") if isinstance(message, dict)
+                    else None
+                )
+                if isinstance(content, str):
+                    parts.append(content)
+        return "".join(parts)
+
+    @staticmethod
     def _is_provider_policy_block(text: str) -> bool:
         normalized = " ".join(str(text or "").split()).strip().lower()
-        if not normalized:
-            return False
-        return any(
-            phrase in normalized
-            for phrase in (
-                "automated bulk tasks detected",
-                "future requests will be blocked",
-                "tos violation",
-                "terms of service violation",
-                "contact for a custom policy",
-                "automated abuse detected",
-                "request blocked by the provider",
-            )
+        return bool(normalized) and any(
+            phrase in normalized for phrase in _PROVIDER_POLICY_BLOCK_PHRASES
         )
+
+    @staticmethod
+    def _is_possible_provider_policy_block_prefix(text: str) -> bool:
+        normalized = " ".join(str(text or "").split()).strip().lower()
+        return bool(normalized) and any(
+            phrase.startswith(normalized)
+            for phrase in _PROVIDER_POLICY_BLOCK_PHRASES
+        )
+
     @staticmethod
     def _classify_http_status(status: int) -> str:
         if status in {401, 403}:
@@ -704,6 +747,7 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 started_output = False
                 visible_content = False
+                provider_policy_block = False
                 pending_chunks: list[bytes] = []
                 pending_bytes = bytearray()
                 first_chunk_at: float | None = None
@@ -780,6 +824,14 @@ class AIGateway:
                                             pending_chunks.append(chunk)
                                             pending_bytes.extend(chunk)
                                             if self._stream_has_visible_content(bytes(pending_bytes)):
+                                                accumulated_text = self._stream_text_content(bytes(pending_bytes))
+                                                if self._is_provider_policy_block(accumulated_text):
+                                                    provider_policy_block = True
+                                                    break
+                                                if self._is_possible_provider_policy_block_prefix(accumulated_text):
+                                                    # Delay only ambiguous initial prefixes (for example
+                                                    # "Automated bulk") until they can be classified.
+                                                    continue
                                                 visible_content = True
                                                 started_output = True
                                                 for pending_chunk in pending_chunks:
@@ -793,21 +845,44 @@ class AIGateway:
                                         else:
                                             started_output = True
                                             yield chunk
+                                if not visible_content and not provider_policy_block:
+                                    # A complete reply can legitimately be only a short
+                                    # prefix such as "To". Do not reject that solely
+                                    # because it temporarily matched a policy phrase prefix.
+                                    accumulated_text = self._stream_text_content(bytes(pending_bytes)).strip()
+                                    if accumulated_text and len(accumulated_text) < 3:
+                                        visible_content = True
+                                        started_output = True
+                                        for pending_chunk in pending_chunks:
+                                            yield pending_chunk
+                                        pending_chunks.clear()
+                                        pending_bytes.clear()
+
                                 if not visible_content:
                                     saw_invalid_response = True
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
                                         self.config.circuit_cooldown_seconds,
                                     )
-                                    logger.warning(
-                                        "ai_stream_provider_empty_response request_id=%s provider=%s buffered_bytes=%s next_provider=%s",
-                                        request_id,
-                                        provider.name,
-                                        len(pending_bytes),
-                                        ordered_providers[provider_index + 1].name
-                                        if provider_index + 1 < len(ordered_providers)
-                                        else "none",
-                                    )
+                                    if provider_policy_block:
+                                        logger.warning(
+                                            "ai_stream_provider_policy_block request_id=%s provider=%s next_provider=%s",
+                                            request_id,
+                                            provider.name,
+                                            ordered_providers[provider_index + 1].name
+                                            if provider_index + 1 < len(ordered_providers)
+                                            else "none",
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "ai_stream_provider_empty_response request_id=%s provider=%s buffered_bytes=%s next_provider=%s",
+                                            request_id,
+                                            provider.name,
+                                            len(pending_bytes),
+                                            ordered_providers[provider_index + 1].name
+                                            if provider_index + 1 < len(ordered_providers)
+                                            else "none",
+                                        )
                                     break
 
                                 provider_succeeded = True
