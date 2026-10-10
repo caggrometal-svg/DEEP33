@@ -236,7 +236,7 @@ function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
   const accountId = (Deno.env.get("DEEP33_CLOUDFLARE_ACCOUNT_ID") || "").trim();
   const cloudflareToken = (Deno.env.get("DEEP33_CLOUDFLARE_API_TOKEN") || "").trim();
   const cloudflareModel =
-    (Deno.env.get("DEEP33_CLOUDFLARE_MODEL") || "@cf/meta/llama-3.1-8b-instruct").trim();
+    (Deno.env.get("DEEP33_CLOUDFLARE_MODEL") || "@cf/meta/llama-3.1-8b-instruct-fp8").trim();
   if (
     /^[a-f0-9]{32}$/i.test(accountId) &&
     cloudflareToken &&
