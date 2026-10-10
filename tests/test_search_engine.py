@@ -633,3 +633,61 @@ def test_realtime_anchor_tokens_ignore_numeric_date_suffixes():
     assert "condes" in anchors
     assert "2026" not in anchors
     assert "10" not in anchors
+
+
+def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
+    from backend.search.engine import _realtime_anchor_tokens
+
+    query = (
+        "Busca una noticia publicada hoy, 10 de octubre de 2026, en Chile. "
+        "Usa una fuente real y actualizada. Indica el titular, la fecha de publicación, "
+        "un resumen breve y el enlace original. No inventes información."
+    )
+    assert _realtime_anchor_tokens(query) == {"chile"}
+    ranked = rank_results(
+        query,
+        [{
+            "title": "Chile anuncia nuevas medidas este sábado",
+            "url": "https://news.example/chile/actualidad",
+            "snippet": "Autoridades informaron hoy de nuevas medidas en Chile.",
+        }],
+        realtime=True,
+    )
+    assert len(ranked) == 1
+
+
+def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
+    queries = []
+
+    async def fake_run_query(self, providers, planned_query, **kwargs):
+        queries.append(planned_query)
+        return (
+            [("google_news", [
+                {
+                    "title": "Chile anuncia nuevas medidas",
+                    "url": "https://news.example/chile-medidas",
+                    "snippet": "Noticia actual publicada hoy en Chile.",
+                },
+                {
+                    "title": "Gobierno de Chile informa nuevos cambios",
+                    "url": "https://report.example/chile-cambios",
+                    "snippet": "Actualización reciente de una fuente informativa.",
+                },
+            ])],
+            [],
+            ["google_news"],
+        )
+
+    monkeypatch.setattr(SearchEngine, "_run_query", fake_run_query)
+    result = asyncio.run(
+        SearchEngine(max_results=5, max_queries=3).search(
+            "noticias recientes en Chile",
+            provider="auto",
+            api_key="",
+            timeout_seconds=3,
+            fallback_ddg=True,
+        )
+    )
+    assert result["ok"] is True
+    assert len(queries) == 1
+    assert result["queries_executed"] == [queries[0]]
