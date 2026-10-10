@@ -1194,6 +1194,73 @@ def should_force_web(messages):
         return True
     return False
 
+def is_connectivity_question(query: str) -> bool:
+    """Identify direct questions about backend Internet connectivity, not web-search topics."""
+    lowered = " ".join(str(query or "").split()).strip().lower()
+    patterns = (
+        r"\b(?:tienes|tiene|tienen|tenemos|tengo|dispone(?:s|n)? de|cuentas con|cuenta con|"
+        r"cuento con|puedes|puede|podemos)\s+(?:acceso\s+(?:directo\s+)?a\s+)?(?:internet|la web)\b",
+        r"\b(?:acceso|conexi[oó]n|conectividad)\s+(?:direct[oa]?\s+)?a\s+(?:internet|la web)\b",
+        r"\b(?:do you have|can you access|does .+ have|do .+ have)\s+(?:direct\s+)?(?:internet|web)\s+access\b",
+    )
+    return any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in patterns)
+
+
+async def _connectivity_status_answer() -> str:
+    """Answer connectivity questions from an actual backend DNS/HTTPS probe."""
+    probe = await network_probe()
+    dns = "PASS" if probe.get("dns_ok") else "FAIL"
+    https = "PASS" if probe.get("https_ok") else "FAIL"
+    latency = probe.get("latency_ms")
+    timestamp = str(probe.get("timestamp") or "no disponible")
+    if probe.get("internet_available"):
+        return (
+            "La prueba real de conectividad del backend DEEP33 pasó: DNS y HTTPS respondieron. "
+            f"Latencia medida: {latency} ms. Hora de la prueba: {timestamp}. "
+            "Esto confirma acceso general a Internet desde el backend en esta prueba, "
+            "pero no garantiza que todos los motores de búsqueda estén disponibles."
+        )
+    error = str(probe.get("error") or "sin detalle técnico")
+    return (
+        "La prueba real de conectividad del backend DEEP33 falló; no puedo confirmar acceso a Internet. "
+        f"DNS={dns}; HTTPS={https}; latencia medida={latency} ms; hora de la prueba={timestamp}; "
+        f"error={error}."
+    )
+
+
+def _is_clock_question(query: str) -> bool:
+    lowered = " ".join(str(query or "").split()).strip().lower()
+    return bool(
+        re.search(
+            r"\b(?:qué|que|cuál|cual|dime)\s+(?:hora|fecha|día|dia)"
+            r"(?:\s+y\s+(?:hora|fecha|día|dia))?\s+(?:es|tenemos|hay|actual)\b",
+            lowered,
+        )
+        or re.search(r"\b(?:hora|fecha|día|dia)(?:\s+y\s+(?:hora|fecha|día|dia))?\s+actual\b", lowered)
+        or re.search(r"\b(?:hora|fecha|día|dia)\s+de hoy\b", lowered)
+        or re.search(r"\b(?:what time is it|what is the time|what is today's date|what date is it|what day is it|current time)\b", lowered)
+    )
+
+
+def _runtime_clock_answer() -> str:
+    now_utc = datetime.now(timezone.utc)
+    try:
+        local = now_utc.astimezone(ZoneInfo(DEEP33_RUNTIME_TIMEZONE))
+        timezone_name = DEEP33_RUNTIME_TIMEZONE
+    except Exception:
+        local = now_utc
+        timezone_name = "UTC"
+    weekday = _RUNTIME_WEEKDAYS_ES[local.weekday()]
+    month = _RUNTIME_MONTHS_ES[local.month - 1]
+    readable_date = f"{weekday}, {local.day} de {month} de {local.year}"
+    place = "Santiago de Chile" if timezone_name == "America/Santiago" else timezone_name
+    return (
+        f"En {place}, la fecha y hora actuales son: {readable_date}, "
+        f"{local.strftime('%H:%M')} (hora local, zona horaria {timezone_name}). "
+        "Esta información procede del reloj de ejecución del backend y no necesita búsqueda web."
+    )
+
+
 def should_deep_web(messages: list[dict[str, Any]], personality: str | None = None) -> bool:
     """Use the deep web-search path for research, uncertainty and controversy."""
     query = latest_user_query(messages).lower()
@@ -1395,7 +1462,9 @@ async def _enforce_web_originality(
 
 
 def _web_search_unavailable_answer(query: str) -> str:
-    """Return a factual, non-retrying answer when live evidence could not be retrieved."""
+    """Return a truthful answer when live evidence could not be retrieved."""
+    if _is_clock_question(query):
+        return _runtime_clock_answer()
     return (
         "No pude verificar información actual porque la búsqueda web falló o no devolvió "
         "resultados verificables. Esto no demuestra que todo el acceso a Internet esté caído. "
@@ -2557,7 +2626,21 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
+        if is_connectivity_question(latest_user_query(messages)):
+            logger.info("backend_connectivity_question request_id=%s session_id=%s", request_id, session_id)
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": await _connectivity_status_answer(),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = []
+        elif DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
             should_force_web(messages) or should_deep_web(messages, personality)
         ):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
@@ -3188,9 +3271,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         temperature=request.temperature,
     )
 
-    web_search_failure_text: str | None = None
+    stream_answer_override: str | None = None
     try:
-        if not skip_web_tools and DEEP33_WEB_TOOLS_ENABLED and (
+        if is_connectivity_question(latest_user_query(messages)):
+            logger.info("backend_connectivity_stream request_id=%s session_id=%s", request_id, session_id)
+            stream_answer_override = await _connectivity_status_answer()
+        elif not skip_web_tools and DEEP33_WEB_TOOLS_ENABLED and (
             should_force_web(messages) or should_deep_web(messages, personality)
         ):
             logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
@@ -3222,7 +3308,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
                 )
                 if working is None:
-                    web_search_failure_text = _web_search_unavailable_answer(
+                    stream_answer_override = _web_search_unavailable_answer(
                         latest_user_query(messages)
                     )
                 else:
@@ -3235,8 +3321,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     )
 
         completion_state: dict[str, str] = {}
-        if web_search_failure_text is not None:
-            fallback_text = web_search_failure_text
+        if stream_answer_override is not None:
+            fallback_text = stream_answer_override
 
             async def unavailable_stream() -> AsyncIterator[bytes]:
                 completion_state["assistant_text"] = fallback_text
