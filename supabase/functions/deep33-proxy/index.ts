@@ -2928,7 +2928,12 @@ async function publicWebSearchUncached(
   const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(
     initialQueries.map(async (q) => ({
       query: q,
-      data: await runPublicWebSearchQuery(q) as Record<string, unknown>,
+      data: await runPublicWebSearchQuery(q).catch(() => ({
+        ok: false,
+        results: [],
+        providers: [],
+        errors: ["initial_provider_request_failed"],
+      })) as Record<string, unknown>,
     })),
   );
   const merged = new Map<string, Record<string, unknown>>();

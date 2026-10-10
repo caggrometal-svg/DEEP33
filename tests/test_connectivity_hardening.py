@@ -463,3 +463,24 @@ def test_edge_stream_records_404_and_410_provider_failures() -> None:
         )[0]
         assert "response.status === 404 || response.status === 410" in stream
         assert "recordProviderFailure(provider);" in stream
+
+
+def test_initial_realtime_provider_network_errors_enter_bounded_fallback() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert "errors: [\"initial_provider_request_failed\"]" in source
+        assert ".catch(() => ({" in source
+        search = (
+            source.split("async function publicWebSearchUncached(", 1)[1].split(
+                "function edgeSearchCacheKey(", 1
+            )[0]
+            if "async function publicWebSearchUncached(" in source
+            else source.split("async function publicWebSearch(query: string)", 1)[1].split(
+                "async function edgeSearch(", 1
+            )[0]
+        )
+        assert "if (realtimeNewsPlan &&" in search
+        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
