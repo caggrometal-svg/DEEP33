@@ -316,3 +316,12 @@ def test_stream_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> 
     assert calls.count("https://primary.test/chat") == 3
     assert calls.count("https://fallback.test/chat") == 4
     assert gateway._circuit(config.providers[0]).opened_until > 0
+
+def test_default_model_is_explicitly_free(monkeypatch):
+    monkeypatch.delenv("AI_GATEWAY_MODEL", raising=False)
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+    monkeypatch.delenv("AI_GATEWAY_API_KEY", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert config.model == "google/gemma-4-26b-a4b-it:free"
