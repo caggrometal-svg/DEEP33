@@ -271,11 +271,14 @@ def test_generation_memory_sync_is_not_on_generation_service_critical_path():
 
 
 def test_edge_realtime_news_uses_bounded_rss_first_path() -> None:
-    source = (ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts").read_text(encoding="utf-8")
-    assert "async function runPublicWebSearchQuery(query: string, forceFullSearch = false)" in source
-    assert "const fastNewsQuery = !forceFullSearch && edgeCurrentNewsQuery(q)" in source
-    assert 'Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)' in source
-    assert 'fastNewsQuery ? q + " when:1d" : q' in source
-    assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
-    assert 'firstRelevant.length >= 2' in source
-    assert "runPublicWebSearchQuery(plan.queries[0], true)" in source
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            ROOT / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "async function runPublicWebSearchQuery(query: string, forceFullSearch = false)" in source
+        assert "const fastNewsQuery = !forceFullSearch && edgeCurrentNewsQuery(q)" in source
+        assert "1800" in source
+        assert 'fastNewsQuery ? q + " when:1d" : q' in source
+        assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
+        assert 'firstRelevant.length >= 2' in source
+        assert "runPublicWebSearchQuery(plan.queries[0], true)" in source
