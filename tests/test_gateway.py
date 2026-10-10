@@ -263,10 +263,24 @@ def test_stream_provider_order_prefers_ttft_after_learning():
 def test_stream_opens_circuit_on_first_primary_404_and_uses_fallback() -> None:
     calls: list[str] = []
 
+    class UnreadErrorBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"error":"model route not found"}'
+
+        async def aclose(self) -> None:
+            return None
+
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
         if request.url.host == "primary.test":
-            return httpx.Response(404, request=request, json={"error": "model route not found"})
+            # An error response returned by a real streaming transport has not
+            # been read yet when the gateway logs its bounded error hint.
+            return httpx.Response(
+                404,
+                request=request,
+                headers={"content-type": "application/json"},
+                stream=UnreadErrorBody(),
+            )
         return httpx.Response(
             200,
             request=request,
