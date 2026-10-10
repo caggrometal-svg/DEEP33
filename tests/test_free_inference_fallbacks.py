@@ -51,6 +51,8 @@ def test_cloudflare_fallback_fails_fast_when_capacity_is_busy() -> None:
     for path in EDGE_PATHS:
         source = path.read_text(encoding="utf-8")
         assert "rejectIfBusy: true" in source
+        assert '@cf/meta/llama-3.1-8b-instruct-fp8' in source
+        assert '@cf/meta/llama-3.1-8b-instruct"' not in source
         assert 'name: "cloudflare-workers-ai-free"' in source
         assert 'name: "groq-free"' in source
 
