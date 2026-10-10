@@ -2843,24 +2843,12 @@ async function publicWebSearchUncached(
   plan = edgeSearchQueries(query),
 ): Promise<Record<string, unknown>> {
   const started = performance.now();
-  const realtimeNewsPlan = plan.depth === "realtime" &&
-    edgeCurrentNewsQuery(plan.original) && plan.queries.length > 1;
-  const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3) : [plan.queries[0]];
+  // Run the first three query variants in one bounded parallel wave.
+  // Avoid a second provider-timeout window (up to 4.5s) for fallback variants.
+  const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);
   const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(
     initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
   );
-  const first = batches[0]?.data || { results: [] };
-  const firstResults = Array.isArray(first.results) ? first.results as Array<Record<string, unknown>> : [];
-  const firstRelevant = edgeFilterSearchResults(plan.original, firstResults, plan.depth === "realtime");
-  const firstProviders = edgeProvidersForResults(firstRelevant);
-  const required = plan.depth === "realtime" ? 2 : 3;
-  if (!realtimeNewsPlan && plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
-    const more = await Promise.all(
-      plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
-    );
-    batches.push(...more);
-  }
-
   const merged = new Map<string, Record<string, unknown>>();
   for (const batch of batches) {
     for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
