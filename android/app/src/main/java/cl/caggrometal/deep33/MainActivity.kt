@@ -1734,12 +1734,16 @@ class MainActivity : Activity() {
                     val backend = checks?.optString("BACKEND", "").orEmpty()
                     val model = checks?.optString("MODEL", "").orEmpty()
                     val chat = checks?.optString("CHAT", "").orEmpty()
+                    val modelConfigured = model in setOf("PASS", "CONFIGURED", "CONFIGURED_NOT_PROBED")
+                    val chatConfigured = chat in setOf("PASS", "CONFIGURED", "CONFIGURED_NOT_PROBED", "NOT_PROBED")
                     val provider = ready.optJSONObject("inference")
-                        ?.optString("provider", "").orEmpty()
+                        ?.optString("provider", "")
+                        ?.takeIf { it.isNotBlank() }
+                        ?: ready.optString("provider", "")
                     val resolvedOnline = online &&
                         backend == "PASS" &&
-                        model == "PASS" &&
-                        chat == "PASS"
+                        modelConfigured &&
+                        chatConfigured
 
                     runOnUiThread {
                         val pendingRecovery = store.loadPendingTurn() != null
@@ -1765,7 +1769,7 @@ class MainActivity : Activity() {
                                 keepConnecting ->
                                     "CONECTANDO\nRecuperando la conversación pendiente."
                                 resolvedOnline ->
-                                    "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
+                                    "ONLINE\nBACKEND: PASS\nAI GATEWAY: CONFIGURED\nMODEL: CONFIGURED\nCHAT: ROUTE CONFIGURED\nINFERENCE: NOT PROBED\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
                                         if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
                                 else ->
                                     "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
@@ -2354,7 +2358,11 @@ class MainActivity : Activity() {
         // A pending generation is a recoverable transport state, not proof that
         // the device or DEEP33 is offline. Keep the UI in CONNECTING until the
         // service reaches a terminal state or a real health probe confirms failure.
-        val visibleState = if (state == ConnectionState.OFFLINE && isGenerationRecoveryActive()) {
+        val pendingTurn = runCatching { store.loadPendingTurn() != null }.getOrDefault(false)
+        val visibleState = if (
+            state == ConnectionState.OFFLINE &&
+            (isGenerationRecoveryActive() || pendingTurn)
+        ) {
             ConnectionState.CONNECTING
         } else {
             state
