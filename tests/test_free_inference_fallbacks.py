@@ -65,3 +65,11 @@ def test_free_provider_does_not_start_a_second_generation_after_stream_output() 
     ]
     assert "if (emitted)" in stream_section
     assert "throw new Error(lastError)" in stream_section
+
+
+def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
+    primary = (ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts").read_text(encoding="utf-8")
+    secondary = (ROOT / "supabase" / "functions" / "deep33-tertiary" / "index.ts").read_text(encoding="utf-8")
+    for source in (primary, secondary):
+        assert '|| "25000"' in source
+        assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000" in source
