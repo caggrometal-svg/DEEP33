@@ -60,6 +60,18 @@ _STOPWORDS = {
 }
 
 _REALTIME_QUERY_FILLERS = {
+    # Currentness, dates, and request-format wording are not topic anchors.
+    "busca", "buscar", "buscando", "una", "uno", "un",
+    "publicada", "publicado", "publicadas", "publicados",
+    "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
+    "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
+    "oficial", "oficiales", "fiable", "fiables", "verificada", "verificado",
+    "titular", "titulares", "fecha", "resumen", "breve", "enlace", "enlaces",
+    "original", "artículo", "articulo", "artículos", "articulos",
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december",
     "situación", "situacion", "actual", "actualmente", "ahora", "mismo", "hoy", "ayer",
     "último", "últimos", "última", "últimas", "ultimo", "ultimos", "ultima", "ultimas",
     "noticia", "noticias", "actualidad", "reciente", "recientes", "información", "informacion",
@@ -72,7 +84,9 @@ _REALTIME_QUERY_FILLERS = {
 }
 
 def _realtime_anchor_tokens(query: str) -> set[str]:
-    tokens = _tokens(query)
+    # Rank topic entities, not prompt instructions or literal publication dates.
+    lookup_query = _normalise_lookup_query(query) or str(query or "")
+    tokens = _tokens(lookup_query)
     anchors = {
         token for token in tokens
         if token not in _REALTIME_QUERY_FILLERS
@@ -124,7 +138,7 @@ def _normalise_lookup_query(query: str) -> str:
     cleaned = " ".join(str(query or "").split()).strip()
     cleaned = re.sub(
         r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+"
-        r"(?:en\s+)?(?:internet|la\s+web)\s*[:,-]?\s*",
+        r"(?:(?:en\s+)?(?:internet|la\s+web)\s*)?[:,-]?\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -135,6 +149,8 @@ def _normalise_lookup_query(query: str) -> str:
         r"(?<=[.!?;:])\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
         r"incluye|resume|cita|describe|presenta|informa|muestra|señala|"
         r"no inventes|no afirmes|no supongas|responde en|responde una sola vez|"
+        r"usa\s+(?:una\s+)?fuentes?\s+(?:real|reales|actualizada|actualizado|oficial|fiable|verificada)|"
+        r"use\s+(?:a\s+)?(?:real|current|official)\s+source|"
         r"formato de salida|resultado de cada prueba|"
         r"si la búsqueda (?:falla|no funciona|no devuelve)|"
         r"si la busqueda (?:falla|no funciona|no devuelve)|"
@@ -589,7 +605,9 @@ class SearchEngine:
                 planned_query,
                 timeout_seconds=timeout_seconds,
                 api_key=api_key,
-                fast_mode=fast_mode,
+                # Real-time queries already race independent providers, so avoid
+                # a second call to the same provider inside the shared deadline.
+                fast_mode=fast_mode or plan_depth == "realtime",
             )
             return name, results, provider_errors
 
@@ -833,11 +851,17 @@ class SearchEngine:
                 if plan.depth == "deep"
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
-            min_provider_successes = 1 if len(providers) == 1 else 2
-            sufficiently_verified = (
-                first_provider_count >= min_provider_successes
-                and first_result_count >= required_results
-            )
+            if plan.depth == "realtime":
+                # _run_query already races providers and gives them a short
+                # corroboration window. Any relevant result can answer a broad
+                # current-news request without launching another query variant.
+                sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
+            else:
+                min_provider_successes = 1 if len(providers) == 1 else 2
+                sufficiently_verified = (
+                    first_provider_count >= min_provider_successes
+                    and first_result_count >= required_results
+                )
             if not sufficiently_verified:
                 remaining = planned_queries[1:MAX_QUERY_FANOUT]
                 if remaining:
@@ -860,13 +884,31 @@ class SearchEngine:
         executed_queries = [query for query, _batch in planned_batches]
         if not successful:
             locality = _extract_realtime_locality(plan.original_query)
+            local_date = datetime.now(timezone.utc).date().isoformat()
+            lowered_original = plan.original_query.lower()
+            is_news_request = any(term in lowered_original for term in REALTIME_NEWS_TERMS)
             if plan.depth == "realtime" and locality:
-                local_date = datetime.now(timezone.utc).date().isoformat()
                 rescue = f"{locality} Chile noticias hoy {local_date}"
+            elif (
+                plan.depth == "realtime"
+                and is_news_request
+                and "chile" in _tokens(plan.original_query)
+            ):
+                rescue = f"Chile noticias hoy {local_date}"
             else:
-                tokens = _tokens(plan.original_query)
-                rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else ""
-            if rescue and rescue.lower() != plan.original_query.lower():
+                rescue_base = _normalise_lookup_query(plan.original_query)
+                tokens = [
+                    token for token in _tokens(rescue_base)
+                    if token not in _REALTIME_QUERY_FILLERS and not token.isdigit()
+                ]
+                rescue = " ".join(tokens[:-1]).strip() if len(tokens) >= 3 else rescue_base
+            # Never record or issue a rescue query after the shared deadline.
+            remaining_budget = search_deadline - asyncio.get_running_loop().time()
+            if (
+                rescue
+                and rescue.lower() != plan.original_query.lower()
+                and remaining_budget > 0.25
+            ):
                 executed_queries.append(rescue)
                 _rescue_query, rescue_result = await run_planned(rescue)
                 batch, batch_errors, attempted = rescue_result
