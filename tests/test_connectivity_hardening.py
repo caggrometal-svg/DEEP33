@@ -487,3 +487,11 @@ def test_initial_realtime_provider_network_errors_enter_bounded_fallback() -> No
         )
         assert "if (realtimeNewsPlan &&" in search
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
+
+
+def test_android_accepts_configured_readiness_without_false_offline() -> None:
+    source = read("android/app/src/main/java/cl/caggrometal/deep33/MainActivity.kt")
+    assert '"CONFIGURED"' in source
+    assert '"CONFIGURED_NOT_PROBED"' in source
+    assert "pendingTurn" in source
+    assert "isGenerationRecoveryActive() || pendingTurn" in source
