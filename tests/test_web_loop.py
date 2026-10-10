@@ -20,6 +20,15 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
         )
         assert any(
             m.get("role") == "system"
+            and "No web tools or function-call interface are available" in m.get("content", "")
+            for m in payload["messages"]
+        )
+        assert not any(
+            m.get("role") == "system" and "Use them for current, external, changing" in m.get("content", "")
+            for m in payload["messages"]
+        )
+        assert any(
+            m.get("role") == "system"
             and "FINAL DEEP33 STYLE LOCK. ACTIVE_PERSONALITY=COMICO" in m.get("content", "")
             and "never copy, paste" in m.get("content", "")
             for m in payload["messages"]
@@ -317,6 +326,45 @@ def test_stream_gateway_forwards_provider_chunks_before_stream_completion(monkey
         assert observed[-1] == "provider-finished"
 
     asyncio.run(exercise())
+
+
+def test_stream_gateway_suppresses_split_internal_tool_markup(monkeypatch):
+    async def fake_stream(payload, **kwargs):
+        yield b'data: {"choices":[{"delta":{"content":"<dots_func"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"tion_call><invoke name=\\"web_search\\">"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"</invoke></dots_function_call>"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    class NoMemory:
+        enabled = False
+
+    monkeypatch.setattr(main.gateway, "stream", fake_stream)
+    monkeypatch.setattr(main, "memory", NoMemory())
+
+    async def exercise():
+        generator = main.stream_gateway(
+            {"messages": [{"role": "user", "content": "busca en internet"}], "model": "test"},
+            "session",
+            "NEUTRO",
+            request_id="internal-tool-markup",
+            idempotency_key="internal-tool-markup",
+            request_hash="internal-tool-markup",
+            lease_token="lease",
+        )
+        output = bytearray()
+        async for part in generator:
+            output.extend(part)
+        assert b"dots_function_call" not in output.lower()
+        assert b"<invoke" not in output.lower()
+        assert b"AI_GATEWAY_INVALID_RESPONSE" in output
+
+    asyncio.run(exercise())
+
+
+def test_sanitize_assistant_text_drops_internal_tool_markup():
+    text = 'Respuesta parcial. <dots_function_call><invoke name="web_search">'
+    assert main.sanitize_assistant_text(text) == "Respuesta parcial."
+    assert main.sanitize_assistant_text("<dots_function_call><invoke name=") == ""
 
 
 def test_local_current_situation_forces_realtime_web_lookup():
