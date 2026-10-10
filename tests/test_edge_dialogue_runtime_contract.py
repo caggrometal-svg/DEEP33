@@ -105,12 +105,19 @@ def test_critical_render_fallback_is_not_skipped_by_open_provider_circuit() -> N
         assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
 
 
-def test_readiness_inference_passes_scoped_session_to_render_fallback() -> None:
+def test_explicit_inference_probe_passes_scoped_session_to_render_fallback() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "}, requestId, null, userAuthorization, sessionId);" in source
 
-def test_readiness_probe_forwards_authenticated_bearer_to_all_fallbacks() -> None:
+
+def test_readiness_route_does_not_run_model_inference() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
-        assert 'const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");' in source
+        start = source.index("async function readinessResponse()")
+        end = source.index("\\n}\\n\\nDeno.serve".replace("\\n", "\n"), start)
+        readiness = source[start:end]
+        assert "ROUTINE_READINESS_SKIPS_MODEL_INFERENCE" in readiness
+        assert "probeInference(" not in readiness
+        assert 'const body = await readinessResponse();' in source
+        assert 'path === "/ready" && req.method === "GET"' in source
