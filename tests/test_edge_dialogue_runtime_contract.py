@@ -141,7 +141,7 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         assert 'provider.name === "render-backend-fallback"' in source
 
 
-def test_search_query_variants_run_in_one_parallel_wave() -> None:
+def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
     function_names = (
         "async function publicWebSearchUncached(",
         "async function publicWebSearch(query: string)",
@@ -149,8 +149,16 @@ def test_search_query_variants_run_in_one_parallel_wave() -> None:
     for path, function_name in zip(EDGE_FILES, function_names):
         source = path.read_text(encoding="utf-8")
         start = source.index(function_name)
-        end = source.index("  const merged = new Map<string, Record<string, unknown>>();", start)
+        end = (
+            source.index("async function edgeSearch(", start)
+            if "publicWebSearch(query: string)" in function_name
+            else source.index("function edgeSearchCacheKey(", start)
+        )
         search = source[start:end]
-        assert "const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);" in search
-        assert "initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))" in search
-        assert "plan.queries.slice(1, 3)" not in search
+        assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in search
+        assert "initialQueries.map(async (q) => ({" in search
+        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
+        assert "const broadFallbackPromise = realtimeNewsPlan" not in search
+        assert "realtimeNewsPlan &&" in search
+
+

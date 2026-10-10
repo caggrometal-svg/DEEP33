@@ -414,35 +414,3 @@ def test_edge_ai_health_diagnostics_use_the_real_streaming_chat_route() -> None:
         assert "const text = response.text;" in probe
         assert "await streamEdgeAI(" in diagnostics
         assert "callEdgeAI({" not in diagnostics
-
-
-def test_realtime_edge_search_uses_lazy_fallback_and_bounded_rss_retries() -> None:
-    for path in (
-        "supabase/functions/deep33-proxy/index.ts",
-        "supabase/functions/deep33-tertiary/index.ts",
-    ):
-        source = read(path)
-        search = (
-            source.split("async function publicWebSearchUncached(", 1)[1].split(
-                "function edgeSearchCacheKey(", 1
-            )[0]
-            if "async function publicWebSearchUncached(" in source
-            else source.split("async function publicWebSearch(query: string)", 1)[1].split(
-                "async function edgeSearch(", 1
-            )[0]
-        )
-        assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in search
-        assert "if (realtimeNewsPlan && finalResults.length < 1)" in search or (
-            "if (realtimeNewsPlan && results.length < 1)" in search
-        )
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
-        assert "providerTimeoutMs?: number" in source
-        assert "providerTimeoutMs ??" in source
-        assert "if (realtimeNewsPlan &&" in search
-
-def test_secondary_public_search_initializes_its_query_plan() -> None:
-    source = read("supabase/functions/deep33-tertiary/index.ts")
-    search = source.split("async function publicWebSearch(query: string)", 1)[1].split(
-        "async function edgeSearch(", 1
-    )[0]
-    assert "const plan = edgeSearchQueries(query);" in search

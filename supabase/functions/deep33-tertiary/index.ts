@@ -2077,11 +2077,7 @@ function edgeCurrentNewsQuery(query: string): boolean {
   return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra)\b/i.test(query);
 }
 
-async function runPublicWebSearchQuery(
-  query: string,
-  forceFullSearch = false,
-  providerTimeoutMs?: number,
-) {
+async function runPublicWebSearchQuery(query: string, forceFullSearch = false) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
   // News queries get a fast RSS-first pass; HTML providers are a bounded fallback.
@@ -2128,7 +2124,7 @@ async function runPublicWebSearchQuery(
         ...(provider.headers || {}),
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : 5000)),
+      signal: AbortSignal.timeout(fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : 5000),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
@@ -2188,7 +2184,7 @@ async function runPublicWebSearchQuery(
   const activeProviders = fastNewsQuery
     ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
@@ -2500,56 +2496,40 @@ async function runCurrentDateTimeSourceFallback(
 
 async function publicWebSearch(query: string) {
   const started = performance.now();
-  const plan = edgeSearchQueries(query);
+  // Search up to three query variants plus broad news providers concurrently.
+  // This prevents a second timeout window from adding 2.5-4.5 seconds to news search.
   const realtimeNewsPlan = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original);
-  const initialQueries = (plan.queries.length ? plan.queries : [plan.original])
-    .slice(0, realtimeNewsPlan ? 1 : 3);
-  const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(
-    initialQueries.map(async (q) => ({
-      query: q,
-      data: await runPublicWebSearchQuery(q) as Record<string, unknown>,
-    })),
-  );
-  const merged = new Map<string, Record<string, unknown>>();
-  const mergeBatch = (batch: { query: string; data: Record<string, unknown> }) => {
+  const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);
+  const broadFallbackPromise = realtimeNewsPlan
+    ? runPublicWebSearchQuery(plan.queries[0], true)
+        .then((data) => ({ query: plan.queries[0], data }))
+        .catch(() => null)
+    : Promise.resolve(null);
+  const [batches, broadFallback] = await Promise.all([
+    Promise.all(initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))),
+    broadFallbackPromise,
+  ]);
+    const merged = new Map<string, Record<string, unknown>>();
+  for (const batch of batches) {
     for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
       const url = String(value.url || "").trim();
       if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
     }
-  };
-  for (const batch of batches) mergeBatch(batch);
-  const filteredResults = () =>
-    edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
-  let results = filteredResults();
-
-  if (realtimeNewsPlan && results.length < 1) {
-    const retryQuery = plan.queries[0] || plan.original;
-    const data = await runPublicWebSearchQuery(
-      retryQuery,
-      true,
-      2500,
-    ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-    const batch = { query: retryQuery, data };
-    batches.push(batch);
-    mergeBatch(batch);
-    results = filteredResults();
   }
-
-  if (realtimeNewsPlan && results.length < 1) {
-    for (const retryQuery of plan.queries.slice(1, 3)) {
-      const data = await runPublicWebSearchQuery(
-        retryQuery,
-        false,
-        3000,
-      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-      const batch = { query: retryQuery, data };
-      batches.push(batch);
-      mergeBatch(batch);
-      results = filteredResults();
-      if (results.length > 0) break;
+  let results = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+  // Use the concurrently fetched broader-provider result only if the fast RSS wave had no relevant result.
+  if (realtimeNewsPlan && results.length < 1 && broadFallback) {
+    const broad = broadFallback.data;
+    batches.push({ query: broadFallback.query, data: broad });
+    for (const item of (Array.isArray(broad.results) ? broad.results : [])) {
+      if (!item || typeof item !== "object") continue;
+      const value = item as Record<string, unknown>;
+      const url = String(value.url || "").trim();
+      if (url && !merged.has(url)) merged.set(url, { ...value, search_query: plan.queries[0] });
     }
+    results = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
   }
   if (!results.length && edgeCurrentDateTimeQuery(plan.original)) {
     const clockResults = await runCurrentDateTimeSourceFallback(plan.original);

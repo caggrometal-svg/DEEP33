@@ -270,26 +270,25 @@ def test_generation_memory_sync_is_not_on_generation_service_critical_path():
     assert "hadFailure" in coordinator
 
 
-def test_edge_realtime_news_uses_bounded_parallel_rss_first_path() -> None:
+def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
-        assert "async function runPublicWebSearchQuery(query: string, forceFullSearch = false)" in source
+        assert "async function runPublicWebSearchQuery(" in source
+        assert "providerTimeoutMs?: number" in source
+        assert "providerTimeoutMs ??" in source
         assert "const currentNewsRequest = edgeCurrentNewsQuery(q)" in source
         assert "const fastNewsQuery = !forceFullSearch && currentNewsRequest" in source
         assert "1800" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
-        assert "const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);" in source
-        assert "plan.queries.slice(1, 3)" not in source
-        assert "initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))" in source
-        assert "2500" in source
+        assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
+        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "2500" in source and "3000" in source
         assert "socialPublisherSuffix" in source
         assert "const pathYear = parsedUrl.pathname.match" in source
         assert "Number(pathYear[1]) < new Date().getFullYear()" in source
-        assert "runPublicWebSearchQuery(plan.queries[0], true)" in source
-
 
 def test_edge_realtime_news_can_return_one_relevant_single_source_result() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
@@ -303,23 +302,25 @@ def test_edge_realtime_news_can_return_one_relevant_single_source_result() -> No
     ).read_text(encoding="utf-8")
 
 
-def test_edge_realtime_news_runs_query_variants_in_parallel_before_broad_fallback() -> None:
+def test_edge_realtime_news_limits_initial_fanout_and_runs_variants_after_empty_results() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
-        assert "const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);" in source
-        assert "const [batches, broadFallback] = await Promise.all([" in source
-        assert "plan.queries.slice(1, 3)" not in source
-        assert "results.length < 1" in source or "finalResults.length < 1" in source
+        assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
+        assert "const batches: Array<{ query: string; data: Record<string, unknown> }>" in source
+        assert "const [batches, broadFallback] = await Promise.all([" not in source
+        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "if (realtimeNewsPlan && finalResults.length < 1)" in source or "if (realtimeNewsPlan && results.length < 1)" in source
 
-
-def test_realtime_news_broad_fallback_is_concurrent() -> None:
+def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
-        assert "const broadFallbackPromise = realtimeNewsPlan" in source
-        assert "const [batches, broadFallback] = await Promise.all([" in source
         assert "forceFullSearch && currentNewsRequest" in source
-        assert "const broad = broadFallback.data;" in source
+        assert "const broadFallbackPromise = realtimeNewsPlan" not in source
+        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      2500," in source
+        assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      3000," in source
+
