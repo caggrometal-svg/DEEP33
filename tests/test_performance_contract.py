@@ -286,6 +286,8 @@ def test_edge_realtime_news_uses_bounded_parallel_rss_first_path() -> None:
         assert "initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))" in source
         assert "2500" in source
         assert "socialPublisherSuffix" in source
+        assert "const pathYear = parsedUrl.pathname.match" in source
+        assert "Number(pathYear[1]) < new Date().getFullYear()" in source
         assert "runPublicWebSearchQuery(plan.queries[0], true)" in source
 
 
