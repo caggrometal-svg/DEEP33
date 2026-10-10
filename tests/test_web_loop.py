@@ -372,7 +372,7 @@ def test_required_web_search_failure_returns_one_explicit_answer_without_stale_m
 
     data, sources = asyncio.run(
         main.run_web_tool_loop(
-            [{"role": "user", "content": "¿Qué fecha es hoy?"}],
+            [{"role": "user", "content": "¿Qué noticias relevantes se publicaron hoy en Chile?"}],
             model="test-model",
             request_id="web-failure-test",
             idempotency_key="web-failure-test",
@@ -406,3 +406,33 @@ def test_prepare_web_evidence_marks_search_failure_without_http_503(
     assert sources == []
     assert evidence == []
     assert results == []
+
+
+def test_connectivity_question_uses_live_backend_probe_not_search(monkeypatch: pytest.MonkeyPatch):
+    assert main.is_connectivity_question("¿Tienes acceso a Internet?")
+    assert main.is_connectivity_question("Do you have internet access?")
+    assert not main.is_connectivity_question("Busca una noticia actual en Internet")
+
+    async def fake_probe():
+        return {
+            "internet_available": True,
+            "dns_ok": True,
+            "https_ok": True,
+            "latency_ms": 123.4,
+            "timestamp": "2026-10-10T20:00:00Z",
+            "error": None,
+        }
+
+    monkeypatch.setattr(main, "network_probe", fake_probe)
+    answer = asyncio.run(main._connectivity_status_answer())
+
+    assert "DNS y HTTPS respondieron" in answer
+    assert "123.4 ms" in answer
+    assert "no garantiza que todos los motores de búsqueda estén disponibles" in answer
+
+
+def test_search_failure_preserves_runtime_clock_answer():
+    answer = main._web_search_unavailable_answer("¿Qué hora y fecha es en Chile?")
+    assert "reloj de ejecución del backend" in answer
+    assert main.DEEP33_RUNTIME_TIMEZONE in answer
+    assert "No pude verificar información actual" not in answer
