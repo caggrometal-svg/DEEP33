@@ -324,4 +324,4 @@ def test_default_model_is_explicitly_free(monkeypatch):
 
     config = GatewayConfig.from_env()
 
-    assert config.model == "google/gemma-4-26b-a4b-it:free"
+    assert config.model == "kilo-auto/free"
