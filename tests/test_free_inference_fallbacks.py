@@ -72,7 +72,7 @@ def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
     secondary = (ROOT / "supabase" / "functions" / "deep33-tertiary" / "index.ts").read_text(encoding="utf-8")
     for source in (primary, secondary):
         assert '|| "25000"' in source
-        assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000" in source
+        assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 8000" in source
 
 
 
