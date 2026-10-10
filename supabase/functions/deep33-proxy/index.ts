@@ -3004,26 +3004,35 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   }
 }
 
-async function readinessResponse(sessionId: string) {
-  const [health, inference] = await Promise.all([
-    probeHealth(sessionId),
-    probeInference(sessionId),
-  ]);
-
-  const ready = health.ok && inference.ok;
+async function readinessResponse() {
+  // Routine readiness must be deterministic and non-invasive. Model inference is
+  // intentionally reserved for explicit diagnostics and real user requests.
+  const providers = edgeProviders();
+  const primary = providers[0] ?? null;
+  const ready = providers.length > 0;
 
   return {
     status: ready ? "PASS" : "FAIL",
     ready,
     service: "DEEP33 AI Edge",
     canonical_runtime: "edge-direct",
-    upstream: UPSTREAM || null,
-    health: health.body,
-    inference: inference.body,
+    readiness_mode: "configuration-only",
+    provider: primary?.name ?? null,
+    model: primary?.model ?? null,
+    provider_count: providers.length,
+    fallback_count: Math.max(0, providers.length - 1),
+    health: {
+      status: ready ? "PASS" : "FAIL",
+      check: "edge-runtime-and-routing-configuration",
+    },
+    inference: {
+      status: "NOT_RUN",
+      reason: "ROUTINE_READINESS_SKIPS_MODEL_INFERENCE",
+    },
     checks: {
-      BACKEND: health.ok ? "PASS" : "FAIL",
-      MODEL: inference.ok ? "PASS" : "FAIL",
-      CHAT: inference.ok ? "PASS" : "FAIL",
+      BACKEND: ready ? "PASS" : "FAIL",
+      MODEL: primary?.model ? "CONFIGURED_NOT_PROBED" : "NOT_CONFIGURED",
+      CHAT: "NOT_PROBED",
     },
     timestamp: new Date().toISOString(),
   };
@@ -3074,7 +3083,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/ready" && req.method === "GET") {
-      const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");
+      const body = await readinessResponse() || "");
       return json(body, body.ready ? 200 : 503);
     }
 
