@@ -449,6 +449,7 @@ def test_realtime_edge_search_uses_lazy_fallback_and_bounded_rss_retries() -> No
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in search
         assert "runPublicWebSearchQuery(\n      rescueQuery" in search
+        assert "const fastRescue = await runPublicWebSearchQuery(" in search
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "providerTimeoutMs?: number" in source
         assert "providerTimeoutMs ??" in source

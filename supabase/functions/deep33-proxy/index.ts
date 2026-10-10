@@ -3000,6 +3000,20 @@ async function publicWebSearchUncached(
     batches.push(batch);
     mergeBatch(batch);
     finalResults = filteredResults();
+
+    // Try the alternate-news provider pair after the full provider set is empty.
+    // This restores Bing + Google News as a separate last-resort route.
+    if (finalResults.length < 1) {
+      const fastRescue = await runPublicWebSearchQuery(
+        rescueQuery,
+        false,
+        Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
+      const fastBatch = { query: rescueQuery, data: fastRescue };
+      batches.push(fastBatch);
+      mergeBatch(fastBatch);
+      finalResults = filteredResults();
+    }
   }
   if (!finalResults.length && edgeCurrentDateTimeQuery(plan.original)) {
     const clockResults = await runCurrentDateTimeSourceFallback(plan.original);

@@ -287,6 +287,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
         assert "runPublicWebSearchQuery(\n      rescueQuery" in source
+        assert "const fastRescue = await runPublicWebSearchQuery(" in source
         assert "2500" in source and "3000" in source
         assert "socialPublisherSuffix" in source
         assert "const pathYear = parsedUrl.pathname.match" in source
