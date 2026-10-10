@@ -97,6 +97,18 @@ def test_public_fast_fallbacks_precede_slow_render_fallback(path: Path) -> None:
     assert 'provider.name === "llmfaucet"' in free_policy
 
 
+@pytest.mark.parametrize("path", EDGE_PATHS)
+def test_public_inference_fallbacks_require_explicit_opt_in(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    start = source.index("function addPublicInferenceProviders(")
+    end = source.index("\n}", start)
+    policy = source[start:end]
+
+    assert 'Deno.env.get("DEEP33_ENABLE_PUBLIC_FALLBACKS")' in policy
+    assert 'Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS")' in policy
+    assert "if (!publicFallbacksEnabled || publicFallbacksDisabled) return;" in policy
+
+
 def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
     import asyncio
     from tools import web_search

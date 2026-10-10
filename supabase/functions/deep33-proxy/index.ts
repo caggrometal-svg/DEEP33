@@ -357,9 +357,13 @@ function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
 
 
 function addPublicInferenceProviders(providers: EdgeAIProvider[]): void {
+  // Public inference vendors remain off until their retention, training, and billing terms
+  // are reviewed and an operator explicitly opts in for user traffic.
+  const publicFallbacksEnabled =
+    (Deno.env.get("DEEP33_ENABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
   const publicFallbacksDisabled =
     (Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS") || "").trim().toLowerCase() === "true";
-  if (publicFallbacksDisabled) return;
+  if (!publicFallbacksEnabled || publicFallbacksDisabled) return;
 
   const vireonixUrl = "https://vireonix.ai/v1/chat/completions";
   if (!providers.some((provider) => provider.url === vireonixUrl)) {

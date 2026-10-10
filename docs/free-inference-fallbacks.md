@@ -44,3 +44,10 @@ Both `deep33-proxy` and `deep33-tertiary` should use the same default `AI_PROVID
 3. Test cold and warm requests, stream-first-chunk latency, HTTP 429/5xx failover, and cancellation.
 4. Verify that a stream never restarts on a second provider after output has been sent.
 5. Confirm actual free-tier usage and total charges remain $0 before enabling the flag in production.
+
+
+## Public inference providers and privacy
+
+The public Vireonix and LLMFaucet endpoints are **disabled by default**. They are only added to the provider chain when the server-side Edge Function secret `DEEP33_ENABLE_PUBLIC_FALLBACKS=true` is explicitly set. `DEEP33_DISABLE_PUBLIC_FALLBACKS=true` remains a hard stop even when the enable flag is present.
+
+Do not enable these endpoints for user conversations until their data-processing, retention, training/use, and billing conditions have been reviewed. Vireonix's current terms grant a broad, perpetual license to process and use submitted inputs, outputs, conversation history, tool calls, metadata, and feedback for service operation, quality, and model training/improvement (https://vireonix.ai/terms). LLMFaucet's applicable privacy/retention and billing terms have not been verified in this review; it therefore also remains disabled by default. Public endpoints must not receive user prompts merely because another provider fails.
