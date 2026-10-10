@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -397,3 +399,62 @@ def test_stream_fails_over_after_empty_200_without_forwarding_empty_chunks() -> 
     assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
     assert output.count(b"FALLBACK_STREAM_NON_EMPTY") == 1
     assert output.count(b"data: [DONE]") == 1
+
+
+def test_stream_ttft_measures_first_visible_text_not_metadata_chunk() -> None:
+    calls: list[str] = []
+
+    class MetadataThenTextStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{"role":"assistant"}}]}\\n\\n'
+            await asyncio.sleep(0.04)
+            yield b'data: {"choices":[{"delta":{"content":"VISIBLE_FIRST_TOKEN"}}]}\\n\\n'
+            yield b"data: [DONE]\\n\\n"
+
+        async def aclose(self) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            stream=MetadataThenTextStream(),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        ),
+        timeout_seconds=2,
+        provider_timeout_seconds=2,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> bytes:
+        output = bytearray()
+        async for part in gateway.stream({"messages": [{"role": "user", "content": "hi"}]}):
+            output.extend(part)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(run_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    samples = list(gateway._ttft_samples["primary"])
+    assert calls == ["https://primary.test/chat"]
+    assert b"VISIBLE_FIRST_TOKEN" in output
+    assert len(samples) == 1
+    # The role-only SSE frame arrives at least 40ms before the first visible text.
+    assert samples[0] >= 30.0
