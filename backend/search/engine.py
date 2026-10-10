@@ -86,6 +86,12 @@ _REALTIME_QUERY_FILLERS = {
 def _realtime_anchor_tokens(query: str) -> set[str]:
     # Rank topic entities, not prompt instructions or literal publication dates.
     lookup_query = _normalise_lookup_query(query) or str(query or "")
+    lookup_query = re.sub(
+        r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+",
+        "",
+        lookup_query,
+        flags=re.IGNORECASE,
+    )
     tokens = _tokens(lookup_query)
     anchors = {
         token for token in tokens
@@ -137,7 +143,7 @@ def _normalise_lookup_query(query: str) -> str:
     """Keep the information request and remove response-format instructions."""
     cleaned = " ".join(str(query or "").split()).strip()
     cleaned = re.sub(
-        r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+"
+        r"^(?:busca|buscar|consulta|consultar)\s+"
         r"(?:(?:en\s+)?(?:internet|la\s+web)\s*)?[:,-]?\s*",
         "",
         cleaned,
