@@ -325,7 +325,7 @@ def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
     )[0]
     assert 'sessionId = ""' in signature
     assert "leaseContext?.sessionId || sessionId || \"\"" in source
-    assert source.count('req.headers.get("x-deep33-session-id") || ""') >= 2
+    assert source.count('req.headers.get("x-deep33-session-id") || ""') >= 1
     assert "sessionId," in source
 
 

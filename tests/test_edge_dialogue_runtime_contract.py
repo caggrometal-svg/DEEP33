@@ -107,10 +107,19 @@ def test_critical_render_fallback_is_not_skipped_by_open_provider_circuit() -> N
         assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
 
 
-def test_explicit_inference_probe_passes_scoped_session_to_render_fallback() -> None:
+def test_explicit_inference_probe_uses_the_streaming_chat_path() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
-        assert "}, requestId, null, userAuthorization, sessionId);" in source
+        probe = source.split("async function probeInference(", 1)[1].split(
+            "async function probeMemory(", 1
+        )[0]
+        diagnostics = source.split('if (path === "/v1/ai/diagnostics"', 1)[1].split(
+            'if (path === "/v1/ai/generate"', 1
+        )[0]
+        assert "await streamEdgeAI(" in probe
+        assert "const text = response.text;" in probe
+        assert "await streamEdgeAI(" in diagnostics
+        assert "callEdgeAI({" not in diagnostics
 
 
 def test_readiness_route_does_not_run_model_inference() -> None:
