@@ -97,7 +97,8 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 8000;
 const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 const EDGE_SEARCH_CACHE_TTL_MS = Math.max(0, Math.min(120000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_CACHE_TTL_MS") || "45000")));
-const edgeSearchCache = new Map<string, { expiresAt: number; data: Record<string, unknown> }>();
+const EDGE_SEARCH_REALTIME_CACHE_TTL_MS = Math.max(1000, Math.min(15000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_REALTIME_CACHE_TTL_MS") || "10000")));
+const edgeSearchCache = new Map<string, { expiresAt: number; cachedAt: number; data: Record<string, unknown> }>();
 const edgeSearchInflight = new Map<string, Promise<Record<string, unknown>>>();
 const EDGE_AI_RETRY_COUNT = 0; // Switch to the next provider immediately; never replay inference on the same provider.
 const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(2000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "250")));
@@ -313,6 +314,7 @@ function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
       .trim()
       .toLowerCase() !== "true"
   ) return;
+  if (!freeInferenceProvidersApproved()) return;
 
   const accountId = (Deno.env.get("DEEP33_CLOUDFLARE_ACCOUNT_ID") || "").trim();
   const cloudflareToken = (Deno.env.get("DEEP33_CLOUDFLARE_API_TOKEN") || "").trim();
@@ -364,6 +366,31 @@ function publicInferenceProvidersEnabled(): boolean {
   return enabled && !disabled;
 }
 
+function publicProviderPrivacyApproved(): boolean {
+  return publicInferenceProvidersEnabled() &&
+    (Deno.env.get("DEEP33_PUBLIC_PROVIDER_PRIVACY_REVIEWED") || "").trim().toLowerCase() === "true" &&
+    (Deno.env.get("DEEP33_PUBLIC_PROVIDER_USER_NOTICE_CONFIRMED") || "").trim().toLowerCase() === "true";
+}
+
+function freeInferenceProvidersApproved(): boolean {
+  return (Deno.env.get("DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS") || "").trim().toLowerCase() === "true" &&
+    (Deno.env.get("DEEP33_FREE_PROVIDER_COSTS_VERIFIED") || "").trim().toLowerCase() === "true" &&
+    (Deno.env.get("DEEP33_FREE_PROVIDER_PRIVACY_REVIEWED") || "").trim().toLowerCase() === "true" &&
+    (Deno.env.get("DEEP33_FREE_PROVIDER_USER_NOTICE_CONFIRMED") || "").trim().toLowerCase() === "true";
+}
+
+function providerUrlApproved(value: string): boolean {
+  let host = "";
+  try { host = new URL(value).hostname.toLowerCase(); } catch { return false; }
+  if (host === "api.kilo.ai") return true;
+  if (host === "deep33-backend.onrender.com") return true;
+  if (host === "vireonix.ai" || host.endsWith(".vireonix.ai") ||
+      host === "llmfaucet.dev" || host.endsWith(".llmfaucet.dev")) return publicProviderPrivacyApproved();
+  if (host === "api.groq.com" || host === "api.cloudflare.com") return freeInferenceProvidersApproved();
+  return (Deno.env.get("DEEP33_CUSTOM_PROVIDER_PRIVACY_REVIEWED") || "").trim().toLowerCase() === "true" &&
+    (Deno.env.get("DEEP33_CUSTOM_PROVIDER_BILLING_VERIFIED") || "").trim().toLowerCase() === "true";
+}
+
 function isUnreviewedPublicProvider(name: string, url: string): boolean {
   if (publicInferenceProvidersEnabled()) return false;
   const normalizedName = name.trim().toLowerCase();
@@ -381,6 +408,7 @@ function addPublicInferenceProviders(providers: EdgeAIProvider[]): void {
   // Public vendors remain disabled until their retention, training, and billing terms
   // are reviewed and an operator explicitly opts in for user traffic.
   if (!publicInferenceProvidersEnabled()) return;
+  if (!publicProviderPrivacyApproved()) return;
 
   const vireonixUrl = "https://vireonix.ai/v1/chat/completions";
   if (!providers.some((provider) => provider.url === vireonixUrl)) {
@@ -412,6 +440,7 @@ function edgeProviders(): EdgeAIProvider[] {
 
   if (
     isSecureHttpsUrl(EDGE_AI_URL) &&
+    providerUrlApproved(EDGE_AI_URL) &&
     (!EDGE_AI_REQUIRES_AUTH || EDGE_AI_KEY) &&
     !isUnreviewedPublicProvider(EDGE_AI_PROVIDER, EDGE_AI_URL)
   ) {
@@ -439,6 +468,8 @@ function edgeProviders(): EdgeAIProvider[] {
           const requires_auth = Boolean(value.requires_auth ?? api_key);
           const name = String(value.name || "fallback").trim() || "fallback";
           if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) || (requires_auth && !api_key)) continue;
+          if (!providerUrlApproved(url) || !providerUrlApproved(stream_url)) continue;
+          if (new URL(url).hostname.toLowerCase() === "api.kilo.ai" && (!api_key || !requires_auth)) continue;
           if (
             isUnreviewedPublicProvider(name, url) ||
             isUnreviewedPublicProvider(name, stream_url)
@@ -2766,6 +2797,30 @@ function edgeFilterSearchResults(
   });
 }
 
+function edgeValidateSearchResults(items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const accepted: Array<Record<string, unknown>> = [];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const title = String(item.title || "").trim();
+    const rawUrl = String(item.url || "").trim();
+    const provider = String(item.provider || "").trim().slice(0, 80);
+    const snippet = String(item.snippet || item.content || "").trim();
+    if (title.length < 3 || title.length > 300 || !provider || snippet.length > 4000) continue;
+    try {
+      const parsed = new URL(rawUrl);
+      const host = parsed.hostname.toLowerCase();
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) continue;
+      if (!host || host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) continue;
+      if (/^(?:127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host)) continue;
+      if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) continue;
+      accepted.push({ ...item, title, url: parsed.href, provider, domain: host, snippet });
+    } catch {
+      // Discard malformed provider records before ranking or response.
+    }
+  }
+  return accepted;
+}
+
 function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
   return [...new Set(items.map((item) => String(item.provider || "").trim()).filter(Boolean))];
 }
@@ -2777,12 +2832,41 @@ function edgeSearchVerification(
   const domains = new Set(items.map((item) => {
     try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
   }).filter(Boolean));
+  const stop = new Set([
+    "para","como","con","del","desde","donde","esta","este","esto","hace","hasta","hoy",
+    "sobre","tambien","tiene","tienen","todo","todos","tras","una","unas","unos","usted",
+    "porque","cuando","the","and","for","from","with","this","that","have","has",
+    "noticia","noticias","actual","actuales","chile","fuente","fuentes","segun",
+  ]);
+  const terms = items.map((item) => new Set(
+    (String(item.title || "") + " " + String(item.snippet || ""))
+      .toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .match(/[a-z0-9]{4,}/g)?.filter((word) => !stop.has(word)) || [],
+  ));
+  const hosts = items.map((item) => {
+    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+  });
+  const sources = items.map((item) => String(item.provider || "").trim());
+  const corroborated = new Set<number>();
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (!hosts[i] || !hosts[j] || hosts[i] === hosts[j] || !sources[i] || !sources[j] || sources[i] === sources[j]) continue;
+      let shared = 0;
+      for (const word of terms[i]) {
+        if (terms[j].has(word) && ++shared >= 2) break;
+      }
+      if (shared >= 2) { corroborated.add(i); corroborated.add(j); }
+    }
+  }
+  const corroboratedCount = corroborated.size;
   return {
-    level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
+    level: corroboratedCount > 0 ? "corroborated" : providers.length > 1 && domains.size > 1 ? "multi-source" : items.length ? "single-source" : "none",
     distinct_domains: domains.size,
     distinct_providers: providers.length,
-    corroborated_results: 0,
+    corroborated_results: corroboratedCount,
     relevant_results: items.length,
+    integrity_validation: "https_title_provider_domain_v1",
+    validated_results: items.length,
   };
 }
 
@@ -2947,7 +3031,7 @@ async function publicWebSearchUncached(
   };
   for (const batch of batches) mergeBatch(batch);
   const filteredResults = () =>
-    edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+    edgeValidateSearchResults(edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime")).slice(0, 8);
   let finalResults = filteredResults();
 
   // Empty or irrelevant RSS is a provider failure: switch to independent sources.
@@ -3053,31 +3137,42 @@ function edgeSearchCacheKey(plan: { original: string; depth: string }): string {
 async function publicWebSearch(query: string): Promise<Record<string, unknown>> {
   const plan = edgeSearchQueries(query);
   const key = edgeSearchCacheKey(plan);
-  const cacheable = plan.depth === "standard" && EDGE_SEARCH_CACHE_TTL_MS > 0;
+  const realtimeNews = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original);
+  const cacheTtlMs = realtimeNews ? EDGE_SEARCH_REALTIME_CACHE_TTL_MS : EDGE_SEARCH_CACHE_TTL_MS;
+  const cacheable = cacheTtlMs > 0 && (plan.depth === "standard" || realtimeNews);
   const now = Date.now();
 
   if (cacheable) {
     const cached = edgeSearchCache.get(key);
-    if (cached && cached.expiresAt > now) return cached.data;
+    if (cached && cached.expiresAt > now) {
+      return { ...cached.data, fresh_request: false, cache_hit: true, cache_age_ms: Math.max(0, now - cached.cachedAt) };
+    }
     if (cached) edgeSearchCache.delete(key);
   }
 
   const inflight = edgeSearchInflight.get(key);
-  if (inflight) return await inflight;
+  if (inflight) {
+    const shared = await inflight;
+    return { ...shared, fresh_request: false, cache_hit: true, cache_age_ms: 0 };
+  }
 
   const promise = publicWebSearchUncached(query, plan);
   edgeSearchInflight.set(key, promise);
   try {
     const result = await promise;
-    if (cacheable && result.ok === true && EDGE_SEARCH_CACHE_TTL_MS > 0) {
+    if (cacheable && result.ok === true) {
+      const cachedAt = Date.now();
       if (!edgeSearchCache.has(key) && edgeSearchCache.size >= 128) {
         const oldest = edgeSearchCache.keys().next().value;
         if (typeof oldest === "string") edgeSearchCache.delete(oldest);
       }
       edgeSearchCache.set(key, {
-        expiresAt: Date.now() + EDGE_SEARCH_CACHE_TTL_MS,
-        data: result,
+        expiresAt: cachedAt + cacheTtlMs,
+        cachedAt,
+        data: { ...result, cache_hit: false },
       });
+    } else {
+      result.cache_hit = false;
     }
     return result;
   } finally {
@@ -3100,7 +3195,7 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
       const realtime = data.realtime === true || edgeRealtimeQuery(q);
-      const filtered = edgeFilterSearchResults(q, data.results as Array<Record<string, unknown>>, realtime).slice(0, 8);
+      const filtered = edgeValidateSearchResults(edgeFilterSearchResults(q, data.results as Array<Record<string, unknown>>, realtime)).slice(0, 8);
       if (filtered.length > 0) {
         const providers = edgeProvidersForResults(filtered);
         const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
