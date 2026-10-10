@@ -104,9 +104,14 @@ def test_public_inference_fallbacks_require_explicit_opt_in(path: Path) -> None:
     end = source.index("\n}", start)
     policy = source[start:end]
 
-    assert 'Deno.env.get("DEEP33_ENABLE_PUBLIC_FALLBACKS")' in policy
-    assert 'Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS")' in policy
-    assert "if (!publicFallbacksEnabled || publicFallbacksDisabled) return;" in policy
+    assert "if (!publicInferenceProvidersEnabled()) return;" in policy
+
+    start = source.index("function publicInferenceProvidersEnabled()")
+    end = source.index("\n}", start)
+    public_policy = source[start:end]
+    assert 'Deno.env.get("DEEP33_ENABLE_PUBLIC_FALLBACKS")' in public_policy
+    assert 'Deno.env.get("DEEP33_DISABLE_PUBLIC_FALLBACKS")' in public_policy
+    assert "return enabled && !disabled;" in public_policy
 
 
 @pytest.mark.parametrize("path", EDGE_PATHS)

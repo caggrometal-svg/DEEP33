@@ -438,9 +438,8 @@ function edgeProviders(): EdgeAIProvider[] {
           const api_key = String(value.api_key || "").trim();
           const requires_auth = Boolean(value.requires_auth ?? api_key);
           const name = String(value.name || "fallback").trim() || "fallback";
+          if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) || (requires_auth && !api_key)) continue;
           if (
-            !isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url) ||
-            (requires_auth && !api_key) ||
             isUnreviewedPublicProvider(name, url) ||
             isUnreviewedPublicProvider(name, stream_url)
           ) continue;
