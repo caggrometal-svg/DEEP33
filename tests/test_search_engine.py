@@ -633,3 +633,47 @@ def test_realtime_anchor_tokens_ignore_numeric_date_suffixes():
     assert "condes" in anchors
     assert "2026" not in anchors
     assert "10" not in anchors
+
+
+def test_fresh_realtime_news_uses_transparent_short_ttl_cache(monkeypatch):
+    import asyncio
+    import tools.web_search as web_search_module
+
+    calls = {"count": 0}
+
+    class FakeEngine:
+        def __init__(self, *, max_results, max_queries):
+            self.max_results = max_results
+            self.max_queries = max_queries
+
+        async def search(self, *args, **kwargs):
+            calls["count"] += 1
+            return {
+                "ok": True,
+                "realtime": True,
+                "retrieved_at": "2026-10-10T00:00:00+00:00",
+                "engine": "DEEP33 Search Engine",
+                "engine_version": "1.3.0",
+                "provider_independent": True,
+                "providers": ["google_news"],
+                "verification": {"level": "single-source", "distinct_domains": 1, "distinct_providers": 1, "corroborated_results": 0},
+                "results": [{"title": "Live Chile news", "url": f"https://example.com/live-{calls['count']}", "snippet": "fresh"}],
+            }
+
+    monkeypatch.setattr("backend.search.engine.SearchEngine", FakeEngine)
+    web_search_module._REALTIME_SEARCH_CACHE.clear()
+    web_search_module._SEARCH_CACHE.clear()
+    query = "noticias de Chile hoy cache-control"
+
+    first = asyncio.run(web_search_module.search_web(query, provider="auto", fresh=True))
+    second = asyncio.run(web_search_module.search_web(query, provider="auto", fresh=True))
+
+    assert calls["count"] == 1
+    assert first["fresh_request"] is True
+    assert first["cache_hit"] is False
+    assert second["fresh_request"] is False
+    assert second["cache_hit"] is True
+    assert second["cache_age_ms"] <= 10_000
+    assert second["retrieved_at"] == first["retrieved_at"]
+    web_search_module._REALTIME_SEARCH_CACHE.clear()
+    web_search_module._SEARCH_CACHE.clear()
