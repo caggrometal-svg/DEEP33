@@ -75,6 +75,28 @@ def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
         assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000" in source
 
 
+
+@pytest.mark.parametrize("path", EDGE_PATHS)
+def test_public_fast_fallbacks_precede_slow_render_fallback(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    start = source.index("function edgeProviders(): EdgeAIProvider[] {")
+    end = source.index("\nfunction edgeAIConfigured()", start)
+    providers = source[start:end]
+
+    public_pos = providers.index("addPublicInferenceProviders(providers);")
+    render_pos = providers.index(
+        'if (!providers.some((provider) => provider.name === "render-backend-fallback"))'
+    )
+    assert public_pos < render_pos
+    assert 'name: "llmfaucet"' in source
+    assert 'model: "auto:fast"' in source
+
+    start = source.index("function isFreeInferenceProvider(")
+    end = source.index("\n}", start)
+    free_policy = source[start:end]
+    assert 'provider.name === "llmfaucet"' in free_policy
+
+
 def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
     import asyncio
     from tools import web_search
