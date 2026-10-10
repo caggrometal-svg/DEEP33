@@ -2557,12 +2557,32 @@ async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
   }
 }
 
-async function readinessResponse(sessionId: string, userAuthorization = "") {
-  const [health, inference] = await Promise.all([
-    probeHealth(sessionId),
-    probeInference(sessionId, userAuthorization),
-  ]);
+async function readinessResponse(
+  sessionId: string,
+  userAuthorization = "",
+  deepProbe = false,
+) {
+  const providers = edgeProviders();
+  const configured = providers.length > 0;
+  const primaryProvider = providers.find((provider) => provider.name !== "render-backend-fallback") ??
+    providers[0] ?? null;
+  const healthPromise = probeHealth(sessionId);
+  const inferencePromise = deepProbe
+    ? probeInference(sessionId, userAuthorization)
+    : Promise.resolve({
+      ok: configured,
+      status: configured ? "CONFIGURED" : "FAIL",
+      body: {
+        status: configured ? "CONFIGURED" : "FAIL",
+        probe: "SKIPPED",
+        provider: primaryProvider?.name ?? null,
+        model: primaryProvider?.model ?? null,
+      },
+    });
+  const [health, inference] = await Promise.all([healthPromise, inferencePromise]);
 
+  // /ready is polled during app lifecycle/recovery. Keep it lightweight by default;
+  // deep inference is opt-in with ?deep=true and is exercised by production diagnostics.
   const ready = health.ok && inference.ok;
 
   return {
@@ -2575,8 +2595,9 @@ async function readinessResponse(sessionId: string, userAuthorization = "") {
     inference: inference.body,
     checks: {
       BACKEND: health.ok ? "PASS" : "FAIL",
-      MODEL: inference.ok ? "PASS" : "FAIL",
-      CHAT: inference.ok ? "PASS" : "FAIL",
+      MODEL: deepProbe ? (inference.ok ? "PASS" : "FAIL") : (configured ? "CONFIGURED" : "FAIL"),
+      CHAT: deepProbe ? (inference.ok ? "PASS" : "FAIL") : (configured ? "CONFIGURED" : "FAIL"),
+      INFERENCE_PROBE: deepProbe ? (inference.ok ? "PASS" : "FAIL") : "SKIPPED",
     },
     timestamp: new Date().toISOString(),
   };
@@ -2627,7 +2648,11 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/ready" && req.method === "GET") {
-      const body = await readinessResponse(sessionId, req.headers.get("authorization") || "");
+      const body = await readinessResponse(
+        sessionId,
+        req.headers.get("authorization") || "",
+        url.searchParams.get("deep") === "true",
+      );
       return json(body, body.ready ? 200 : 503);
     }
 

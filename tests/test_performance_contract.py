@@ -312,3 +312,21 @@ def test_edge_realtime_news_runs_query_variants_in_parallel_before_broad_fallbac
         assert "const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(" in source
         assert "const realtimeNewsPlan = plan.depth === " in source
         assert "results.length < 1" in source or "finalResults.length < 1" in source
+
+
+def test_edge_ready_does_not_generate_model_output_by_default() -> None:
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            ROOT / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "deepProbe = false" in source
+        assert 'url.searchParams.get("deep") === "true"' in source
+        assert 'probe: "SKIPPED"' in source
+        assert 'INFERENCE_PROBE: deepProbe ? (inference.ok ? "PASS" : "FAIL") : "SKIPPED"' in source
+        assert 'MODEL: deepProbe ? (inference.ok ? "PASS" : "FAIL") : (configured ? "CONFIGURED" : "FAIL")' in source
+    activity = (
+        ROOT / "android" / "app" / "src" / "main" / "java" / "cl" / "caggrometal" / "deep33" / "MainActivity.kt"
+    ).read_text(encoding="utf-8")
+    assert 'model == "PASS" || model == "CONFIGURED"' in activity
+    assert 'chat == "PASS" || chat == "CONFIGURED"' in activity
+    assert "INFERENCE: NOT PROBED" in activity
