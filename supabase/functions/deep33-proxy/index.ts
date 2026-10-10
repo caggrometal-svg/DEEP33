@@ -298,6 +298,64 @@ function isSecureHttpsUrl(value: string): boolean {
 
 type EdgeAIProvider = { name: string; url: string; stream_url?: string; api_key: string; model: string; requires_auth: boolean };
 
+const FREE_INFERENCE_REQUEST_TIMEOUT_MS = 7000;
+const FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS = 4000;
+
+function isFreeInferenceProvider(provider: EdgeAIProvider): boolean {
+  return provider.name === "cloudflare-workers-ai-free" || provider.name === "groq-free";
+}
+
+// Free alternatives are opt-in and read credentials only from server-side function secrets.
+// They are inserted before the cold Render fallback so a rate-limited/slow upstream can fail fast.
+function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
+  if (
+    (Deno.env.get("DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS") || "")
+      .trim()
+      .toLowerCase() !== "true"
+  ) return;
+
+  const accountId = (Deno.env.get("DEEP33_CLOUDFLARE_ACCOUNT_ID") || "").trim();
+  const cloudflareToken = (Deno.env.get("DEEP33_CLOUDFLARE_API_TOKEN") || "").trim();
+  const cloudflareModel =
+    (Deno.env.get("DEEP33_CLOUDFLARE_MODEL") || "@cf/meta/llama-3.1-8b-instruct").trim();
+  if (
+    /^[a-f0-9]{32}$/i.test(accountId) &&
+    cloudflareToken &&
+    !providers.some((provider) => provider.name === "cloudflare-workers-ai-free")
+  ) {
+    const url =
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
+    if (isSecureHttpsUrl(url)) {
+      providers.push({
+        name: "cloudflare-workers-ai-free",
+        url,
+        stream_url: url,
+        api_key: cloudflareToken,
+        model: cloudflareModel,
+        requires_auth: true,
+      });
+    }
+  }
+
+  const groqKey = (Deno.env.get("DEEP33_GROQ_API_KEY") || "").trim();
+  const groqModel = (Deno.env.get("DEEP33_GROQ_MODEL") || "openai/gpt-oss-20b").trim();
+  const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+  if (
+    groqKey &&
+    !providers.some((provider) => provider.name === "groq-free")
+  ) {
+    providers.push({
+      name: "groq-free",
+      url: groqUrl,
+      stream_url: groqUrl,
+      api_key: groqKey,
+      model: groqModel,
+      requires_auth: true,
+    });
+  }
+}
+
+
 function edgeProviders(): EdgeAIProvider[] {
   const providers: EdgeAIProvider[] = [];
 
@@ -339,6 +397,8 @@ function edgeProviders(): EdgeAIProvider[] {
       // Optional fallback configuration is non-fatal.
     }
   }
+
+  addFreeInferenceProviders(providers);
 
   if (!providers.some((provider) => provider.name === "render-backend-fallback")) {
     providers.push({
@@ -403,6 +463,27 @@ function providerPayload(
   delete providerPayload.sources;
   return providerPayload;
 }
+
+function providerRequestBody(
+  provider: EdgeAIProvider,
+  payload: Record<string, unknown>,
+  stream: boolean,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    ...providerPayload(payload, stream),
+    ...(provider.model ? { model: provider.model } : {}),
+  };
+
+  // Workers AI can reject quickly instead of waiting in a capacity queue.
+  if (provider.name === "cloudflare-workers-ai-free") {
+    const existingOptions = body.options && typeof body.options === "object"
+      ? body.options as Record<string, unknown>
+      : {};
+    body.options = { ...existingOptions, rejectIfBusy: true };
+  }
+  return body;
+}
+
 
 function providerRequestHeaders(
   provider: EdgeAIProvider,
@@ -719,7 +800,10 @@ async function callEdgeAI(
       for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
         const started = performance.now();
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+        const providerTimeoutMs = isFreeInferenceProvider(provider)
+          ? FREE_INFERENCE_REQUEST_TIMEOUT_MS
+          : EDGE_AI_TIMEOUT_MS;
+        const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
 
         try {
           const response = await fetch(provider.url, {
@@ -732,10 +816,7 @@ async function callEdgeAI(
               leaseContext?.sessionId || sessionId || "",
               leaseContext?.idempotencyKey || "",
             ),
-            body: JSON.stringify({
-              ...providerPayload(payload, false),
-              ...(provider.model ? { model: provider.model } : {}),
-            }),
+            body: JSON.stringify(providerRequestBody(provider, payload, false)),
             signal: controller.signal,
           });
 
@@ -1086,9 +1167,12 @@ async function streamEdgeAI(
         const controller = new AbortController();
         onController(controller);
         const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
+        const firstChunkTimeoutMs = isFreeInferenceProvider(provider)
+          ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
+          : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
         let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
           () => controller.abort(),
-          EDGE_AI_FIRST_CHUNK_TIMEOUT_MS,
+          firstChunkTimeoutMs,
         );
         let emitted = false;
         let firstChunkMs: number | null = null;
@@ -1108,10 +1192,7 @@ async function streamEdgeAI(
               idempotencyContext?.sessionId || "",
               idempotencyContext?.idempotencyKey || "",
             ),
-            body: JSON.stringify({
-              ...providerPayload(payload, true),
-              ...(provider.model ? { model: provider.model } : {}),
-            }),
+            body: JSON.stringify(providerRequestBody(provider, payload, true)),
             signal: controller.signal,
           });
 
