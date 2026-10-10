@@ -73,3 +73,93 @@ def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
     for source in (primary, secondary):
         assert '|| "25000"' in source
         assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5000" in source
+
+
+def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
+    import asyncio
+    from tools import web_search
+
+    class FakeResponse:
+        status_code = 200
+        text = (
+            "<?xml version='1.0' encoding='UTF-8'?>"
+            "<rss version='2.0'><channel>"
+            "<item><title>Últimas noticias de Las Condes</title>"
+            "<link>https://news.google.com/rss/articles/test-story</link>"
+            "<description>Actualización reciente de la comuna de Las Condes, Chile.</description>"
+            "</item></channel></rss>"
+        )
+        content = text.encode("utf-8")
+
+    class FakeClient:
+        def __init__(self):
+            self.url = None
+            self.params = None
+            self.timeout = None
+
+        async def get(self, url, **kwargs):
+            self.url = url
+            self.params = kwargs.get("params")
+            self.timeout = kwargs.get("timeout")
+            return FakeResponse()
+
+    fake_client = FakeClient()
+
+    async def fake_get_client():
+        return fake_client
+
+    monkeypatch.setattr(web_search, "_search_http_client", fake_get_client)
+    result = asyncio.run(
+        web_search._google_news_search(
+            "situación actual de la comuna de Las Condes en Chile",
+            timeout_seconds=5.0,
+            max_results=5,
+        )
+    )
+
+    assert fake_client.url == "https://news.google.com/rss/search"
+    assert fake_client.params["gl"] == "CL"
+    assert fake_client.params["ceid"] == "CL:es-419"
+    assert "when:1d" in fake_client.params["q"]
+    assert result
+    assert result[0]["url"].startswith("https://news.google.com/")
+
+
+def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeypatch) -> None:
+    import asyncio
+    from backend.search.engine import SearchEngine
+
+    engine = SearchEngine(max_results=5, max_queries=1)
+    captured = []
+
+    async def fake_run_query(providers, planned_query, **kwargs):
+        captured.append(list(providers))
+        if "google_news" not in providers:
+            return [], ["no-news-fallback"], list(providers)
+        return (
+            [("google_news", [{
+                "title": "Situación actual de la comuna de Las Condes",
+                "url": "https://news.google.com/rss/articles/las-condes",
+                "snippet": "Actualidad reciente en Las Condes, Chile.",
+                "published_at": "2026-10-10T02:00:00Z",
+            }])],
+            [],
+            ["google_news"],
+        )
+
+    monkeypatch.setattr(engine, "_run_query", fake_run_query)
+    result = asyncio.run(
+        engine.search(
+            "situación actual de la comuna de Las Condes en Chile",
+            provider="auto",
+            api_key="",
+            timeout_seconds=3.0,
+            fallback_ddg=True,
+        )
+    )
+
+    assert captured
+    assert captured[0][0] == "google_news"
+    assert result["ok"] is True
+    assert "google_news" in result["providers"]
+    assert result["verification"]["distinct_providers"] == 1

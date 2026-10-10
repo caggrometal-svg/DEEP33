@@ -600,9 +600,13 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
     async def fake_ddg(query, timeout_seconds, max_results):
         return await fake_bing(query, timeout_seconds, max_results)
 
+    async def fake_google_news(query, timeout_seconds, max_results):
+        return []
+
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
     monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
+    monkeypatch.setattr("tools.web_search._google_news_search", fake_google_news)
 
     result = asyncio.run(
         SearchEngine(max_results=5, max_queries=3).search(

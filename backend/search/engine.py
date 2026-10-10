@@ -481,12 +481,14 @@ class SearchEngine:
         timeout_seconds: float,
         api_key: str,
     ) -> list[dict]:
-        from tools.web_search import _bing_search, _duckduckgo_search, _tavily_search
+        from tools.web_search import _bing_search, _duckduckgo_search, _google_news_search, _tavily_search
 
         if provider == "tavily":
             if not api_key:
                 return []
             return await _tavily_search(query, api_key, timeout_seconds, self.max_results)
+        if provider == "google_news":
+            return await _google_news_search(query, timeout_seconds, self.max_results)
         if provider == "bing":
             return await _bing_search(query, timeout_seconds, self.max_results)
         return await _duckduckgo_search(query, timeout_seconds, self.max_results)
@@ -743,6 +745,10 @@ class SearchEngine:
         plan = self.plan(query)
         provider_name = provider.strip().lower() or "auto"
         providers = self._providers(provider_name, api_key, fallback_ddg)
+        normalized_query = " ".join(str(query or "").split()).lower()
+        if plan.depth == "realtime" and any(term in normalized_query for term in REALTIME_NEWS_TERMS):
+            if "google_news" not in providers:
+                providers.insert(0, "google_news")
 
         successful: list[tuple[str, str, list[dict]]] = []
         errors: list[str] = []

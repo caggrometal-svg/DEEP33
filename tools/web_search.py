@@ -417,6 +417,30 @@ async def _parse_bing_rss(response, max_results):
         raise WebSearchError("WEB_SEARCH_BING_RSS_INVALID_RESPONSE") from exc
 
 
+async def _google_news_search(query, timeout_seconds, max_results):
+    """Search recent Spanish-language Chilean news without an API key."""
+    if not _looks_realtime_news(query):
+        return []
+    client = await _search_http_client()
+    normalized_query = " ".join(str(query or "").split()).strip()
+    response = await client.get(
+        "https://news.google.com/rss/search",
+        params={
+            "q": f"{normalized_query} when:1d",
+            "hl": "es-419",
+            "gl": "CL",
+            "ceid": "CL:es-419",
+        },
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/rss+xml,application/xml,text/xml",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    # Google News uses standard RSS; reuse the bounded XML parser and URL checks.
+    return await _parse_bing_rss(response, max_results)
+
+
 async def _bing_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
     html_error = None
