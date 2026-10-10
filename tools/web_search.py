@@ -517,11 +517,22 @@ async def search_web(
     fast: bool = False,
     fresh: bool = False,
 ):
-    cleaned = " ".join(query.split()).strip()
+    from backend.search.engine import SearchEngine, _normalise_lookup_query
+
+    raw_query = " ".join(str(query or "").split()).strip()
+    cleaned = _normalise_lookup_query(raw_query) or raw_query
     if not cleaned:
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
     if len(cleaned) > MAX_QUERY_CHARS:
-        raise WebSearchError("WEB_SEARCH_QUERY_TOO_LONG")
+        # Last-resort bound for verbose but legitimate requests. Normalization
+        # above normally removes response instructions before this point.
+        first_sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0].strip()
+        if first_sentence and len(first_sentence) <= MAX_QUERY_CHARS:
+            cleaned = first_sentence
+        else:
+            cleaned = cleaned[:MAX_QUERY_CHARS].rsplit(" ", 1)[0].rstrip(" ?¡!.,;:")
+    if not cleaned:
+        raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
     timeout_seconds = max(1.0, min(6.0, timeout_seconds))
     max_results = max(1, min(8, int(max_results)))
@@ -531,8 +542,6 @@ async def search_web(
     key = (
         api_key if api_key is not None else os.getenv("WEB_SEARCH_API_KEY", "")
     ).strip()
-
-    from backend.search.engine import SearchEngine
 
     engine = SearchEngine(
         max_results=max_results,
