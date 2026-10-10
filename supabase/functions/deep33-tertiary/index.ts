@@ -2256,6 +2256,10 @@ function edgeFilterSearchResults(
       const host = parsedUrl.hostname.toLowerCase();
       const googleNewsStory = host === "news.google.com" &&
         parsedUrl.pathname.toLowerCase().startsWith("/rss/articles/");
+      // Reject RSS items whose publisher is a social repost rather than a news outlet.
+      const title = String(item.title || "").trim();
+      const socialPublisherSuffix = /(?:\s[-–|]\s*)(?:facebook|instagram|tiktok|reddit|youtube)(?:\s|$)/i.test(title);
+      if (googleNewsStory && socialPublisherSuffix) return false;
       const publishedAt = String(item.published_at ?? "").trim();
       const publicationTimestamp = Date.parse(publishedAt);
       const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
@@ -2453,7 +2457,7 @@ async function publicWebSearch(query: string) {
   const firstProviders = edgeProvidersForResults(firstRelevant);
   const batches: Array<{ query: string; data: Record<string, unknown> }> = [{ query: plan.queries[0], data: first }];
   const required = plan.depth === "realtime" ? 2 : 3;
-  const enoughFastNews = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && firstRelevant.length >= 2;
+  const enoughFastNews = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && firstRelevant.length >= 1;
   if (!enoughFastNews && plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
     batches.push(...await Promise.all(plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))));
   }
@@ -2468,7 +2472,7 @@ async function publicWebSearch(query: string) {
   }
   let results = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
   // Broaden the provider fan-out only when fast RSS has fewer than two relevant items.
-  if (plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && results.length < 2) {
+  if (plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && results.length < 1) {
     const broad = await runPublicWebSearchQuery(plan.queries[0], true);
     batches.push({ query: plan.queries[0], data: broad });
     for (const item of (Array.isArray(broad.results) ? broad.results : [])) {
