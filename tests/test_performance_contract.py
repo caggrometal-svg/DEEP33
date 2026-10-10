@@ -327,3 +327,14 @@ def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
         assert "Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      2500," in source
         assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      3000," in source
 
+
+
+def test_edge_search_enforces_source_integrity_and_independent_corroboration() -> None:
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (ROOT / "supabase" / "functions" / function_name / "index.ts").read_text(encoding="utf-8")
+        assert "function edgeValidateSearchResults" in source
+        assert 'parsed.protocol !== "https:"' in source
+        assert 'integrity_validation: "https_title_provider_domain_v1"' in source
+        assert "corroborated_results: corroboratedCount" in source
+        assert "sources[i] === sources[j]" in source
+        assert "const filtered = edgeValidateSearchResults(edgeFilterSearchResults" in source
