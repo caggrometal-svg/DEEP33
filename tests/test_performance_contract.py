@@ -270,18 +270,21 @@ def test_generation_memory_sync_is_not_on_generation_service_critical_path():
     assert "hadFailure" in coordinator
 
 
-def test_edge_realtime_news_uses_bounded_rss_first_path() -> None:
+def test_edge_realtime_news_uses_bounded_parallel_rss_first_path() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "async function runPublicWebSearchQuery(query: string, forceFullSearch = false)" in source
-        assert "const fastNewsQuery = !forceFullSearch && edgeCurrentNewsQuery(q)" in source
+        assert "const currentNewsRequest = edgeCurrentNewsQuery(q)" in source
+        assert "const fastNewsQuery = !forceFullSearch && currentNewsRequest" in source
         assert "1800" in source
-        assert 'fastNewsQuery ? q + " when:1d" : q' in source
+        assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
-        assert "firstRelevant.length >= 1" in source
-        assert "results.length < 1" in source or "finalResults.length < 1" in source
+        assert "const realtimeNewsPlan = plan.depth === " in source
+        assert "const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3)" in source
+        assert "initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))" in source
+        assert "2500" in source
         assert "socialPublisherSuffix" in source
         assert "runPublicWebSearchQuery(plan.queries[0], true)" in source
 
@@ -291,9 +294,19 @@ def test_edge_realtime_news_can_return_one_relevant_single_source_result() -> No
         source = (
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
-        assert "firstRelevant.length >= 1" in source
         assert "socialPublisherSuffix" in source
         assert "if (googleNewsStory && socialPublisherSuffix) return false;" in source
     assert "firstRelevant.length >= 2" not in (
         ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
     ).read_text(encoding="utf-8")
+
+
+def test_edge_realtime_news_runs_query_variants_in_parallel_before_broad_fallback() -> None:
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            ROOT / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3)" in source
+        assert "const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(" in source
+        assert "const realtimeNewsPlan = plan.depth === " in source
+        assert "results.length < 1" in source or "finalResults.length < 1" in source
