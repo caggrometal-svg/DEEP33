@@ -2559,6 +2559,27 @@ async function publicWebSearch(query: string) {
       if (results.length > 0) break;
     }
   }
+  // One final alternate-topic query prevents transient empty RSS responses from
+  // turning into a user-facing 503. It only runs after bounded provider retries fail.
+  if (realtimeNewsPlan && results.length < 1) {
+    const locality = edgeExtractLocality(plan.original);
+    const rescueQuery = edgeBroadWorldNewsQuery(plan.original)
+      ? "noticias internacionales de hoy"
+      : locality
+        ? `${locality} noticias de hoy`
+        : /\\b(?:chile|chileno|chilena)\\b/i.test(plan.original)
+          ? "Chile noticias hoy"
+          : `${normalizeEdgeSearchQuery(plan.original)} actualidad de hoy`;
+    const data = await runPublicWebSearchQuery(
+      rescueQuery,
+      true,
+      Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+    ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
+    const batch = { query: rescueQuery, data };
+    batches.push(batch);
+    mergeBatch(batch);
+    results = filteredResults();
+  }
   if (!results.length && edgeCurrentDateTimeQuery(plan.original)) {
     const clockResults = await runCurrentDateTimeSourceFallback(plan.original);
     results = edgeFilterSearchResults(
