@@ -326,6 +326,39 @@ class AIGateway:
         return result
 
     @staticmethod
+    def _stream_has_visible_content(buffer: bytes) -> bool:
+        """Return true once an SSE frame contains non-empty assistant text."""
+        for line in buffer.splitlines():
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == b"[DONE]":
+                continue
+            try:
+                event = json.loads(payload)
+            except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+                continue
+            if not isinstance(event, dict):
+                continue
+            choices = event.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                message = choice.get("message")
+                content = (
+                    delta.get("content")
+                    if isinstance(delta, dict)
+                    else message.get("content") if isinstance(message, dict)
+                    else None
+                )
+                if isinstance(content, str) and content.strip():
+                    return True
+        return False
+
+    @staticmethod
     def _is_provider_policy_block(text: str) -> bool:
         normalized = " ".join(str(text or "").split()).strip().lower()
         if not normalized:
@@ -531,6 +564,13 @@ class AIGateway:
                     }
                     circuit.success()
                     provider_succeeded = True
+                    logger.info(
+                        "ai_provider_success request_id=%s provider=%s fallback_used=%s elapsed_ms=%.2f",
+                        request_id,
+                        provider.name,
+                        bool(self.config.providers and provider.name != self.config.providers[0].name),
+                        elapsed_ms,
+                    )
                     return result
 
                 except httpx.ConnectTimeout:
@@ -629,7 +669,8 @@ class AIGateway:
         saw_http_error = False
         saw_invalid_response = False
 
-        for provider in self._ordered_providers(prefer_ttft=True):
+        ordered_providers = self._ordered_providers(prefer_ttft=True)
+        for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             if not circuit.available(time.monotonic()):
                 continue
@@ -639,6 +680,9 @@ class AIGateway:
 
             for attempt in range(self.config.max_retries + 1):
                 started_output = False
+                visible_content = False
+                pending_chunks: list[bytes] = []
+                pending_bytes = bytearray()
                 first_chunk_at: float | None = None
                 stream_completion_tokens: float | None = None
                 try:
@@ -675,6 +719,20 @@ class AIGateway:
                                     error_class,
                                     attempt + 1,
                                 )
+                                if status in {404, 410}:
+                                    next_provider = (
+                                        ordered_providers[provider_index + 1].name
+                                        if provider_index + 1 < len(ordered_providers)
+                                        else "none"
+                                    )
+                                    logger.warning(
+                                        "ai_stream_provider_failover request_id=%s failed_provider=%s status=%s next_provider=%s configured_provider_count=%s",
+                                        request_id,
+                                        provider.name,
+                                        status,
+                                        next_provider,
+                                        len(ordered_providers),
+                                    )
                                 if 500 <= status <= 599:
                                     raise GatewayHTTPError
                             else:
@@ -697,8 +755,40 @@ class AIGateway:
                                                             stream_completion_tokens = float(value)
                                             except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
                                                 pass
-                                        started_output = True
-                                        yield chunk
+                                        if not visible_content:
+                                            pending_chunks.append(chunk)
+                                            pending_bytes.extend(chunk)
+                                            if self._stream_has_visible_content(bytes(pending_bytes)):
+                                                visible_content = True
+                                                started_output = True
+                                                for pending_chunk in pending_chunks:
+                                                    yield pending_chunk
+                                                pending_chunks.clear()
+                                                pending_bytes.clear()
+                                            elif len(pending_bytes) > 256 * 1024:
+                                                # Keep memory bounded; discard a provider that
+                                                # never starts an assistant text response.
+                                                break
+                                        else:
+                                            started_output = True
+                                            yield chunk
+                                if not visible_content:
+                                    saw_invalid_response = True
+                                    circuit.failure(
+                                        self.config.circuit_failure_threshold,
+                                        self.config.circuit_cooldown_seconds,
+                                    )
+                                    logger.warning(
+                                        "ai_stream_provider_empty_response request_id=%s provider=%s buffered_bytes=%s next_provider=%s",
+                                        request_id,
+                                        provider.name,
+                                        len(pending_bytes),
+                                        ordered_providers[provider_index + 1].name
+                                        if provider_index + 1 < len(ordered_providers)
+                                        else "none",
+                                    )
+                                    break
+
                                 provider_succeeded = True
                                 elapsed_ms = (time.perf_counter() - started_request) * 1000
                                 self._record_latency(provider, elapsed_ms)
@@ -708,6 +798,14 @@ class AIGateway:
                                         stream_completion_tokens / max(0.001, elapsed_ms / 1000.0),
                                     )
                                 circuit.success()
+                                logger.info(
+                                    "ai_stream_provider_success request_id=%s provider=%s fallback_used=%s first_chunk_ms=%.2f elapsed_ms=%.2f",
+                                    request_id,
+                                    provider.name,
+                                    bool(self.config.providers and provider.name != self.config.providers[0].name),
+                                    (first_chunk_at - started_request) * 1000 if first_chunk_at else -1.0,
+                                    elapsed_ms,
+                                )
                                 return
 
                     if provider_succeeded:

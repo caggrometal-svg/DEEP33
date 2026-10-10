@@ -1479,6 +1479,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         deep = complexity_profile(messages)[2] == "DEEP"
     search_depth = bool(deep or realtime)
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
+    search_started = time.perf_counter()
     try:
         search_result = await search_web(
             query,
@@ -1489,9 +1490,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
     except Exception as exc:
         logger.warning(
-            "required_web_search_failed request_id=%s error=%s detail=%s",
+            "required_web_search_failed request_id=%s error=%s elapsed_ms=%.2f detail=%s",
             request_id,
             type(exc).__name__,
+            (time.perf_counter() - search_started) * 1000,
             str(exc)[:300],
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
@@ -1500,13 +1502,24 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if not isinstance(search_result, dict) or not search_result.get("ok"):
         errors = search_result.get("errors") if isinstance(search_result, dict) else None
         logger.warning(
-            "required_web_search_no_results request_id=%s errors=%s",
+            "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
             request_id,
+            (time.perf_counter() - search_started) * 1000,
+            search_result.get("providers_attempted") if isinstance(search_result, dict) else None,
             errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
+    logger.info(
+        "web_search_stage request_id=%s elapsed_ms=%.2f status=success provider=%s providers=%s result_count=%s realtime=%s",
+        request_id,
+        (time.perf_counter() - search_started) * 1000,
+        search_result.get("provider"),
+        search_result.get("providers_attempted"),
+        len(search_result.get("results") or []),
+        realtime,
+    )
     sources = {}
     for source in _source_from_result(search_result):
         url = str(source.get("url") or "").strip()
@@ -2452,9 +2465,16 @@ async def prepare_messages(
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
 
+    memory_started = time.perf_counter()
     try:
         context = await memory.context(session_id, memory_profile_id=memory_profile_id)
         remote = extract_context_messages(context)
+        logger.info(
+            "memory_stage request_id=%s elapsed_ms=%.2f status=success remote_messages=%s",
+            perf_request_id,
+            (time.perf_counter() - memory_started) * 1000,
+            len(remote),
+        )
         merged = merge_messages(remote, requested)
         merged_chars = 0
         bounded: list[dict[str, str]] = []
@@ -2492,7 +2512,13 @@ async def prepare_messages(
         performance.mark(perf_request_id, "T3_CONTEXT_PREPARED")
         return result, selected
     except MemoryUnavailableError as exc:
-        logger.warning("memory_context_unavailable session_id=%s error=%s", session_id, exc)
+        logger.warning(
+            "memory_context_unavailable session_id=%s request_id=%s elapsed_ms=%.2f error=%s",
+            session_id,
+            perf_request_id,
+            (time.perf_counter() - memory_started) * 1000,
+            exc,
+        )
         selected_messages = requested[-max_messages:]
         while selected_messages and sum(len(str(item.get("content",""))) for item in selected_messages) > max_chars:
             selected_messages.pop(0)
@@ -3050,6 +3076,7 @@ async def stream_gateway(
     request_hash: str,
     lease_token: str,
     completion_state: dict[str, str] | None = None,
+    request_started_at: float | None = None,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     assistant_parts: list[str] = []
@@ -3120,6 +3147,12 @@ async def stream_gateway(
                             request_id,
                             ttft_ms,
                         )
+                        if request_started_at is not None:
+                            logger.info(
+                                "stream_end_to_end_ttft request_id=%s elapsed_ms=%.2f path=inference",
+                                request_id,
+                                (first_output_at - request_started_at) * 1000,
+                            )
                     yield outbound_frame + b"\n\n"
         if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
             yield bytes(frame_buffer) + b"\n\n"
@@ -3144,12 +3177,19 @@ async def stream_gateway(
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
+    stream_elapsed_ms = (time.perf_counter() - stream_started) * 1000
     logger.info(
         "stream_ttft_path request_id=%s stream_bytes=%s total_stream_ms=%.2f",
         request_id,
         len(collected),
-        (time.perf_counter() - stream_started) * 1000,
+        stream_elapsed_ms,
     )
+    if request_started_at is not None:
+        logger.info(
+            "stream_end_to_end_total request_id=%s elapsed_ms=%.2f",
+            request_id,
+            (time.perf_counter() - request_started_at) * 1000,
+        )
     if completion_state is not None:
         completion_state["assistant_text"] = assistant_text
     yield b"data: [DONE]\n\n"
@@ -3160,6 +3200,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     session_id = session_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
     request_id = request_id_from_request(http_request)
+    request_started_at = time.perf_counter()
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
     request = resolve_personality_request(request, http_request)
@@ -3221,6 +3262,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         and is_weather_query(latest_user_query(raw_messages))
         else None
     )
+    prefetch_search_task: asyncio.Task | None = None
     try:
         state, record = await claim_task
         if state in {"COMPLETED", "FAILED"}:
@@ -3247,6 +3289,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 await asyncio.gather(weather_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
+        raw_query = latest_user_query(raw_messages)
+        if (
+            DEEP33_WEB_TOOLS_ENABLED
+            and not skip_web_tools
+            and not is_connectivity_question(raw_query)
+            and not is_weather_query(raw_query)
+            and (should_force_web(raw_messages) or should_deep_web(raw_messages, personality))
+        ):
+            prefetch_deep = should_deep_web(raw_messages, personality) or is_realtime_query(raw_query)
+            # Search and memory are independent preparation stages: overlap them to
+            # reduce the time before the first visible token.
+            prefetch_search_task = asyncio.create_task(
+                prepare_web_evidence(raw_messages, request_id=request_id, deep=prefetch_deep)
+            )
+
         messages, personality = await context_task
     except Exception:
         if not claim_task.done():
@@ -3255,10 +3312,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             context_task.cancel()
         if weather_task is not None and not weather_task.done():
             weather_task.cancel()
+        if prefetch_search_task is not None and not prefetch_search_task.done():
+            prefetch_search_task.cancel()
         await asyncio.gather(
             claim_task,
             context_task,
             weather_task if weather_task is not None else asyncio.sleep(0),
+            prefetch_search_task if prefetch_search_task is not None else asyncio.sleep(0),
             return_exceptions=True,
         )
         raise
@@ -3302,11 +3362,14 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     temperature=request.temperature,
                 )
             else:
-                working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
-                    messages,
-                    request_id=request_id,
-                    deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
-                )
+                if prefetch_search_task is not None:
+                    working, _sources, _evidence_fragments, _search_results = await prefetch_search_task
+                else:
+                    working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
+                        messages,
+                        request_id=request_id,
+                        deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
+                    )
                 if working is None:
                     stream_answer_override = _web_search_unavailable_answer(
                         latest_user_query(messages)
@@ -3326,7 +3389,15 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
 
             async def unavailable_stream() -> AsyncIterator[bytes]:
                 completion_state["assistant_text"] = fallback_text
+                first_piece = True
                 for piece in _sse_text_chunks(fallback_text):
+                    if first_piece:
+                        logger.info(
+                            "stream_end_to_end_ttft request_id=%s elapsed_ms=%.2f path=search_fallback",
+                            request_id,
+                            (time.perf_counter() - request_started_at) * 1000,
+                        )
+                        first_piece = False
                     yield _sse_delta(piece)
                 yield b"data: [DONE]\n\n"
 
@@ -3341,6 +3412,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 request_hash=request_hash,
                 lease_token=lease_token,
                 completion_state=completion_state,
+                request_started_at=request_started_at,
             )
 
         async def finalize_success() -> None:
