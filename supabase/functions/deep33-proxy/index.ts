@@ -2344,7 +2344,8 @@ async function runPublicWebSearchQuery(query: string, forceFullSearch = false) {
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
   // News queries get a fast RSS-first pass. Broader HTML providers are only used
   // when the RSS results are insufficient, avoiding 4.5s waits on irrelevant pages.
-  const fastNewsQuery = !forceFullSearch && edgeCurrentNewsQuery(q);
+  const currentNewsRequest = edgeCurrentNewsQuery(q);
+  const fastNewsQuery = !forceFullSearch && currentNewsRequest;
 
   const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
@@ -2353,7 +2354,7 @@ async function runPublicWebSearchQuery(query: string, forceFullSearch = false) {
     },
     {
       name: "google_news_public",
-      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(fastNewsQuery ? q + " when:1d" : q) +
+      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(currentNewsRequest ? q + " when:1d" : q) +
         "&hl=es-419&gl=CL&ceid=CL:es-419",
       headers: {
         "Accept": "application/rss+xml,application/xml,text/xml",
@@ -2399,7 +2400,9 @@ async function runPublicWebSearchQuery(query: string, forceFullSearch = false) {
       redirect: "follow",
       signal: AbortSignal.timeout(fastNewsQuery
         ? Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
-        : EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+        : forceFullSearch && currentNewsRequest
+          ? Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
+          : EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
@@ -2838,15 +2841,18 @@ async function publicWebSearchUncached(
   plan = edgeSearchQueries(query),
 ): Promise<Record<string, unknown>> {
   const started = performance.now();
-  const batches: Array<{ query: string; data: Record<string, unknown> }> = [];
-  const first = await runPublicWebSearchQuery(plan.queries[0]);
-  batches.push({ query: plan.queries[0], data: first });
+  const realtimeNewsPlan = plan.depth === "realtime" &&
+    edgeCurrentNewsQuery(plan.original) && plan.queries.length > 1;
+  const initialQueries = realtimeNewsPlan ? plan.queries.slice(0, 3) : [plan.queries[0]];
+  const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(
+    initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
+  );
+  const first = batches[0]?.data || { results: [] };
   const firstResults = Array.isArray(first.results) ? first.results as Array<Record<string, unknown>> : [];
   const firstRelevant = edgeFilterSearchResults(plan.original, firstResults, plan.depth === "realtime");
   const firstProviders = edgeProvidersForResults(firstRelevant);
   const required = plan.depth === "realtime" ? 2 : 3;
-  const enoughFastNews = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && firstRelevant.length >= 1;
-  if (!enoughFastNews && plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
+  if (!realtimeNewsPlan && plan.queries.length > 1 && (firstProviders.length < 2 || firstRelevant.length < required)) {
     const more = await Promise.all(
       plan.queries.slice(1, 3).map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
     );
@@ -2863,8 +2869,7 @@ async function publicWebSearchUncached(
     }
   }
   let finalResults = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
-  // If a fast RSS-only news pass returned fewer than two relevant items, retry once
-  // with every public provider. This preserves breadth without penalizing successful RSS hits.
+  // Retry with the broader provider set only when all parallel RSS news queries yield no relevant result.
   if (plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && finalResults.length < 1) {
     const broad = await runPublicWebSearchQuery(plan.queries[0], true);
     batches.push({ query: plan.queries[0], data: broad });
