@@ -21,7 +21,7 @@ In the Supabase project that hosts `deep33-proxy` and `deep33-tertiary`, add onl
 | `DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS` | Explicit opt-in; set to `true` only after reviewing provider billing controls |
 | `DEEP33_CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID (32 hexadecimal characters) |
 | `DEEP33_CLOUDFLARE_API_TOKEN` | Server-side token allowed to run Workers AI |
-| `DEEP33_CLOUDFLARE_MODEL` | Optional; defaults to `@cf/meta/llama-3.1-8b-instruct` |
+| `DEEP33_CLOUDFLARE_MODEL` | Optional; defaults to `@cf/meta/llama-3.1-8b-instruct-fp8` |
 | `DEEP33_GROQ_API_KEY` | Server-side Groq API key |
 | `DEEP33_GROQ_MODEL` | Optional; defaults to `openai/gpt-oss-20b` |
 
@@ -29,7 +29,7 @@ Use the Supabase Dashboard's Edge Function secrets/environment settings or the S
 
 ## Zero-cost controls
 
-Free-tier quotas are provider-account quotas, not per DEEP33 user. Groq can return HTTP 429 when its organization limit is exhausted. Workers AI has a daily free-neuron quota; check the current quota and billing configuration in Cloudflare before enabling it. To keep DEEP33 at $0, do not enable usage-based billing/paid overage for this provider, and keep the feature disabled until that condition has been verified.
+Free-tier quotas are provider-account quotas, not per DEEP33 user. Groq can return HTTP 429 when its organization limit is exhausted. Cloudflare currently documents 10,000 free Neurons per day; the original `@cf/meta/llama-3.1-8b-instruct` model was deprecated on May 30, 2026, so the configured default is `@cf/meta/llama-3.1-8b-instruct-fp8`. Check the current model catalog, quota, and billing configuration before enabling. To keep DEEP33 at $0, use a Workers Free plan with no paid overage enabled; requests beyond the free allowance must fail rather than incur charges. Keep this feature disabled until those conditions are confirmed.
 
 This code does not magically guarantee provider capacity or unlimited free inference. When the free provider is unavailable, it fails quickly and the existing fallback chain continues. Current primary Edge behavior is unchanged while the feature flag is off.
 
