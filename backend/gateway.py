@@ -704,6 +704,7 @@ class AIGateway:
                 pending_chunks: list[bytes] = []
                 pending_bytes = bytearray()
                 first_chunk_at: float | None = None
+                first_visible_at: float | None = None
                 stream_completion_tokens: float | None = None
                 try:
                     started_request = time.perf_counter()
@@ -757,11 +758,9 @@ class AIGateway:
                                 async for chunk in response.aiter_bytes():
                                     if chunk:
                                         if first_chunk_at is None:
+                                            # Track first transport data separately from
+                                            # first visible assistant text.
                                             first_chunk_at = time.perf_counter()
-                                            self._record_ttft(
-                                                provider,
-                                                (first_chunk_at - started_request) * 1000,
-                                            )
                                         if b'"completion_tokens"' in chunk:
                                             try:
                                                 for line in chunk.splitlines():
@@ -778,6 +777,11 @@ class AIGateway:
                                             pending_bytes.extend(chunk)
                                             if self._stream_has_visible_content(bytes(pending_bytes)):
                                                 visible_content = True
+                                                first_visible_at = time.perf_counter()
+                                                self._record_ttft(
+                                                    provider,
+                                                    (first_visible_at - started_request) * 1000,
+                                                )
                                                 started_output = True
                                                 for pending_chunk in pending_chunks:
                                                     yield pending_chunk
