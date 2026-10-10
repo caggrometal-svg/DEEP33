@@ -120,8 +120,8 @@ class SearchPlan:
 
 
 def _normalise_lookup_query(query: str) -> str:
-    """Remove conversational search commands before sending text to web providers."""
-    cleaned = " ".join(query.split()).strip()
+    """Keep the information request and remove response-format instructions."""
+    cleaned = " ".join(str(query or "").split()).strip()
     cleaned = re.sub(
         r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+"
         r"(?:en\s+)?(?:internet|la\s+web)\s*[:,-]?\s*",
@@ -129,6 +129,19 @@ def _normalise_lookup_query(query: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    # Search engines need the topic, not the user's full operating instructions.
+    # Trim instruction clauses even when the prompt is longer than provider limits.
+    instruction_clause = (
+        r"\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
+        r"incluye|resume|cita|describe|presenta|informa|muestra|señala|"
+        r"no inventes|no afirmes|no supongas|responde en|responde una sola vez|"
+        r"formato de salida|resultado de cada prueba|"
+        r"si la búsqueda (?:falla|no funciona|no devuelve)|"
+        r"si la busqueda (?:falla|no funciona|no devuelve)|"
+        r"and (?:return|provide|include|summarize|verify|confirm)|"
+        r"do not invent|do not claim|if the search fails)\b.*$"
+    )
+    cleaned = re.sub(instruction_clause, "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
         r"\s+(?:y|e)\s+(?:responde|contesta|di|dime)\b.*$",
         "",
