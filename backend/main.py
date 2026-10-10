@@ -3242,7 +3242,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 completion_state["assistant_text"] = fallback_text
                 for piece in _sse_text_chunks(fallback_text):
                     yield _sse_delta(piece)
-                yield b"data: [DONE]\\n\\n"
+                yield b"data: [DONE]\n\n"
 
             body = unavailable_stream()
         else:
