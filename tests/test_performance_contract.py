@@ -312,3 +312,14 @@ def test_edge_realtime_news_runs_query_variants_in_parallel_before_broad_fallbac
         assert "const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(" in source
         assert "plan.queries.slice(1, 3)" not in source
         assert "results.length < 1" in source or "finalResults.length < 1" in source
+
+
+def test_realtime_news_broad_fallback_is_concurrent() -> None:
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            ROOT / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "const broadFallbackPromise = realtimeNewsPlan" in source
+        assert "const [batches, broadFallback] = await Promise.all([" in source
+        assert "forceFullSearch && currentNewsRequest" in source
+        assert "const broad = broadFallback.data;" in source

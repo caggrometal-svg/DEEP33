@@ -2479,7 +2479,9 @@ async function runPublicWebSearchQuery(query: string, forceFullSearch = false) {
 
   const activeProviders = fastNewsQuery
     ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
-    : providers;
+    : forceFullSearch && currentNewsRequest
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
+      : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
     if (item.status !== "fulfilled" || !item.value.results.length) continue;
@@ -2843,13 +2845,20 @@ async function publicWebSearchUncached(
   plan = edgeSearchQueries(query),
 ): Promise<Record<string, unknown>> {
   const started = performance.now();
-  // Run the first three query variants in one bounded parallel wave.
-  // Avoid a second provider-timeout window (up to 4.5s) for fallback variants.
+  // Search up to three query variants plus broad news providers concurrently.
+  // This prevents a second timeout window from adding 2.5-4.5 seconds to news search.
+  const realtimeNewsPlan = plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original);
   const initialQueries = (plan.queries.length ? plan.queries : [plan.original]).slice(0, 3);
-  const batches: Array<{ query: string; data: Record<string, unknown> }> = await Promise.all(
-    initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) })),
-  );
-  const merged = new Map<string, Record<string, unknown>>();
+  const broadFallbackPromise = realtimeNewsPlan
+    ? runPublicWebSearchQuery(plan.queries[0], true)
+        .then((data) => ({ query: plan.queries[0], data }))
+        .catch(() => null)
+    : Promise.resolve(null);
+  const [batches, broadFallback] = await Promise.all([
+    Promise.all(initialQueries.map(async (q) => ({ query: q, data: await runPublicWebSearchQuery(q) }))),
+    broadFallbackPromise,
+  ]);
+    const merged = new Map<string, Record<string, unknown>>();
   for (const batch of batches) {
     for (const item of (Array.isArray(batch.data.results) ? batch.data.results : [])) {
       if (!item || typeof item !== "object") continue;
@@ -2859,10 +2868,10 @@ async function publicWebSearchUncached(
     }
   }
   let finalResults = edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
-  // Retry with the broader provider set only when all parallel RSS news queries yield no relevant result.
-  if (plan.depth === "realtime" && edgeCurrentNewsQuery(plan.original) && finalResults.length < 1) {
-    const broad = await runPublicWebSearchQuery(plan.queries[0], true);
-    batches.push({ query: plan.queries[0], data: broad });
+  // Use the concurrently fetched broader-provider result only if the fast RSS wave had no relevant result.
+  if (realtimeNewsPlan && finalResults.length < 1 && broadFallback) {
+    const broad = broadFallback.data;
+    batches.push({ query: broadFallback.query, data: broad });
     for (const item of (Array.isArray(broad.results) ? broad.results : [])) {
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
