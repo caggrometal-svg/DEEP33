@@ -121,3 +121,10 @@ def test_readiness_route_does_not_run_model_inference() -> None:
         assert "probeInference(" not in readiness
         assert 'const body = await readinessResponse();' in source
         assert 'path === "/ready" && req.method === "GET"' in source
+
+def test_provider_failover_switches_without_retry_waits() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "const EDGE_AI_RETRY_COUNT = 0;" in source
+        assert "for (const provider of providers)" in source
+        assert 'provider.name === "render-backend-fallback"' in source
