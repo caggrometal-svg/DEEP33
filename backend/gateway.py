@@ -391,6 +391,28 @@ class AIGateway:
         # request before returning the error. Retrying/failing over can duplicate inference.
         return status == 429
 
+    @staticmethod
+    def _provider_error_hint(response: httpx.Response) -> str:
+        """Return a bounded provider error message without logging request/prompt data."""
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+
+        hint = ""
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                hint = str(error.get("message") or error.get("type") or error.get("code") or "")
+            elif isinstance(error, str):
+                hint = error
+            if not hint:
+                hint = str(payload.get("message") or payload.get("detail") or "")
+
+        if not hint:
+            hint = response.reason_phrase or "empty_error_body"
+        return " ".join(hint.split())[:240]
+
     async def probe(self) -> dict:
         started = time.perf_counter()
         failures: list[str] = []
@@ -478,21 +500,19 @@ class AIGateway:
                         saw_http_error = True
                         provider_failed_transiently = self._is_retryable_status(status)
                         if status in {404, 410}:
-                            # A missing endpoint/model is unambiguous and should not
-                            # be retried indefinitely on every request. Open the
-                            # circuit after repeated misses, while this request still
-                            # proceeds to the configured fallback provider.
-                            circuit.failure(
-                                self.config.circuit_failure_threshold,
-                                self.config.circuit_cooldown_seconds,
-                            )
+                            # A fixed missing route/model will not recover on a repeated
+                            # POST. Open this provider's circuit immediately, while the
+                            # current request still proceeds to the configured fallback.
+                            circuit.failure(1, self.config.circuit_cooldown_seconds)
                         logger.warning(
-                            "ai_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
+                            "ai_provider_http_failure request_id=%s provider=%s model=%s status=%s error_class=%s attempt=%s error_hint=%s",
                             request_id,
                             provider.name,
+                            provider.model,
                             status,
                             error_class,
                             attempt + 1,
+                            self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
                             # A provider 5xx is ambiguous after a POST. Do not retry or
@@ -704,20 +724,18 @@ class AIGateway:
                                 saw_http_error = True
                                 transient_failure = self._is_retryable_status(status)
                                 if status in {404, 410}:
-                                    # Missing endpoint/model is deterministic: count it
-                                    # toward the circuit so streaming skips the bad route
-                                    # after repeated failures instead of paying its latency.
-                                    circuit.failure(
-                                        self.config.circuit_failure_threshold,
-                                        self.config.circuit_cooldown_seconds,
-                                    )
+                                    # Fail fast on deterministic routing errors; preserve
+                                    # this request's automatic transition to the fallback.
+                                    circuit.failure(1, self.config.circuit_cooldown_seconds)
                                 logger.warning(
-                                    "ai_stream_provider_http_failure request_id=%s provider=%s status=%s error_class=%s attempt=%s",
+                                    "ai_stream_provider_http_failure request_id=%s provider=%s model=%s status=%s error_class=%s attempt=%s error_hint=%s",
                                     request_id,
                                     provider.name,
+                                    provider.model,
                                     status,
                                     error_class,
                                     attempt + 1,
+                                    self._provider_error_hint(response),
                                 )
                                 if status in {404, 410}:
                                     next_provider = (
