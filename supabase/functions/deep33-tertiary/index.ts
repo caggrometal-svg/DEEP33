@@ -304,7 +304,7 @@ function freeInferenceProvidersApproved(): boolean {
 function providerUrlApproved(value: string): boolean {
   let host = "";
   try { host = new URL(value).hostname.toLowerCase(); } catch { return false; }
-  if (host === "api.kilo.ai") return true;
+  if (host === "api.kilo.ai") return Boolean(EDGE_AI_KEY);
   if (host === "deep33-backend.onrender.com") return true;
   if (host === "vireonix.ai" || host.endsWith(".vireonix.ai") ||
       host === "llmfaucet.dev" || host.endsWith(".llmfaucet.dev")) return publicProviderPrivacyApproved();
