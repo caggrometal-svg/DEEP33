@@ -1736,10 +1736,12 @@ class MainActivity : Activity() {
                     val chat = checks?.optString("CHAT", "").orEmpty()
                     val provider = ready.optJSONObject("inference")
                         ?.optString("provider", "").orEmpty()
+                    val modelConfigured = model == "PASS" || model == "CONFIGURED"
+                    val chatConfigured = chat == "PASS" || chat == "CONFIGURED"
                     val resolvedOnline = online &&
                         backend == "PASS" &&
-                        model == "PASS" &&
-                        chat == "PASS"
+                        modelConfigured &&
+                        chatConfigured
 
                     runOnUiThread {
                         val pendingRecovery = store.loadPendingTurn() != null
@@ -1765,7 +1767,7 @@ class MainActivity : Activity() {
                                 keepConnecting ->
                                     "CONECTANDO\nRecuperando la conversación pendiente."
                                 resolvedOnline ->
-                                    "ONLINE\nBACKEND: PASS\nAI GATEWAY: PASS\nMODEL: PASS\nCHAT: PASS\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
+                                    "ONLINE\nBACKEND: PASS\nAI GATEWAY: CONFIGURED\nMODEL: CONFIGURED\nCHAT: ROUTE CONFIGURED\nINFERENCE: NOT PROBED\nPROVIDER: ${provider}\nANDROID_VALIDATED: " +
                                         if (osNetworkValidated) "YES" else "NO · HTTPS DEEP33 OK"
                                 else ->
                                     "OFFLINE\nLa ruta DEEP33 no pudo completar la verificación de backend + IA."
