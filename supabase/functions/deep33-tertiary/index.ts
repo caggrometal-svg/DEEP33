@@ -2306,7 +2306,10 @@ function edgeFilterSearchResults(
       const pathYear = parsedUrl.pathname.match(/(?:^|\/)((?:19|20)\d{2})(?:\/|$)/);
       if (currentNews && !googleNewsStory && pathYear && Number(pathYear[1]) < new Date().getFullYear()) return false;
       const publishedAt = String(item.published_at ?? "").trim();
-      const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7);
+      const publicationTimestamp = Date.parse(publishedAt);
+      const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
+      const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||
+        (googleNewsStory && publicationDateUnknown);
       return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org") &&
         newsFreshEnough;
     } catch {

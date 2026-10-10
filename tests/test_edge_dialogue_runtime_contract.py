@@ -59,7 +59,9 @@ def test_realtime_search_does_not_discard_all_undated_current_results() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);" in source
-        assert "googleNewsStory || publicationDateUnknown" in source
+        assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||" in source
+        assert "(googleNewsStory && publicationDateUnknown)" in source
+        assert "googleNewsStory || publicationDateUnknown" not in source
 
 
 def test_current_date_time_search_has_targeted_clock_sources() -> None:

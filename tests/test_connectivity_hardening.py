@@ -193,7 +193,8 @@ def test_realtime_news_rejects_results_without_recent_publication_dates() -> Non
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7);" in source
+        assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||" in source
+        assert "(googleNewsStory && publicationDateUnknown)" in source
         assert "googleNewsStory || publicationDateUnknown" not in source
 
 
