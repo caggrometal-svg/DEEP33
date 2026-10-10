@@ -1394,6 +1394,15 @@ async def _enforce_web_originality(
     return rewritten
 
 
+def _web_search_unavailable_answer(query: str) -> str:
+    """Return a factual, non-retrying answer when live evidence could not be retrieved."""
+    return (
+        "No pude verificar información actual porque la búsqueda web falló o no devolvió "
+        "resultados verificables. Esto no demuestra que todo el acceso a Internet esté caído. "
+        "No voy a inventar datos ni enlaces."
+    )
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
@@ -1416,7 +1425,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             type(exc).__name__,
             str(exc)[:300],
         )
-        raise HTTPException(status_code=503, detail="WEB_SEARCH_UNAVAILABLE") from exc
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     if not isinstance(search_result, dict) or not search_result.get("ok"):
         errors = search_result.get("errors") if isinstance(search_result, dict) else None
@@ -1425,7 +1435,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             request_id,
             errors,
         )
-        raise HTTPException(status_code=503, detail="WEB_SEARCH_UNAVAILABLE")
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     sources = {}
     for source in _source_from_result(search_result):
@@ -1586,6 +1597,18 @@ async def run_web_tool_loop(
             request_id=request_id,
             deep=(research_mode or should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
         )
+        if working is None:
+            return {
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": _web_search_unavailable_answer(latest_user_query(messages)),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }, []
         performance.mark(request_id, "T6_INFERENCE_STARTED")
         sources.update({str(item.get("url")): item for item in prepared_sources if item.get("url")})
         evidence_fragments.extend(prepared_evidence)
@@ -3165,6 +3188,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         temperature=request.temperature,
     )
 
+    web_search_failure_text: str | None = None
     try:
         if not skip_web_tools and DEEP33_WEB_TOOLS_ENABLED and (
             should_force_web(messages) or should_deep_web(messages, personality)
@@ -3197,25 +3221,41 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     request_id=request_id,
                     deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
                 )
-                working.append(_web_personality_lock(personality))
-                payload = _completion_payload(
-                    working,
-                    payload["model"],
-                    max_tokens=payload.get("max_tokens"),
-                    temperature=request.temperature,
-                )
+                if working is None:
+                    web_search_failure_text = _web_search_unavailable_answer(
+                        latest_user_query(messages)
+                    )
+                else:
+                    working.append(_web_personality_lock(personality))
+                    payload = _completion_payload(
+                        working,
+                        payload["model"],
+                        max_tokens=payload.get("max_tokens"),
+                        temperature=request.temperature,
+                    )
 
         completion_state: dict[str, str] = {}
-        body = stream_gateway(
-            payload,
-            session_id,
-            personality,
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-            request_hash=request_hash,
-            lease_token=lease_token,
-            completion_state=completion_state,
-        )
+        if web_search_failure_text is not None:
+            fallback_text = web_search_failure_text
+
+            async def unavailable_stream() -> AsyncIterator[bytes]:
+                completion_state["assistant_text"] = fallback_text
+                for piece in _sse_text_chunks(fallback_text):
+                    yield _sse_delta(piece)
+                yield b"data: [DONE]\\n\\n"
+
+            body = unavailable_stream()
+        else:
+            body = stream_gateway(
+                payload,
+                session_id,
+                personality,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+                lease_token=lease_token,
+                completion_state=completion_state,
+            )
 
         async def finalize_success() -> None:
             assistant_text = completion_state.get("assistant_text", "")
