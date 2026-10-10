@@ -217,3 +217,17 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
     assert result["ok"] is True
     assert "google_news" in result["providers"]
     assert result["verification"]["distinct_providers"] == 1
+
+
+@pytest.mark.parametrize("path", EDGE_PATHS)
+def test_external_provider_requires_privacy_notice_and_cost_approval(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    assert "DEEP33_PUBLIC_PROVIDER_PRIVACY_REVIEWED" in source
+    assert "DEEP33_PUBLIC_PROVIDER_USER_NOTICE_CONFIRMED" in source
+    assert "DEEP33_FREE_PROVIDER_COSTS_VERIFIED" in source
+    assert "DEEP33_FREE_PROVIDER_PRIVACY_REVIEWED" in source
+    assert "DEEP33_FREE_PROVIDER_USER_NOTICE_CONFIRMED" in source
+    assert "DEEP33_CUSTOM_PROVIDER_PRIVACY_REVIEWED" in source
+    assert "DEEP33_CUSTOM_PROVIDER_BILLING_VERIFIED" in source
+    assert "providerUrlApproved(url)" in source
+    assert 'name: "kilo-free"' not in source
