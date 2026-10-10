@@ -183,7 +183,7 @@ def test_complete_fails_over_after_primary_rate_limit() -> None:
     assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
 
 
-def test_complete_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> None:
+def test_complete_opens_circuit_on_first_primary_404_and_uses_fallback() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -232,7 +232,7 @@ def test_complete_opens_circuit_after_repeated_primary_404_and_uses_fallback() -
         httpx.AsyncClient = original
 
     assert all(output["choices"][0]["message"]["content"] == "FALLBACK_NON_EMPTY" for output in outputs)
-    assert calls.count("https://primary.test/chat") == 3
+    assert calls.count("https://primary.test/chat") == 1
     assert calls.count("https://fallback.test/chat") == 4
     assert gateway._circuit(config.providers[0]).opened_until > 0
 
@@ -260,7 +260,7 @@ def test_stream_provider_order_prefers_ttft_after_learning():
     assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "fallback"
 
 
-def test_stream_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> None:
+def test_stream_opens_circuit_on_first_primary_404_and_uses_fallback() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -313,9 +313,24 @@ def test_stream_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> 
         httpx.AsyncClient = original
 
     assert all(b"FALLBACK_STREAM_NON_EMPTY" in output for output in outputs)
-    assert calls.count("https://primary.test/chat") == 3
+    assert all(output.count(b"FALLBACK_STREAM_NON_EMPTY") == 1 for output in outputs)
+    assert calls.count("https://primary.test/chat") == 1
     assert calls.count("https://fallback.test/chat") == 4
     assert gateway._circuit(config.providers[0]).opened_until > 0
+
+def test_provider_error_hint_extracts_message_and_caps_length() -> None:
+    response = httpx.Response(
+        404,
+        json={"error": {"message": "model route not found"}},
+    )
+    assert AIGateway._provider_error_hint(response) == "model route not found"
+
+    oversized = httpx.Response(
+        404,
+        json={"error": {"message": "x" * 500}},
+    )
+    assert len(AIGateway._provider_error_hint(oversized)) == 240
+
 
 def test_default_model_is_explicitly_free(monkeypatch):
     monkeypatch.delenv("AI_GATEWAY_MODEL", raising=False)
