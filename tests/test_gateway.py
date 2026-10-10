@@ -272,8 +272,8 @@ def test_stream_opens_circuit_after_repeated_primary_404_and_uses_fallback() -> 
             request=request,
             headers={"content-type": "text/event-stream"},
             content=(
-                b'data: {"choices":[{"delta":{"content":"FALLBACK_STREAM_NON_EMPTY"}}]}\\n\\n'
-                b'data: [DONE]\\n\\n'
+                b'data: {"choices":[{"delta":{"content":"FALLBACK_STREAM_NON_EMPTY"}}]}\n\n'
+                b'data: [DONE]\n\n'
             ),
         )
 
