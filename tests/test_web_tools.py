@@ -313,3 +313,53 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
 
     assert all("facebook" not in item["title"].lower() for item in ranked)
     assert any("ADN Radio" in item["title"] for item in ranked)
+
+
+def test_long_search_instructions_are_compacted_before_provider_query_limit(monkeypatch):
+    import tools.web_search as module
+    from backend.search.engine import SearchEngine
+
+    captured = {}
+
+    async def fake_engine_search(self, query, **kwargs):
+        captured["query"] = query
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Actualidad verificada",
+                    "url": "https://example.com/news",
+                    "snippet": "Resultado de prueba",
+                }
+            ],
+            "sources": [],
+            "providers": ["test"],
+            "providers_attempted": ["test"],
+            "provider": "test",
+            "errors": [],
+            "queries": [query],
+            "retrieved_at": "2026-10-10T00:00:00Z",
+            "verification": {"relevant_results": 1},
+        }
+
+    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
+    module._SEARCH_CACHE.clear()
+    module._SEARCH_INFLIGHT.clear()
+
+    long_prompt = (
+        "Busca en Internet una noticia real publicada hoy, 10 de octubre de 2026. "
+        "Devuelve el título, la fecha de publicación, un resumen y el enlace. "
+        "Comprueba que la página existe. Si la búsqueda falla, indica el error. "
+        "No inventes noticias ni resultados. "
+        + ("Responde en un único mensaje y no inventes información. " * 80)
+    )
+    assert len(long_prompt) > module.MAX_QUERY_CHARS
+
+    result = asyncio.run(
+        module.search_web(long_prompt, provider="auto", fresh=True, fast=True)
+    )
+
+    assert result["ok"] is True
+    assert len(captured["query"]) <= module.MAX_QUERY_CHARS
+    assert "no inventes" not in captured["query"].lower()
+    assert "noticia real publicada hoy" in captured["query"].lower()
