@@ -49,7 +49,7 @@ jobs:
 
 
   production_realtime_search:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/perf/verify-prod-search-v84') }}
     runs-on: ubuntu-latest
     steps:
       - name: Create authenticated production session
