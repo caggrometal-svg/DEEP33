@@ -113,7 +113,7 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").trim() || "vireonix";
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
-const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
+const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "google/gemma-4-26b-a4b-it:free").trim();
 // Keep provider fallback URL classification defined in this edge runtime as in the primary gateway.
 const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";
 const EDGE_AI_REQUIRES_AUTH =
@@ -385,7 +385,7 @@ function edgeProviders(): EdgeAIProvider[] {
       url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
       stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream",
       api_key: "",
-      model: "kilo-auto/small",
+      model: "google/gemma-4-26b-a4b-it:free",
       requires_auth: true,
     });
   }

@@ -283,7 +283,7 @@ def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     )[0]
     assert 'name: "render-backend-fallback"' in providers
     assert 'url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate"' in providers
-    assert 'model: "kilo-auto/small"' in providers
+    assert 'model: "google/gemma-4-26b-a4b-it:free"' in providers
     assert "requires_auth: true" in providers
     assert 'provider.name === "render-backend-fallback"' in source
     assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com"' in source
