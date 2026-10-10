@@ -2636,7 +2636,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/ready" && req.method === "GET") {
-      const body = await readinessResponse() || "");
+      const body = await readinessResponse();
       return json(body, body.ready ? 200 : 503);
     }
 
