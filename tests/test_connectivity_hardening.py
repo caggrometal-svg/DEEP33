@@ -396,3 +396,21 @@ def test_production_e2e_measures_multiple_real_search_latencies() -> None:
     assert "p95_ms={p95:.2f}" in workflow
     assert "(.results | length) >= 1" in workflow
     assert "(.providers | length) >= 1" in workflow
+
+
+def test_edge_ai_health_diagnostics_use_the_real_streaming_chat_route() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        probe = source.split("async function probeInference(", 1)[1].split(
+            "async function probeMemory(", 1
+        )[0]
+        diagnostics = source.split('if (path === "/v1/ai/diagnostics"', 1)[1].split(
+            'if (path === "/v1/ai/generate"', 1
+        )[0]
+        assert "await streamEdgeAI(" in probe
+        assert "const text = response.text;" in probe
+        assert "await streamEdgeAI(" in diagnostics
+        assert "callEdgeAI({" not in diagnostics

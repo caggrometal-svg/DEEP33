@@ -289,3 +289,27 @@ def test_fetch_http_client_has_connection_pool(monkeypatch):
         module._FETCH_HTTP_LOOP = None
 
     asyncio.run(exercise())
+
+
+def test_realtime_rank_results_reject_social_media_reposts() -> None:
+    from backend.search.engine import rank_results
+
+    results = [
+        {
+            "title": "Chile: latest events and updates - Facebook",
+            "url": "https://news.google.com/rss/articles/social-repost",
+            "snippet": "Current news and updates from Chile",
+            "published_at": "2026-10-10T05:00:00Z",
+        },
+        {
+            "title": "Chile: latest news from ADN Radio",
+            "url": "https://adnradio.cl/noticias/chile",
+            "snippet": "Current events in Chile today",
+            "published_at": "2026-10-10T05:00:00Z",
+        },
+    ]
+
+    ranked = rank_results("últimas noticias de Chile hoy", results, realtime=True)
+
+    assert all("facebook" not in item["title"].lower() for item in ranked)
+    assert any("ADN Radio" in item["title"] for item in ranked)

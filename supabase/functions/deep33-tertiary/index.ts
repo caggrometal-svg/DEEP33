@@ -1954,7 +1954,7 @@ async function probeHealth(sessionId: string) {
   }
 }
 
-async function probeInference(sessionId: string, userAuthorization = "") {
+async function probeInference(_sessionId: string, userAuthorization = "") {
   if (!edgeAIConfigured()) {
     return {
       ok: false,
@@ -1969,13 +1969,13 @@ async function probeInference(sessionId: string, userAuthorization = "") {
 
   const requestId = crypto.randomUUID();
   try {
-    const response = await callEdgeAI({
+    const response = await streamEdgeAI({
       messages: [
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId, null, userAuthorization, sessionId);
-    const text = extractProviderText(response.body);
+    }, requestId, () => {}, () => {}, null, userAuthorization);
+    const text = response.text;
     const ok = text.trim() === "DEEP33_DIAGNOSTIC_OK";
     return {
       ok,
@@ -3037,13 +3037,13 @@ Deno.serve(async (req) => {
       const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
       let inference: Record<string, unknown> = { status: "FAIL", text_ok: false };
       try {
-        const response = await callEdgeAI({
+        const response = await streamEdgeAI({
           messages: [
             { role: "system", content: "Return the requested diagnostic token exactly." },
             { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
           ],
-        }, requestId, null, req.headers.get("authorization") || "", req.headers.get("x-deep33-session-id") || "");
-        const text = extractProviderText(response.body);
+        }, requestId, () => {}, () => {}, null, req.headers.get("authorization") || "");
+        const text = response.text;
         inference = {
           status: text === "DEEP33_DIAGNOSTIC_OK" ? "PASS" : "FAIL",
           provider: response.provider,

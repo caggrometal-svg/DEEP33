@@ -323,6 +323,14 @@ def rank_results(
         if realtime and _host(url).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
+        if realtime and re.search(
+            r"\s[-–|]\s*(?:facebook|instagram|tiktok|reddit|youtube)\s*$",
+            str(item.get("title") or ""),
+            re.IGNORECASE,
+        ):
+            # Google News can wrap social-media reposts in RSS article URLs;
+            # they are not independent newsroom sources for a current-news answer.
+            continue
         parsed_url = urlparse(url)
         anchor_evidence = (
             _evidence_text(item)
