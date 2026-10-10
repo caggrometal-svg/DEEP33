@@ -354,19 +354,55 @@ def test_date_questions_force_fresh_web_lookup():
     assert main.should_force_web([{"role": "user", "content": "¿Qué hora es?"}]) is True
 
 
-def test_required_web_search_failure_never_falls_back_to_stale_model(monkeypatch: pytest.MonkeyPatch):
+def test_required_web_search_failure_returns_one_explicit_answer_without_stale_model(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def failing_search(*_args, **_kwargs):
+        raise RuntimeError("network down")
+
+    async def no_weather(*_args, **_kwargs):
+        return None
+
+    async def forbidden_gateway(*_args, **_kwargs):
+        raise AssertionError("Must not answer a current question from model memory")
+
+    monkeypatch.setattr(main, "search_web", failing_search)
+    monkeypatch.setattr(main, "resolve_gps_weather", no_weather)
+    monkeypatch.setattr(main, "call_gateway", forbidden_gateway)
+
+    data, sources = asyncio.run(
+        main.run_web_tool_loop(
+            [{"role": "user", "content": "¿Qué fecha es hoy?"}],
+            model="test-model",
+            request_id="web-failure-test",
+            idempotency_key="web-failure-test",
+            force_web=True,
+            personality="NEUTRO",
+        )
+    )
+
+    assert sources == []
+    answer = data["choices"][0]["message"]["content"]
+    assert "No pude verificar información actual" in answer
+    assert "No voy a inventar datos ni enlaces" in answer
+
+
+def test_prepare_web_evidence_marks_search_failure_without_http_503(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async def failing_search(*_args, **_kwargs):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(main, "search_web", failing_search)
 
-    with pytest.raises(main.HTTPException) as exc_info:
-        asyncio.run(
-            main.prepare_web_evidence(
-                [{"role": "user", "content": "¿Qué fecha es hoy?"}],
-                request_id="web-failure-test",
-            )
+    working, sources, evidence, results = asyncio.run(
+        main.prepare_web_evidence(
+            [{"role": "user", "content": "¿Qué fecha es hoy?"}],
+            request_id="web-failure-test",
         )
+    )
 
-    assert exc_info.value.status_code == 503
-    assert exc_info.value.detail == "WEB_SEARCH_UNAVAILABLE"
+    assert working is None
+    assert sources == []
+    assert evidence == []
+    assert results == []
