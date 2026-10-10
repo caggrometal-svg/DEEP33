@@ -557,6 +557,9 @@ function providerRequestHeaders(
   const renderBackendFallback =
     provider.name === "render-backend-fallback" ||
     provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+  const fallbackSessionId = renderBackendFallback && !sessionId
+    ? "deep33-edge-" + requestId.slice(0, 100)
+    : "";
   const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
     ? userAuthorization
     : provider.api_key
@@ -572,6 +575,7 @@ function providerRequestHeaders(
     ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
+    ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
     ...(idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {}),
   };
 }
@@ -2662,11 +2666,9 @@ function edgeFilterSearchResults(
       const pathYear = parsedUrl.pathname.match(/(?:^|\/)((?:19|20)\d{2})(?:\/|$)/);
       if (currentNews && !googleNewsStory && pathYear && Number(pathYear[1]) < new Date().getFullYear()) return false;
       const publishedAt = String(item.published_at ?? "").trim();
-      const publicationTimestamp = Date.parse(publishedAt);
-      const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
+      const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7);
       return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org") &&
-        (!currentNews || hasRecentPublication(publishedAt, 7) ||
-          googleNewsStory || publicationDateUnknown);
+        newsFreshEnough;
     } catch {
       return false;
     }

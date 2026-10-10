@@ -173,6 +173,30 @@ def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
     assert 'const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
+def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        headers = source.split("function providerRequestHeaders(", 1)[1].split(
+            "\\nconst PROVIDER_POLICY_BLOCK_PATTERNS", 1
+        )[0]
+        assert "const fallbackSessionId = renderBackendFallback && !sessionId" in headers
+        assert '"X-DEEP33-Session-Id": fallbackSessionId' in headers
+        assert '"X-DEEP33-Session-Id": sessionId' in headers
+
+
+def test_realtime_news_rejects_results_without_recent_publication_dates() -> None:
+    for path in (
+        "supabase/functions/deep33-proxy/index.ts",
+        "supabase/functions/deep33-tertiary/index.ts",
+    ):
+        source = read(path)
+        assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7);" in source
+        assert "googleNewsStory || publicationDateUnknown" not in source
+
+
 def test_realtime_edge_search_filters_static_wikipedia_and_uses_actual_providers() -> None:
     for path in (
         "supabase/functions/deep33-proxy/index.ts",
