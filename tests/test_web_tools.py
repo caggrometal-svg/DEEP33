@@ -109,7 +109,7 @@ def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
     assert len(ranked) == 2
     assert {item["url"] for item in ranked} == {
         target,
-        "https://realpython.com/async-io-python",
+        "https://realpython.com/async-io-python/",
     }
 
 
