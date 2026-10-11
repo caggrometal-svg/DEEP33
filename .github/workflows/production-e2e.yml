@@ -130,11 +130,11 @@ jobs:
           cat /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
-# Navigation validation is intentionally run on every main-branch merge after this PR.
-      - name: Verify real source-page navigation through the Render fetcher
+# Validate broad Internet navigation (not a news-aggregator-only path).
+      - name: Verify generic web search and real source-page navigation
         run: |
           set -euo pipefail
-          query="situación actual de la comuna de Las Condes en Chile"
+          query="Python asyncio official documentation"
           status="$(curl -sS --connect-timeout 8 --max-time 45 \
             -o /tmp/deep33-navigation-search.json -w "%{http_code}" \
             -G "$TERTIARY_URL/v1/web/search" \
@@ -147,7 +147,7 @@ jobs:
             jq -c '{ok,provider,providers,results:(.results|length),errors}' /tmp/deep33-navigation-search.json 2>/dev/null || true
             exit 1
           fi
-          mapfile -t source_urls < <(jq -r '[.results[]? | .url? // empty | select(startswith("https://"))] | unique | .[:3][]' /tmp/deep33-navigation-search.json)
+          mapfile -t source_urls < <(jq -r '[.results[]? | .url? // empty | select(startswith("https://"))] | unique | sort_by(test("^https://news\\.google\\.com/rss/articles/")) | .[:6][]' /tmp/deep33-navigation-search.json)
           fetch_ok=0
           for index in "${!source_urls[@]}"; do
             source_url="${source_urls[$index]}"
