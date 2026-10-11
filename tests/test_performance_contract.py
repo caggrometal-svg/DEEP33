@@ -355,6 +355,6 @@ def test_edge_web_stream_locks_model_to_final_answer_after_navigation() -> None:
     ).read_text(encoding="utf-8")
     assert "WEB SEARCH AND SOURCE NAVIGATION ARE ALREADY COMPLETE ON THE SERVER." in source
     assert "No browser, search, retrieval, function, or other tools are available" in source
-    assert "do not emit internal control markup" in source
+    assert "emit internal tool/control markup" in source
     assert "If the evidence is insufficient, say what could not be verified" in source
     assert "messages: edgeMessages" in source
