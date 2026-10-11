@@ -466,7 +466,7 @@ jobs:
         run: |
           set -euo pipefail
           diagnostics_ok=0
-          for attempt in $(seq 1 3); do
+          for attempt in $(seq 1 5); do
             status="$(curl -sS --connect-timeout 8 --max-time 60 -o /tmp/diag.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/diagnostics" || true)"
             if [ "$status" = "200" ] && jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json >/dev/null 2>&1; then
               diagnostics_ok=1
@@ -474,7 +474,7 @@ jobs:
             fi
             echo "PRIMARY_INFERENCE_NOT_READY attempt=$attempt http=$status"
             jq -c '{online,checks,inference,timestamp}' /tmp/diag.json 2>/dev/null || true
-            sleep 3
+            [ "$attempt" -lt 5 ] && sleep 5
           done
           test "$diagnostics_ok" = "1" || { echo "PRIMARY_INFERENCE_FAIL"; cat /tmp/diag.json 2>/dev/null || true; exit 1; }
           jq -c '{online,checks,inference}' /tmp/diag.json
@@ -1335,7 +1335,7 @@ jobs:
         run: |
           set -euo pipefail
           diagnostics_ok=0
-          for attempt in $(seq 1 3); do
+          for attempt in $(seq 1 5); do
             status="$(curl -sS --connect-timeout 8 --max-time 60 -o /tmp/diag.json -w "%{http_code}" "$PRIMARY_URL/v1/ai/diagnostics" || true)"
             if [ "$status" = "200" ] && jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json >/dev/null 2>&1; then
               diagnostics_ok=1
@@ -1343,7 +1343,7 @@ jobs:
             fi
             echo "PRIMARY_INFERENCE_NOT_READY attempt=$attempt http=$status"
             jq -c '{online,checks,inference,timestamp}' /tmp/diag.json 2>/dev/null || true
-            sleep 3
+            [ "$attempt" -lt 5 ] && sleep 5
           done
           test "$diagnostics_ok" = "1" || { echo "PRIMARY_INFERENCE_FAIL"; cat /tmp/diag.json 2>/dev/null || true; exit 1; }
           jq -c '{online,checks,inference}' /tmp/diag.json
