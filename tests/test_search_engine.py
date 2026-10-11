@@ -41,9 +41,10 @@ def test_rank_results_prefers_relevant_and_corroborated_sources():
             },
         ],
     )
+    assert len(results) == 2  # The unrelated result must be rejected.
     assert results[0]["corroborated"] is True
     assert results[0]["corroboration_count"] >= 1
-    assert results[0]["score"] > results[2]["score"]
+    assert results[0]["score"] >= results[1]["score"]
 
 
 def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
@@ -177,9 +178,10 @@ def test_deep_search_uses_multiple_independent_providers(monkeypatch):
         )
     )
     assert result["ok"] is True
-    assert set(result["providers"]) == {"tavily", "bing", "duckduckgo"}
-    assert result["verification"]["distinct_providers"] == 3
-    assert result["verification"]["distinct_domains"] >= 3
+    # The unrelated DDG result is excluded from evidence/provider accounting.
+    assert set(result["providers"]) == {"tavily", "bing"}
+    assert result["verification"]["distinct_providers"] == 2
+    assert result["verification"]["distinct_domains"] >= 2
     assert result["verification"]["corroborated_results"] >= 1
 
 

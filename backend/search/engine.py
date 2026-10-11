@@ -265,6 +265,11 @@ _TOPIC_FILLERS = {
     "online", "what", "which", "when", "where", "why", "how",
     "whoever", "best", "top", "latest", "current", "currently",
     "today", "now", "information", "info", "guide", "overview",
+    "investiga", "investigar", "investigación", "investigacion",
+    "investigate", "analiza", "analizar", "analyze", "analyse",
+    "compara", "comparar", "compare", "contrasta", "contrastar",
+    "contrast", "consulta", "consultar", "rápida", "rapida", "rápido",
+    "rapido", "quick", "fast", "deep", "profundidad",
     "please", "tell", "show", "explain", "find", "about",
     "oficial", "oficiales", "documentación", "documentacion",
     "documento", "documentos", "ficha", "fichas", "texto", "sitio",
@@ -697,7 +702,9 @@ class SearchEngine:
                     )
                     if relevant:
                         successful.append((name, results))
-                        if has_sufficient_relevant_coverage(successful):
+                        # Fast mode optimizes first useful output, not deep-source
+                        # corroboration. Standard/deep searches enforce domain coverage.
+                        if len(relevant) >= min(self.max_results, MIN_FALLBACK_RESULTS):
                             for other in tasks:
                                 if not other.done():
                                     other.cancel()
