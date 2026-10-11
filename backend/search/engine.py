@@ -258,6 +258,39 @@ def _token_set(text: str) -> frozenset[str]:
     return frozenset(_cached_tokens(str(text)))
 
 
+_TOPIC_FILLERS = {
+    "official", "officially", "documentation", "document", "docs",
+    "fact", "facts", "sheet", "sheets", "text", "website", "webpage",
+    "page", "pages", "source", "sources", "site", "search", "internet",
+    "online", "what", "which", "when", "where", "why", "how",
+    "whoever", "best", "top", "latest", "current", "currently",
+    "today", "now", "information", "info", "guide", "overview",
+    "please", "tell", "show", "explain", "find", "about",
+    "oficial", "oficiales", "documentación", "documentacion",
+    "documento", "documentos", "ficha", "fichas", "texto", "sitio",
+    "página", "pagina", "páginas", "paginas", "fuente", "fuentes",
+    "buscar", "busca", "internet", "web", "información", "informacion",
+    "guía", "guia", "resumen", "sobre", "cuándo", "cuando", "dónde",
+    "donde", "porqué", "porque", "cómo", "como", "mejor", "mejores",
+}
+_TOPIC_PHRASE_ALIASES = (
+    (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
+    (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
+)
+
+
+def _topic_tokens(query: str) -> list[str]:
+    normalized = _normalise_lookup_query(query)
+    for pattern, replacement in _TOPIC_PHRASE_ALIASES:
+        normalized = pattern.sub(replacement, normalized)
+    ignored = _TOPIC_FILLERS | _REALTIME_QUERY_FILLERS
+    return [
+        token
+        for token in _tokens(normalized)
+        if token not in ignored and not token.isdigit()
+    ]
+
+
 def _canonical_url(url: str) -> str:
     parsed = urlparse(url.strip())
     path = parsed.path.rstrip("/") or "/"
@@ -348,6 +381,7 @@ def rank_results(
     realtime: bool = False,
 ) -> list[dict]:
     query_tokens = _tokens(query)
+    topic_tokens = _topic_tokens(query)
     anchor_tokens = _realtime_anchor_tokens(query) if realtime else set()
     support = _corroboration_counts(results)
     ranked = []
@@ -380,7 +414,15 @@ def rank_results(
         if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
             # Country/currentness words alone do not prove relevance to a named locality.
             continue
-        relevance = _text_score(query_tokens, item)
+        topic_hits = len(set(topic_tokens) & evidence_tokens)
+        required_topic_hits = min(2, len(topic_tokens))
+        if not realtime and topic_tokens and topic_hits < required_topic_hits:
+            # Domain reputation and corroboration must never make unrelated results relevant.
+            continue
+        relevance = max(
+            _text_score(query_tokens, item),
+            _text_score(topic_tokens, item) if topic_tokens else 0.0,
+        )
         anchor_score = (
             min(1.0, anchor_hits / max(1, min(2, len(anchor_tokens))))
             if anchor_tokens
@@ -604,6 +646,24 @@ class SearchEngine:
         successful: list[tuple[str, list[dict]]] = []
         errors: list[str] = []
         attempted: list[str] = []
+        required_coverage = min(self.max_results, MIN_FALLBACK_RESULTS)
+
+        def has_sufficient_relevant_coverage(
+            batches: list[tuple[str, list[dict]]],
+        ) -> bool:
+            combined = [item for _provider, batch in batches for item in batch]
+            relevant = rank_results(
+                planned_query,
+                combined,
+                realtime=plan_depth == "realtime",
+            )
+            urls = {
+                _canonical_url(str(item.get("url") or ""))
+                for item in relevant
+                if str(item.get("url") or "").strip()
+            }
+            domains = {_host(url) for url in urls if _host(url)}
+            return len(urls) >= required_coverage and len(domains) >= required_coverage
 
         async def call(name: str) -> tuple[str, list[dict], list[str]]:
             results, provider_errors = await self._provider_search_with_retry(
@@ -618,22 +678,28 @@ class SearchEngine:
             return name, results, provider_errors
 
         if fast_mode and len(providers) > 1:
-            # Race providers and return as soon as one has enough usable results.
+            # Race providers, but only count relevant results on independent domains.
             # Fast mode deliberately omits retries and deep query fan-out.
-            required_results = min(self.max_results, MIN_FALLBACK_RESULTS)
             tasks = [asyncio.create_task(call(name)) for name in providers]
             try:
                 for task in asyncio.as_completed(tasks):
                     name, results, provider_errors = await task
                     attempted.append(name)
                     errors.extend(provider_errors)
-                    if results:
+                    relevant = rank_results(
+                        planned_query,
+                        results,
+                        realtime=plan_depth == "realtime",
+                    )
+                    if relevant:
                         successful.append((name, results))
-                        if len(results) >= required_results:
+                        if has_sufficient_relevant_coverage(successful):
                             for other in tasks:
                                 if not other.done():
                                     other.cancel()
                             break
+                    elif results:
+                        errors.append(f"{name}:no_relevant_results:{len(results)}")
             finally:
                 await asyncio.gather(*tasks, return_exceptions=True)
             return successful, errors, attempted
@@ -643,8 +709,15 @@ class SearchEngine:
             if name:
                 attempted.append(name)
                 errors.extend(provider_errors)
-                if results:
+                relevant = rank_results(
+                    planned_query,
+                    results,
+                    realtime=plan_depth == "realtime",
+                )
+                if relevant:
                     successful.append((name, results))
+                elif results:
+                    errors.append(f"{name}:no_relevant_results:{len(results)}")
             return successful, errors, attempted
 
         if plan_depth == "realtime":
@@ -751,13 +824,16 @@ class SearchEngine:
                     name, results, provider_errors = await task
                     attempted.append(name)
                     errors.extend(provider_errors)
-                    if results:
+                    relevant = rank_results(planned_query, results)
+                    if relevant:
                         successful.append((name, results))
-                        if len(results) >= MIN_FALLBACK_RESULTS:
+                        if has_sufficient_relevant_coverage(successful):
                             for other in tasks:
                                 if not other.done():
                                     other.cancel()
                             break
+                    elif results:
+                        errors.append(f"{name}:no_relevant_results:{len(results)}")
             finally:
                 await asyncio.gather(*tasks, return_exceptions=True)
             return successful, errors, attempted
@@ -771,10 +847,13 @@ class SearchEngine:
                 api_key=api_key,
             )
             errors.extend(provider_errors)
-            if results:
+            relevant = rank_results(planned_query, results)
+            if relevant:
                 successful.append((name, results))
-                if len(results) >= MIN_FALLBACK_RESULTS:
+                if has_sufficient_relevant_coverage(successful):
                     break
+            elif results:
+                errors.append(f"{name}:no_relevant_results:{len(results)}")
         return successful, errors, attempted
 
     async def search(

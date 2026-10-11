@@ -2478,12 +2478,63 @@ function edgeBroadWorldNewsQuery(query: string): boolean {
 }
 
 
+function edgeFilterNonRealtimeResults(
+  query: string,
+  items: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const normalized = normalizeEdgeSearchQuery(query).toLowerCase()
+    .replace(/\\bworld\\s+health\\s+organization\\b/giu, "who")
+    .replace(/\\bnational\\s+aeronautics\\s+and\\s+space\\s+administration\\b/giu, "nasa");
+  const ignored = new Set([
+    ...EDGE_REALTIME_FILLERS,
+    "official", "officially", "documentation", "document", "docs", "fact", "facts",
+    "sheet", "sheets", "text", "website", "webpage", "page", "pages", "source",
+    "sources", "site", "search", "internet", "online", "what", "which", "when",
+    "where", "why", "how", "best", "top", "information", "info", "guide",
+    "overview", "please", "tell", "show", "explain", "find", "about", "oficial",
+    "oficiales", "documentación", "documentacion", "documento", "documentos",
+    "ficha", "fichas", "texto", "sitio", "página", "pagina", "páginas", "paginas",
+    "guía", "guia", "resumen", "sobre", "cuándo", "cuando", "dónde", "donde",
+    "cómo", "como", "mejor", "mejores", "que", "qué", "es", "son", "uno", "una",
+    "unos", "unas", "unos", "los", "las", "el", "la", "del", "en", "por", "para",
+    "con", "y", "e", "o", "se", "su", "sus", "mi", "tu", "lo", "le", "les",
+    "the", "and", "for", "with", "from", "this", "that", "is", "are", "an",
+    "or", "to", "of", "into", "it", "as", "at", "by",
+  ]);
+  const queryTokens = [...new Set(
+    (normalized.match(/[a-záéíóúüñ]{2,}/giu) || [])
+      .filter((token) => !ignored.has(token) && !/^\\d+$/.test(token)),
+  )];
+  if (!queryTokens.length) return items;
+  const requiredHits = Math.min(2, queryTokens.length);
+
+  return items.filter((item) => {
+    try {
+      const parsed = new URL(String(item.url || ""));
+      const evidence = (
+        String(item.title || "") + " " +
+        String(item.snippet || "") + " " +
+        parsed.hostname + " " +
+        parsed.pathname.replace(/[-_]/g, " ").replace(/\\//g, " ")
+      ).toLowerCase();
+      const evidenceTokens = new Set(evidence.match(/[a-záéíóúüñ]{2,}/giu) || []);
+      const hits = queryTokens.reduce(
+        (count, token) => count + (evidenceTokens.has(token) ? 1 : 0),
+        0,
+      );
+      return hits >= requiredHits;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function edgeFilterSearchResults(
   query: string,
   items: Array<Record<string, unknown>>,
   realtime: boolean,
 ): Array<Record<string, unknown>> {
-  if (!realtime) return items;
+  if (!realtime) return edgeFilterNonRealtimeResults(query, items);
   const currentNews = edgeCurrentNewsQuery(query);
   const liveItems = items.filter((item) => {
     try {
