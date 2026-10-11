@@ -921,16 +921,24 @@ def payload_hash(value: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def canonical_idempotency_temperature(value: float | int | None) -> str | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if numeric == 0:
+        return "0"
+    rendered = format(numeric, ".15g")
+    if "e" in rendered.lower():
+        mantissa, exponent = rendered.lower().split("e", 1)
+        rendered = f"{mantissa}e{int(exponent)}"
+    return rendered
+
+
 def generation_request_hash(request: ChatRequest, personality: str | None = None) -> str:
     """Canonical client-turn fingerprint shared with the Edge gateway."""
     selected_personality = normalize_personality(
         personality if personality is not None else request.personality
     )
-    temperature = request.temperature
-    # Pydantic represents integer JSON temperatures as floats; Edge keeps them as
-    # JSON integers. Normalize both to the same canonical JSON scalar.
-    if temperature is not None and float(temperature).is_integer():
-        temperature = int(temperature)
     return payload_hash({
         "messages": [
             message.model_dump()
@@ -938,7 +946,7 @@ def generation_request_hash(request: ChatRequest, personality: str | None = None
             if message.role in {"user", "assistant"}
         ],
         "model": request.model,
-        "temperature": temperature,
+        "temperature": canonical_idempotency_temperature(request.temperature),
         "personality": selected_personality,
     })
 
