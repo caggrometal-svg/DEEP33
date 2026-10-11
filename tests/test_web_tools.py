@@ -19,7 +19,7 @@ def test_tavily_normalisation(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def fake(*args,**kwargs): return [{"title":"DEEP33 Example","url":"https://example.com/","snippet":"DEEP33 Snippet"}]
+    async def fake(*args,**kwargs): return [{"title":"DEEP33 Example","url":"https://example.com/","snippet":"Snippet"}]
     monkeypatch.setattr("tools.web_search._tavily_search",fake)
     result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
     assert result["results"][0]["snippet"]=="Snippet"
