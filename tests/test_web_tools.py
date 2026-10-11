@@ -84,6 +84,64 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
     assert result["provider"]=="duckduckgo"
 
+def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
+    import tools.web_search as module
+    from backend.search.engine import rank_results
+
+    page = """
+    <html><body>
+      <ul class="results-standard">
+        <li>
+          <a class="ob" href="https://docs.python.org/3/library/asyncio.html">docs.python.org</a>
+          <h2><a href="https://docs.python.org/3/library/asyncio.html">asyncio - Asynchronous I/O</a></h2>
+          <p class="s">Python asyncio documentation and examples.</p>
+        </li>
+        <li>
+          <a class="ob" href="https://realpython.com/async-io-python/">realpython.com</a>
+          <h2><a href="https://realpython.com/async-io-python/">Async IO in Python</a></h2>
+          <p class="s">Python asyncio and asynchronous programming.</p>
+        </li>
+        <li>
+          <a class="ob" href="https://papajohns.cl/menu">papajohns.cl</a>
+          <h2><a href="https://papajohns.cl/menu">Papa Johns menu</a></h2>
+          <p class="s">Pizza delivery and family meals.</p>
+        </li>
+      </ul>
+    </body></html>
+    """
+    monkeypatch.setattr(module, "validate_public_url", lambda value: value)
+    module._SEARCH_HTTP_CLIENT = None
+    module._SEARCH_HTTP_LOOP = None
+    requested = []
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                requested.append(str(request.url))
+                return httpx.Response(200, request=request, text=page, headers={"content-type": "text/html"})
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+
+    async def run():
+        result = await module._mojeek_search(
+            "Python asyncio official documentation",
+            timeout_seconds=4,
+            max_results=5,
+        )
+        await module.close_search_http_client()
+        return result
+
+    results = asyncio.run(run())
+    ranked = rank_results("Python asyncio official documentation", results)
+
+    assert requested and requested[0].startswith("https://www.mojeek.com/search?")
+    assert len(ranked) == 2
+    assert all("pizza" not in item["title"].lower() for item in ranked)
+
+
 def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
     import tools.web_search as module
     from backend.search.engine import rank_results

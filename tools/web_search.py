@@ -201,6 +201,78 @@ class BingParser(HTMLParser):
         self._flush()
 
 
+
+class MojeekParser(HTMLParser):
+    """Small parser for Mojeek's public general-web results page."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self._in_results = False
+        self._current = None
+        self._capture = None
+        self._buffer = []
+
+    def _flush(self):
+        if self._current and self._current.get("title") and self._current.get("url"):
+            self.results.append(dict(self._current))
+        self._current = None
+        self._capture = None
+        self._buffer = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs_map = dict(attrs)
+        classes = set((attrs_map.get("class") or "").split())
+        if tag == "ul" and "results-standard" in classes:
+            self._in_results = True
+            return
+        if not self._in_results:
+            return
+        if tag == "li":
+            self._flush()
+            self._current = {"url": "", "title": "", "snippet": ""}
+            return
+        if self._current is None:
+            return
+        if tag == "a":
+            href = (attrs_map.get("href") or "").strip()
+            if "ob" in classes and href:
+                self._current["url"] = href
+            elif self._capture == "title" and href and not self._current.get("url"):
+                self._current["url"] = href
+        if tag == "h2":
+            self._capture = "title"
+            self._buffer = []
+        elif tag == "p" and "s" in classes:
+            self._capture = "snippet"
+            self._buffer = []
+
+    def handle_endtag(self, tag):
+        if self._capture == "title" and tag == "h2":
+            self._current["title"] = " ".join(self._buffer).strip()
+            self._capture = None
+            self._buffer = []
+        elif self._capture == "snippet" and tag == "p":
+            self._current["snippet"] = " ".join(self._buffer).strip()
+            self._capture = None
+            self._buffer = []
+        if tag == "li":
+            self._flush()
+        elif tag == "ul" and self._in_results:
+            self._flush()
+            self._in_results = False
+
+    def handle_data(self, data):
+        if self._capture:
+            value = " ".join(str(data or "").split()).strip()
+            if value:
+                self._buffer.append(value)
+
+    def close(self):
+        super().close()
+        self._flush()
+
+
 def _unwrap_ddg_url(value):
     if not value:
         return ""
@@ -339,6 +411,29 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
     if not isinstance(raw, list):
         raise WebSearchError("WEB_SEARCH_TAVILY_INVALID_RESPONSE")
     return _normalise_results(raw, max_results)
+
+
+
+async def _mojeek_search(query, timeout_seconds, max_results):
+    """Query Mojeek's public web search as an independent no-key fallback."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://www.mojeek.com/search",
+        params={"q": query, "s": "0", "lang": "en", "lb": "en"},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_MOJEEK_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_MOJEEK_RESPONSE_TOO_LARGE")
+    parser = MojeekParser()
+    parser.feed(response.text)
+    parser.close()
+    return _normalise_results(parser.results, max_results)
 
 
 async def _duckduckgo_search(query, timeout_seconds, max_results):

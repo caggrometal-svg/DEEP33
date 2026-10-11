@@ -97,6 +97,18 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     assert result["provider"] == "tavily"
 
 
+def test_auto_provider_plan_includes_optional_mojeek_fallback(monkeypatch):
+    from backend.search.engine import SearchEngine
+
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "true")
+    engine = SearchEngine()
+
+    assert engine._providers("auto", "", True) == ["bing", "mojeek", "duckduckgo"]
+    assert engine._providers("bing", "", True) == ["bing", "mojeek", "duckduckgo"]
+    assert engine._providers("mojeek", "", True) == ["mojeek"]
+
+
 def test_deep_search_stops_after_verified_providers(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     cancelled = {"ddg": False}
