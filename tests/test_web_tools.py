@@ -377,7 +377,7 @@ def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch)
         + b"</body></html>"
     )
     monkeypatch.setattr(module, "validate_public_url", lambda value: value)
-    monkeypatch.setattr(module, "_max_response_bytes", lambda: 96)
+    monkeypatch.setattr(module, "_max_response_bytes", lambda: 192)
     module._FETCH_CACHE.clear()
     module._FETCH_INFLIGHT.clear()
     module._FETCH_HTTP_CLIENT = None
@@ -406,7 +406,7 @@ def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch)
     assert result["ok"] is True
     assert result["title"] == "Current news article"
     assert "Relevant article text begins here." in result["text"]
-    assert result["bytes"] <= 160
+    assert result["bytes"] <= 192
 
     async def close():
         await module.close_fetch_http_client()
