@@ -2515,8 +2515,10 @@ function edgeFilterNonRealtimeResults(
         String(item.title || "") + " " +
         String(item.snippet || "") + " " +
         parsed.hostname + " " +
-        parsed.pathname.replace(/[-_]/g, " ").replace(/\\//g, " ")
-      ).toLowerCase();
+        parsed.pathname.replace(/[-_]/g, " ").split("/").join(" ")
+      ).toLowerCase()
+        .replace(/\bworld\s+health\s+organization\b/giu, "who")
+        .replace(/\bnational\s+aeronautics\s+and\s+space\s+administration\b/giu, "nasa");
       const evidenceTokens = new Set(evidence.match(/[a-záéíóúüñ]{2,}/giu) || []);
       const hits = queryTokens.reduce(
         (count, token) => count + (evidenceTokens.has(token) ? 1 : 0),

@@ -43,12 +43,18 @@ def test_topic_aliases_preserve_world_health_organization_results() -> None:
             "url": "https://papajohns.cl/",
             "snippet": "Pizza deals and delivery.",
         },
+        {
+            "title": "Dengue research and prevention",
+            "url": "https://www.cnn.com/health/dengue",
+            "snippet": "The World Health Organization describes dengue symptoms and prevention.",
+        },
     ]
 
     ranked = rank_results("World Health Organization dengue fact sheet", results)
 
-    assert len(ranked) == 1
-    assert ranked[0]["url"].startswith("https://www.who.int/")
+    assert len(ranked) == 2
+    assert any(item["url"].startswith("https://www.who.int/") for item in ranked)
+    assert any(item["url"].startswith("https://www.cnn.com/") for item in ranked)
 
 
 def test_search_keeps_trying_providers_until_relevant_domains_are_diverse(monkeypatch) -> None:
@@ -84,9 +90,9 @@ def test_search_keeps_trying_providers_until_relevant_domains_are_diverse(monkey
             },
             {
                 "title": "NASA Artemis mission coverage",
-                    "url": "https://www.bbc.com/news/science-environment-artemis",
-                    "snippet": "NASA Artemis mission news and details.",
-                },
+                "url": "https://www.bbc.com/news/science-environment-artemis",
+                "snippet": "NASA Artemis mission news and details.",
+            },
             ], []
 
     monkeypatch.setattr(engine, "_provider_search_with_retry", fake_provider_search)

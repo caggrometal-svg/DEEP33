@@ -414,7 +414,11 @@ def rank_results(
         if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
             # Country/currentness words alone do not prove relevance to a named locality.
             continue
-        topic_hits = len(set(topic_tokens) & evidence_tokens)
+        topic_evidence = anchor_evidence
+        for pattern, replacement in _TOPIC_PHRASE_ALIASES:
+            topic_evidence = pattern.sub(replacement, topic_evidence)
+        topic_evidence_tokens = _token_set(topic_evidence)
+        topic_hits = len(set(topic_tokens) & topic_evidence_tokens)
         required_topic_hits = min(2, len(topic_tokens))
         if not realtime and topic_tokens and topic_hits < required_topic_hits:
             # Domain reputation and corroboration must never make unrelated results relevant.
