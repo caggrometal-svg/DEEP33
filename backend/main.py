@@ -921,21 +921,8 @@ def payload_hash(value: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def canonical_idempotency_temperature(value: float | int | None) -> str | None:
-    if value is None:
-        return None
-    numeric = float(value)
-    if numeric == 0:
-        return "0"
-    rendered = format(numeric, ".15g")
-    if "e" in rendered.lower():
-        mantissa, exponent = rendered.lower().split("e", 1)
-        rendered = f"{mantissa}e{int(exponent)}"
-    return rendered
-
-
 def generation_request_hash(request: ChatRequest, personality: str | None = None) -> str:
-    """Canonical client-turn fingerprint shared with the Edge gateway."""
+    """Preserve Render's historical request fingerprint while sharing it with Edge."""
     selected_personality = normalize_personality(
         personality if personality is not None else request.personality
     )
@@ -946,7 +933,9 @@ def generation_request_hash(request: ChatRequest, personality: str | None = None
             if message.role in {"user", "assistant"}
         ],
         "model": request.model,
-        "temperature": canonical_idempotency_temperature(request.temperature),
+        # Keep the Pydantic float (including 1.0) to preserve existing idempotency
+        # hashes already stored for retries that cross a deployment.
+        "temperature": request.temperature,
         "personality": selected_personality,
     })
 
