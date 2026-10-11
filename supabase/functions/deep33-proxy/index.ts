@@ -520,7 +520,7 @@ function providerPayload(
   payload: Record<string, unknown>,
   stream: boolean,
 ): Record<string, unknown> {
-  const providerPayload = { ...payload, stream };
+  const providerPayload: Record<string, unknown> = { ...payload, stream };
   delete providerPayload.personality;
   delete providerPayload.web_navigation;
   delete providerPayload.sources;
@@ -839,10 +839,8 @@ async function edgeIdempotencyRelease(context: EdgeIdempotencyContext): Promise<
 }
 
 async function acquireEdgeIdempotency(
-  context: EdgeIdempotencyContext | null,
+  context: EdgeIdempotencyContext,
 ): Promise<{ context: EdgeIdempotencyContext; completed: EdgeIdempotencyRecord | null }> {
-  if (!context) return { context: context as EdgeIdempotencyContext, completed: null };
-
   const initial = await edgeIdempotencyAction("idempotency_claim", context);
   const state = String(initial.state || "").toUpperCase();
 
@@ -3504,10 +3502,10 @@ Deno.serve(async (req) => {
       }
 
       const encoder = new TextEncoder();
+      let abortProvider = () => {};
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode(": DEEP33\n\n"));
-          let abortProvider = () => {};
 
           (async () => {
             try {
