@@ -142,7 +142,7 @@ async function buildNavigatedWebEvidence(
   const batchSize = 3;
   const sourceReadTimeoutMs = 2500;
 
-  for (let offset = 0; offset < orderedSources.length && pageByUrl.size === 0; offset += batchSize) {
+  for (let offset = 0; offset < Math.min(orderedSources.length, 6) && pageByUrl.size === 0; offset += batchSize) {
     const targets = orderedSources.slice(offset, offset + batchSize);
     attempted += targets.length;
     const settled = await Promise.allSettled(
@@ -2723,7 +2723,7 @@ async function runPublicWebSearchQuery(
         ? Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
         : forceFullSearch && currentNewsRequest
           ? Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
-          : EDGE_SEARCH_PROVIDER_TIMEOUT_MS)),
+          : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
