@@ -3594,6 +3594,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/v1/chat/stream" && req.method === "POST") {
+      const streamRequestStarted = performance.now();
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const validation = validateChatPayload(payload);
       if (!validation.ok) throw new Deep33HttpError(400, validation.error);
@@ -3688,6 +3689,7 @@ Deno.serve(async (req) => {
       }
 
       const encoder = new TextEncoder();
+      let firstVisibleChunkElapsedMs: number | null = null;
       let abortProvider = () => {};
       const stream = new ReadableStream({
         start(controller) {
@@ -3716,6 +3718,15 @@ Deno.serve(async (req) => {
                 },
                 (chunk) => {
                   if (!chunk) return;
+                  if (firstVisibleChunkElapsedMs === null) {
+                    firstVisibleChunkElapsedMs = Math.round(performance.now() - streamRequestStarted);
+                    console.log(JSON.stringify({
+                      event: "edge_stream_first_visible_chunk",
+                      request_id: requestId,
+                      elapsed_ms: firstVisibleChunkElapsedMs,
+                      path: webTrigger ? "web" : "inference",
+                    }));
+                  }
                   // Forward provider deltas unchanged. Sanitizing each fragment can
                   // remove boundary whitespace and merge words incorrectly.
                   controller.enqueue(
@@ -3757,8 +3768,19 @@ Deno.serve(async (req) => {
                 provider: ai.provider,
                 model: ai.model,
                 request_id: requestId,
+                elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                first_visible_chunk_ms: firstVisibleChunkElapsedMs,
+                path: webTrigger ? "web" : "inference",
               }));
             } catch (error) {
+              console.warn(JSON.stringify({
+                event: "edge_chat_stream_failed",
+                request_id: requestId,
+                elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                first_visible_chunk_ms: firstVisibleChunkElapsedMs,
+                path: webTrigger ? "web" : "inference",
+                error: error instanceof Error ? error.name : "UnknownError",
+              }));
               const body = {
                 status: "FAIL",
                 error: error instanceof Error ? error.message : String(error),
