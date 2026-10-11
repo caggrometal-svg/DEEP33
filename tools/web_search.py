@@ -9,7 +9,7 @@ import os
 import re
 import time
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -273,6 +273,66 @@ class MojeekParser(HTMLParser):
         self._flush()
 
 
+
+def _unwrap_google_url(value):
+    if not value:
+        return ""
+    absolute = value if value.startswith(("http://", "https://")) else urljoin("https://www.google.com", value)
+    parsed = urlparse(absolute)
+    if parsed.netloc.lower().endswith("google.com"):
+        if parsed.path == "/url":
+            params = parse_qs(parsed.query)
+            target = unquote((params.get("q") or params.get("url") or [""])[0])
+            return target if target.startswith(("http://", "https://")) else ""
+        return ""
+    return absolute
+
+
+class GoogleSearchParser(HTMLParser):
+    """Extract general Google web results, not the Google News feed."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self.anchor_url = ""
+        self.capture_title = False
+        self.buffer = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs_map = dict(attrs)
+        if tag == "a":
+            self.anchor_url = _unwrap_google_url((attrs_map.get("href") or "").strip())
+            self.capture_title = False
+            self.buffer = []
+        elif tag == "h3" and self.anchor_url:
+            self.capture_title = True
+            self.buffer = []
+
+    def handle_endtag(self, tag):
+        if tag == "h3" and self.capture_title:
+            title = " ".join(self.buffer).strip()
+            if title and self.anchor_url:
+                self.results.append({"url": self.anchor_url, "title": title, "snippet": ""})
+            self.capture_title = False
+            self.buffer = []
+        elif tag == "a":
+            self.anchor_url = ""
+            self.capture_title = False
+            self.buffer = []
+
+    def handle_data(self, data):
+        if self.capture_title:
+            value = " ".join(str(data or "").split()).strip()
+            if value:
+                self.buffer.append(value)
+
+    def close(self):
+        super().close()
+        self.anchor_url = ""
+        self.capture_title = False
+        self.buffer = []
+
+
 def _unwrap_ddg_url(value):
     if not value:
         return ""
@@ -412,6 +472,33 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
         raise WebSearchError("WEB_SEARCH_TAVILY_INVALID_RESPONSE")
     return _normalise_results(raw, max_results)
 
+
+
+
+async def _google_search(query, timeout_seconds, max_results):
+    """Run a bounded general Google Web Search request as one fallback provider."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://www.google.com/search",
+        params={"q": query, "num": "10", "hl": "en"},
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_GOOGLE_HTTP_{response.status_code}")
+    if len(response.content) > 3 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_GOOGLE_RESPONSE_TOO_LARGE")
+    parser = GoogleSearchParser()
+    parser.feed(response.text)
+    parser.close()
+    return _normalise_results(parser.results, max_results)
 
 
 async def _mojeek_search(query, timeout_seconds, max_results):
