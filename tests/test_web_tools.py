@@ -84,6 +84,65 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
     assert result["provider"]=="duckduckgo"
 
+
+def test_google_general_search_extracts_relevant_results(monkeypatch):
+    import tools.web_search as module
+    from backend.search.engine import rank_results
+
+    page = """
+    <html><body>
+      <div class="MjjYud">
+        <a href="https://www.google.com/url?q=https%3A%2F%2Fdocs.python.org%2F3%2Flibrary%2Fasyncio.html">
+          <h3>asyncio - Asynchronous I/O</h3>
+        </a>
+      </div>
+      <div class="MjjYud">
+        <a href="https://realpython.com/async-io-python/">
+          <h3>Async IO in Python</h3>
+        </a>
+      </div>
+      <div class="MjjYud">
+        <a href="https://papajohns.cl/menu">
+          <h3>Papa Johns menu</h3>
+        </a>
+      </div>
+    </body></html>
+    """
+    monkeypatch.setattr(module, "validate_public_url", lambda value: value)
+    module._SEARCH_HTTP_CLIENT = None
+    module._SEARCH_HTTP_LOOP = None
+    requested = []
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                requested.append(str(request.url))
+                return httpx.Response(
+                    200, request=request, text=page,
+                    headers={"content-type": "text/html"},
+                )
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+
+    async def run():
+        result = await module._google_search(
+            "Python asyncio official documentation",
+            timeout_seconds=4,
+            max_results=5,
+        )
+        await module.close_search_http_client()
+        return result
+
+    results = asyncio.run(run())
+    ranked = rank_results("Python asyncio official documentation", results)
+    assert requested and requested[0].startswith("https://www.google.com/search?")
+    assert len(ranked) == 2
+    assert all("pizza" not in item["title"].lower() for item in ranked)
+
+
+
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
     from backend.search.engine import rank_results

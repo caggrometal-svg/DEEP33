@@ -575,7 +575,7 @@ class SearchEngine:
         timeout_seconds: float,
         api_key: str,
     ) -> list[dict]:
-        from tools.web_search import _bing_search, _duckduckgo_search, _google_news_search, _mojeek_search, _tavily_search
+        from tools.web_search import _bing_search, _duckduckgo_search, _google_news_search, _google_search, _mojeek_search, _tavily_search
 
         if provider == "tavily":
             if not api_key:
@@ -583,6 +583,8 @@ class SearchEngine:
             return await _tavily_search(query, api_key, timeout_seconds, self.max_results)
         if provider == "google_news":
             return await _google_news_search(query, timeout_seconds, self.max_results)
+        if provider == "google":
+            return await _google_search(query, timeout_seconds, self.max_results)
         if provider == "bing":
             return await _bing_search(query, timeout_seconds, self.max_results)
         if provider == "mojeek":
@@ -624,11 +626,14 @@ class SearchEngine:
 
     def _providers(self, provider_name: str, api_key: str, fallback_ddg: bool) -> list[str]:
         bing_enabled = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
+        google_enabled = os.getenv("WEB_SEARCH_GOOGLE_ENABLED", "false").strip().lower() == "true"
         mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "false").strip().lower() == "true"
         if provider_name == "tavily":
             providers = ["tavily"]
             if bing_enabled:
                 providers.append("bing")
+            if google_enabled:
+                providers.append("google")
             if mojeek_enabled:
                 providers.append("mojeek")
             if fallback_ddg:
@@ -636,11 +641,15 @@ class SearchEngine:
             return providers
         if provider_name == "bing":
             providers = ["bing"]
+            if google_enabled:
+                providers.append("google")
             if mojeek_enabled:
                 providers.append("mojeek")
             if fallback_ddg:
                 providers.append("duckduckgo")
             return providers
+        if provider_name == "google":
+            return ["google"]
         if provider_name == "mojeek":
             return ["mojeek"]
         if provider_name == "duckduckgo":
@@ -650,6 +659,8 @@ class SearchEngine:
             providers.append("tavily")
         if bing_enabled:
             providers.append("bing")
+        if google_enabled:
+            providers.append("google")
         if mojeek_enabled:
             providers.append("mojeek")
         if fallback_ddg or not providers:
