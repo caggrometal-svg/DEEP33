@@ -109,17 +109,18 @@ async function buildNavigatedWebEvidence(
   const targets = sources.slice(0, 2);
   const settled = await Promise.allSettled(
     targets.map(async (source) => {
-      const response = await fetchUpstream(
-        "/v1/web/fetch?url=" + encodeURIComponent(source.url),
+      const response = await fetch(
+        EDGE_AI_UPSTREAM_URL + "/v1/web/fetch?url=" + encodeURIComponent(source.url),
         {
           method: "GET",
           headers: {
             "Authorization": userAuthorization,
             "Accept": "application/json",
+            "X-DEEP33-Session-Id": sessionId,
           },
+          redirect: "error",
           signal: AbortSignal.timeout(3500),
         },
-        sessionId,
       );
       if (!response.ok) return null;
       const body = await readJson(response);
@@ -141,6 +142,12 @@ async function buildNavigatedWebEvidence(
     }
   }
 
+  console.log(JSON.stringify({
+    event: "edge_web_navigation",
+    attempted_pages: targets.length,
+    fetched_pages: pageByUrl.size,
+    request_scope: sessionId.slice(0, 128),
+  }));
   return {
     sources: sources.map((source) => ({
       ...source,
