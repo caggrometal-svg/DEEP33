@@ -759,6 +759,24 @@ def session_id_from_request(request: Request) -> str:
     return value[:128]
 
 
+def scope_session_for_user(user_id: str | None, session_id: str) -> str:
+    """Normalize direct Render and JWT-scoped Edge session IDs to one namespace."""
+    owner = str(user_id or "").strip()
+    value = str(session_id or "").strip()
+    if not owner:
+        return value[:128]
+
+    prefix = f"{owner}:"
+    # Edge has already scoped this session. Preserve its exact bounded form so the
+    # same request keeps its idempotency key when Android switches to direct Render.
+    if value.startswith(prefix):
+        return value[:128]
+
+    # Match Supabase Edge scopedSession(): cap the client portion before adding the
+    # authenticated owner prefix. Never trust a client-provided owner as identity.
+    return f"{prefix}{value[:96]}"[:128]
+
+
 def memory_profile_id_from_request(request: Request) -> str | None:
     # The memory boundary is the authenticated Supabase user, never a client-supplied
     # profile identifier. The caller must invoke enforce_client_controls first.
@@ -2684,6 +2702,7 @@ async def generate(
     skip_web_tools: bool = False,
     memory_profile_id: str | None = None,
 ) -> dict:
+    session_id = scope_session_for_user(memory_profile_id, session_id)
     personality = normalize_personality(request.personality)
     logger.info("personality_selected request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
     client_payload = {
@@ -3345,6 +3364,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     request_started_at = time.perf_counter()
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
+    session_id = scope_session_for_user(memory_profile_id, session_id)
     request = resolve_personality_request(request, http_request)
     personality = normalize_personality(request.personality)
     request_hash = payload_hash({
