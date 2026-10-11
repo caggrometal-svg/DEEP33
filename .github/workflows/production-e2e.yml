@@ -130,6 +130,7 @@ jobs:
           cat /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
 
+# Navigation validation is intentionally run on every main-branch merge after this PR.
       - name: Verify real source-page navigation through the Render fetcher
         run: |
           set -euo pipefail
