@@ -2354,7 +2354,10 @@ class MainActivity : Activity() {
         // A pending generation is a recoverable transport state, not proof that
         // the device or DEEP33 is offline. Keep the UI in CONNECTING until the
         // service reaches a terminal state or a real health probe confirms failure.
-        val visibleState = if (state == ConnectionState.OFFLINE && isGenerationRecoveryActive()) {
+        val visibleState = if (
+            state == ConnectionState.OFFLINE &&
+            (generationActive || isGenerationRecoveryActive())
+        ) {
             ConnectionState.CONNECTING
         } else {
             state
