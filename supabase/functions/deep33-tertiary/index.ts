@@ -2089,7 +2089,7 @@ async function runPublicWebSearchQuery(
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
   // News queries get a fast RSS-first pass; HTML providers are a bounded fallback.
   const currentNewsRequest = edgeCurrentNewsQuery(q);
-  const fastNewsQuery = !forceFullSearch && currentNewsRequest;
+  const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined;
 
   const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
@@ -2189,9 +2189,13 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
+    // Google News is the fast, date-filtered primary for a news request.
+    // The bounded fallback below broadens provider coverage only when needed.
+    ? providers.filter((provider) => provider.name === "google_news_public")
+    // Corroboration must come from independent providers, not a second RSS call
+    // to Google News or Bing's same-query response.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
