@@ -693,6 +693,19 @@ function canonicalIdempotencyJson(value: unknown): string {
   return JSON.stringify(canonicalizeIdempotencyValue(value));
 }
 
+function canonicalIdempotencyTemperature(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return Number.isFinite(numeric) ? "0" : null;
+  const rendered = numeric.toPrecision(15);
+  if (rendered.includes("e")) {
+    const [rawMantissa, rawExponent] = rendered.split("e");
+    const mantissa = rawMantissa.replace(/\.0+$|(?<=\d)0+$/g, "").replace(/\.$/, "");
+    return mantissa + "e" + Number(rawExponent);
+  }
+  return rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+}
+
 function idempotencyResultBody(record: Record<string, unknown>): Record<string, unknown> {
   const text = idempotencyRecordText(record);
   if (!text.trim()) throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
@@ -734,14 +747,10 @@ async function buildEdgeIdempotencyContext(
       role: String(item.role || ""),
       content: String(item.content ?? ""),
     }));
-  const temperatureValue = payload.temperature;
-  const temperature = temperatureValue === undefined || temperatureValue === null
-    ? null
-    : Number(temperatureValue);
   const requestHash = await sha256(canonicalIdempotencyJson({
     messages,
     model: payload.model === undefined ? null : payload.model,
-    temperature: Number.isInteger(temperature) ? temperature : temperature,
+    temperature: canonicalIdempotencyTemperature(payload.temperature),
     personality: normalizePersonality(personality),
   }));
   return {
