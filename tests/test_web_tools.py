@@ -412,3 +412,20 @@ def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch)
         await module.close_fetch_http_client()
 
     asyncio.run(close())
+
+
+def test_edge_web_navigation_requires_multiple_independent_sources() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            root / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "const MAX_WEB_SEARCH_RESULTS = 12;" in source
+        assert "const TARGET_READABLE_WEB_SOURCES = 4;" in source
+        assert "const MIN_READABLE_WEB_SOURCES = 2;" in source
+        assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
+        assert "const fetchedDomains = new Set<string>();" in source
+        assert "navigation.succeeded < MIN_READABLE_WEB_SOURCES" in source
+        assert "async function buildNavigatedWebEvidence(" in source
