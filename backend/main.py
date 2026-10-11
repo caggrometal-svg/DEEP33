@@ -921,6 +921,25 @@ def payload_hash(value: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def generation_request_hash(request: ChatRequest, personality: str | None = None) -> str:
+    """Preserve Render's historical request fingerprint while sharing it with Edge."""
+    selected_personality = normalize_personality(
+        personality if personality is not None else request.personality
+    )
+    return payload_hash({
+        "messages": [
+            message.model_dump()
+            for message in request.messages
+            if message.role in {"user", "assistant"}
+        ],
+        "model": request.model,
+        # Keep the Pydantic float (including 1.0) to preserve existing idempotency
+        # hashes already stored for retries that cross a deployment.
+        "temperature": request.temperature,
+        "personality": selected_personality,
+    })
+
+
 def cache_prune() -> None:
     now = time.monotonic()
     expired = [key for key, value in _idempotency_cache.items() if value[0] <= now]
@@ -2115,6 +2134,56 @@ def sanitize_generation_output(output: dict) -> dict:
     return output
 
 
+def normalize_shared_generation_output(
+    output: dict,
+    request: ChatRequest,
+    request_id: str,
+    personality: str,
+) -> dict:
+    """Adapt Edge's compact shared-cache record to Render's public response schema."""
+    if not isinstance(output, dict):
+        raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+
+    result = output.get("result")
+    if isinstance(result, dict) and isinstance(result.get("text"), str):
+        return sanitize_generation_output(output)
+
+    text_value = output.get("text")
+    if not isinstance(text_value, str):
+        response = output.get("response")
+        choices = response.get("choices") if isinstance(response, dict) else None
+        first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first, dict) else {}
+        text_value = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(text_value, str) or not text_value.strip():
+        raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
+
+    model = output.get("model") or request.model
+    provider = output.get("provider")
+    normalized = {
+        "request_id": str(output.get("request_id") or request_id),
+        "latency_ms": output.get("latency_ms"),
+        "result": {
+            "role": "assistant",
+            "text": text_value,
+            "model": model,
+            "provider": provider,
+            "personality": personality,
+        },
+        "response": {
+            "model": model or "",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text_value},
+                "finish_reason": "stop",
+            }],
+        },
+        "sources": [],
+        "web_navigation": False,
+    }
+    return sanitize_generation_output(normalized)
+
+
 async def network_probe() -> dict:
     started = time.perf_counter()
     dns_ok = False
@@ -2705,13 +2774,7 @@ async def generate(
     session_id = scope_session_for_user(memory_profile_id, session_id)
     personality = normalize_personality(request.personality)
     logger.info("personality_selected request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-    client_payload = {
-        "messages": [message.model_dump() for message in request.messages if message.role in {"user", "assistant"}],
-        "model": request.model,
-        "temperature": request.temperature,
-        "personality": personality,
-    }
-    request_hash = payload_hash(client_payload)
+    request_hash = generation_request_hash(request, personality)
 
     try:
         cached = cache_get(session_id, idempotency_key, request_hash)
@@ -2775,7 +2838,12 @@ async def generate(
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
-            output = sanitize_generation_output(replay_idempotent(state, record))
+            output = normalize_shared_generation_output(
+                replay_idempotent(state, record),
+                request,
+                request_id,
+                personality,
+            )
             cache_put(session_id, idempotency_key, request_hash, output)
             return output
 
@@ -3367,12 +3435,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     session_id = scope_session_for_user(memory_profile_id, session_id)
     request = resolve_personality_request(request, http_request)
     personality = normalize_personality(request.personality)
-    request_hash = payload_hash({
-        "messages": [m.model_dump() for m in request.messages if m.role in {"user", "assistant"}],
-        "model": request.model,
-        "temperature": request.temperature,
-        "personality": personality,
-    })
+    request_hash = generation_request_hash(request, personality)
 
     try:
         cached = cache_get(session_id, idempotency_key, request_hash)
@@ -3433,7 +3496,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
-            cached = replay_idempotent(state, record)
+            cached = normalize_shared_generation_output(
+                replay_idempotent(state, record),
+                request,
+                request_id,
+                personality,
+            )
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
             async def replay_stream():
                 for piece in _sse_text_chunks(text_value):
