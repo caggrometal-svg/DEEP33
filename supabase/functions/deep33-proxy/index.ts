@@ -2965,8 +2965,8 @@ function edgeFilterNonRealtimeResults(
   items: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   const normalized = normalizeEdgeSearchQuery(query).toLowerCase()
-    .replace(/\\bworld\\s+health\\s+organization\\b/giu, "who")
-    .replace(/\\bnational\\s+aeronautics\\s+and\\s+space\\s+administration\\b/giu, "nasa");
+    .replace(/\bworld\s+health\s+organization\b/giu, "who")
+    .replace(/\bnational\s+aeronautics\s+and\s+space\s+administration\b/giu, "nasa");
   const ignored = new Set([
     ...EDGE_REALTIME_FILLERS,
     "official", "officially", "documentation", "document", "docs", "fact", "facts",
@@ -2985,7 +2985,7 @@ function edgeFilterNonRealtimeResults(
   ]);
   const queryTokens = [...new Set(
     (normalized.match(/[a-záéíóúüñ]{2,}/giu) || [])
-      .filter((token) => !ignored.has(token) && !/^\\d+$/.test(token)),
+      .filter((token) => !ignored.has(token) && !/^\d+$/.test(token)),
   )];
   if (!queryTokens.length) return items;
   const requiredHits = Math.min(2, queryTokens.length);
