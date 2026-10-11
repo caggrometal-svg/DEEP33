@@ -2469,7 +2469,15 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
             fresh=True,
         )
     except Exception as exc:
-        logger.warning("web_fetch_endpoint_failed request_id=%s error=%s", request_id_from_request(request), type(exc).__name__)
+        # WebFetchError messages are stable, bounded reason codes (not URLs or page
+        # contents). Preserve them in server logs so navigation failures can be
+        # diagnosed without exposing fetched content or user credentials.
+        logger.warning(
+            "web_fetch_endpoint_failed request_id=%s error=%s detail=%s",
+            request_id_from_request(request),
+            type(exc).__name__,
+            str(exc).replace("\\n", " ")[:160],
+        )
         raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
 
 
