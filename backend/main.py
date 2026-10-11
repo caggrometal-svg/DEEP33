@@ -260,7 +260,7 @@ _local_idempotency_inflight: dict[str, tuple[float, str, str]] = {}
 _local_idempotency_completed: dict[str, tuple[float, str, dict]] = {}
 CACHE_TTL_SECONDS = 300.0
 IDEMPOTENCY_LEASE_SECONDS = 180
-IDEMPOTENCY_WAIT_SECONDS = 80
+IDEMPOTENCY_WAIT_SECONDS = max(3.0, min(25.0, float(os.getenv("DEEP33_IDEMPOTENCY_WAIT_SECONDS", "15"))))
 LOCAL_IDEMPOTENCY_FALLBACK_SECONDS = 180.0
 
 class IdempotencyConflictError(RuntimeError):
@@ -1049,6 +1049,10 @@ async def shared_idempotency_claim(
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE")
 
+    # A local fallback is safe only when the initial shared claim itself is
+    # unavailable. Once the shared store says another request owns this key,
+    # never switch to a local claim: that process cannot see the remote lease
+    # and could start a duplicate inference.
     try:
         claim = await memory.idempotency_claim(
             session_id,
@@ -1057,26 +1061,6 @@ async def shared_idempotency_claim(
             request_hash,
             lease_seconds=IDEMPOTENCY_LEASE_SECONDS,
         )
-        state = str(claim.get("state", "")).upper()
-        if state == "CONFLICT":
-            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
-        if state in {"CLAIMED", "COMPLETED", "FAILED"}:
-            return state, claim
-
-        deadline = time.monotonic() + IDEMPOTENCY_WAIT_SECONDS
-        while time.monotonic() < deadline:
-            await asyncio.sleep(0.5)
-            status = await memory.idempotency_status(
-                session_id,
-                idempotency_key,
-                request_hash,
-            )
-            state = str(status.get("state", "")).upper()
-            if state in {"COMPLETED", "FAILED"}:
-                return state, status
-            if state == "CONFLICT":
-                raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
-        raise HTTPException(status_code=504, detail="IDEMPOTENCY_IN_PROGRESS")
     except MemoryUnavailableError as exc:
         logger.warning(
             "idempotency_store_unavailable_using_local_fallback session_id=%s error=%s",
@@ -1084,6 +1068,61 @@ async def shared_idempotency_claim(
             type(exc).__name__,
         )
         return local_idempotency_claim(session_id, idempotency_key, request_hash)
+
+    state = str(claim.get("state", "")).upper()
+    if state == "CONFLICT":
+        raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+    if state in {"CLAIMED", "COMPLETED", "FAILED"}:
+        return state, claim
+
+    wait_started = time.monotonic()
+    deadline = wait_started + IDEMPOTENCY_WAIT_SECONDS
+    poll_interval = 0.25
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(poll_interval, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            status = await asyncio.wait_for(
+                memory.idempotency_status(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                ),
+                timeout=remaining,
+            )
+        except (MemoryUnavailableError, asyncio.TimeoutError) as exc:
+            # The remote lease may still be live. Do not fall back to a local
+            # claim here; doing so would hide the existing lease and duplicate
+            # the inference. Let the caller retry with the same idempotency key.
+            logger.warning(
+                "idempotency_status_unavailable operation=%s elapsed_ms=%.2f error=%s",
+                operation,
+                (time.monotonic() - wait_started) * 1000,
+                type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="IDEMPOTENCY_STATUS_UNAVAILABLE",
+            ) from exc
+
+        state = str(status.get("state", "")).upper()
+        if state in {"COMPLETED", "FAILED"}:
+            return state, status
+        if state == "CONFLICT":
+            raise HTTPException(status_code=409, detail="IDEMPOTENCY_KEY_REUSED")
+        poll_interval = min(1.0, poll_interval * 1.5)
+
+    logger.warning(
+        "idempotency_wait_timeout operation=%s elapsed_ms=%.2f",
+        operation,
+        (time.monotonic() - wait_started) * 1000,
+    )
+    raise HTTPException(status_code=504, detail="IDEMPOTENCY_IN_PROGRESS")
 
 
 def replay_idempotent(state: str, record: dict, *, default_status: int = 200) -> dict:
