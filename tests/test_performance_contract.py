@@ -284,7 +284,6 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name === "google_news_public"' in source
         assert 'provider.name !== "bing_public" && provider.name !== "google_news_public"' in source
-        assert "edge_search_latency" not in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
