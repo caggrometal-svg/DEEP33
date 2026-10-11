@@ -467,9 +467,8 @@ function edgeProviders(): EdgeAIProvider[] {
       url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
       stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream",
       api_key: "",
-      // Preserve the caller's model choice; Render applies its own configured model
-      // only when the public payload omitted one.
-      model: "",
+      // Keep the existing explicit free model for the Render fallback.
+      model: "google/gemma-4-26b-a4b-it:free",
       requires_auth: true,
     });
   }
