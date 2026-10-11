@@ -2062,11 +2062,20 @@ function decodeHtml(value: string): string {
 function rssText(itemXml: string, tag: string): string {
   const match = itemXml.match(new RegExp("<" + tag + "\\b[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "i"));
   if (!match) return "";
-  return decodeHtml(String(match[1] ?? "")
+  let value = String(match[1] ?? "")
     .replace(/^\s*<!\[CDATA\[/i, "")
     .replace(/\]\]>\s*$/, "")
+    .trim();
+  // Decode escaped markup before stripping it so RSS descriptions stay plain text.
+  value = decodeHtml(decodeHtml(value))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ");
+  return value
     .replace(/<[^>]*>/g, " ")
-    .trim());
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
