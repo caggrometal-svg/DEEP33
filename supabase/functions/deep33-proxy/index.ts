@@ -75,6 +75,12 @@ async function fetchUpstream(
   });
 }
 
+
+const MAX_WEB_SEARCH_RESULTS = 12;
+const MAX_WEB_NAVIGATION_CANDIDATES = 12;
+const TARGET_READABLE_WEB_SOURCES = 4;
+const MIN_READABLE_WEB_SOURCES = 2;
+
 type NavigatedWebSource = {
   title: string;
   url: string;
@@ -95,7 +101,7 @@ async function buildNavigatedWebEvidence(
         .filter((item): item is Record<string, unknown> =>
           Boolean(item && typeof item === "object" && item.url),
         )
-        .slice(0, 8)
+        .slice(0, MAX_WEB_SEARCH_RESULTS)
         .map((item) => ({
           title: String(item.title ?? item.url).slice(0, 300),
           url: String(item.url).slice(0, 2000),
@@ -131,19 +137,40 @@ async function buildNavigatedWebEvidence(
     }
   };
 
-  // Search results from independent engines are useful only if we can open a
-  // source. Try direct publisher URLs first; keep aggregators as last-resort
-  // evidence and never let two unreadable RSS links block the rest of the list.
+  // Search results are candidates, not evidence by themselves. Open multiple
+  // independent public pages, continue after partial success, and avoid counting
+  // mirrors or search-aggregator wrappers as independent sources.
   const orderedSources = [...sources].sort((a, b) =>
     Number(isSearchWrapper(a.url)) - Number(isSearchWrapper(b.url))
   );
   const pageByUrl = new Map<string, Record<string, unknown>>();
+  const fetchedDomains = new Set<string>();
+  const seenCandidates = new Set<string>();
   let attempted = 0;
-  const batchSize = 3;
+  const batchSize = 4;
   const sourceReadTimeoutMs = 2500;
+  const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);
 
-  for (let offset = 0; offset < Math.min(orderedSources.length, 6) && pageByUrl.size === 0; offset += batchSize) {
-    const targets = orderedSources.slice(offset, offset + batchSize);
+  for (
+    let offset = 0;
+    offset < candidateLimit && pageByUrl.size < TARGET_READABLE_WEB_SOURCES;
+    offset += batchSize
+  ) {
+    const targets = orderedSources
+      .slice(offset, Math.min(offset + batchSize, candidateLimit))
+      .filter((source) => {
+        try {
+          const parsed = new URL(source.url);
+          if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+          if (seenCandidates.has(parsed.href)) return false;
+          seenCandidates.add(parsed.href);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    if (!targets.length) continue;
+
     attempted += targets.length;
     const settled = await Promise.allSettled(
       targets.map(async (source) => {
@@ -164,19 +191,36 @@ async function buildNavigatedWebEvidence(
         const body = await readJson(response);
         const pageText = typeof body.text === "string" ? body.text.trim() : "";
         if (body.ok !== true || pageText.length < 40) return null;
+
+        const finalUrl = typeof body.final_url === "string"
+          ? body.final_url.slice(0, 2000)
+          : source.url;
+        if (isSearchWrapper(finalUrl)) return null;
+
         return {
           url: source.url,
           page_text: pageText.slice(0, 3500),
-          final_url: typeof body.final_url === "string" ? body.final_url.slice(0, 2000) : undefined,
-          retrieved_at: typeof body.retrieved_at === "string" ? body.retrieved_at.slice(0, 100) : undefined,
+          final_url: finalUrl,
+          retrieved_at: typeof body.retrieved_at === "string"
+            ? body.retrieved_at.slice(0, 100)
+            : undefined,
         };
       }),
     );
 
     for (const item of settled) {
-      if (item.status === "fulfilled" && item.value) {
-        pageByUrl.set(item.value.url, item.value);
+      if (item.status !== "fulfilled" || !item.value) continue;
+      if (pageByUrl.size >= TARGET_READABLE_WEB_SOURCES) break;
+      let hostname = "";
+      try {
+        hostname = new URL(String(item.value.final_url || item.value.url))
+          .hostname.toLowerCase().replace(/^www\./, "");
+      } catch {
+        continue;
       }
+      if (!hostname || fetchedDomains.has(hostname)) continue;
+      fetchedDomains.add(hostname);
+      pageByUrl.set(item.value.url, item.value);
     }
   }
 
@@ -184,20 +228,24 @@ async function buildNavigatedWebEvidence(
     ...source,
     ...(pageByUrl.get(source.url) || {}),
   }));
+  const status = pageByUrl.size >= MIN_READABLE_WEB_SOURCES
+    ? "success"
+    : pageByUrl.size > 0
+      ? "partial"
+      : (attempted > 0 ? "no_pages_readable" : "skipped");
+
   console.log(JSON.stringify({
     event: "edge_web_navigation",
-    status: pageByUrl.size > 0 ? "success" : (attempted > 0 ? "no_pages_readable" : "skipped"),
+    status,
     elapsed_ms: Math.round(performance.now() - navigationStarted),
     attempted_pages: attempted,
     fetched_pages: pageByUrl.size,
+    distinct_domains: fetchedDomains.size,
     request_scope: sessionId.slice(0, 128),
   }));
-  return {
-    sources: resultSources,
-    attempted,
-    succeeded: pageByUrl.size,
-  };
+  return { sources: resultSources, attempted, succeeded: pageByUrl.size };
 }
+
 
 async function readJson(res: Response): Promise<Record<string, unknown>> {
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -2839,7 +2887,7 @@ async function runPublicWebSearchQuery(
   }
 
   const fallbackFill = all.filter((result) => !diversified.some((item) => item.url === result.url));
-  const finalResults = [...diversified, ...fallbackFill].slice(0, 8);
+  const finalResults = [...diversified, ...fallbackFill].slice(0, MAX_WEB_SEARCH_RESULTS);
 
   if (finalResults.length) {
     return {
@@ -3206,7 +3254,7 @@ async function publicWebSearchUncached(
   };
   for (const batch of batches) mergeBatch(batch);
   const filteredResults = () =>
-    edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, 8);
+    edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
   // Fresh news from a single provider is usable, but not yet independently corroborated.
@@ -3299,7 +3347,7 @@ async function publicWebSearchUncached(
       plan.original,
       [...merged.values(), ...clockResults],
       plan.depth === "realtime",
-    ).slice(0, 8);
+    ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
   const providerNames = edgeProvidersForResults(finalResults);
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
@@ -3431,7 +3479,7 @@ async function edgeSearch(
         q,
         data.results as Array<Record<string, unknown>>,
         realtime,
-      ).slice(0, 8);
+      ).slice(0, MAX_WEB_SEARCH_RESULTS);
       if (filtered.length > 0) {
         const providers = edgeProvidersForResults(filtered);
         const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
@@ -3664,7 +3712,7 @@ Deno.serve(async (req) => {
         );
         const sources = navigation.sources;
 
-        if (!search.ok || sources.length === 0 || navigation.succeeded < 1) {
+        if (!search.ok || sources.length === 0 || navigation.succeeded < MIN_READABLE_WEB_SOURCES) {
           return new Response(
             "event: error\ndata: " +
               JSON.stringify({
@@ -4105,7 +4153,7 @@ Deno.serve(async (req) => {
         );
         const sources = navigation.sources;
 
-        if (!search.ok || sources.length === 0 || navigation.succeeded < 1) {
+        if (!search.ok || sources.length === 0 || navigation.succeeded < MIN_READABLE_WEB_SOURCES) {
           return json({
             status: "FAIL",
             error: "WEB_SEARCH_NO_RESULTS",
