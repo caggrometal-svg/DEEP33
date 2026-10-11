@@ -115,56 +115,86 @@ async function buildNavigatedWebEvidence(
     return { sources, attempted: 0, succeeded: 0 };
   }
 
-  const targets = sources.slice(0, 2);
-  const settled = await Promise.allSettled(
-    targets.map(async (source) => {
-      const response = await fetch(
-        EDGE_AI_UPSTREAM_URL + "/v1/web/fetch?url=" + encodeURIComponent(source.url),
-        {
-          method: "GET",
-          headers: {
-            "Authorization": userAuthorization,
-            "Accept": "application/json",
-            "X-DEEP33-Session-Id": sessionId,
-          },
-          redirect: "error",
-          signal: AbortSignal.timeout(3500),
-        },
+  const isSearchWrapper = (value: string): boolean => {
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.toLowerCase();
+      return (
+        (host === "news.google.com" && parsed.pathname.toLowerCase().startsWith("/rss/articles/")) ||
+        ((host === "bing.com" || host.endsWith(".bing.com")) && /\/search\/?$/i.test(parsed.pathname)) ||
+        host === "html.duckduckgo.com" ||
+        host === "www.google.com" ||
+        host === "google.com"
       );
-      if (!response.ok) return null;
-      const body = await readJson(response);
-      const pageText = typeof body.text === "string" ? body.text.trim() : "";
-      if (body.ok !== true || !pageText) return null;
-      return {
-        url: source.url,
-        page_text: pageText.slice(0, 3500),
-        final_url: typeof body.final_url === "string" ? body.final_url.slice(0, 2000) : undefined,
-        retrieved_at: typeof body.retrieved_at === "string" ? body.retrieved_at.slice(0, 100) : undefined,
-      };
-    }),
-  );
+    } catch {
+      return true;
+    }
+  };
 
+  // Search results from independent engines are useful only if we can open a
+  // source. Try direct publisher URLs first; keep aggregators as last-resort
+  // evidence and never let two unreadable RSS links block the rest of the list.
+  const orderedSources = [...sources].sort((a, b) =>
+    Number(isSearchWrapper(a.url)) - Number(isSearchWrapper(b.url))
+  );
   const pageByUrl = new Map<string, Record<string, unknown>>();
-  for (const item of settled) {
-    if (item.status === "fulfilled" && item.value) {
-      pageByUrl.set(item.value.url, item.value);
+  let attempted = 0;
+  const batchSize = 3;
+  const sourceReadTimeoutMs = 2500;
+
+  for (let offset = 0; offset < orderedSources.length && pageByUrl.size === 0; offset += batchSize) {
+    const targets = orderedSources.slice(offset, offset + batchSize);
+    attempted += targets.length;
+    const settled = await Promise.allSettled(
+      targets.map(async (source) => {
+        const response = await fetch(
+          EDGE_AI_UPSTREAM_URL + "/v1/web/fetch?url=" + encodeURIComponent(source.url),
+          {
+            method: "GET",
+            headers: {
+              "Authorization": userAuthorization,
+              "Accept": "application/json",
+              "X-DEEP33-Session-Id": sessionId,
+            },
+            redirect: "error",
+            signal: AbortSignal.timeout(sourceReadTimeoutMs),
+          },
+        );
+        if (!response.ok) return null;
+        const body = await readJson(response);
+        const pageText = typeof body.text === "string" ? body.text.trim() : "";
+        if (body.ok !== true || pageText.length < 40) return null;
+        return {
+          url: source.url,
+          page_text: pageText.slice(0, 3500),
+          final_url: typeof body.final_url === "string" ? body.final_url.slice(0, 2000) : undefined,
+          retrieved_at: typeof body.retrieved_at === "string" ? body.retrieved_at.slice(0, 100) : undefined,
+        };
+      }),
+    );
+
+    for (const item of settled) {
+      if (item.status === "fulfilled" && item.value) {
+        pageByUrl.set(item.value.url, item.value);
+      }
     }
   }
 
+  const resultSources = sources.map((source) => ({
+    ...source,
+    ...(pageByUrl.get(source.url) || {}),
+  }));
   console.log(JSON.stringify({
     event: "edge_web_navigation",
-    status: pageByUrl.size > 0 ? "success" : (targets.length > 0 ? "no_pages_readable" : "skipped"),
+    status: pageByUrl.size > 0 ? "success" : (attempted > 0 ? "no_pages_readable" : "skipped"),
     elapsed_ms: Math.round(performance.now() - navigationStarted),
-    attempted_pages: targets.length,
+    attempted_pages: attempted,
     fetched_pages: pageByUrl.size,
     request_scope: sessionId.slice(0, 128),
   }));
   return {
-    sources: sources.map((source) => ({
-      ...source,
-      ...(pageByUrl.get(source.url) || {}),
-    })),
-    attempted: targets.length,
+    sources: resultSources,
+    attempted,
     succeeded: pageByUrl.size,
   };
 }
@@ -2764,14 +2794,12 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    // Google News is the fast, date-filtered primary for a news request.
-    // If it returns no usable results, the bounded fallback below can use Bing
-    // and the other providers; do not wait for a slower parallel Bing response.
-    ? providers.filter((provider) => provider.name === "google_news_public")
-    // Corroboration must come from independent providers, not a second RSS call
-    // to Google News or Bing's same-query response.
+    // News queries use several independent public-web providers in the same
+    // bounded race. Google News is one candidate, never the exclusive source.
+    ? providers.filter((provider) => provider.name !== "wikipedia_public")
+    // Corroboration uses independent web indexes, not a replay of Bing/Google RSS.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
