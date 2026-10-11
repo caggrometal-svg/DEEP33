@@ -754,6 +754,7 @@ class AIGateway:
                 pending_chunks: list[bytes] = []
                 pending_bytes = bytearray()
                 first_chunk_at: float | None = None
+                first_visible_at: float | None = None
                 stream_completion_tokens: float | None = None
                 try:
                     started_request = time.perf_counter()
@@ -807,11 +808,9 @@ class AIGateway:
                                 async for chunk in response.aiter_bytes():
                                     if chunk:
                                         if first_chunk_at is None:
+                                            # Preserve transport-start timing for diagnostics, but
+                                            # provider ranking must use the first visible assistant text.
                                             first_chunk_at = time.perf_counter()
-                                            self._record_ttft(
-                                                provider,
-                                                (first_chunk_at - started_request) * 1000,
-                                            )
                                         if b'"completion_tokens"' in chunk:
                                             try:
                                                 for line in chunk.splitlines():
@@ -836,6 +835,12 @@ class AIGateway:
                                                     # "Automated bulk") until they can be classified.
                                                     continue
                                                 visible_content = True
+                                                if first_visible_at is None:
+                                                    first_visible_at = time.perf_counter()
+                                                    self._record_ttft(
+                                                        provider,
+                                                        (first_visible_at - started_request) * 1000,
+                                                    )
                                                 started_output = True
                                                 for pending_chunk in pending_chunks:
                                                     yield pending_chunk
@@ -855,6 +860,12 @@ class AIGateway:
                                     accumulated_text = self._stream_text_content(bytes(pending_bytes)).strip()
                                     if accumulated_text and len(accumulated_text) < 3:
                                         visible_content = True
+                                        if first_visible_at is None:
+                                            first_visible_at = time.perf_counter()
+                                            self._record_ttft(
+                                                provider,
+                                                (first_visible_at - started_request) * 1000,
+                                            )
                                         started_output = True
                                         for pending_chunk in pending_chunks:
                                             yield pending_chunk
