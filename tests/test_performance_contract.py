@@ -347,3 +347,14 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "navigation.succeeded < 1" in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
+
+
+def test_edge_web_stream_locks_model_to_final_answer_after_navigation() -> None:
+    source = (
+        ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
+    ).read_text(encoding="utf-8")
+    assert "WEB SEARCH AND SOURCE NAVIGATION ARE ALREADY COMPLETE ON THE SERVER." in source
+    assert "No browser, search, retrieval, function, or other tools are available" in source
+    assert "do not emit internal control markup" in source
+    assert "If the evidence is insufficient, say what could not be verified" in source
+    assert "messages: edgeMessages" in source
