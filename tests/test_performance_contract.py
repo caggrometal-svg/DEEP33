@@ -339,12 +339,12 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     source = (
         ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
     ).read_text(encoding="utf-8")
-    assert "const batchSize = 3;" in source
+    assert "const batchSize = 4;" in source
     assert "const sourceReadTimeoutMs = 2500;" in source
-    assert "Math.min(orderedSources.length, 6)" in source
-    assert "pageByUrl.size === 0" in source
+    assert "const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);" in source
+    assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
     assert "isSearchWrapper(a.url)" in source
-    assert "navigation.succeeded < 1" in source
+    assert "navigation.succeeded < MIN_READABLE_WEB_SOURCES" in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
 
