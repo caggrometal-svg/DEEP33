@@ -3759,41 +3759,104 @@ Deno.serve(async (req) => {
                 idempotencyKey,
                 activePersonality,
               );
-              const ai = await streamEdgeAI(
-                {
-                  ...payload,
-                  messages: edgeMessages,
-                },
-                requestId,
-                (providerController) => {
-                  abortProvider = () => providerController.abort();
-                },
-                (chunk) => {
-                  if (!chunk) return;
-                  if (firstVisibleChunkElapsedMs === null) {
-                    firstVisibleChunkElapsedMs = Math.round(performance.now() - streamRequestStarted);
-                    console.log(JSON.stringify({
-                      event: "edge_stream_first_visible_chunk",
-                      request_id: requestId,
-                      elapsed_ms: firstVisibleChunkElapsedMs,
-                      path: webTrigger ? "web" : "inference",
-                    }));
-                  }
-                  // Forward provider deltas unchanged. Sanitizing each fragment can
-                  // remove boundary whitespace and merge words incorrectly.
-                  controller.enqueue(
-                    encoder.encode(
-                      "data: " +
-                        JSON.stringify({
-                          choices: [{ delta: { content: chunk } }],
-                        }) +
-                        "\n\n",
-                    ),
-                  );
-                },
-                idempotencyContext,
-                req.headers.get("authorization") || "",
-              );
+              const emitVisibleChunk = (chunk: string) => {
+                if (!chunk) return;
+                if (firstVisibleChunkElapsedMs === null) {
+                  firstVisibleChunkElapsedMs = Math.round(performance.now() - streamRequestStarted);
+                  console.log(JSON.stringify({
+                    event: "edge_stream_first_visible_chunk",
+                    request_id: requestId,
+                    elapsed_ms: firstVisibleChunkElapsedMs,
+                    path: webTrigger ? "web" : "inference",
+                  }));
+                }
+                // Forward complete, validated chunks. Web-triggered content is buffered
+                // until a provider finishes successfully so a failed attempt never leaks
+                // partial prose before the completion recovery path runs.
+                controller.enqueue(
+                  encoder.encode(
+                    "data: " +
+                      JSON.stringify({
+                        choices: [{ delta: { content: chunk } }],
+                      }) +
+                      "\n\n",
+                  ),
+                );
+              };
+
+              const bufferedWebChunks: string[] = [];
+              let ai: { text: string; provider: string; model: string };
+              try {
+                ai = await streamEdgeAI(
+                  {
+                    ...payload,
+                    messages: edgeMessages,
+                  },
+                  requestId,
+                  (providerController) => {
+                    abortProvider = () => providerController.abort();
+                  },
+                  (chunk) => {
+                    if (!chunk) return;
+                    if (webTrigger) {
+                      bufferedWebChunks.push(chunk);
+                      return;
+                    }
+                    emitVisibleChunk(chunk);
+                  },
+                  idempotencyContext,
+                  req.headers.get("authorization") || "",
+                );
+
+                if (webTrigger) {
+                  for (const chunk of bufferedWebChunks) emitVisibleChunk(chunk);
+                }
+              } catch (streamError) {
+                if (!webTrigger) throw streamError;
+
+                console.warn(JSON.stringify({
+                  event: "edge_web_stream_recovery_started",
+                  request_id: requestId,
+                  elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                  error: streamError instanceof Error
+                    ? streamError.message.slice(0, 120)
+                    : "UnknownError",
+                }));
+
+                // The Render SSE route can terminate without a valid final frame
+                // when a model returns internal control output. Recover once through
+                // the non-streaming completion endpoint; keep the public SSE contract
+                // by emitting the complete, validated answer as bounded text chunks.
+                const recovered = await callEdgeAI(
+                  {
+                    ...payload,
+                    messages: edgeMessages,
+                  },
+                  requestId + "-web-recovery",
+                  null,
+                  req.headers.get("authorization") || "",
+                  sessionId,
+                );
+                const recoveredText = sanitizeAssistantText(extractProviderText(recovered.body));
+                if (!recoveredText) throw new Error("EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE");
+
+                ai = {
+                  text: recoveredText,
+                  provider: recovered.provider,
+                  model: recovered.model,
+                };
+                console.log(JSON.stringify({
+                  event: "edge_web_stream_recovered",
+                  request_id: requestId,
+                  provider: recovered.provider,
+                  model: recovered.model,
+                  text_chars: recoveredText.length,
+                  elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                }));
+                for (let offset = 0; offset < recoveredText.length; offset += 120) {
+                  emitVisibleChunk(recoveredText.slice(offset, offset + 120));
+                }
+              }
 
               const responseText = sanitizeAssistantText(ai.text);
               if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
