@@ -133,7 +133,7 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
                         headers={"content-type": "application/rss+xml"},
                         content=(
                             b"<?xml version=\"1.0\"?><rss><channel>"
-                            b"<item><title>asyncio — Asynchronous I/O</title>"
+                            b"<item><title>asyncio - Asynchronous I/O</title>"
                             b"<link>https://docs.python.org/3/library/asyncio.html</link>"
                             b"<description>Python asyncio documentation and examples.</description></item>"
                             b"<item><title>Async IO in Python</title>"
