@@ -19,7 +19,7 @@ def test_tavily_normalisation(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def fake(*args,**kwargs): return [{"title":"Example","url":"https://example.com/","snippet":"Snippet"}]
+    async def fake(*args,**kwargs): return [{"title":"DEEP33 Example","url":"https://example.com/","snippet":"Snippet"}]
     monkeypatch.setattr("tools.web_search._tavily_search",fake)
     result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
     assert result["results"][0]["snippet"]=="Snippet"
@@ -75,7 +75,7 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     async def failing(*args,**kwargs): raise RuntimeError("down")
-    async def ddg(*args,**kwargs): return [{"title":"DDG","url":"https://example.com/","snippet":"Fallback"}]
+    async def ddg(*args,**kwargs): return [{"title":"DEEP33 DDG","url":"https://example.com/","snippet":"DEEP33 fallback result"}]
     monkeypatch.setattr("tools.web_search._tavily_search",failing)
     monkeypatch.setattr("tools.web_search._duckduckgo_search",ddg)
     import tools.web_search as module

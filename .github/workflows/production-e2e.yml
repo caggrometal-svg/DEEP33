@@ -160,6 +160,34 @@ jobs:
               jq -c '{ok,provider,providers,results:(.results|length),errors}' "$response_file" 2>/dev/null || true
               exit 1
             fi
+            if ! python - "$query" "$response_file" <<'PY'
+          import json, re, sys
+          topic, path = sys.argv[1], sys.argv[2]
+          expected = {
+              "Python asyncio official documentation": {"python", "asyncio"},
+              "NASA Artemis mission official": {"nasa", "artemis", "mission"},
+              "World Health Organization dengue fact sheet": {"who", "dengue"},
+              "United Nations Charter official text": {"united", "nations", "charter"},
+          }[topic]
+          payload = json.load(open(path, encoding="utf-8"))
+          def tokens(value):
+              value = re.sub(r"\bworld\s+health\s+organization\b", " who ", value, flags=re.I)
+              value = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", value, flags=re.I)
+              return set(re.findall(r"[a-z0-9]+", value.lower()))
+          results = payload.get("results") or []
+          matched = []
+          for result in results:
+              evidence = " ".join(str(result.get(key) or "") for key in ("title", "snippet", "url"))
+              if len(expected & tokens(evidence)) >= min(2, len(expected)):
+                  matched.append(result)
+          if not matched:
+              print(f"BROAD_WEB_RELEVANCE_FAIL topic={topic} results={len(results)}")
+              raise SystemExit(1)
+          print(f"BROAD_WEB_RELEVANCE_PASS topic={topic} relevant={len(matched)}/{len(results)}")
+          PY
+            then
+              exit 1
+            fi
             domains="$(jq -r '[.results[]?.url? | try (capture("^https?://(?<host>[^/]+)").host | sub("^www\\\\."; "")) catch empty] | unique | length' "$response_file")"
             echo "BROAD_WEB_SEARCH_PASS topic=$query providers=$(jq -r '.providers | join(",")' "$response_file") results=$(jq -r '.results | length' "$response_file") domains=$domains"
             jq -r --arg topic "$query" '.results[:4][]? | [.url // "", $topic] | @tsv' "$response_file" >> "$candidates_file"
@@ -181,6 +209,29 @@ jobs:
               --data-urlencode "url=$source_url" || true)"
             if [ "$fetch_status" != "200" ] || ! jq -e '.ok == true and (.text | strings | length) >= 20 and (.final_url | strings | length) > 10' "$fetch_file" >/dev/null 2>&1; then
               echo "WEB_SOURCE_NOT_READABLE topic=$topic candidate=$candidate_index http=$fetch_status"
+              continue
+            fi
+            if ! python - "$topic" "$fetch_file" <<'PY'
+          import json, re, sys
+          topic, path = sys.argv[1], sys.argv[2]
+          expected = {
+              "Python asyncio official documentation": {"python", "asyncio"},
+              "NASA Artemis mission official": {"nasa", "artemis", "mission"},
+              "World Health Organization dengue fact sheet": {"who", "dengue"},
+              "United Nations Charter official text": {"united", "nations", "charter"},
+          }[topic]
+          payload = json.load(open(path, encoding="utf-8"))
+          evidence = " ".join(str(payload.get(key) or "") for key in ("title", "final_url", "text"))
+          evidence = re.sub(r"\bworld\s+health\s+organization\b", " who ", evidence, flags=re.I)
+          evidence = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", evidence, flags=re.I)
+          tokens = set(re.findall(r"[a-z0-9]+", evidence.lower()))
+          hits = len(expected & tokens)
+          if hits < min(2, len(expected)):
+              print(f"WEB_SOURCE_NOT_RELEVANT topic={topic}")
+              raise SystemExit(1)
+          PY
+            then
+              echo "WEB_SOURCE_NOT_RELEVANT topic=$topic candidate=$candidate_index"
               continue
             fi
             final_url="$(jq -r '.final_url' "$fetch_file")"
