@@ -484,10 +484,22 @@ async def _bing_search(query, timeout_seconds, max_results):
         parser.feed(response.text)
         parser.close()
         html_results = _normalise_results(parser.results, max_results)
-        # Current-event HTML can be syntactically valid but fail the stricter
-        # locality/relevance filter. Enrich it with Bing RSS before ranking.
+        # Don't treat syntactically valid HTML as a successful search if its
+        # results don't match the requested topic. In that case, try the RSS
+        # representation of the same broad-web provider before failing over.
+        # This keeps the fast path for relevant HTML while rescuing polluted SERPs.
         if html_results and not realtime_news:
-            return html_results
+            from backend.search.engine import MIN_FALLBACK_RESULTS, rank_results
+
+            relevant_html = rank_results(query, html_results)
+            relevant_domains = {
+                (urlparse(str(item.get("url") or "")).hostname or "").lower().removeprefix("www.")
+                for item in relevant_html
+                if item.get("url")
+            }
+            required_coverage = min(max_results, MIN_FALLBACK_RESULTS)
+            if len(relevant_html) >= required_coverage and len(relevant_domains) >= required_coverage:
+                return html_results
     except Exception as exc:
         html_error = exc
 
