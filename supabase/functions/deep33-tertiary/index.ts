@@ -2140,7 +2140,7 @@ async function runPublicWebSearchQuery(
         ...(provider.headers || {}),
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : 5000)),
+      signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
