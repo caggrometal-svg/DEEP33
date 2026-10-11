@@ -715,8 +715,7 @@ async function buildEdgeIdempotencyContext(
   sessionId: string,
   memoryProfileId: string,
   idempotencyKey: string,
-  operation: string,
-  stream: boolean,
+  personality: unknown,
 ): Promise<EdgeIdempotencyContext | null> {
   const key = idempotencyKey.trim();
   const session = sessionId.trim();
@@ -743,7 +742,7 @@ async function buildEdgeIdempotencyContext(
     messages,
     model: payload.model === undefined ? null : payload.model,
     temperature: Number.isInteger(temperature) ? temperature : temperature,
-    personality: normalizePersonality(payload.personality),
+    personality: normalizePersonality(personality),
   }));
   return {
     sessionId: session,
@@ -3511,8 +3510,7 @@ Deno.serve(async (req) => {
                 sessionId,
                 memoryProfileId,
                 idempotencyKey,
-                "ai.chat.stream",
-                true,
+                activePersonality,
               );
               const ai = await streamEdgeAI(
                 {
@@ -3843,8 +3841,7 @@ Deno.serve(async (req) => {
               sessionId,
               memoryProfileId,
               idempotencyKey,
-              "ai.generate",
-              false,
+              payload.personality,
             );
             const ai = await callEdgeAI(
               { ...payload, messages: edgeMessages },
@@ -3943,8 +3940,7 @@ return json({
             sessionId,
             memoryProfileId,
             idempotencyKey,
-            "ai.generate",
-            false,
+            payload.personality,
           );
           const ai = await callEdgeAI(
             { ...payload, messages: edgeMessages },
