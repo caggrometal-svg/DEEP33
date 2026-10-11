@@ -116,6 +116,7 @@ const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "google/gemma-4-26b-a4b-it:free").trim();
 // Keep provider fallback URL classification defined in this edge runtime as in the primary gateway.
 const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";
+const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 
 const MAX_WEB_SEARCH_RESULTS = 12;
 const MAX_WEB_NAVIGATION_CANDIDATES = 12;
@@ -607,7 +608,7 @@ function providerPayload(
   payload: Record<string, unknown>,
   stream: boolean,
 ): Record<string, unknown> {
-  const providerPayload = { ...payload, stream };
+  const providerPayload: Record<string, unknown> = { ...payload, stream };
   delete providerPayload.personality;
   delete providerPayload.web_navigation;
   delete providerPayload.sources;
@@ -794,9 +795,6 @@ async function edgeIdempotencyComplete(
       });
       return;
     } catch (error) {
-    if (error instanceof Deep33HttpError) {
-      return json({ ok: false, error: error.message }, error.status);
-    }
       lastError = error;
       if (attempt < 2) {
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
@@ -837,9 +835,8 @@ async function edgeIdempotencyRelease(context: EdgeIdempotencyContext): Promise<
 }
 
 async function acquireEdgeIdempotency(
-  context: EdgeIdempotencyContext | null,
+  context: EdgeIdempotencyContext,
 ): Promise<{ context: EdgeIdempotencyContext; completed: EdgeIdempotencyRecord | null }> {
-  if (!context) return { context: context as EdgeIdempotencyContext, completed: null };
 
   const initial = await edgeIdempotencyAction("idempotency_claim", context);
   const state = String(initial.state || "").toUpperCase();
@@ -2476,6 +2473,11 @@ function edgeCurrentDateTimeQuery(query: string): boolean {
   return temporalIntent && currentIntent;
 }
 
+function edgeBroadWorldNewsQuery(query: string): boolean {
+  return /\b(?:noticias?\s+(?:mundiales?|internacionales?|globales?)|noticias?\s+del\s+mundo|world\s+news|global\s+news|international\s+news|news\s+from\s+around\s+the\s+world)\b/i.test(query);
+}
+
+
 function edgeFilterSearchResults(
   query: string,
   items: Array<Record<string, unknown>>,
@@ -3094,10 +3096,10 @@ Deno.serve(async (req) => {
       }
 
       const encoder = new TextEncoder();
+      let abortProvider = () => {};
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode(": DEEP33\n\n"));
-          let abortProvider = () => {};
 
           (async () => {
             try {
