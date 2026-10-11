@@ -276,7 +276,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "async function runPublicWebSearchQuery(" in source
-        rss_parser = source.split("function rssText(itemXml: string, tag: string): string {", 1)[1].split("\\n}", 1)[0]
+        rss_parser = source.split("function rssText(itemXml: string, tag: string): string {", 1)[1].split("\n}", 1)[0]
         assert "decodeHtml(decodeHtml(value))" in rss_parser
         assert 'replace(/<[^>]*>/g, " ")' in rss_parser
 
