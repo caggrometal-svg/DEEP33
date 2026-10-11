@@ -285,9 +285,10 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "const currentNewsRequest = edgeCurrentNewsQuery(q)" in source
         assert "const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined" in source
         assert "1800" in source
+        assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
-        assert 'provider.name === "google_news_public"' in source
-        assert 'provider.name !== "bing_public" && provider.name !== "google_news_public"' in source
+        assert 'provider.name !== "wikipedia_public"' in source
+        assert 'provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
@@ -332,3 +333,17 @@ def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
         assert "Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      2500," in source
         assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      3000," in source
 
+
+
+def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
+    source = (
+        ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
+    ).read_text(encoding="utf-8")
+    assert "const batchSize = 3;" in source
+    assert "const sourceReadTimeoutMs = 2500;" in source
+    assert "Math.min(orderedSources.length, 6)" in source
+    assert "pageByUrl.size === 0" in source
+    assert "isSearchWrapper(a.url)" in source
+    assert "navigation.succeeded < 1" in source
+    assert '"clima"' in source
+    assert '"búsqueda"' in source

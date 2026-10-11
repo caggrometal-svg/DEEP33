@@ -2140,7 +2140,7 @@ async function runPublicWebSearchQuery(
         ...(provider.headers || {}),
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : 5000)),
+      signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
     if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
     const html = await response.text();
@@ -2198,13 +2198,12 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    // Google News is the fast, date-filtered primary for a news request.
-    // The bounded fallback below broadens provider coverage only when needed.
-    ? providers.filter((provider) => provider.name === "google_news_public")
-    // Corroboration must come from independent providers, not a second RSS call
-    // to Google News or Bing's same-query response.
+    // Search several independent web indexes together. Google News is only
+    // one candidate, never the exclusive first-pass provider.
+    ? providers.filter((provider) => provider.name !== "wikipedia_public")
+    // Corroboration uses independent web indexes rather than replaying RSS sources.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
