@@ -363,3 +363,52 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
     assert len(captured["query"]) <= module.MAX_QUERY_CHARS
     assert "no inventes" not in captured["query"].lower()
     assert "noticia real publicada hoy" in captured["query"].lower()
+
+
+
+def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch):
+    import tools.web_fetch as module
+
+    url = "https://large-article.example/news"
+    page = (
+        b"<html><head><title>Current news article</title></head>"
+        b"<body><article>Relevant article text begins here.</article>"
+        + b"padding " * 100
+        + b"</body></html>"
+    )
+    monkeypatch.setattr(module, "validate_public_url", lambda value: value)
+    monkeypatch.setattr(module, "_max_response_bytes", lambda: 192)
+    module._FETCH_CACHE.clear()
+    module._FETCH_INFLIGHT.clear()
+    module._FETCH_HTTP_CLIENT = None
+    module._FETCH_HTTP_LOOP = None
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                return httpx.Response(
+                    200,
+                    request=request,
+                    headers={
+                        "content-type": "text/html; charset=utf-8",
+                        "content-length": str(len(page)),
+                    },
+                    content=page,
+                )
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+
+    result = asyncio.run(module.fetch_page(url, fresh=True, max_text_chars=1000))
+
+    assert result["ok"] is True
+    assert result["title"] == "Current news article"
+    assert "Relevant article text begins here." in result["text"]
+    assert result["bytes"] <= 192
+
+    async def close():
+        await module.close_fetch_http_client()
+
+    asyncio.run(close())
