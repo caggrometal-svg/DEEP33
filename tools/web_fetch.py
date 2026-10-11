@@ -142,11 +142,23 @@ def validate_public_url(url):
     return candidate
 
 async def _read_limited(response,limit):
-    total=0; chunks=[]
+    """Read at most limit bytes and stop cleanly on large HTML/text pages.
+
+    Search results often point at publisher pages whose full HTML is larger than
+    the extraction budget. Returning a bounded prefix lets us extract the title
+    and leading article text without downloading an unbounded response.
+    """
+    total=0
+    chunks=[]
     async for chunk in response.aiter_bytes():
-        total+=len(chunk)
-        if total>limit: raise DownloadLimitError("WEB_FETCH_DOWNLOAD_TOO_LARGE")
+        remaining=limit-total
+        if remaining<=0:
+            break
+        if len(chunk)>remaining:
+            chunks.append(chunk[:remaining])
+            break
         chunks.append(chunk)
+        total+=len(chunk)
     return b"".join(chunks)
 
 def _extract_text(content,content_type,max_text_chars):
@@ -189,11 +201,9 @@ async def _fetch_page_uncached(
                 if response.status_code>=400: raise WebFetchError(f"WEB_FETCH_HTTP_{response.status_code}")
                 content_type=response.headers.get("content-type",""); mime=content_type.split(";",1)[0].strip().lower()
                 if mime not in ALLOWED_CONTENT_TYPES: raise WebFetchError("WEB_FETCH_CONTENT_TYPE_BLOCKED")
-                declared=response.headers.get("content-length")
-                if declared:
-                    try:
-                        if int(declared)>_max_response_bytes(): raise DownloadLimitError("WEB_FETCH_DOWNLOAD_TOO_LARGE")
-                    except ValueError: pass
+                # Content-Length is only a hint. Some publisher pages exceed
+                # the extraction cap while their useful article text is at the
+                # start; _read_limited enforces the same hard byte ceiling.
                 content=await _read_limited(response,_max_response_bytes())
             title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
             if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
