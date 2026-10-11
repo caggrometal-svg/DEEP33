@@ -4028,7 +4028,7 @@ Deno.serve(async (req) => {
         );
         const sources = navigation.sources;
 
-        if (!search.ok || sources.length === 0) {
+        if (!search.ok || sources.length === 0 || navigation.succeeded < 1) {
           return json({
             status: "FAIL",
             error: "WEB_SEARCH_NO_RESULTS",
