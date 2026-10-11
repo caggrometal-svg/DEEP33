@@ -2631,7 +2631,7 @@ async function runPublicWebSearchQuery(
   // News queries get a fast RSS-first pass. Broader HTML providers are only used
   // when the RSS results are insufficient, avoiding 4.5s waits on irrelevant pages.
   const currentNewsRequest = edgeCurrentNewsQuery(q);
-  const fastNewsQuery = !forceFullSearch && currentNewsRequest;
+  const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined;
 
   const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
@@ -2764,9 +2764,14 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
+    // Google News is the fast, date-filtered primary for a news request.
+    // If it returns no usable results, the bounded fallback below can use Bing
+    // and the other providers; do not wait for a slower parallel Bing response.
+    ? providers.filter((provider) => provider.name === "google_news_public")
+    // Corroboration must come from independent providers, not a second RSS call
+    // to Google News or Bing's same-query response.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
@@ -3182,7 +3187,7 @@ async function publicWebSearchUncached(
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(1100, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
