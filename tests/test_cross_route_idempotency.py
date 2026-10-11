@@ -29,7 +29,7 @@ def test_generation_hash_matches_canonical_edge_payload() -> None:
             "model": None,
             # Pydantic parses an integer temperature as float; the shared contract
             # canonicalizes it back to a JSON integer, as Edge does.
-            "temperature": "1",
+            "temperature": 1.0,
             "personality": "NEUTRO",
         }
     )
