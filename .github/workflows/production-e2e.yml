@@ -20,6 +20,9 @@ on:
       - "supabase/functions/deep33-proxy/index.ts"
       - "supabase/functions/deep33-tertiary/index.ts"
       - "tests/test_connectivity_hardening.py"
+      - "tools/web_fetch.py"
+      - "tools/web_search.py"
+      - "tests/test_web_tools.py"
 
 permissions:
   contents: read
@@ -126,6 +129,47 @@ jobs:
           fi
           cat /tmp/audit.json
           echo "DEEP33_EDGE_AUDIT_PASS"
+
+      - name: Verify real source-page navigation through the Render fetcher
+        run: |
+          set -euo pipefail
+          query="situación actual de la comuna de Las Condes en Chile"
+          status="$(curl -sS --connect-timeout 8 --max-time 45 \
+            -o /tmp/deep33-navigation-search.json -w "%{http_code}" \
+            -G "$TERTIARY_URL/v1/web/search" \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+            -H "X-DEEP33-Session-Id: navigation-e2e-$GITHUB_RUN_ID" \
+            -H "X-Request-ID: navigation-e2e-$GITHUB_RUN_ID" \
+            --data-urlencode "q=$query" || true)"
+          if [ "$status" != "200" ] || ! jq -e '.ok == true and (.results | length) >= 1' /tmp/deep33-navigation-search.json >/dev/null 2>&1; then
+            echo "WEB_NAVIGATION_SEARCH_FAIL http=$status"
+            jq -c '{ok,provider,providers,results:(.results|length),errors}' /tmp/deep33-navigation-search.json 2>/dev/null || true
+            exit 1
+          fi
+          mapfile -t source_urls < <(jq -r '[.results[]? | .url? // empty | select(startswith("https://"))] | unique | .[:3][]' /tmp/deep33-navigation-search.json)
+          fetch_ok=0
+          for index in "${!source_urls[@]}"; do
+            source_url="${source_urls[$index]}"
+            fetch_status="$(curl -sS --connect-timeout 5 --max-time 15 \
+              -o /tmp/deep33-navigation-fetch.json -w "%{http_code}" \
+              -G "$TERTIARY_URL/v1/web/fetch" \
+              -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+              -H "X-DEEP33-Session-Id: navigation-e2e-$GITHUB_RUN_ID" \
+              -H "X-Request-ID: navigation-e2e-$GITHUB_RUN_ID-$index" \
+              --data-urlencode "url=$source_url" || true)"
+            if [ "$fetch_status" = "200" ] && jq -e '.ok == true and (.text | strings | length) >= 20 and (.final_url | strings | length) > 10' /tmp/deep33-navigation-fetch.json >/dev/null 2>&1; then
+              jq -c '{navigation:"PASS",title,final_url,bytes,redirects,text_chars:(.text|length)}' /tmp/deep33-navigation-fetch.json
+              fetch_ok=1
+              break
+            fi
+            echo "WEB_NAVIGATION_SOURCE_NOT_READABLE candidate=$((index + 1)) http=$fetch_status"
+            jq -c '{ok,error,title,final_url,bytes,redirects}' /tmp/deep33-navigation-fetch.json 2>/dev/null || true
+          done
+          if [ "$fetch_ok" != "1" ]; then
+            echo "WEB_NAVIGATION_FAIL no_search_result_could_be_opened"
+            exit 1
+          fi
+          echo "DEEP33_WEB_SOURCE_NAVIGATION_PASS"
 
       - name: Measure live production search latency (10 independent requests)
         run: |
