@@ -575,7 +575,7 @@ class SearchEngine:
         timeout_seconds: float,
         api_key: str,
     ) -> list[dict]:
-        from tools.web_search import _bing_search, _duckduckgo_search, _google_news_search, _tavily_search
+        from tools.web_search import _bing_search, _duckduckgo_search, _google_news_search, _mojeek_search, _tavily_search
 
         if provider == "tavily":
             if not api_key:
@@ -585,6 +585,8 @@ class SearchEngine:
             return await _google_news_search(query, timeout_seconds, self.max_results)
         if provider == "bing":
             return await _bing_search(query, timeout_seconds, self.max_results)
+        if provider == "mojeek":
+            return await _mojeek_search(query, timeout_seconds, self.max_results)
         return await _duckduckgo_search(query, timeout_seconds, self.max_results)
 
     async def _provider_search_with_retry(
@@ -622,15 +624,25 @@ class SearchEngine:
 
     def _providers(self, provider_name: str, api_key: str, fallback_ddg: bool) -> list[str]:
         bing_enabled = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
+        mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "false").strip().lower() == "true"
         if provider_name == "tavily":
             providers = ["tavily"]
             if bing_enabled:
                 providers.append("bing")
+            if mojeek_enabled:
+                providers.append("mojeek")
             if fallback_ddg:
                 providers.append("duckduckgo")
             return providers
         if provider_name == "bing":
-            return ["bing"] + (["duckduckgo"] if fallback_ddg else [])
+            providers = ["bing"]
+            if mojeek_enabled:
+                providers.append("mojeek")
+            if fallback_ddg:
+                providers.append("duckduckgo")
+            return providers
+        if provider_name == "mojeek":
+            return ["mojeek"]
         if provider_name == "duckduckgo":
             return ["duckduckgo"]
         providers: list[str] = []
@@ -638,6 +650,8 @@ class SearchEngine:
             providers.append("tavily")
         if bing_enabled:
             providers.append("bing")
+        if mojeek_enabled:
+            providers.append("mojeek")
         if fallback_ddg or not providers:
             providers.append("duckduckgo")
         return providers
