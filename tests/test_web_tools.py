@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import base64
 import httpx
 import pytest
 from tools.web_fetch import SSRFBlockedError, validate_public_url
@@ -82,6 +83,35 @@ def test_tavily_falls_back_to_ddg(monkeypatch):
     module._SEARCH_CACHE.clear()
     result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
     assert result["provider"]=="duckduckgo"
+
+def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
+    import tools.web_search as module
+    from backend.search.engine import rank_results
+
+    target = "https://docs.python.org/3/library/asyncio.html"
+    wrapped_value = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+    tracking_url = f"https://www.bing.com/ck/a?u={wrapped_value}"
+    xml = (
+        "<?xml version=\"1.0\"?><rss><channel>"
+        "<item><title>asyncio - Asynchronous I/O</title>"
+        f"<link>{tracking_url}</link>"
+        "<description>Python asyncio documentation and examples.</description></item>"
+        "<item><title>Async IO in Python</title>"
+        "<link>https://realpython.com/async-io-python/</link>"
+        "<description>Python asyncio and asynchronous programming.</description></item>"
+        "</channel></rss>"
+    )
+    response = httpx.Response(200, content=xml.encode("utf-8"))
+    parsed = asyncio.run(module._parse_bing_rss(response, 5))
+
+    assert parsed[0]["url"] == target
+    ranked = rank_results("Python asyncio official documentation", parsed)
+    assert len(ranked) == 2
+    assert {item["url"] for item in ranked} == {
+        target,
+        "https://realpython.com/async-io-python",
+    }
+
 
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")

@@ -413,6 +413,10 @@ async def _parse_bing_rss(response, max_results):
             url = ""
             if link_node is not None:
                 url = (link_node.text or link_node.attrib.get("href") or "").strip()
+                # Bing RSS may retain a click-through URL (ck/a?u=a1...).
+                # Unwrap it before URL validation and topic scoring so the
+                # canonical destination, not "bing.com", is used as evidence.
+                url = _unwrap_bing_url(url) or url
             snippet = (
                 item.findtext("description")
                 or item.findtext("{*}description")
