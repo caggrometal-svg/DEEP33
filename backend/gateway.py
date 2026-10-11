@@ -655,15 +655,18 @@ class AIGateway:
                         continue
                     break
                 except (httpx.ReadTimeout, httpx.WriteTimeout):
+                    # Never retry the same provider after an ambiguous timeout.
+                    # If a distinct fallback exists, move to it once so the user
+                    # can recover without receiving duplicate assistant output.
                     saw_timeout = True
-                    provider_failed_transiently = False
+                    provider_failed_transiently = True
                     logger.warning(
-                        "ai_provider_ambiguous_timeout request_id=%s provider=%s attempt=%s",
+                        "ai_provider_ambiguous_timeout_failover request_id=%s provider=%s attempt=%s",
                         request_id,
                         provider.name,
                         attempt + 1,
                     )
-                    raise GatewayTimeoutError
+                    break
                 except httpx.TimeoutException:
                     saw_timeout = True
                     provider_failed_transiently = True

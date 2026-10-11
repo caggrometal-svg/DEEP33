@@ -63,12 +63,24 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
 
 
 
-def test_complete_never_retries_or_fails_over_after_ambiguous_read_timeout() -> None:
+@pytest.mark.parametrize("timeout_type", [httpx.ReadTimeout, httpx.WriteTimeout])
+def test_complete_fails_over_once_after_ambiguous_timeout_without_retrying_primary(timeout_type) -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        raise httpx.ReadTimeout("ambiguous response timeout", request=request)
+        if request.url.host == "primary.test":
+            raise timeout_type("ambiguous provider timeout", request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "model": "fallback-model",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "FALLBACK_PASS"}}
+                ],
+            },
+        )
 
     transport = httpx.MockTransport(handler)
     config = GatewayConfig(
@@ -92,20 +104,22 @@ def test_complete_never_retries_or_fails_over_after_ambiguous_read_timeout() -> 
     try:
         import asyncio
 
-        with pytest.raises(Exception) as exc_info:
-            asyncio.run(
-                gateway.complete(
-                    {"messages": [{"role": "user", "content": "hi"}]},
-                    request_id="timeout-test",
-                    idempotency_key="timeout-test",
-                )
+        result = asyncio.run(
+            gateway.complete(
+                {"messages": [{"role": "user", "content": "hi"}]},
+                request_id="timeout-failover-test",
+                idempotency_key="timeout-failover-test",
             )
-        assert exc_info.type.__name__ == "GatewayTimeoutError"
+        )
     finally:
         httpx.AsyncClient = original
 
-    assert calls == ["https://primary.test/chat"]
-
+    assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
+    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
 
 def test_complete_raises_when_all_providers_fail() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
