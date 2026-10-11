@@ -629,10 +629,10 @@ class Deep33GenerationService : Service() {
     companion object {
         private const val CHANNEL_ID = "deep33_generation"
         private const val NOTIFICATION_ID = 3301
-        private const val MAX_STREAM_RECOVERY_RETRIES = 5
+        private const val MAX_STREAM_RECOVERY_RETRIES = 1
         private const val GENERATION_DEADLINE_MS = 180_000L
         private const val NETWORK_RECOVERY_GRACE_MS = 350L
-        private val RETRY_DELAYS_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L)
+        private val RETRY_DELAYS_MS = longArrayOf(500L)
         private const val ACTION_START = "cl.caggrometal.deep33.action.START_GENERATION"
         private const val ACTION_CANCEL = "cl.caggrometal.deep33.action.CANCEL_GENERATION"
         private const val ACTION_BACKGROUND = "cl.caggrometal.deep33.action.APP_BACKGROUND"
