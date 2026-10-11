@@ -358,3 +358,21 @@ def test_edge_web_stream_locks_model_to_final_answer_after_navigation() -> None:
     assert "emit internal tool/control markup" in source
     assert "If the evidence is insufficient, say what could not be verified" in source
     assert "messages: edgeMessages" in source
+
+
+def test_edge_web_stream_recovers_before_exposing_partial_output() -> None:
+    source = (
+        ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
+    ).read_text(encoding="utf-8")
+    assert "const bufferedWebChunks: string[] = [];" in source
+    assert "if (webTrigger) {" in source
+    assert "bufferedWebChunks.push(chunk);" in source
+    assert "edge_web_stream_recovery_started" in source
+    assert 'requestId + "-web-recovery"' in source
+    assert "EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE" in source
+    assert "for (let offset = 0; offset < recoveredText.length; offset += 120)" in source
+
+
+def test_skip_web_tools_also_disables_knowledge_gap_research_reentry() -> None:
+    source = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
+    assert "if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and response_needs_web_retry(data):" in source
