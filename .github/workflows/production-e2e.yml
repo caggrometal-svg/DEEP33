@@ -161,30 +161,30 @@ jobs:
               exit 1
             fi
             if ! python - "$query" "$response_file" <<'PY'
-import json, re, sys
-topic, path = sys.argv[1], sys.argv[2]
-expected = {
-    "Python asyncio official documentation": {"python", "asyncio"},
-    "NASA Artemis mission official": {"nasa", "artemis", "mission"},
-    "World Health Organization dengue fact sheet": {"who", "dengue"},
-    "United Nations Charter official text": {"united", "nations", "charter"},
-}[topic]
-payload = json.load(open(path, encoding="utf-8"))
-def tokens(value):
-    value = re.sub(r"\bworld\s+health\s+organization\b", " who ", value, flags=re.I)
-    value = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", value, flags=re.I)
-    return set(re.findall(r"[a-z0-9]+", value.lower()))
-results = payload.get("results") or []
-matched = []
-for result in results:
-    evidence = " ".join(str(result.get(key) or "") for key in ("title", "snippet", "url"))
-    if len(expected & tokens(evidence)) >= min(2, len(expected)):
-        matched.append(result)
-if not matched:
-    print(f"BROAD_WEB_RELEVANCE_FAIL topic={topic} results={len(results)}")
-    raise SystemExit(1)
-print(f"BROAD_WEB_RELEVANCE_PASS topic={topic} relevant={len(matched)}/{len(results)}")
-PY
+          import json, re, sys
+          topic, path = sys.argv[1], sys.argv[2]
+          expected = {
+              "Python asyncio official documentation": {"python", "asyncio"},
+              "NASA Artemis mission official": {"nasa", "artemis", "mission"},
+              "World Health Organization dengue fact sheet": {"who", "dengue"},
+              "United Nations Charter official text": {"united", "nations", "charter"},
+          }[topic]
+          payload = json.load(open(path, encoding="utf-8"))
+          def tokens(value):
+              value = re.sub(r"\bworld\s+health\s+organization\b", " who ", value, flags=re.I)
+              value = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", value, flags=re.I)
+              return set(re.findall(r"[a-z0-9]+", value.lower()))
+          results = payload.get("results") or []
+          matched = []
+          for result in results:
+              evidence = " ".join(str(result.get(key) or "") for key in ("title", "snippet", "url"))
+              if len(expected & tokens(evidence)) >= min(2, len(expected)):
+                  matched.append(result)
+          if not matched:
+              print(f"BROAD_WEB_RELEVANCE_FAIL topic={topic} results={len(results)}")
+              raise SystemExit(1)
+          print(f"BROAD_WEB_RELEVANCE_PASS topic={topic} relevant={len(matched)}/{len(results)}")
+          PY
             then
               exit 1
             fi
@@ -212,24 +212,24 @@ PY
               continue
             fi
             if ! python - "$topic" "$fetch_file" <<'PY'
-import json, re, sys
-topic, path = sys.argv[1], sys.argv[2]
-expected = {
-    "Python asyncio official documentation": {"python", "asyncio"},
-    "NASA Artemis mission official": {"nasa", "artemis", "mission"},
-    "World Health Organization dengue fact sheet": {"who", "dengue"},
-    "United Nations Charter official text": {"united", "nations", "charter"},
-}[topic]
-payload = json.load(open(path, encoding="utf-8"))
-evidence = " ".join(str(payload.get(key) or "") for key in ("title", "final_url", "text"))
-evidence = re.sub(r"\bworld\s+health\s+organization\b", " who ", evidence, flags=re.I)
-evidence = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", evidence, flags=re.I)
-tokens = set(re.findall(r"[a-z0-9]+", evidence.lower()))
-hits = len(expected & tokens)
-if hits < min(2, len(expected)):
-    print(f"WEB_SOURCE_NOT_RELEVANT topic={topic} candidate={sys.argv[3]}")
-    raise SystemExit(1)
-PY
+          import json, re, sys
+          topic, path = sys.argv[1], sys.argv[2]
+          expected = {
+              "Python asyncio official documentation": {"python", "asyncio"},
+              "NASA Artemis mission official": {"nasa", "artemis", "mission"},
+              "World Health Organization dengue fact sheet": {"who", "dengue"},
+              "United Nations Charter official text": {"united", "nations", "charter"},
+          }[topic]
+          payload = json.load(open(path, encoding="utf-8"))
+          evidence = " ".join(str(payload.get(key) or "") for key in ("title", "final_url", "text"))
+          evidence = re.sub(r"\bworld\s+health\s+organization\b", " who ", evidence, flags=re.I)
+          evidence = re.sub(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", " nasa ", evidence, flags=re.I)
+          tokens = set(re.findall(r"[a-z0-9]+", evidence.lower()))
+          hits = len(expected & tokens)
+          if hits < min(2, len(expected)):
+              print(f"WEB_SOURCE_NOT_RELEVANT topic={topic}")
+              raise SystemExit(1)
+          PY
             then
               echo "WEB_SOURCE_NOT_RELEVANT topic=$topic candidate=$candidate_index"
               continue
