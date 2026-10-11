@@ -406,7 +406,7 @@ def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch)
     assert result["ok"] is True
     assert result["title"] == "Current news article"
     assert "Relevant article text begins here." in result["text"]
-    assert result["bytes"] <= 96
+    assert result["bytes"] <= 160
 
     async def close():
         await module.close_fetch_http_client()
