@@ -276,13 +276,18 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
             ROOT / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "async function runPublicWebSearchQuery(" in source
+        rss_parser = source.split("function rssText(itemXml: string, tag: string): string {", 1)[1].split("\n}", 1)[0]
+        assert "decodeHtml(decodeHtml(value))" in rss_parser
+        assert 'replace(/<[^>]*>/g, " ")' in rss_parser
+
         assert "providerTimeoutMs?: number" in source
         assert "providerTimeoutMs ??" in source
         assert "const currentNewsRequest = edgeCurrentNewsQuery(q)" in source
-        assert "const fastNewsQuery = !forceFullSearch && currentNewsRequest" in source
+        assert "const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined" in source
         assert "1800" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
-        assert 'provider.name === "bing_public" || provider.name === "google_news_public"' in source
+        assert 'provider.name === "google_news_public"' in source
+        assert 'provider.name !== "bing_public" && provider.name !== "google_news_public"' in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source

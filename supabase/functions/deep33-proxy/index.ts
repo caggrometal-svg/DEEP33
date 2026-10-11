@@ -89,6 +89,7 @@ async function buildNavigatedWebEvidence(
   sessionId: string,
   userAuthorization = "",
 ): Promise<{ sources: NavigatedWebSource[]; attempted: number; succeeded: number }> {
+  const navigationStarted = performance.now();
   const sources: NavigatedWebSource[] = Array.isArray(search.results)
     ? search.results
         .filter((item): item is Record<string, unknown> =>
@@ -103,6 +104,14 @@ async function buildNavigatedWebEvidence(
     : [];
 
   if (!sources.length || !userAuthorization.startsWith("Bearer ")) {
+    console.log(JSON.stringify({
+      event: "edge_web_navigation",
+      status: "skipped",
+      elapsed_ms: Math.round(performance.now() - navigationStarted),
+      attempted_pages: 0,
+      fetched_pages: 0,
+      request_scope: sessionId.slice(0, 128),
+    }));
     return { sources, attempted: 0, succeeded: 0 };
   }
 
@@ -144,6 +153,8 @@ async function buildNavigatedWebEvidence(
 
   console.log(JSON.stringify({
     event: "edge_web_navigation",
+    status: pageByUrl.size > 0 ? "success" : (targets.length > 0 ? "no_pages_readable" : "skipped"),
+    elapsed_ms: Math.round(performance.now() - navigationStarted),
     attempted_pages: targets.length,
     fetched_pages: pageByUrl.size,
     request_scope: sessionId.slice(0, 128),
@@ -2580,11 +2591,23 @@ function decodeHtml(value: string): string {
 function rssText(itemXml: string, tag: string): string {
   const match = itemXml.match(new RegExp("<" + tag + "\\b[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "i"));
   if (!match) return "";
-  return decodeHtml(String(match[1] ?? "")
+  let value = String(match[1] ?? "")
     .replace(/^\s*<!\[CDATA\[/i, "")
     .replace(/\]\]>\s*$/, "")
+    .trim();
+
+  // RSS providers sometimes HTML-escape the markup inside <description>.
+  // Decode before stripping tags so escaped <a>/<font> wrappers never leak
+  // into search snippets or the evidence passed to the model.
+  value = decodeHtml(decodeHtml(value))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ");
+  return value
     .replace(/<[^>]*>/g, " ")
-    .trim());
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
@@ -2608,7 +2631,7 @@ async function runPublicWebSearchQuery(
   // News queries get a fast RSS-first pass. Broader HTML providers are only used
   // when the RSS results are insufficient, avoiding 4.5s waits on irrelevant pages.
   const currentNewsRequest = edgeCurrentNewsQuery(q);
-  const fastNewsQuery = !forceFullSearch && currentNewsRequest;
+  const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined;
 
   const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
@@ -2741,9 +2764,14 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
+    // Google News is the fast, date-filtered primary for a news request.
+    // If it returns no usable results, the bounded fallback below can use Bing
+    // and the other providers; do not wait for a slower parallel Bing response.
+    ? providers.filter((provider) => provider.name === "google_news_public")
+    // Corroboration must come from independent providers, not a second RSS call
+    // to Google News or Bing's same-query response.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
@@ -3159,7 +3187,7 @@ async function publicWebSearchUncached(
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(1100, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
@@ -3310,6 +3338,23 @@ async function edgeSearch(
 ) {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
+  const searchStarted = performance.now();
+
+  const logSearchStage = (
+    status: string,
+    path: string,
+    result: Record<string, unknown>,
+  ) => {
+    console.log(JSON.stringify({
+      event: "edge_web_search_stage",
+      elapsed_ms: Math.round(performance.now() - searchStarted),
+      status,
+      path,
+      result_count: Array.isArray(result.results) ? result.results.length : 0,
+      providers: Array.isArray(result.providers) ? result.providers : [],
+      request_scope: sessionId.slice(0, 128),
+    }));
+  };
 
   // Edge direct is the latency-first canonical search path. Render remains an
   // authenticated fallback when every public Edge provider is empty/unavailable.
@@ -3325,10 +3370,12 @@ async function edgeSearch(
     Array.isArray(direct.results) &&
     direct.results.length > 0
   ) {
+    logSearchStage("success", "edge-direct", direct);
     return direct;
   }
 
   if (!UPSTREAM || !userAuthorization.startsWith("Bearer ")) {
+    logSearchStage("unavailable", "edge-direct", direct);
     return direct;
   }
 
@@ -3355,7 +3402,7 @@ async function edgeSearch(
       if (filtered.length > 0) {
         const providers = edgeProvidersForResults(filtered);
         const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
-        return {
+        const response = {
           ...data,
           ok: true,
           providers,
@@ -3365,10 +3412,14 @@ async function edgeSearch(
           verification: edgeSearchVerification(filtered, providers),
           fallback_path: "render",
         };
+        logSearchStage("success", "render-fallback", response);
+        return response;
       }
     }
+    logSearchStage("unavailable", "render-fallback", direct);
     return direct;
   } catch {
+    logSearchStage("unavailable", "render-fallback", direct);
     return direct;
   }
 }
@@ -3548,6 +3599,7 @@ Deno.serve(async (req) => {
     }
 
     if (path === "/v1/chat/stream" && req.method === "POST") {
+      const streamRequestStarted = performance.now();
       const payload = (await req.json().catch(() => ({}))) as Record<string, unknown>;
       const validation = validateChatPayload(payload);
       if (!validation.ok) throw new Deep33HttpError(400, validation.error);
@@ -3642,6 +3694,7 @@ Deno.serve(async (req) => {
       }
 
       const encoder = new TextEncoder();
+      let firstVisibleChunkElapsedMs: number | null = null;
       let abortProvider = () => {};
       const stream = new ReadableStream({
         start(controller) {
@@ -3670,6 +3723,15 @@ Deno.serve(async (req) => {
                 },
                 (chunk) => {
                   if (!chunk) return;
+                  if (firstVisibleChunkElapsedMs === null) {
+                    firstVisibleChunkElapsedMs = Math.round(performance.now() - streamRequestStarted);
+                    console.log(JSON.stringify({
+                      event: "edge_stream_first_visible_chunk",
+                      request_id: requestId,
+                      elapsed_ms: firstVisibleChunkElapsedMs,
+                      path: webTrigger ? "web" : "inference",
+                    }));
+                  }
                   // Forward provider deltas unchanged. Sanitizing each fragment can
                   // remove boundary whitespace and merge words incorrectly.
                   controller.enqueue(
@@ -3711,8 +3773,19 @@ Deno.serve(async (req) => {
                 provider: ai.provider,
                 model: ai.model,
                 request_id: requestId,
+                elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                first_visible_chunk_ms: firstVisibleChunkElapsedMs,
+                path: webTrigger ? "web" : "inference",
               }));
             } catch (error) {
+              console.warn(JSON.stringify({
+                event: "edge_chat_stream_failed",
+                request_id: requestId,
+                elapsed_ms: Math.round(performance.now() - streamRequestStarted),
+                first_visible_chunk_ms: firstVisibleChunkElapsedMs,
+                path: webTrigger ? "web" : "inference",
+                error: error instanceof Error ? error.name : "UnknownError",
+              }));
               const body = {
                 status: "FAIL",
                 error: error instanceof Error ? error.message : String(error),

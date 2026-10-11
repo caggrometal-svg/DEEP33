@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import html
+import json
 import ipaddress
 import os
 import socket
@@ -73,41 +75,218 @@ class SSRFBlockedError(WebFetchError): pass
 class DownloadLimitError(WebFetchError): pass
 
 class HTMLTextExtractor(HTMLParser):
-    def __init__(self)->None:
+    """Extract visible HTML and conservative, server-rendered article metadata."""
+
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.parts=[]; self.title_parts=[]; self._skip_depth=0; self._in_title=False
-    def handle_starttag(self,tag,attrs):
-        tag=tag.lower()
-        if tag=="title": self._in_title=True
+        self.parts: list[str] = []
+        self.title_parts: list[str] = []
+        self.meta_titles: dict[str, str] = {}
+        self.meta_descriptions: dict[str, str] = {}
+        self.jsonld_blocks: list[str] = []
+        self._skip_depth = 0
+        self._in_title = False
+        self._jsonld_active = False
+        self._jsonld_buffer: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        values = {
+            str(key).lower(): str(value or "")
+            for key, value in attrs
+            if key
+        }
+
+        if tag == "script" and "ld+json" in values.get("type", "").lower():
+            self._jsonld_active = True
+            self._jsonld_buffer = []
+            return
+
+        if tag == "meta":
+            key = (
+                values.get("property")
+                or values.get("name")
+                or values.get("itemprop")
+                or ""
+            ).strip().lower()
+            value = " ".join(html.unescape(values.get("content", "")).split())
+            if value and key in {"og:title", "twitter:title"}:
+                self.meta_titles.setdefault(key, value)
+            elif value and key in {
+                "description", "og:description", "twitter:description",
+                "article:description",
+            }:
+                self.meta_descriptions.setdefault(key, value)
+            return
+
+        if tag == "title":
+            self._in_title = True
+            return
         if tag in BLOCKED_HTML_TAGS:
-            self._skip_depth+=1; return
-        if tag in {"p","div","section","article","main","aside","header","footer","nav","li","ul","ol","h1","h2","h3","h4","h5","h6","br","tr","td","th","pre","blockquote"}:
+            self._skip_depth += 1
+            return
+        if tag in {
+            "p", "div", "section", "article", "main", "aside", "header",
+            "footer", "nav", "li", "ul", "ol", "h1", "h2", "h3", "h4",
+            "h5", "h6", "br", "tr", "td", "th", "pre", "blockquote",
+        }:
             self.parts.append("\n")
-    def handle_endtag(self,tag):
-        tag=tag.lower()
-        if tag=="title": self._in_title=False
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "script" and self._jsonld_active:
+            block = "".join(self._jsonld_buffer).strip()
+            if block:
+                self.jsonld_blocks.append(block)
+            self._jsonld_active = False
+            self._jsonld_buffer = []
+            return
+        if tag == "title":
+            self._in_title = False
+            return
         if tag in BLOCKED_HTML_TAGS:
-            self._skip_depth=max(0,self._skip_depth-1); return
-        if tag in {"p","div","section","article","main","aside","header","footer","nav","li","ul","ol","h1","h2","h3","h4","h5","h6","br","tr","td","th","pre","blockquote"}:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if tag in {
+            "p", "div", "section", "article", "main", "aside", "header",
+            "footer", "nav", "li", "ul", "ol", "h1", "h2", "h3", "h4",
+            "h5", "h6", "br", "tr", "td", "th", "pre", "blockquote",
+        }:
             self.parts.append("\n")
-    def handle_data(self,data):
-        if self._skip_depth: return
-        value=" ".join(data.split())
-        if not value: return
-        if self._in_title: self.title_parts.append(value)
+
+    def handle_data(self, data):
+        if self._jsonld_active:
+            self._jsonld_buffer.append(data)
+            return
+        if self._skip_depth:
+            return
+        value = " ".join(str(data or "").split())
+        if not value:
+            return
+        if self._in_title:
+            self.title_parts.append(value)
+            return
         self.parts.append(value)
+
     @property
-    def title(self): return " ".join(self.title_parts).strip()
+    def title(self):
+        return " ".join(self.title_parts).strip()
+
+    @property
+    def meta_title(self):
+        return (
+            self.meta_titles.get("og:title")
+            or self.meta_titles.get("twitter:title")
+            or ""
+        ).strip()
+
+    @property
+    def meta_description(self):
+        return (
+            self.meta_descriptions.get("og:description")
+            or self.meta_descriptions.get("description")
+            or self.meta_descriptions.get("twitter:description")
+            or self.meta_descriptions.get("article:description")
+            or ""
+        ).strip()
+
     @property
     def text(self):
-        lines=[]; blank=False
+        lines = []
+        blank = False
         for raw in "\n".join(self.parts).splitlines():
-            line=" ".join(raw.split()).strip()
+            line = " ".join(raw.split()).strip()
             if not line:
-                if lines and not blank: lines.append("")
-                blank=True; continue
-            lines.append(line); blank=False
+                if lines and not blank:
+                    lines.append("")
+                blank = True
+                continue
+            lines.append(line)
+            blank = False
         return "\n".join(lines).strip()
+
+
+def _usable_fallback_text(value: str, *, minimum: int = 24) -> str:
+    candidate = " ".join(html.unescape(str(value or "")).split()).strip()
+    if len(candidate) < minimum:
+        return ""
+    lowered = candidate.casefold()
+    challenge_markers = (
+        "enable javascript",
+        "javascript is disabled",
+        "just a moment",
+        "access denied",
+        "verify you are human",
+        "checking your browser",
+        "complete the captcha",
+        "request blocked",
+        "403 forbidden",
+        "robot check",
+    )
+    if any(marker in lowered for marker in challenge_markers):
+        return ""
+    return candidate
+
+
+def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
+    """Return conservative articleBody, description, and headline JSON-LD candidates."""
+    article_bodies: list[tuple[int, str]] = []
+    descriptions: list[tuple[int, str]] = []
+    headlines: list[tuple[int, str]] = []
+
+    def visit(value) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        raw_type = value.get("@type", [])
+        if isinstance(raw_type, str):
+            types = [raw_type]
+        elif isinstance(raw_type, list):
+            types = [str(item) for item in raw_type]
+        else:
+            types = []
+        priority = 0 if any("article" in item.casefold() for item in types) else 1
+
+        body = value.get("articleBody")
+        if isinstance(body, str):
+            normalized = " ".join(html.unescape(body).split()).strip()
+            if normalized:
+                article_bodies.append((priority, normalized))
+
+        description = value.get("description")
+        if isinstance(description, str):
+            normalized = _usable_fallback_text(description)
+            if normalized:
+                descriptions.append((priority, normalized))
+
+        headline = value.get("headline") or value.get("name")
+        if isinstance(headline, str):
+            normalized = " ".join(html.unescape(headline).split()).strip()
+            if normalized:
+                headlines.append((priority, normalized))
+
+        for key, child in value.items():
+            if key not in {"articleBody", "description", "headline", "name"}:
+                visit(child)
+
+    for block in blocks:
+        try:
+            visit(json.loads(block))
+        except (TypeError, ValueError):
+            continue
+
+    article_bodies.sort(key=lambda item: (item[0], -len(item[1])))
+    descriptions.sort(key=lambda item: (item[0], -len(item[1])))
+    headlines.sort(key=lambda item: (item[0], -len(item[1])))
+    return (
+        article_bodies[0][1] if article_bodies else "",
+        descriptions[0][1] if descriptions else "",
+        headlines[0][1] if headlines else "",
+    )
 
 def _is_public_ip(value):
     try: return ipaddress.ip_address(value).is_global
@@ -161,14 +340,44 @@ async def _read_limited(response,limit):
         total+=len(chunk)
     return b"".join(chunks)
 
-def _extract_text(content,content_type,max_text_chars):
-    charset="utf-8"; lower=content_type.lower()
-    if "charset=" in lower: charset=lower.split("charset=",1)[1].split(";",1)[0].strip() or charset
-    decoded=content.decode(charset,errors="replace"); mime=content_type.split(";",1)[0].strip().lower()
-    if mime=="text/plain":
-        return "", "\n".join(line.strip() for line in decoded.splitlines() if line.strip())[:max_text_chars]
-    parser=HTMLTextExtractor(); parser.feed(decoded); parser.close()
-    return parser.title[:500],parser.text[:max_text_chars]
+def _extract_text(content, content_type, max_text_chars):
+    charset = "utf-8"
+    lower = content_type.lower()
+    if "charset=" in lower:
+        charset = lower.split("charset=", 1)[1].split(";", 1)[0].strip() or charset
+    decoded = content.decode(charset, errors="replace")
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime == "text/plain":
+        plain = "\n".join(line.strip() for line in decoded.splitlines() if line.strip())
+        return "", plain[:max_text_chars]
+
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+    visible_text = parser.text[:max_text_chars].strip()
+    article_body, structured_description, structured_title = _structured_article_fields(
+        parser.jsonld_blocks
+    )
+    title = (parser.title or parser.meta_title or structured_title).strip()[:500]
+
+    # Visible text remains the primary evidence. Metadata is only a bounded
+    # fallback for publisher pages whose main article is rendered in JavaScript.
+    if len(visible_text) >= 80:
+        return title, visible_text
+
+    structured_body = _usable_fallback_text(article_body, minimum=80)
+    if structured_body:
+        return title, structured_body[:max_text_chars]
+
+    for candidate in (structured_description, parser.meta_description):
+        usable = _usable_fallback_text(candidate)
+        if usable:
+            return title, usable[:max_text_chars]
+
+    if len(visible_text) >= 24:
+        return title, visible_text
+    return title, visible_text
+
 
 async def _fetch_page_uncached(
     *,
@@ -205,8 +414,9 @@ async def _fetch_page_uncached(
                 # the extraction cap while their useful article text is at the
                 # start; _read_limited enforces the same hard byte ceiling.
                 content=await _read_limited(response,_max_response_bytes())
-            title,text=_extract_text(content,content_type,max_text_chars); text=text.strip()
-            if not text: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
+            title, text = _extract_text(content, content_type, max_text_chars)
+            text = text.strip()
+            if len(text) < 20: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
             return {
                 "ok":True,
                 "url":original_url,

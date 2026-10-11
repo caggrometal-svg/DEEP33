@@ -2460,23 +2460,34 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
     await enforce_client_controls(request, session_id)
     if not DEEP33_WEB_TOOLS_ENABLED:
         raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+
+    request_id = request_id_from_request(request)
+    fetch_started = time.perf_counter()
     try:
-        return await fetch_page(
+        result = await fetch_page(
             url,
             timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8")),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
         )
+        logger.info(
+            "web_fetch_stage request_id=%s elapsed_ms=%.2f status=success bytes=%s text_chars=%s redirects=%s",
+            request_id,
+            (time.perf_counter() - fetch_started) * 1000,
+            result.get("bytes"),
+            len(result.get("text") or ""),
+            result.get("redirects"),
+        )
+        return result
     except Exception as exc:
-        # WebFetchError messages are stable, bounded reason codes (not URLs or page
-        # contents). Preserve them in server logs so navigation failures can be
-        # diagnosed without exposing fetched content or user credentials.
+        # The reason is a bounded code, not a URL, response body, or page content.
         logger.warning(
-            "web_fetch_endpoint_failed request_id=%s error=%s detail=%s",
-            request_id_from_request(request),
+            "web_fetch_endpoint_failed request_id=%s elapsed_ms=%.2f error=%s detail=%s",
+            request_id,
+            (time.perf_counter() - fetch_started) * 1000,
             type(exc).__name__,
-            str(exc).replace("\\n", " ")[:160],
+            str(exc).replace("\n", " ")[:160],
         )
         raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
 

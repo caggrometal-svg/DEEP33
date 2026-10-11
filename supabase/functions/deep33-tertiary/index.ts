@@ -2062,11 +2062,20 @@ function decodeHtml(value: string): string {
 function rssText(itemXml: string, tag: string): string {
   const match = itemXml.match(new RegExp("<" + tag + "\\b[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "i"));
   if (!match) return "";
-  return decodeHtml(String(match[1] ?? "")
+  let value = String(match[1] ?? "")
     .replace(/^\s*<!\[CDATA\[/i, "")
     .replace(/\]\]>\s*$/, "")
+    .trim();
+  // Decode escaped markup before stripping it so RSS descriptions stay plain text.
+  value = decodeHtml(decodeHtml(value))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ");
+  return value
     .replace(/<[^>]*>/g, " ")
-    .trim());
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
@@ -2089,7 +2098,7 @@ async function runPublicWebSearchQuery(
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
   // News queries get a fast RSS-first pass; HTML providers are a bounded fallback.
   const currentNewsRequest = edgeCurrentNewsQuery(q);
-  const fastNewsQuery = !forceFullSearch && currentNewsRequest;
+  const fastNewsQuery = !forceFullSearch && currentNewsRequest && providerTimeoutMs === undefined;
 
   const providers: Array<{ name: string; url: string; headers?: Record<string, string> }> = [
     {
@@ -2189,9 +2198,13 @@ async function runPublicWebSearchQuery(
   };
 
   const activeProviders = fastNewsQuery
-    ? providers.filter((provider) => provider.name === "bing_public" || provider.name === "google_news_public")
+    // Google News is the fast, date-filtered primary for a news request.
+    // The bounded fallback below broadens provider coverage only when needed.
+    ? providers.filter((provider) => provider.name === "google_news_public")
+    // Corroboration must come from independent providers, not a second RSS call
+    // to Google News or Bing's same-query response.
     : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public")
+      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {

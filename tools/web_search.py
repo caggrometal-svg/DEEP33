@@ -367,6 +367,25 @@ async def _duckduckgo_search(query, timeout_seconds, max_results):
     return _normalise_results(parser.results, max_results)
 
 
+class _RSSSnippetParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        value = " ".join(str(data or "").split()).strip()
+        if value:
+            self.parts.append(value)
+
+
+def _plain_rss_snippet(value: str) -> str:
+    """Strip markup from RSS descriptions before they reach ranking or the model."""
+    parser = _RSSSnippetParser()
+    parser.feed(html.unescape(str(value or "")))
+    parser.close()
+    return " ".join(parser.parts).strip()[:1500]
+
+
 async def _parse_bing_rss(response, max_results):
     if response.status_code >= 400:
         raise WebSearchError(f"WEB_SEARCH_BING_RSS_HTTP_{response.status_code}")
@@ -401,6 +420,7 @@ async def _parse_bing_rss(response, max_results):
                 or item.findtext("{*}content")
                 or ""
             ).strip()
+            snippet = _plain_rss_snippet(snippet)
             if title and url:
                 rss_results.append({"title": title, "url": url, "snippet": snippet})
         normalized = _normalise_results(rss_results, max_results)
