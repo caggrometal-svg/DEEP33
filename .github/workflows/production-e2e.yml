@@ -172,6 +172,58 @@ jobs:
           fi
           echo "DEEP33_WEB_SOURCE_NAVIGATION_PASS"
 
+      - name: Verify the primary Edge chat performs search, source navigation, and response
+        run: |
+          set -euo pipefail
+          payload='{"messages":[{"role":"user","content":"Busca en internet la documentación oficial de Python asyncio y explica brevemente qué es."}],"personality":"NEUTRO"}'
+          status="$(curl -sS --connect-timeout 8 --max-time 45 \
+            -o /tmp/deep33-edge-web-chat.sse -w "%{http_code}" \
+            -X POST "$PRIMARY_URL/v1/chat/stream" \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-DEEP33-Session-Id: edge-web-e2e-$GITHUB_RUN_ID" \
+            -H "X-Request-ID: edge-web-e2e-$GITHUB_RUN_ID" \
+            --data-binary "$payload" || true)"
+          if [ "$status" != "200" ]; then
+            echo "DEEP33_EDGE_WEB_CHAT_FAIL http=$status"
+            head -c 1000 /tmp/deep33-edge-web-chat.sse 2>/dev/null || true
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          raw = Path("/tmp/deep33-edge-web-chat.sse").read_text(errors="replace")
+          if "event: error" in raw:
+              print("DEEP33_EDGE_WEB_CHAT_FAIL error_event=true")
+              raise SystemExit(1)
+          chunks = []
+          done = False
+          for block in raw.split("\n\n"):
+              for line in block.splitlines():
+                  if not line.startswith("data: "):
+                      continue
+                  data = line[6:].strip()
+                  if data == "[DONE]":
+                      done = True
+                      continue
+                  try:
+                      event = json.loads(data)
+                  except json.JSONDecodeError:
+                      continue
+                  choices = event.get("choices")
+                  if isinstance(choices, list) and choices:
+                      delta = choices[0].get("delta", {})
+                      value = delta.get("content", "") if isinstance(delta, dict) else ""
+                      if isinstance(value, str) and value:
+                          chunks.append(value)
+          answer = "".join(chunks).strip()
+          if not done or len(answer) < 20:
+              print(f"DEEP33_EDGE_WEB_CHAT_FAIL done={done} text_chars={len(answer)}")
+              raise SystemExit(1)
+          print(f"DEEP33_EDGE_WEB_NAVIGATION_E2E_PASS text_chars={len(answer)}")
+          PY
+
       - name: Measure live production search latency (10 independent requests)
         run: |
           set -euo pipefail
