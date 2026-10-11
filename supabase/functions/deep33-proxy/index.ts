@@ -89,6 +89,7 @@ async function buildNavigatedWebEvidence(
   sessionId: string,
   userAuthorization = "",
 ): Promise<{ sources: NavigatedWebSource[]; attempted: number; succeeded: number }> {
+  const navigationStarted = performance.now();
   const sources: NavigatedWebSource[] = Array.isArray(search.results)
     ? search.results
         .filter((item): item is Record<string, unknown> =>
@@ -103,6 +104,14 @@ async function buildNavigatedWebEvidence(
     : [];
 
   if (!sources.length || !userAuthorization.startsWith("Bearer ")) {
+    console.log(JSON.stringify({
+      event: "edge_web_navigation",
+      status: "skipped",
+      elapsed_ms: Math.round(performance.now() - navigationStarted),
+      attempted_pages: 0,
+      fetched_pages: 0,
+      request_scope: sessionId.slice(0, 128),
+    }));
     return { sources, attempted: 0, succeeded: 0 };
   }
 
@@ -144,6 +153,8 @@ async function buildNavigatedWebEvidence(
 
   console.log(JSON.stringify({
     event: "edge_web_navigation",
+    status: pageByUrl.size > 0 ? "success" : (targets.length > 0 ? "no_pages_readable" : "skipped"),
+    elapsed_ms: Math.round(performance.now() - navigationStarted),
     attempted_pages: targets.length,
     fetched_pages: pageByUrl.size,
     request_scope: sessionId.slice(0, 128),
@@ -3322,6 +3333,23 @@ async function edgeSearch(
 ) {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
+  const searchStarted = performance.now();
+
+  const logSearchStage = (
+    status: string,
+    path: string,
+    result: Record<string, unknown>,
+  ) => {
+    console.log(JSON.stringify({
+      event: "edge_web_search_stage",
+      elapsed_ms: Math.round(performance.now() - searchStarted),
+      status,
+      path,
+      result_count: Array.isArray(result.results) ? result.results.length : 0,
+      providers: Array.isArray(result.providers) ? result.providers : [],
+      request_scope: sessionId.slice(0, 128),
+    }));
+  };
 
   // Edge direct is the latency-first canonical search path. Render remains an
   // authenticated fallback when every public Edge provider is empty/unavailable.
@@ -3337,10 +3365,12 @@ async function edgeSearch(
     Array.isArray(direct.results) &&
     direct.results.length > 0
   ) {
+    logSearchStage("success", "edge-direct", direct);
     return direct;
   }
 
   if (!UPSTREAM || !userAuthorization.startsWith("Bearer ")) {
+    logSearchStage("unavailable", "edge-direct", direct);
     return direct;
   }
 
@@ -3367,7 +3397,7 @@ async function edgeSearch(
       if (filtered.length > 0) {
         const providers = edgeProvidersForResults(filtered);
         const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
-        return {
+        const response = {
           ...data,
           ok: true,
           providers,
@@ -3377,10 +3407,14 @@ async function edgeSearch(
           verification: edgeSearchVerification(filtered, providers),
           fallback_path: "render",
         };
+        logSearchStage("success", "render-fallback", response);
+        return response;
       }
     }
+    logSearchStage("unavailable", "render-fallback", direct);
     return direct;
   } catch {
+    logSearchStage("unavailable", "render-fallback", direct);
     return direct;
   }
 }
