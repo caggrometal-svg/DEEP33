@@ -175,7 +175,7 @@ jobs:
       - name: Verify the primary Edge chat performs search, source navigation, and response
         run: |
           set -euo pipefail
-          payload='{"messages":[{"role":"user","content":"Busca en internet la documentación oficial de Python asyncio y explica brevemente qué es."}],"personality":"NEUTRO"}'
+          payload='{"messages":[{"role":"user","content":"Busca en internet: Python asyncio official documentation."}],"personality":"NEUTRO"}'
           status="$(curl -sS --connect-timeout 8 --max-time 45 \
             -o /tmp/deep33-edge-web-chat.sse -w "%{http_code}" \
             -X POST "$PRIMARY_URL/v1/chat/stream" \
