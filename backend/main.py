@@ -2933,7 +2933,7 @@ async def generate(
                 deadline=deadline,
             )
             sources = []
-            if DEEP33_WEB_TOOLS_ENABLED and response_needs_web_retry(data):
+            if DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and response_needs_web_retry(data):
                 logger.info(
                     "knowledge_gap_web_retry request_id=%s session_id=%s personality=%s",
                     request_id,
