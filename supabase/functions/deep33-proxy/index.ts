@@ -2580,11 +2580,23 @@ function decodeHtml(value: string): string {
 function rssText(itemXml: string, tag: string): string {
   const match = itemXml.match(new RegExp("<" + tag + "\\b[^>]*>([\\s\\S]*?)<\\/" + tag + ">", "i"));
   if (!match) return "";
-  return decodeHtml(String(match[1] ?? "")
+  let value = String(match[1] ?? "")
     .replace(/^\s*<!\[CDATA\[/i, "")
     .replace(/\]\]>\s*$/, "")
+    .trim();
+
+  // RSS providers sometimes HTML-escape the markup inside <description>.
+  // Decode before stripping tags so escaped <a>/<font> wrappers never leak
+  // into search snippets or the evidence passed to the model.
+  value = decodeHtml(decodeHtml(value))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ");
+  return value
     .replace(/<[^>]*>/g, " ")
-    .trim());
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
