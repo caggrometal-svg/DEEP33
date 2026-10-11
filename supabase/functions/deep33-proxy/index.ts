@@ -689,21 +689,31 @@ function canonicalizeIdempotencyValue(value: unknown): unknown {
   return value;
 }
 
-function canonicalIdempotencyJson(value: unknown): string {
-  return JSON.stringify(canonicalizeIdempotencyValue(value));
+function pythonFloatJson(value: number): string {
+  if (Object.is(value, -0)) return "-0.0";
+  if (value === 0 || Number.isInteger(value)) return value.toFixed(1);
+  if (Math.abs(value) < 0.0001) {
+    const [mantissa, exponentRaw] = value.toExponential().split("e");
+    const exponent = Number(exponentRaw);
+    return mantissa + "e-" + String(Math.abs(exponent)).padStart(2, "0");
+  }
+  return String(value);
 }
 
-function canonicalIdempotencyTemperature(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric === 0) return Number.isFinite(numeric) ? "0" : null;
-  const rendered = numeric.toPrecision(15);
-  if (rendered.includes("e")) {
-    const [rawMantissa, rawExponent] = rendered.split("e");
-    const mantissa = rawMantissa.replace(/\.0+$|(?<=\d)0+$/g, "").replace(/\.$/, "");
-    return mantissa + "e" + Number(rawExponent);
+function canonicalIdempotencyJson(value: unknown, parentKey = ""): string {
+  if (typeof value === "number" && parentKey === "temperature") {
+    return pythonFloatJson(value);
   }
-  return rendered.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalIdempotencyJson(item)).join(",") + "]";
+  }
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return "{" + Object.keys(source).sort().map((key) =>
+      JSON.stringify(key) + ":" + canonicalIdempotencyJson(source[key], key)
+    ).join(",") + "}";
+  }
+  return JSON.stringify(value);
 }
 
 function idempotencyResultBody(record: Record<string, unknown>): Record<string, unknown> {
@@ -750,7 +760,7 @@ async function buildEdgeIdempotencyContext(
   const requestHash = await sha256(canonicalIdempotencyJson({
     messages,
     model: payload.model === undefined ? null : payload.model,
-    temperature: canonicalIdempotencyTemperature(payload.temperature),
+    temperature: payload.temperature === undefined ? null : payload.temperature,
     personality: normalizePersonality(personality),
   }));
   return {
