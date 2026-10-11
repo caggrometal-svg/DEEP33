@@ -58,11 +58,14 @@ jobs:
             fi
             if [ "$status" = "409" ]; then
               echo "AUTH_PROFILE_COLLISION attempt=$attempt; rotating test profile"
-              continue
+            elif [ "$status" = "000" ] || [ "$status" = "429" ] || [ "${status:0:1}" = "5" ]; then
+              echo "AUTH_TRANSIENT_FAILURE attempt=$attempt http=$status"
+            else
+              echo "AUTH_SESSION_FAILED status=$status"
+              printf '%s\n' "$auth_json" | jq -c '{error: (.error // "unknown")}' || true
+              exit 1
             fi
-            echo "AUTH_SESSION_FAILED status=$status"
-            printf '%s\n' "$auth_json" | jq -c '{error: (.error // "unknown")}' || true
-            exit 1
+            [ "$attempt" -lt 3 ] && sleep 3
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
@@ -179,8 +182,18 @@ jobs:
             sleep 5
           done
           test "$audit_ok" = "1" || { cat /tmp/audit-recheck.json 2>/dev/null || true; exit 1; }
-          curl -fsS --connect-timeout 8 --max-time 120 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/ai/diagnostics" | tee /tmp/diag.json
-          jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json
+          diagnostics_ok=0
+          for attempt in $(seq 1 5); do
+            status="$(curl -sS --connect-timeout 8 --max-time 120 -o /tmp/diag.json -w "%{http_code}" -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/ai/diagnostics" || true)"
+            if [ "$status" = "200" ] && jq -e '.online==true and .checks.MODEL=="PASS" and .checks.CHAT=="PASS"' /tmp/diag.json >/dev/null 2>&1; then
+              diagnostics_ok=1
+              break
+            fi
+            echo "DEEP33_DIAGNOSTICS_NOT_READY attempt=$attempt http=$status"
+            jq -c '{online,checks,inference,timestamp}' /tmp/diag.json 2>/dev/null || true
+            [ "$attempt" -lt 5 ] && sleep 5
+          done
+          test "$diagnostics_ok" = "1" || { echo "DEEP33_DIAGNOSTICS_FAIL"; cat /tmp/diag.json 2>/dev/null || true; exit 1; }
           inference_ok=0
           for attempt in $(seq 1 4); do
             echo "DEEP33_REAL_INFERENCE_ATTEMPT=$attempt"
