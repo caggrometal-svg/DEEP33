@@ -294,6 +294,11 @@ function requiresFreshWeb(query: string): boolean {
     "verifica", "verificar", "comprueba", "comprobar", "precio", "cotización",
     "fecha", "fechas", "día", "hora", "ahora mismo", "en este momento",
     "investiga", "investigación", "evidencia", "contrasta", "contrastar",
+    "busca", "buscar", "búsqueda", "búscame", "consulta", "consultar", "comprueba",
+    "verifica", "navega", "navegar", "fuente", "fuentes", "referencias",
+    "clima", "tiempo meteorológico", "temperatura", "pronóstico", "pronostico",
+    "dólar", "dolar", "uf", "sismo", "terremoto", "volcán", "volcan",
+    "elecciones", "elección", "presidente", "cotización", "mercado", "acciones",
   ].some((term) => normalized.includes(term));
 }
 
@@ -3659,7 +3664,7 @@ Deno.serve(async (req) => {
         );
         const sources = navigation.sources;
 
-        if (!search.ok || sources.length === 0) {
+        if (!search.ok || sources.length === 0 || navigation.succeeded < 1) {
           return new Response(
             "event: error\ndata: " +
               JSON.stringify({
