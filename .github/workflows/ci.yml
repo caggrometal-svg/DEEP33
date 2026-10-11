@@ -74,24 +74,7 @@ jobs:
               -H "content-type: application/json" \
               -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
             status="${response##*DEEP33_HTTP_STATUS:}"
-            auth_json="${response%$'\n'DEEP33_HTTP_STATUS:*}"
-            if [ "$status" = "200" ]; then
-              token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
-              [ -n "$token" ] && break
-            fi
-            if [ "$status" = "409" ]; then
-              echo "AUTH_PROFILE_COLLISION attempt=$attempt"
-            elif [ "$status" = "000" ] || [ "$status" = "429" ] || [[ "$status" == 5* ]]; then
-              echo "AUTH_TRANSIENT_FAILURE attempt=$attempt http=$status"
-            else
-              echo "AUTH_SESSION_FATAL http=$status"
-              printf '%s\n' "$auth_json" | jq -c '{error: (.error // "unknown")}' || true
-              exit 1
-            fi
-            [ "$attempt" -lt 5 ] && sleep 3
-          done
-          test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
-          echo "DEEP33_CI_TOKEN=$token" >> "$GITHUB_ENV"
+            auth_json="${response%
       - name: Verify PRIMARY realtime search
         run: |
           set -euo pipefail
@@ -950,7 +933,7 @@ jobs:
             fi
             if [ "$status" = "409" ]; then
               echo "AUTH_PROFILE_COLLISION attempt=$attempt"
-            elif [ "$status" = "000" ] || [ "$status" = "429" ] || [ "${status:0:1}" = "5" ]; then
+            elif [ "$status" = "000" ] || [ "$status" = "429" ] || [[ "$status" == 5* ]]; then
               echo "AUTH_TRANSIENT_FAILURE attempt=$attempt http=$status"
             else
               echo "AUTH_SESSION_FATAL http=$status"
