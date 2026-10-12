@@ -291,12 +291,17 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
         ]
 
         multidomain_evidence: list[dict] = []
-        for query in topics:
+        for query_index, query in enumerate(topics):
+            request_id = f"phase12-search-{query_index}-{int(time.time() * 1000)}"
+            request_headers = {
+                **headers,
+                "X-Request-ID": request_id,
+            }
             started = time.perf_counter()
             response = await client.get(
                 f"{base}/v1/web/search",
                 params={"q": query},
-                headers=headers,
+                headers=request_headers,
             )
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             if response.status_code == 502:
@@ -328,12 +333,18 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
 
             fetch_ok = 0
             fetch_fail = 0
-            for url in urls[:3]:
+            fetch_ms = 0.0
+            for fetch_index, url in enumerate(urls[:3]):
+                fetch_started = time.perf_counter()
                 fetched = await client.get(
                     f"{base}/v1/web/fetch",
                     params={"url": url},
-                    headers=headers,
+                    headers={
+                        **headers,
+                        "X-Request-ID": f"{request_id}-fetch-{fetch_index}",
+                    },
                 )
+                fetch_ms += (time.perf_counter() - fetch_started) * 1000.0
                 if fetched.status_code == 502:
                     raise AssertionError(f"502 forbidden for source fetch: {url}")
                 if fetched.status_code >= 500:
@@ -351,8 +362,14 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
             multidomain_evidence.append(
                 {
                     "query": query,
+                    "http_status": response.status_code,
+                    "provider": payload.get("winner_provider") or payload.get("provider"),
                     "domains": domains[:5],
                     "search_ms": round(elapsed_ms, 2),
+                    "fetch_ms": round(fetch_ms, 2),
+                    "ttft_ms": None,
+                    "total_ms": round(elapsed_ms + fetch_ms, 2),
+                    "request_id": request_id,
                     "fetch_success": fetch_ok,
                     "fetch_failed": fetch_fail,
                 }
@@ -376,9 +393,11 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                 "messages": [{"role": "user", "content": prompt}],
                 "personality": "NEUTRO",
             }
+            stream_request_id = f"phase12-stream-{suffix}-{int(time.time() * 1000)}"
             stream_headers = {
                 **headers,
                 "Accept": "text/event-stream",
+                "X-Request-ID": stream_request_id,
                 "Idempotency-Key": f"gate-{suffix}-{int(time.time() * 1000)}",
             }
             started = time.perf_counter()
@@ -451,10 +470,17 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                 raise AssertionError(f"Total latency gate failed: {total:.3f}s >= 10.0s")
             return {
                 "prompt": prompt,
+                "http_status": 200,
+                "provider": "chat-stream",
+                "domains": [],
+                "search_ms": None,
+                "fetch_ms": None,
                 "ttft_ms": round(ttft * 1000, 2),
                 "total_ms": round(total * 1000, 2),
+                "request_id": stream_request_id,
                 "states": statuses,
                 "chars": len(rebuilt),
+                "duplicates": 0,
             }
 
         stream_cases = [
@@ -468,34 +494,100 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
         for index, prompt in enumerate(stream_cases):
             stream_results.append(await run_stream(prompt, str(index)))
 
-        async def one_search(i: int) -> float:
+        supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        supabase_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+        if not supabase_url or not supabase_key:
+            raise AssertionError("Stress gate requires SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY")
+
+        auth_semaphore = asyncio.Semaphore(5)
+
+        async def create_stress_identity(i: int) -> tuple[str, str]:
+            async with auth_semaphore:
+                profile_id = f"phase12-stress-{int(time.time() * 1000)}-{i}"
+                response = await client.post(
+                    f"{supabase_url}/functions/v1/deep33-auth",
+                    headers={
+                        "apikey": supabase_key,
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "action": "session",
+                        "memory_profile_id": profile_id,
+                    },
+                )
+                if response.status_code != 200:
+                    raise AssertionError(
+                        f"Stress auth {i} failed HTTP {response.status_code}: {response.text[:200]}"
+                    )
+                token_value = str(response.json().get("access_token") or "").strip()
+                if not token_value:
+                    raise AssertionError(f"Stress auth {i} returned no token")
+                return token_value, profile_id
+
+        stress_identities = await asyncio.gather(
+            *(create_stress_identity(i) for i in range(20))
+        )
+
+        async def one_search(level: int, i: int) -> dict:
+            auth_token, stress_session = stress_identities[i]
+            request_id = f"stress-c{level}-u{i}-{int(time.time()*1000)}"
             started = time.perf_counter()
-            resp = await client.get(
-                f"{base}/v1/web/search",
-                params={"q": f"Python asyncio documentación oficial concurrencia {i}"},
-                headers={**headers, "X-Request-ID": f"stress-{i}-{int(time.time()*1000)}"},
-            )
-            elapsed = time.perf_counter() - started
-            if resp.status_code >= 500:
-                raise AssertionError(f"Stress request {i} failed with HTTP {resp.status_code}")
-            if resp.status_code != 200:
-                raise AssertionError(f"Stress request {i} unexpected HTTP {resp.status_code}")
-            return elapsed
+            try:
+                resp = await client.get(
+                    f"{base}/v1/web/search",
+                    params={"q": f"Python asyncio documentación oficial concurrencia {level}-{i}"},
+                    headers={
+                        "Authorization": f"Bearer {auth_token}",
+                        "X-DEEP33-Session-Id": stress_session,
+                        "X-Request-ID": request_id,
+                    },
+                )
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                return {
+                    "request_id": request_id,
+                    "http_status": resp.status_code,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "timeout": False,
+                    "error": None,
+                }
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout):
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                return {
+                    "request_id": request_id,
+                    "http_status": 0,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "timeout": True,
+                    "error": "timeout",
+                }
 
         stress_results: list[dict] = []
         for concurrency in (1, 5, 10, 20):
-            latencies = await asyncio.gather(*(one_search(i) for i in range(concurrency)))
-            ms = [value * 1000.0 for value in latencies]
-            stress_results.append(
-                {
-                    "concurrency": concurrency,
-                    "p50_ms": round(percentile(ms, 0.50), 2),
-                    "p95_ms": round(percentile(ms, 0.95), 2),
-                    "p99_ms": round(percentile(ms, 0.99), 2),
-                    "max_ms": round(max(ms), 2),
-                    "errors": 0,
-                }
+            samples = await asyncio.gather(
+                *(one_search(concurrency, i) for i in range(concurrency))
             )
+            ms = [float(item["elapsed_ms"]) for item in samples]
+            success = sum(1 for item in samples if item["http_status"] == 200)
+            five_xx = sum(1 for item in samples if 500 <= item["http_status"] <= 599)
+            timeouts = sum(1 for item in samples if item["timeout"])
+            failures = len(samples) - success
+            result = {
+                "concurrency": concurrency,
+                "users": concurrency,
+                "requests": len(samples),
+                "success": success,
+                "success_rate": round(success / len(samples), 4),
+                "p50_ms": round(percentile(ms, 0.50), 2),
+                "p95_ms": round(percentile(ms, 0.95), 2),
+                "p99_ms": round(percentile(ms, 0.99), 2),
+                "max_ms": round(max(ms), 2),
+                "5xx_count": five_xx,
+                "timeouts": timeouts,
+                "errors": failures,
+                "samples": samples,
+            }
+            stress_results.append(result)
+            if failures or five_xx or timeouts:
+                raise AssertionError(f"Stress gate failed at concurrency={concurrency}: {result}")
 
         print(
             json.dumps(
