@@ -99,6 +99,7 @@ def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
         ]
 
     orchestrator.providers["bing"] = failing
+    orchestrator.providers["google"] = failing
     orchestrator.providers["mojeek"] = failing
     orchestrator.providers["duckduckgo"] = ddg
     result = asyncio.run(orchestrator.search("DEEP33 fallback test", fresh=True))
@@ -173,6 +174,7 @@ def test_recovery_broadens_provider_query_but_ranks_against_original_question():
         return []
 
     orchestrator.providers["bing"] = provider
+    orchestrator.providers["google"] = provider
     orchestrator.providers["mojeek"] = provider
     orchestrator.providers["duckduckgo"] = provider
     original = "Python asyncio TaskGroup documentación oficial"
@@ -208,6 +210,7 @@ def test_no_results_logs_redacted_rank_diagnostics(caplog):
         ]
 
     orchestrator.providers["bing"] = unrelated
+    orchestrator.providers["google"] = unrelated
     orchestrator.providers["mojeek"] = unrelated
     orchestrator.providers["duckduckgo"] = unrelated
     result = asyncio.run(orchestrator.search(private_query, fresh=True))
