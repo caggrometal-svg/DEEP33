@@ -590,6 +590,73 @@ def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch)
     asyncio.run(close())
 
 
+def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monkeypatch):
+    import backend.main as main
+
+    query = "investiga el funcionamiento de Python asyncio y concurrencia"
+    urls = [
+        "https://blocked-one.example/a",
+        "https://blocked-two.example/b",
+        "https://blocked-two.example/another",
+        "https://working-three.example/c",
+        "https://working-four.example/d",
+        "https://extra-five.example/e",
+    ]
+
+    async def fake_search(*_args, **_kwargs):
+        results = [
+            {"title": f"Result {index}", "url": url, "snippet": "short result snippet"}
+            for index, url in enumerate(urls)
+        ]
+        return {
+            "ok": True,
+            "engine": "DEEP33 Search Engine",
+            "engine_version": "1.4.0",
+            "results": results,
+            "sources": results,
+            "provider": "test",
+            "providers_attempted": ["test"],
+            "queries": [query],
+            "retrieved_at": "2026-10-12T00:00:00Z",
+            "verification": {"distinct_domains": 5},
+            "fresh_request": True,
+        }
+
+    attempted = []
+
+    async def fake_execute(name, arguments):
+        assert name == "web_fetch"
+        url = arguments["url"]
+        attempted.append(url)
+        if url in urls[:2]:
+            return {"ok": False, "error": "FETCH_BLOCKED"}
+        label = "READABLE-THREE" if "working-three" in url else "READABLE-FOUR"
+        return {
+            "ok": True,
+            "title": label,
+            "url": url,
+            "final_url": url,
+            "text": (f"{label} independently retrieved article content. " * 5),
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "execute_web_tool", fake_execute)
+
+    working, sources, evidence_fragments, _ = asyncio.run(
+        main.prepare_web_evidence(
+            [{"role": "user", "content": query}],
+            request_id="web-fetch-fallback-test",
+            deep=True,
+        )
+    )
+
+    assert working
+    assert len(sources) == len(urls)
+    assert set(attempted) == {urls[0], urls[1], urls[3], urls[4]}
+    assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
+    assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
+
+
 def test_edge_web_navigation_requires_multiple_independent_sources() -> None:
     from pathlib import Path
 
