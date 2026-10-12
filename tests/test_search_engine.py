@@ -336,38 +336,42 @@ def test_controversial_queries_expand_against_official_and_independent_versions(
     assert any("evidencia independiente" in q.lower() for q in plan.queries[1:])
 
 
+
 def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     import tools.web_search as web_search_module
+    import backend.search.resilient as resilient_module
 
     calls = {"count": 0}
 
-    class FakeEngine:
-        def __init__(self, *, max_results, max_queries):
-            self.max_results = max_results
-            self.max_queries = max_queries
-
-        async def search(self, *args, **kwargs):
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
             calls["count"] += 1
             return {
                 "ok": True,
                 "engine": "DEEP33 Search Engine",
-                "engine_version": "1.3.0",
+                "engine_version": "1.4.0",
                 "provider_independent": True,
                 "results": [{
                     "title": "Live result",
                     "url": f"https://example.com/live-{calls['count']}",
                     "snippet": "fresh",
                 }],
+                "sources": [],
+                "providers": ["test"],
+                "providers_attempted": ["test"],
+                "provider": "test",
+                "winner_provider": "test",
+                "errors": [],
             }
 
-    monkeypatch.setattr("backend.search.engine.SearchEngine", FakeEngine)
-    web_search_module._SEARCH_CACHE.clear()
+    fake = FakeOrchestrator()
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda _max_results=5: fake)
+    web_search_module._SEARCH_INFLIGHT.clear()
 
     asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
     asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
 
     assert calls["count"] == 2
-
 
 def test_realtime_policy_detects_local_current_situation_as_news_intent():
     query = "situación actual de la comuna de Las Condes en Chile"
