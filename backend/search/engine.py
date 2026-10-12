@@ -704,8 +704,10 @@ class SearchEngine:
             return len(urls) >= required_coverage and len(domains) >= min(required_coverage, 2)
 
         async def call(name: str) -> tuple[str, list[dict], list[str]]:
+            wrapper_errors: list[str] = []
+
             async def operation() -> list[dict]:
-                return await self._provider_search(
+                results, existing_errors = await self._provider_search_with_retry(
                     name,
                     planned_query,
                     timeout_seconds=min(
@@ -713,7 +715,10 @@ class SearchEngine:
                         controller.budgets.provider_total_seconds,
                     ),
                     api_key=api_key,
+                    fast_mode=fast_mode or plan_depth == "realtime",
                 )
+                wrapper_errors.extend(existing_errors)
+                return results
 
             results, attempt = await controller.run_provider(
                 name,
@@ -723,8 +728,8 @@ class SearchEngine:
                     controller.budgets.provider_total_seconds,
                 ),
             )
-            provider_errors: list[str] = []
-            if not attempt.ok:
+            provider_errors = list(wrapper_errors)
+            if not attempt.ok and not provider_errors:
                 provider_errors.append(
                     f"{name}:{attempt.code}:elapsed_ms={attempt.elapsed_ms:.2f}"
                 )
