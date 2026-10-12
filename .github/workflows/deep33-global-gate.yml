@@ -32,7 +32,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-      DEEP33_BASE_URL: https://deep33-backend.onrender.com
+      DEEP33_BASE_URL: ""
       DEEP33_TEST_AUTH_TOKEN: ""
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       DEEP33_REQUIRE_LIVE_GATE: ${{ github.ref == 'refs/heads/main' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
@@ -82,6 +82,7 @@ jobs:
             exit 1
           done
           test -n "$token" || { echo "GLOBAL_GATE_AUTH_FAILED retries_exhausted"; exit 1; }
+          echo "DEEP33_BASE_URL=https://deep33-backend.onrender.com" >> "$GITHUB_ENV"
           echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: DEEP33-TEST-GLOBAL-101026
