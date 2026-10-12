@@ -515,3 +515,74 @@ def test_live_production_gate_zero_5xx_multidomain_and_android_sse():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q", "-ra"]))
+
+
+
+def test_global_gate_does_not_probe_live_without_explicit_flag(monkeypatch, capsys):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    root_script = Path(__file__).resolve().parents[1] / "test_deep33_global_gate.py"
+    spec = importlib.util.spec_from_file_location("_deep33_root_global_gate", root_script)
+    assert spec is not None and spec.loader is not None
+    gate = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gate
+    spec.loader.exec_module(gate)
+
+    monkeypatch.setattr(
+        gate,
+        "parse_args",
+        lambda: SimpleNamespace(
+            base_url="https://deep33-backend.onrender.com",
+            token="",
+            session_id="unit-test-session",
+            require_live=False,
+        ),
+    )
+    monkeypatch.setattr(gate, "run_unit_gate", lambda: True)
+
+    async def unexpected_live_probe(*_args, **_kwargs):
+        raise AssertionError("live production probe ran without require_live=true")
+
+    monkeypatch.setattr(gate, "live_gate", unexpected_live_probe)
+
+    assert gate.main() == 0
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["status"] == "PASS"
+    assert payload["live"] is False
+
+
+def test_global_gate_requires_authenticated_token_for_live_mode(monkeypatch, capsys):
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    root_script = Path(__file__).resolve().parents[1] / "test_deep33_global_gate.py"
+    spec = importlib.util.spec_from_file_location("_deep33_root_global_gate", root_script)
+    assert spec is not None and spec.loader is not None
+    gate = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gate
+    spec.loader.exec_module(gate)
+
+    monkeypatch.setattr(
+        gate,
+        "parse_args",
+        lambda: SimpleNamespace(
+            base_url="https://deep33-backend.onrender.com",
+            token="",
+            session_id="unit-test-session",
+            require_live=True,
+        ),
+    )
+    monkeypatch.setattr(gate, "run_unit_gate", lambda: True)
+
+    async def unexpected_live_probe(*_args, **_kwargs):
+        raise AssertionError("live production probe must not run without a token")
+
+    monkeypatch.setattr(gate, "live_gate", unexpected_live_probe)
+
+    assert gate.main() == 1
+    assert "DEEP33_TEST_AUTH_TOKEN is empty" in capsys.readouterr().err
