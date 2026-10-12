@@ -16,6 +16,7 @@ on:
       - ".github/workflows/ci.yml"
       - ".github/workflows/warmup.yml"
       - "backend/search/engine.py"
+      - "backend/search/resilient.py"
       - "tests/test_search_engine.py"
       - "test_deep33_global_gate.py"
       - "render.yaml"
