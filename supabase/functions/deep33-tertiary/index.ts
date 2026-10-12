@@ -338,7 +338,9 @@ async function buildNavigatedWebEvidence(
       }
       if (!hostname || fetchedDomains.has(hostname)) continue;
       fetchedDomains.add(hostname);
-      pageByUrl.set(item.value.url, item.value);
+      const sourceUrl = typeof item.value.url === "string" ? item.value.url : "";
+      if (!sourceUrl) continue;
+      pageByUrl.set(sourceUrl, item.value);
     }
   }
 
