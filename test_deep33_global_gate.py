@@ -249,6 +249,7 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
     base = base_url.rstrip("/")
     headers = {
         "X-Request-ID": f"deep33-global-gate-{int(time.time())}",
+        "X-DEEP33-Session-Id": session_id,
         "X-Session-ID": session_id,
     }
     if token:
