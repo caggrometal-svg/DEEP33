@@ -197,6 +197,8 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         route_start = source.index('@app.post("/v1/chat/stream")')
         route_end = source.index("def _sse_text_chunks", route_start)
         route = source[route_start:route_end]
+        deferred_start = route.index("async def deferred_stream")
+        deferred = route[deferred_start:]
 
         ordered = [
             'yield _sse_status("thinking"',
@@ -204,9 +206,9 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             '"sources_ready"',
             'yield _sse_status("token_stream"',
         ]
-        offsets = [route.index(marker) for marker in ordered]
+        offsets = [deferred.index(marker) for marker in ordered]
         self.assertEqual(offsets, sorted(offsets))
-        self.assertIn("await asyncio.gather(*pending_tasks, return_exceptions=True)", route)
+        self.assertIn("await asyncio.gather(*pending_tasks, return_exceptions=True)", deferred)
         self.assertEqual(main._sse_text_chunks(""), [])
         payload = main._sse_delta("x").decode("utf-8")
         decoded = json.loads(payload.split("data: ", 1)[1])
