@@ -15,6 +15,7 @@ import uuid
 import httpx
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -1624,7 +1625,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(source.get("snippet") or "")[:1500],
             }
 
-    candidates = list(sources.values())[:2]
+    candidates = []
+    seen_domains = set()
+    for source in sources.values():
+        host = (urlparse(str(source.get("url") or "")).hostname or "").casefold()
+        if not host or host in seen_domains:
+            continue
+        seen_domains.add(host)
+        candidates.append(source)
+        if len(candidates) >= 5:
+            break
     fetched_pages = []
     compact_search_results = [
         {
@@ -1646,18 +1656,55 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     )
     explicit_research = bool(deep and not realtime)
     if candidates and (explicit_research or not snippets_sufficient):
-        results = await asyncio.gather(
-            *(execute_web_tool("web_fetch", {"url": source["url"]}) for source in candidates),
-            return_exceptions=True,
-        )
-        for source, result in zip(candidates, results):
-            if isinstance(result, Exception):
-                continue
-            fetched_pages.append({
-                "title": source["title"],
-                "url": source["url"],
-                "text": str(result.get("text") or result.get("snippet") or "")[:2200],
-            })
+        # Keep at most two requests in flight. Each blocked/failed URL frees a
+        # slot immediately so the next independent publisher can be tried.
+        pending_fetches = {}
+        next_candidate = 0
+        try:
+            while (
+                len(fetched_pages) < 2
+                and (next_candidate < len(candidates) or pending_fetches)
+            ):
+                while next_candidate < len(candidates) and len(pending_fetches) < 2:
+                    source = candidates[next_candidate]
+                    next_candidate += 1
+                    task = asyncio.create_task(
+                        execute_web_tool("web_fetch", {"url": source["url"]}),
+                        name=f"web-fetch-fallback:{next_candidate}",
+                    )
+                    pending_fetches[task] = source
+
+                if not pending_fetches:
+                    break
+                done, _ = await asyncio.wait(
+                    tuple(pending_fetches),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    source = pending_fetches.pop(task)
+                    try:
+                        result = task.result()
+                    except Exception:
+                        continue
+                    if not isinstance(result, dict) or not result.get("ok"):
+                        continue
+                    page_text = str(result.get("text") or result.get("snippet") or "").strip()
+                    if len(page_text) < 20:
+                        continue
+                    fetched_pages.append({
+                        "title": str(result.get("title") or source["title"])[:300],
+                        "url": str(result.get("final_url") or result.get("url") or source["url"])[:2000],
+                        "text": page_text[:2200],
+                    })
+                    if len(fetched_pages) >= 2:
+                        break
+        finally:
+            remaining_fetches = list(pending_fetches)
+            for task in remaining_fetches:
+                if not task.done():
+                    task.cancel()
+            if remaining_fetches:
+                await asyncio.gather(*remaining_fetches, return_exceptions=True)
 
     compact_fetched_pages = [
         {
