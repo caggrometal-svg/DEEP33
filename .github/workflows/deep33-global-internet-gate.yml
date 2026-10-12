@@ -31,6 +31,7 @@ env:
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
   DEEP33_PRODUCTION_GATE_URL: https://deep33-backend.onrender.com
+  PYTHONPATH: .
 
 jobs:
   chaos-unit-gate:
