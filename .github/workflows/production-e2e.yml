@@ -72,6 +72,23 @@ jobs:
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Wait for exact main SHA on canonical Render
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            health="$(curl -fsS --connect-timeout 8 --max-time 20 "$TERTIARY_URL/health" || true)"
+            live_sha="$(printf '%s' "$health" | jq -r '.git_sha // empty' 2>/dev/null || true)"
+            status="$(printf '%s' "$health" | jq -r '.status // empty' 2>/dev/null || true)"
+            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status"
+            if [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
+              echo "RENDER_EXACT_SHA_PASS=$live_sha"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "RENDER_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          exit 1
+
       - name: Verify every production transport node
         run: |
           set -euo pipefail
