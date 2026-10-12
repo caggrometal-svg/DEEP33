@@ -15,6 +15,9 @@ concurrency:
   group: deep33-railway-web-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PYTHONPATH: .
+
 jobs:
   code-and-contract:
     runs-on: ubuntu-latest
