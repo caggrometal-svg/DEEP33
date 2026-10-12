@@ -382,8 +382,10 @@ def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
         realtime=False,
     )
 
-    assert len(ranked) == 2
-    assert all("astronomy" not in item["url"] for item in ranked)
+    # The query explicitly names WHO. A generic dengue page that doesn't
+    # identify that organization cannot satisfy the second topic anchor.
+    assert len(ranked) == 1
+    assert ranked[0]["url"].startswith("https://www.who.int/")
 
 
 def test_generic_medical_terms_do_not_overfilter_distinct_influenza_topic():
