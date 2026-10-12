@@ -349,6 +349,7 @@ async def persist_deep33_self_name(
     session_id: str,
     self_name: str | None,
     memory_profile_id: str | None = None,
+    access_token: str | None = None,
 ) -> None:
     if not self_name or not memory.enabled:
         return
@@ -359,6 +360,7 @@ async def persist_deep33_self_name(
             "context",
             content,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
         )
         logger.info("deep33_self_name_persisted session_id=%s name=%s", session_id, self_name)
     except MemoryUnavailableError as exc:
@@ -793,6 +795,16 @@ def memory_profile_id_from_request(request: Request) -> str | None:
     return getattr(request.state, "user_id", None)
 
 
+def access_token_from_request(request: Request) -> str | None:
+    # Call only after enforce_client_controls has authenticated the request.
+    if not getattr(request.state, "user_id", None):
+        return None
+    authorization = request.headers.get("Authorization", "").strip()
+    if not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):].strip()
+    return token or None
+
 
 def request_id_from_request(request: Request) -> str:
     value = getattr(request.state, "request_id", "").strip()
@@ -1092,6 +1104,7 @@ async def shared_idempotency_claim(
     idempotency_key: str,
     operation: str,
     request_hash: str,
+    access_token: str | None = None,
 ) -> tuple[str, dict]:
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="IDEMPOTENCY_STORE_UNAVAILABLE")
@@ -1107,6 +1120,7 @@ async def shared_idempotency_claim(
             operation,
             request_hash,
             lease_seconds=IDEMPOTENCY_LEASE_SECONDS,
+            access_token=access_token,
         )
     except MemoryUnavailableError as exc:
         logger.warning(
@@ -1139,6 +1153,7 @@ async def shared_idempotency_claim(
                     session_id,
                     idempotency_key,
                     request_hash,
+                    access_token=access_token,
                 ),
                 timeout=remaining,
             )
@@ -2806,6 +2821,7 @@ async def prepare_messages(
     session_id: str,
     memory_profile_id: str | None = None,
     request_id: str | None = None,
+    access_token: str | None = None,
 ) -> tuple[list[dict[str, str]], str]:
     requested = [
         message.model_dump()
@@ -2842,7 +2858,11 @@ async def prepare_messages(
 
     memory_started = time.perf_counter()
     try:
-        context = await memory.context(session_id, memory_profile_id=memory_profile_id)
+        context = await memory.context(
+            session_id,
+            memory_profile_id=memory_profile_id,
+            access_token=access_token,
+        )
         remote = extract_context_messages(context)
         logger.info(
             "memory_stage request_id=%s elapsed_ms=%.2f status=success remote_messages=%s",
@@ -2913,11 +2933,15 @@ async def persist_messages(
     *,
     personality: str | None = None,
     memory_profile_id: str | None = None,
+    access_token: str | None = None,
 ) -> None:
     if not memory.enabled:
         return
     try:
-        await memory.sync(session_id, messages, personality=personality, memory_profile_id=memory_profile_id)
+        await memory.sync(
+            session_id, messages, personality=personality,
+            memory_profile_id=memory_profile_id, access_token=access_token,
+        )
     except MemoryUnavailableError as exc:
         logger.warning("memory_sync_unavailable session_id=%s error=%s", session_id, exc)
 
@@ -2930,6 +2954,7 @@ async def generate(
     idempotency_key: str,
     skip_web_tools: bool = False,
     memory_profile_id: str | None = None,
+    access_token: str | None = None,
 ) -> dict:
     session_id = scope_session_for_user(memory_profile_id, session_id)
     personality = normalize_personality(request.personality)
@@ -2963,6 +2988,7 @@ async def generate(
             idempotency_key,
             "deep33.ai.generate",
             request_hash,
+            access_token=access_token,
         )
     )
     context_task = asyncio.create_task(
@@ -2971,6 +2997,7 @@ async def generate(
             session_id,
             memory_profile_id,
             request_id=request_id,
+            access_token=access_token,
         )
     )
     raw_messages = [
@@ -3106,11 +3133,13 @@ async def generate(
                 [message for message in messages if message.get("role") != "system"] + [assistant_message],
                 personality=personality,
                 memory_profile_id=memory_profile_id,
+                access_token=access_token,
             ),
             persist_deep33_self_name(
                 session_id,
                 self_name,
                 memory_profile_id=memory_profile_id,
+                access_token=access_token,
             ),
         )
         performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
@@ -3141,6 +3170,7 @@ async def generate(
                     lease_token,
                     200,
                     output,
+                    access_token=access_token,
                 )
             except MemoryUnavailableError as exc:
                 logger.error(
@@ -3176,6 +3206,7 @@ async def generate(
                     lease_token,
                     status_code,
                     stored,
+                    access_token=access_token,
                 )
         except Exception as store_exc:
             logger.warning(
@@ -3252,6 +3283,7 @@ async def ai_generate(request: ChatRequest, http_request: Request, response: Res
             in {"1", "true", "yes", "on"}
         ),
         memory_profile_id=memory_profile_id,
+        access_token=access_token_from_request(http_request),
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -3273,6 +3305,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
         request_id=request_id,
         idempotency_key=idempotency_key,
         memory_profile_id=memory_profile_id,
+        access_token=access_token_from_request(http_request),
     )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
@@ -3288,7 +3321,10 @@ async def memory_context(http_request: Request) -> dict:
     memory_profile_id = memory_profile_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.context(session_id, memory_profile_id=memory_profile_id)
+        return await memory.context(
+            session_id, memory_profile_id=memory_profile_id,
+            access_token=access_token_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -3315,6 +3351,7 @@ async def memory_sync(
             personality=payload.personality,
             preferences=payload.preferences,
             memory_profile_id=memory_profile_id,
+            access_token=access_token_from_request(http_request),
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
@@ -3331,7 +3368,11 @@ async def memory_remember(
     memory_profile_id = memory_profile_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
     try:
-        return await memory.remember(session_id, payload.kind, payload.content, memory_profile_id=memory_profile_id)
+        return await memory.remember(
+            session_id, payload.kind, payload.content,
+            memory_profile_id=memory_profile_id,
+            access_token=access_token_from_request(http_request),
+        )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
 
@@ -3352,6 +3393,7 @@ async def memory_preferences(
             personality=payload.personality,
             preferences=payload.preferences,
             memory_profile_id=memory_profile_id,
+            access_token=access_token_from_request(http_request),
         )
     except MemoryUnavailableError as exc:
         raise HTTPException(status_code=503, detail="MEMORY_UNAVAILABLE") from exc
@@ -3394,6 +3436,7 @@ async def _finalize_stream(
     lease_token: str,
     assistant_text: str,
     memory_profile_id: str | None = None,
+    access_token: str | None = None,
 ) -> None:
     output = {
         "request_id": request_id,
@@ -3415,11 +3458,13 @@ async def _finalize_stream(
         ]
         + [{"role": "assistant", "content": assistant_text}],
         personality=personality,
+        access_token=access_token,
     )
     await persist_deep33_self_name(
         session_id,
         extract_deep33_self_name(assistant_text),
         memory_profile_id=memory_profile_id,
+        access_token=access_token,
     )
     performance.mark(request_id, "T9_PERSISTENCE_FINISHED")
     cache_put(session_id, idempotency_key, request_hash, output)
@@ -3432,6 +3477,7 @@ async def _finalize_stream(
                 lease_token,
                 200,
                 output,
+                access_token=access_token,
             )
         except MemoryUnavailableError as exc:
             logger.error(
@@ -3592,6 +3638,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     request_started_at = time.perf_counter()
     idempotency_key = idempotency_key_from_request(http_request, request_id)
     memory_profile_id = memory_profile_id_from_request(http_request)
+    access_token = access_token_from_request(http_request)
     session_id = scope_session_for_user(memory_profile_id, session_id)
     request = resolve_personality_request(request, http_request)
     personality = normalize_personality(request.personality)
@@ -3616,7 +3663,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     # without creating a second inference for the same user turn.
     claim_task = asyncio.create_task(
         shared_idempotency_claim(
-            session_id, idempotency_key, "deep33.ai.generate", request_hash
+            session_id,
+            idempotency_key,
+            "deep33.ai.generate",
+            request_hash,
+            access_token=access_token,
         )
     )
     context_task = asyncio.create_task(
@@ -3876,6 +3927,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     lease_token,
                     status_code,
                     stored,
+                    access_token=access_token,
                 )
             except Exception as store_exc:
                 logger.warning(
@@ -3921,6 +3973,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             lease_token=lease_token,
             assistant_text=assistant_text,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
         )
 
     return StreamingResponse(
