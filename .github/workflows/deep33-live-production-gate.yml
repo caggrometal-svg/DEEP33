@@ -1,0 +1,109 @@
+name: DEEP33 Live Production Gate
+
+on:
+  push:
+    branches:
+      - test/deep33-live-gate-101026
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live_production_gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: "1"
+      DEEP33_BASE_URL: https://deep33-backend.onrender.com
+      DEEP33_TEST_SESSION_ID: deep33-production-gate-101026
+      SUPABASE_URL: https://guqevsjbjyapqjjtutza.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: sb_publishable_jbH_3RA6brvmpzmyjmhwtw_knKY0PIT
+
+    steps:
+      - name: Checkout production commit
+        uses: actions/checkout@v4
+
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+
+      - name: Create isolated temporary Supabase session
+        id: auth
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import httpx
+
+          url = os.environ["SUPABASE_URL"].rstrip("/") + "/auth/v1/signup"
+          key = os.environ["SUPABASE_PUBLISHABLE_KEY"]
+          response = httpx.post(
+              url,
+              headers={
+                  "apikey": key,
+                  "Content-Type": "application/json",
+              },
+              json={},
+              timeout=10.0,
+          )
+          try:
+              payload = response.json()
+          except ValueError:
+              payload = {"raw": response.text[:500]}
+          if response.status_code not in {200, 201}:
+              raise SystemExit(
+                  f"anonymous_auth_failed status={response.status_code} payload={json.dumps(payload, ensure_ascii=False)}"
+              )
+          token = str(payload.get("access_token") or "").strip()
+          user = payload.get("user") or {}
+          user_id = str(user.get("id") or "").strip()
+          if not token or not user_id:
+              raise SystemExit("anonymous_auth_missing_token_or_user")
+          print(f"::add-mask::{token}")
+          print(f"TEMP_USER_ID={user_id}")
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"DEEP33_TEST_AUTH_TOKEN={token}\n")
+              handle.write(f"DEEP33_TEMP_USER_ID={user_id}\n")
+          PY
+
+      - name: Run authenticated DEEP33 live gate
+        run: |
+          python test_deep33_global_gate.py \
+            --base-url "$DEEP33_BASE_URL" \
+            --token "$DEEP33_TEST_AUTH_TOKEN" \
+            --session-id "$DEEP33_TEST_SESSION_ID" \
+            --require-live
+
+      - name: Revoke temporary Supabase session
+        if: always() && env.DEEP33_TEST_AUTH_TOKEN != ''
+        run: |
+          python - <<'PY'
+          import os
+          import httpx
+
+          response = httpx.post(
+              os.environ["SUPABASE_URL"].rstrip("/") + "/auth/v1/logout",
+              headers={
+                  "apikey": os.environ["SUPABASE_PUBLISHABLE_KEY"],
+                  "Authorization": "Bearer " + os.environ["DEEP33_TEST_AUTH_TOKEN"],
+              },
+              timeout=10.0,
+          )
+          print(
+              f"temporary_session_revoked status={response.status_code} "
+              f"user_id={os.environ.get('DEEP33_TEMP_USER_ID', '')}"
+          )
+          if response.status_code not in {200, 204, 401, 403}:
+              raise SystemExit(f"logout_failed status={response.status_code}")
+          PY
