@@ -415,9 +415,28 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
-        evidence_tokens = _token_set(anchor_evidence)
-        anchor_hits = len(anchor_tokens & evidence_tokens)
-        required_anchor_hits = min(2, len(anchor_tokens))
+        normalized_anchor_evidence = re.sub(
+            r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
+            " clima ",
+            anchor_evidence,
+            flags=re.IGNORECASE,
+        )
+        normalized_anchor_evidence = re.sub(
+            r"\b(?:temperature|temperatures|temperatura|temperaturas)\b",
+            " temperatura ",
+            normalized_anchor_evidence,
+            flags=re.IGNORECASE,
+        )
+        normalized_anchor_query = re.sub(
+            r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
+            " clima ",
+            " ".join(anchor_tokens),
+            flags=re.IGNORECASE,
+        )
+        effective_anchor_tokens = _token_set(normalized_anchor_query)
+        evidence_tokens = _token_set(normalized_anchor_evidence)
+        anchor_hits = len(effective_anchor_tokens & evidence_tokens)
+        required_anchor_hits = min(2, len(effective_anchor_tokens))
         if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
             # Country/currentness words alone do not prove relevance to a named locality.
             continue
