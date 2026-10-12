@@ -283,6 +283,14 @@ _TOPIC_FILLERS = {
 _TOPIC_PHRASE_ALIASES = (
     (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
     (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
+    (
+        re.compile(
+            r"\b(?:econom(?:ia|ía|ico|ica|icos|icas)|econ(?:omy|omic|omics)|"
+            r"finanzas?|financier[oa]s?|financial|markets?|mercados?)\b",
+            re.IGNORECASE,
+        ),
+        "economia",
+    ),
 )
 
 
@@ -433,6 +441,9 @@ def rank_results(
             " ".join(anchor_tokens),
             flags=re.IGNORECASE,
         )
+        for pattern, replacement in _TOPIC_PHRASE_ALIASES:
+            normalized_anchor_evidence = pattern.sub(replacement, normalized_anchor_evidence)
+            normalized_anchor_query = pattern.sub(replacement, normalized_anchor_query)
         effective_anchor_tokens = _token_set(normalized_anchor_query)
         evidence_tokens = _token_set(normalized_anchor_evidence)
         anchor_hits = len(effective_anchor_tokens & evidence_tokens)
