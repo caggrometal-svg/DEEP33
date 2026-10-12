@@ -30,9 +30,11 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL }}
+      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL || 'https://deep33-backend.onrender.com' }}
       DEEP33_TEST_AUTH_TOKEN: ${{ secrets.DEEP33_TEST_AUTH_TOKEN }}
       DEEP33_TEST_SESSION_ID: deep33-global-gate
+      SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
       DEEP33_REQUIRE_LIVE_GATE: ${{ github.ref == 'refs/heads/main' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
 
     steps:
@@ -50,6 +52,41 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+
+      - name: Prepare authenticated live production session
+        if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
+        run: |
+          set -euo pipefail
+          token=""
+          for attempt in 1 2 3; do
+            profile_id="global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${attempt}"
+            response="$(curl -sS --connect-timeout 8 --max-time 30               -w '\nDEEP33_HTTP_STATUS:%{http_code}'               -X POST "$SUPABASE_URL/functions/v1/deep33-auth"               -H "apikey: $SUPABASE_PUBLISHABLE_KEY"               -H "content-type: application/json"               -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            status="${response##*DEEP33_HTTP_STATUS:}"
+            auth_json="${response%        run: |
+          python -m py_compile             backend/search/resilient.py             backend/search/web_pipeline.py             tools/web_search.py             tools/web_fetch.py             backend/main.py             backend/gateway.py             test_deep33_global_gate.py
+
+      - name: DEEP33-TEST-GLOBAL-101026
+        run: python test_deep33_global_gate.py
+
+      - name: Enforce live production evidence on main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          test -n "$DEEP33_BASE_URL"
+          test "$DEEP33_REQUIRE_LIVE_GATE" = "true"
+
+      - name: Existing search and performance regression tests
+        run: |
+          python -m pytest -q             tests/test_performance_contract.py             tests/test_hybrid_search.py             tests/test_connectivity_hardening.py             tests/test_ttft_fast_path.py
+\n'DEEP33_HTTP_STATUS:*}"
+            if [ "$status" = "200" ]; then
+              token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
+              [ -n "$token" ] && break
+            fi
+            [ "$attempt" -lt 3 ] && sleep 2
+          done
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Compile changed Python
         run: |
