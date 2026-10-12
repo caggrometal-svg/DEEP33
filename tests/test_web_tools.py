@@ -186,6 +186,44 @@ def test_recovery_broadens_provider_query_but_ranks_against_original_question():
     assert "python asyncio" in seen
 
 
+def test_no_results_logs_redacted_rank_diagnostics(caplog):
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=3,
+        provider_total_seconds=0.08,
+        global_budget_seconds=0.40,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    private_query = "Python asyncio TaskGroup private-query-marker"
+    private_snippet = "PRIVATE-SNIPPET-MARKER unrelated gardening content"
+
+    async def unrelated(_query, _timeout, _limit):
+        return [
+            {"title": "Gardening tips", "url": "https://gardening.example/soil",
+             "snippet": private_snippet},
+            {"title": "Home cooking", "url": "https://cooking.example/herbs",
+             "snippet": "Recipes and herb preparation"},
+        ]
+
+    orchestrator.providers["bing"] = unrelated
+    orchestrator.providers["mojeek"] = unrelated
+    orchestrator.providers["duckduckgo"] = unrelated
+    result = asyncio.run(orchestrator.search(private_query, fresh=True))
+
+    assert result["status"] == "NO_RESULTS"
+    matches = [
+        record.getMessage()
+        for record in caplog.records
+        if "web_search_rank_rejected_candidates" in record.getMessage()
+    ]
+    assert matches, "Expected aggregate rank diagnostics for rejected provider candidates"
+    assert "anchor_count=4" in matches[-1]
+    assert private_query not in matches[-1]
+    assert private_snippet not in matches[-1]
+
+
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
     from backend.search.engine import rank_results
