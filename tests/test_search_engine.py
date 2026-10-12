@@ -110,12 +110,24 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.3.0"
+    assert result["engine_version"] == "1.4.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
+
+
+def test_web_search_status_matches_canonical_engine_version():
+    from backend.search.engine import ENGINE_VERSION
+    from tools.web_search import web_search_status
+
+    status = web_search_status()
+    assert status["engine_version"] == ENGINE_VERSION
+    assert status["tool_loop_enabled"] is True
+    assert status["general_web_search_enabled"] is True
+    assert status["realtime_search_enabled"] is True
+    assert {"bing", "google", "mojeek", "duckduckgo"} <= set(status["provider_names"])
 
 
 def test_auto_provider_plan_includes_optional_mojeek_fallback(monkeypatch):
