@@ -96,6 +96,26 @@ class Deep33ConnectivityTest {
         )
         assertTrue("stream result is empty: " + result, combined.toString().isNotBlank())
         assertTrue("stream callback result mismatch", result == combined.toString())
+
+        val normalized = result.replace(Regex("\\s+"), " ").trim()
+        val duplicatedHalf = normalized.length % 2 == 0 &&
+            normalized.substring(0, normalized.length / 2) ==
+            normalized.substring(normalized.length / 2)
+        val repeatedFallback =
+            normalized.windowed(
+                "El servicio de DEEP33 está temporalmente fuera de servicio".length,
+                1,
+                partialWindows = false
+            ).count { it == "El servicio de DEEP33 está temporalmente fuera de servicio" } > 1 ||
+            normalized.windowed(
+                "Servicio temporalmente no disponible".length,
+                1,
+                partialWindows = false
+            ).count { it == "Servicio temporalmente no disponible" } > 1
+
+        assertTrue("duplicated complete streaming response: " + normalized, !duplicatedHalf)
+        assertTrue("duplicated fallback streaming response: " + normalized, !repeatedFallback)
+        println("ANDROID_DUPLICATES=0")
     }
 
     private fun get(path: String): JSONObject =
