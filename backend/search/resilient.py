@@ -243,7 +243,7 @@ class WebOrchestrator:
                     if outcome.ok
                     for item in outcome.results
                 ]
-                ranked_now = rank_results(cleaned, merged_now, realtime=False)
+                ranked_now = rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned))
                 selected_now = deduplicate(ranked_now, self.max_results)
                 distinct_domains = {
                     item.get("source_domain") or ""
@@ -265,7 +265,7 @@ class WebOrchestrator:
             if outcome.ok
             for item in outcome.results
         ]
-        ranked = rank_results(cleaned, merged, realtime=False)
+        ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
         errors = [
             f"{outcome.provider}:{outcome.error_code}"
