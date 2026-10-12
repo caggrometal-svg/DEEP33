@@ -365,6 +365,38 @@ def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
     assert all("astronomy" not in item["url"] for item in ranked)
 
 
+def test_generic_medical_terms_do_not_overfilter_distinct_influenza_topic():
+    from backend.search.engine import _topic_tokens, rank_results
+
+    query = "medicina general influenza información oficial"
+    assert _topic_tokens(query) == ["influenza"]
+
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Influenza (Flu)",
+                "url": "https://www.cdc.gov/flu/",
+                "snippet": "Official information about influenza prevention and symptoms.",
+            },
+            {
+                "title": "Influenza",
+                "url": "https://www.who.int/health-topics/influenza-seasonal",
+                "snippet": "Seasonal influenza facts and public health guidance.",
+            },
+            {
+                "title": "Unrelated cardiology article",
+                "url": "https://medical.example/cardiology",
+                "snippet": "Heart health overview.",
+            },
+        ],
+        realtime=False,
+    )
+
+    assert len(ranked) == 2
+    assert all("cardiology" not in item["url"] for item in ranked)
+
+
 def test_realtime_economics_ranking_normalizes_cross_language_and_inflections():
     from backend.search.engine import rank_results
 
