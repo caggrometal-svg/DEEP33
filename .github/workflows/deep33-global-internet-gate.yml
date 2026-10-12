@@ -10,6 +10,8 @@ on:
       - "backend/main.py"
       - "tests/test_deep33_global_gate.py"
       - ".github/workflows/deep33-global-internet-gate.yml"
+      - ".github/workflows/deep33-global-gate.yml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/production-e2e.yml"
   push:
     branches: ["main"]
