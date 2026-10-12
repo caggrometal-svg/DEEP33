@@ -430,35 +430,66 @@ def rank_results(
         if not realtime and topic_tokens and topic_hits < required_topic_hits:
             # Domain reputation and corroboration must never make unrelated results relevant.
             continue
-        relevance = max(
-            _text_score(query_tokens, item),
-            _text_score(topic_tokens, item) if topic_tokens else 0.0,
+        scoring_tokens = topic_tokens or query_tokens
+        title_tokens = _token_set(str(item.get("title") or ""))
+        snippet_tokens = _token_set(str(item.get("snippet") or ""))
+        query_token_set = set(scoring_tokens)
+        title_score = (
+            len(query_token_set & title_tokens) / max(1, len(query_token_set))
         )
-        anchor_score = (
-            min(1.0, anchor_hits / max(1, min(2, len(anchor_tokens))))
-            if anchor_tokens
-            else 0.0
+        snippet_score = (
+            len(query_token_set & snippet_tokens) / max(1, len(query_token_set))
         )
         quality = _domain_quality(url)
         freshness = _freshness_score(item)
-        corroboration = min(1.0, support.get(id(item), 0) / 2.0)
-        if realtime:
-            score = (
-                relevance * 0.42
-                + anchor_score * 0.28
-                + quality * 0.15
-                + freshness * 0.05
-                + corroboration * 0.10
-            )
-        else:
-            score = relevance * 0.50 + quality * 0.20 + freshness * 0.10 + corroboration * 0.20
+        query_match = max(
+            _text_score(query_tokens, item),
+            _text_score(topic_tokens, item) if topic_tokens else 0.0,
+        )
+
+        # The relevance/locality filters above are hard gates. These penalties only
+        # break ties and demote weak/intermediary result shapes; they never make an
+        # unrelated result eligible.
+        penalties = 0.0
+        host = _host(url)
+        if host in {"news.google.com", "www.google.com", "google.com"}:
+            penalties += 0.10
+        if not str(item.get("title") or "").strip():
+            penalties += 0.05
+        if not str(item.get("snippet") or "").strip():
+            penalties += 0.05
+        if urlparse(url).query and any(
+            marker in urlparse(url).query.lower()
+            for marker in ("utm_", "gclid=", "fbclid=", "mc_cid=")
+        ):
+            penalties += 0.03
+
+        # Contract requested by DEEP33-TEST-GLOBAL-101026:
+        # 0.30 Title + 0.25 Snippet + 0.20 Domain + 0.15 Freshness
+        # + 0.10 QueryMatch - penalties.
+        score = (
+            0.30 * title_score
+            + 0.25 * snippet_score
+            + 0.20 * quality
+            + 0.15 * freshness
+            + 0.10 * query_match
+            - penalties
+        )
         ranked.append({
             **item,
-            "score": round(score, 6),
+            "score": round(max(0.0, score), 6),
+            "score_components": {
+                "title": round(title_score, 6),
+                "snippet": round(snippet_score, 6),
+                "domain": round(quality, 6),
+                "freshness": round(freshness, 6),
+                "query_match": round(query_match, 6),
+                "penalties": round(penalties, 6),
+            },
             "corroboration_count": support.get(id(item), 0),
             "corroborated": support.get(id(item), 0) >= 1,
             "anchor_hits": anchor_hits,
-            "source_domain": _host(url),
+            "source_domain": host,
         })
     ranked.sort(
         key=lambda item: (
