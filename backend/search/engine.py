@@ -285,7 +285,7 @@ _TOPIC_PHRASE_ALIASES = (
     (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
     (
         re.compile(
-            r"\b(?:econom(?:ia|ía|ico|ica|icos|icas)|econ(?:omy|omic|omics)|"
+            r"\b(?:econ[oó]m(?:ia|ía|ico|ica|icos|icas)|econ(?:omy|omic|omics)|"
             r"finanzas?|financier[oa]s?|financial|markets?|mercados?)\b",
             re.IGNORECASE,
         ),
