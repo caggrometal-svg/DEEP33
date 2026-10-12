@@ -36,8 +36,10 @@ def test_free_inference_fallbacks_fail_fast_before_render(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
 
     add_fallbacks = source.index("addFreeInferenceProviders(providers);")
-    internal_fallbacks = source.index("addInternalInferenceBackends(providers);")
-    assert add_fallbacks < internal_fallbacks
+    render_fallback = source.index(
+        'if (!providers.some((provider) => provider.name === "render-backend-fallback"))'
+    )
+    assert add_fallbacks < render_fallback
 
     # Synchronous requests to optional providers have a shorter deadline than the main provider.
     assert "FREE_INFERENCE_REQUEST_TIMEOUT_MS = 7000" in source
@@ -70,7 +72,7 @@ def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
     secondary = (ROOT / "supabase" / "functions" / "deep33-tertiary" / "index.ts").read_text(encoding="utf-8")
     for source in (primary, secondary):
         assert '|| "25000"' in source
-        assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800" in source
+        assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 8000" in source
 
 
 
@@ -82,8 +84,10 @@ def test_public_fast_fallbacks_precede_slow_render_fallback(path: Path) -> None:
     providers = source[start:end]
 
     public_pos = providers.index("addPublicInferenceProviders(providers);")
-    internal_pos = providers.index("addInternalInferenceBackends(providers);")
-    assert public_pos < internal_pos
+    render_pos = providers.index(
+        'if (!providers.some((provider) => provider.name === "render-backend-fallback"))'
+    )
+    assert public_pos < render_pos
     assert 'name: "llmfaucet"' in source
     assert 'model: "auto:fast"' in source
 

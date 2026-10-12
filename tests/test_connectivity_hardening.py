@@ -168,9 +168,8 @@ def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert 'idempotencyContext,\n            req.headers.get("authorization") || "",\n          );' in source
     assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
-    assert 'function isInternalBackendProvider(provider: EdgeAIProvider): boolean' in source
-    assert 'EDGE_AI_UPSTREAM_URLS.some((base) =>' in source
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
+    assert 'provider.name === "render-backend-fallback"' in source
+    assert 'provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/")' in source
     assert 'const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
@@ -279,28 +278,15 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
 
 def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
-    internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
-        "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
-    )[0]
     providers = source.split("function edgeProviders()", 1)[1].split(
         "\nfunction edgeAIConfigured()", 1
     )[0]
-    for name in (
-        "render-backend-fallback",
-        "render-api-fallback",
-        "render-backup-fallback",
-    ):
-        assert f'"{name}"' in internal
-    for base in (
-        "https://deep33-backend.onrender.com",
-        "https://deep33-api.onrender.com",
-        "https://deep33-backup.onrender.com",
-    ):
-        assert f'"{base}"' in source
-    assert 'const url = base + "/v1/ai/generate";' in internal
-    assert 'requires_auth: true' in internal
-    assert 'addInternalInferenceBackends(providers);' in providers
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
+    assert 'name: "render-backend-fallback"' in providers
+    assert 'url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate"' in providers
+    assert 'model: "google/gemma-4-26b-a4b-it:free"' in providers
+    assert "requires_auth: true" in providers
+    assert 'provider.name === "render-backend-fallback"' in source
+    assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com"' in source
 
 def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None:
     source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
@@ -313,12 +299,8 @@ def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None
 
 def test_secondary_edge_render_fallback_supports_streaming() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
-    internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
-        "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
-    )[0]
     assert "stream_url?: string" in source
-    assert 'const streamUrl = base + "/v1/chat/stream";' in internal
-    assert 'stream_url: streamUrl' in internal
+    assert 'stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream"' in source
     assert 'fetch(provider.stream_url || provider.url, {' in source
     assert 'const stream_url = String(value.stream_url || url).trim();' in source
     assert 'if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url)' in source

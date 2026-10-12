@@ -666,7 +666,28 @@ async def search_web(
 
     max_results = max(1, min(8, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
-    result = await orchestrator.search(cleaned, fresh=fresh)
+
+    inflight_key = _search_cache_key(
+        cleaned,
+        "resilient",
+        "",
+        float(timeout_seconds),
+        max_results,
+    )
+    task = _SEARCH_INFLIGHT.get(inflight_key)
+    if task is None or task.done():
+        task = asyncio.create_task(
+            orchestrator.search(cleaned, fresh=fresh),
+            name=f"web-search:{inflight_key[:12]}",
+        )
+        _SEARCH_INFLIGHT[inflight_key] = task
+
+    try:
+        result = copy.deepcopy(await task)
+    finally:
+        if _SEARCH_INFLIGHT.get(inflight_key) is task and task.done():
+            _SEARCH_INFLIGHT.pop(inflight_key, None)
+
     result["fresh_request"] = bool(fresh)
     result["configured_provider"] = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")

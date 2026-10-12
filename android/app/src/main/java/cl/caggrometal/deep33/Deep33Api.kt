@@ -76,7 +76,7 @@ object Deep33Api {
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
-    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 7_000
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
@@ -352,9 +352,6 @@ object Deep33Api {
                     connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         lines.forEach { line ->
                             if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
-                            if (System.nanoTime() >= deadline) {
-                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
-                            }
                             // [DONE] marks the end of content, not the end of the HTTP body.
                             // Drain to EOF before closing the reader; returning early can
                             // reset the socket while the edge gateway is still closing SSE.
