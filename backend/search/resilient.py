@@ -137,6 +137,24 @@ class WebOrchestrator:
             compact += " official"
         return compact
 
+    @staticmethod
+    def _recovery_query(query: str) -> str:
+        """Create one semantically equivalent fallback query after zero usable evidence."""
+        cleaned = " ".join(str(query or "").split()).strip()
+        topics = _topic_tokens(cleaned)
+        compact = " ".join(dict.fromkeys(topics))
+        lowered = cleaned.casefold()
+
+        if any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico", "weather", "forecast")):
+            locality = "santiago chile" if "santiago" in lowered else compact
+            return f"{locality} clima weather forecast".strip()
+        if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
+            locality = "chile" if "chile" in lowered else ""
+            return f"{locality} economia economy markets".strip()
+        if compact:
+            return compact
+        return cleaned
+
     async def _call_provider(self, provider: str, query: str) -> ProviderOutcome:
         state = self.circuits[provider]
         now = time.monotonic()
@@ -283,6 +301,48 @@ class WebOrchestrator:
         ]
         ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
+
+        recovery_query = self._recovery_query(cleaned)
+        if not selected and recovery_query.casefold() != provider_query.casefold():
+            recovery_started = asyncio.get_running_loop().time()
+            recovery_tasks = [
+                asyncio.create_task(
+                    self._call_provider(provider, recovery_query),
+                    name=f"search-recovery:{provider}",
+                )
+                for provider in ("bing", "duckduckgo")
+            ]
+            try:
+                remaining = max(
+                    0.0,
+                    self.global_budget_seconds
+                    - (asyncio.get_running_loop().time() - recovery_started),
+                )
+                if remaining > 0:
+                    recovery_outcomes = await asyncio.wait_for(
+                        asyncio.gather(*recovery_tasks, return_exceptions=False),
+                        timeout=min(self.provider_total_seconds, remaining),
+                    )
+                    outcomes.extend(recovery_outcomes)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            finally:
+                for task in recovery_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*recovery_tasks, return_exceptions=True)
+
+            merged = [
+                {**item, "provider": outcome.provider}
+                for outcome in outcomes
+                if outcome.ok
+                for item in outcome.results
+            ]
+            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            selected = deduplicate(ranked, self.max_results)
+            if selected:
+                provider_query = recovery_query
+
         errors = [
             f"{outcome.provider}:{outcome.error_code}"
             for outcome in outcomes
@@ -318,8 +378,8 @@ class WebOrchestrator:
         executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
-        providers_used = [o.provider for o in outcomes if o.ok]
-        attempted = [o.provider for o in outcomes]
+        providers_used = list(dict.fromkeys(o.provider for o in outcomes if o.ok))
+        attempted = list(dict.fromkeys(o.provider for o in outcomes))
         winner = next((o.provider for o in outcomes if o.ok and o.results), None)
         realtime = is_realtime_query(query)
         domains = sorted({
