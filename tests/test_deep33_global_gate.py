@@ -162,8 +162,7 @@ def test_resilient_orchestrator_uses_one_semantic_recovery_wave_after_zero_evide
         assert payload["ok"] is True
         assert len({item["source_domain"] for item in payload["results"]}) >= 2
         recovery_calls = [item for item in calls if item[1] == "python asyncio"]
-        assert {name for name, _ in recovery_calls} == {"bing", "duckduckgo"}
-        assert all(name != "mojeek" for name, _ in recovery_calls)
+        assert {name for name, _ in recovery_calls} == {"bing", "mojeek", "duckduckgo"}
 
     asyncio.run(scenario())
 
