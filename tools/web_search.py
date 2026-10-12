@@ -665,14 +665,73 @@ async def search_web(
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
     max_results = max(1, min(8, int(max_results)))
-    orchestrator = get_web_orchestrator(max_results)
-    result = await orchestrator.search(cleaned, fresh=fresh)
-    result["fresh_request"] = bool(fresh)
-    result["configured_provider"] = (
+    configured_provider = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")
     ).strip().lower()
-    return result
+    effective_timeout = max(0.5, min(2.5, float(timeout_seconds)))
+    cache_key = _search_cache_key(
+        cleaned,
+        configured_provider,
+        str(api_key or ""),
+        effective_timeout,
+        max_results,
+    )
+    now = time.monotonic()
 
+    if not fresh:
+        cached = _SEARCH_CACHE.get(cache_key)
+        if cached is not None:
+            expires_at, value = cached
+            if expires_at > now:
+                output = copy.deepcopy(value)
+                output["cache_hit"] = True
+                output["fresh_request"] = False
+                output["configured_provider"] = configured_provider
+                return output
+            _SEARCH_CACHE.pop(cache_key, None)
+
+    current_loop = asyncio.get_running_loop()
+    inflight = _SEARCH_INFLIGHT.get(cache_key)
+    if inflight is not None and (
+        inflight.done() or inflight.get_loop() is not current_loop
+    ):
+        _SEARCH_INFLIGHT.pop(cache_key, None)
+        inflight = None
+
+    if inflight is None:
+        orchestrator = get_web_orchestrator(max_results)
+
+        async def execute() -> dict:
+            result = await orchestrator.search(cleaned, fresh=fresh)
+            if result.get("ok"):
+                _SEARCH_CACHE[cache_key] = (
+                    time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
+                    copy.deepcopy(result),
+                )
+            return result
+
+        inflight = asyncio.create_task(
+            execute(),
+            name=f"web-search:{cache_key[:12]}",
+        )
+        _SEARCH_INFLIGHT[cache_key] = inflight
+
+        def finalize(task: asyncio.Task) -> None:
+            if _SEARCH_INFLIGHT.get(cache_key) is task:
+                _SEARCH_INFLIGHT.pop(cache_key, None)
+            if task.cancelled():
+                return
+            try:
+                task.exception()
+            except Exception:
+                pass
+
+        inflight.add_done_callback(finalize)
+
+    result = copy.deepcopy(await asyncio.shield(inflight))
+    result["fresh_request"] = bool(fresh)
+    result["configured_provider"] = configured_provider
+    return result
 
 def web_search_status():
     provider = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower()
