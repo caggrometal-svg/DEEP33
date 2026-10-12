@@ -18,6 +18,7 @@ on:
       - "backend/search/engine.py"
       - "backend/search/resilient.py"
       - "tests/test_search_engine.py"
+      - "tests/test_deep33_global_gate.py"
       - "test_deep33_global_gate.py"
       - "render.yaml"
       - "supabase/functions/deep33-proxy/index.ts"
