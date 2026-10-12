@@ -542,6 +542,14 @@ def conversation_response_shape(messages: list[dict[str, Any]]) -> str:
             return "SIMPLE_DIRECT"
         return "CONVERSATIONAL"
 
+    direct_command = re.match(
+        r"(?i)^\\s*(?:dime|dame|indica|confirma|verifica|consulta|averigua|busca|"
+        r"cu[aá]l|qu[eé]|qui[eé]n|cu[aá]nto|c[oó]mo)\\b",
+        latest_user,
+    )
+    if direct_command and len(latest_user) <= 240 and question_count <= 1:
+        return "SIMPLE_DIRECT"
+
     return "CONVERSATIONAL"
 
 
