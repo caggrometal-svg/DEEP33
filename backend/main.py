@@ -3318,8 +3318,8 @@ async def memory_context(http_request: Request) -> dict:
     if not memory.enabled:
         raise HTTPException(status_code=503, detail="MEMORY_NOT_CONFIGURED")
     session_id = session_id_from_request(http_request)
-    memory_profile_id = memory_profile_id_from_request(http_request)
     await enforce_client_controls(http_request, session_id)
+    memory_profile_id = memory_profile_id_from_request(http_request)
     try:
         return await memory.context(
             session_id, memory_profile_id=memory_profile_id,
