@@ -117,6 +117,15 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(seen)
         self.assertTrue(all(query == "python asyncio official" for query in seen))
 
+    async def test_realtime_weather_provider_query_uses_locality_and_weather_synonyms(self) -> None:
+        orchestrator = WebOrchestrator()
+        query = orchestrator._provider_query("clima actual Santiago Chile")
+        self.assertIn("santiago", query.casefold())
+        self.assertIn("chile", query.casefold())
+        self.assertIn("weather", query.casefold())
+        self.assertIn("clima", query.casefold())
+        self.assertNotIn(" actual ", f" {query.casefold()} ")
+
     async def test_circuit_breaker_opens_after_five_consecutive_failures(self) -> None:
         orchestrator = WebOrchestrator(
             provider_total_seconds=0.05,
