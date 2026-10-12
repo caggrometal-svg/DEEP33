@@ -14,18 +14,36 @@ def test_url_policy():
     with pytest.raises(SSRFBlockedError): validate_public_url("https://user:pass@example.com/")
     with pytest.raises(SSRFBlockedError): validate_public_url("https://example.com:8080/")
 
+
 def test_tavily_normalisation(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
-    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def fake(*args,**kwargs): return [{"title":"DEEP33 Example","url":"https://example.com/","snippet":"Snippet"}]
-    monkeypatch.setattr("tools.web_search._tavily_search",fake)
-    result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
-    assert result["results"][0]["snippet"]=="Snippet"
-    assert result["engine"] == "DEEP33 Search Engine"
-    assert result["provider"] == "tavily"
+    import tools.web_search as module
+
+    class Response:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "results": [{
+                    "title": "DEEP33 Example",
+                    "url": "https://example.com/",
+                    "content": "Snippet",
+                }]
+            }
+
+    class Client:
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    async def fake_client():
+        return Client()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+    result = asyncio.run(module._tavily_search("DEEP33", "tvly-test", 5, 5))
+
+    assert result[0]["snippet"] == "Snippet"
+    assert result[0]["title"] == "DEEP33 Example"
+    assert result[0]["url"] == "https://example.com/"
 
 def test_tavily_realtime_news_is_time_bounded(monkeypatch):
     import tools.web_search as module
@@ -72,17 +90,34 @@ def test_tavily_realtime_news_is_time_bounded(monkeypatch):
     assert result[0]["published_at"].startswith("2026-10-08")
 
 
+
 def test_tavily_falls_back_to_ddg(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def failing(*args,**kwargs): raise RuntimeError("down")
-    async def ddg(*args,**kwargs): return [{"title":"DEEP33 DDG","url":"https://example.com/","snippet":"DEEP33 fallback result"}]
-    monkeypatch.setattr("tools.web_search._tavily_search",failing)
-    monkeypatch.setattr("tools.web_search._duckduckgo_search",ddg)
-    import tools.web_search as module
-    module._SEARCH_CACHE.clear()
-    result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
-    assert result["provider"]=="duckduckgo"
+    from backend.search.resilient import WebOrchestrator
+
+    async def failing(*args, **kwargs):
+        raise RuntimeError("down")
+
+    async def ddg(query, timeout_seconds, max_results):
+        return [
+            {"title": "DEEP33 DDG", "url": "https://example.com/", "snippet": query},
+            {"title": "DEEP33 DDG 2", "url": "https://example.org/", "snippet": query},
+            {"title": "DEEP33 DDG 3", "url": "https://example.net/", "snippet": query},
+        ]
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        fallback_delay_seconds=0,
+        global_budget_seconds=2,
+    )
+    orchestrator.providers["bing"] = failing
+    orchestrator.providers["mojeek"] = failing
+    orchestrator.providers["duckduckgo"] = ddg
+
+    result = asyncio.run(orchestrator.search("DEEP33 fallback test", fresh=True))
+
+    assert result["ok"] is True
+    assert result["winner_provider"] == "duckduckgo"
+    assert result["provider"] == "duckduckgo"
 
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
@@ -171,10 +206,12 @@ def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
     }
 
 
+
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
-    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+    import tools.web_search as module
+
+    module._SEARCH_HTTP_CLIENT = None
+    module._SEARCH_HTTP_LOOP = None
 
     class Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
@@ -183,18 +220,23 @@ def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
                     return httpx.Response(
                         200,
                         request=request,
-                        content=b"""<?xml version="1.0"?><rss><channel><item><title>DEEP33</title><link>https://example.org/deep33</link><description>Search result</description></item></channel></rss>""",
+                        content=b"""<?xml version="1.0"?><rss><channel><item><title>DEEP33</title><link>https://example.org/deep33</link><description>DEEP33 search result</description></item></channel></rss>""",
                     )
                 return httpx.Response(502, request=request)
+
             kwargs["transport"] = httpx.MockTransport(handler)
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr("tools.web_search.httpx.AsyncClient", Client)
-    result = asyncio.run(search_web("DEEP33", provider="bing", api_key=""))
-    assert result["ok"] is True
-    assert result["provider"] == "bing"
-    assert result["results"][0]["url"] == "https://example.org/deep33"
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
 
+    async def exercise():
+        result = await module._bing_search("DEEP33", 5, 5)
+        await module.close_search_http_client()
+        return result
+
+    result = asyncio.run(exercise())
+    assert result
+    assert result[0]["url"] == "https://example.org/deep33"
 
 def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
     import tools.web_search as module
@@ -359,29 +401,33 @@ def test_web_status_endpoint(monkeypatch):
     assert body["tool_loop_enabled"] is True
 
 
+
 def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
     import tools.web_search as module
-    from backend.search.engine import SearchEngine
+    import backend.search.resilient as resilient_module
 
     calls = {"count": 0}
 
-    async def fake_engine_search(*_args, **_kwargs):
-        calls["count"] += 1
-        await asyncio.sleep(0.05)
-        return {
-            "ok": True,
-            "results": [
-                {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
-                {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
-            ],
-            "sources": [],
-            "providers": ["test"],
-            "provider": "test",
-            "errors": [],
-        }
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            calls["count"] += 1
+            await asyncio.sleep(0.05)
+            return {
+                "ok": True,
+                "results": [
+                    {"title": "A", "url": "https://coalesce.example/a", "snippet": query},
+                    {"title": "B", "url": "https://other.example/b", "snippet": query},
+                ],
+                "sources": [],
+                "providers": ["test"],
+                "providers_attempted": ["test"],
+                "provider": "test",
+                "winner_provider": "test",
+                "errors": [],
+            }
 
-    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
-    module._SEARCH_CACHE.clear()
+    fake = FakeOrchestrator()
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda _max_results=5: fake)
     module._SEARCH_INFLIGHT.clear()
 
     async def exercise():
@@ -393,7 +439,6 @@ def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
     first, second = asyncio.run(exercise())
     assert calls["count"] == 1
     assert first["results"] == second["results"]
-
 
 def test_fetch_coalesces_concurrent_fresh_requests(monkeypatch):
     import tools.web_fetch as module
@@ -474,35 +519,36 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
     assert any("ADN Radio" in item["title"] for item in ranked)
 
 
+
 def test_long_search_instructions_are_compacted_before_provider_query_limit(monkeypatch):
     import tools.web_search as module
-    from backend.search.engine import SearchEngine
+    import backend.search.resilient as resilient_module
 
     captured = {}
 
-    async def fake_engine_search(self, query, **kwargs):
-        captured["query"] = query
-        return {
-            "ok": True,
-            "results": [
-                {
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            captured["query"] = query
+            return {
+                "ok": True,
+                "results": [{
                     "title": "Actualidad verificada",
                     "url": "https://example.com/news",
                     "snippet": "Resultado de prueba",
-                }
-            ],
-            "sources": [],
-            "providers": ["test"],
-            "providers_attempted": ["test"],
-            "provider": "test",
-            "errors": [],
-            "queries": [query],
-            "retrieved_at": "2026-10-10T00:00:00Z",
-            "verification": {"relevant_results": 1},
-        }
+                }],
+                "sources": [],
+                "providers": ["test"],
+                "providers_attempted": ["test"],
+                "provider": "test",
+                "winner_provider": "test",
+                "errors": [],
+                "queries": [query],
+                "retrieved_at": "2026-10-10T00:00:00Z",
+                "verification": {"relevant_results": 1},
+            }
 
-    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
-    module._SEARCH_CACHE.clear()
+    fake = FakeOrchestrator()
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda _max_results=5: fake)
     module._SEARCH_INFLIGHT.clear()
 
     long_prompt = (
@@ -522,8 +568,6 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
     assert len(captured["query"]) <= module.MAX_QUERY_CHARS
     assert "no inventes" not in captured["query"].lower()
     assert "noticia real publicada hoy" in captured["query"].lower()
-
-
 
 def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch):
     import tools.web_fetch as module
