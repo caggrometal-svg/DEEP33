@@ -16,6 +16,7 @@ import httpx
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -1432,7 +1433,7 @@ async def execute_web_tool(name,arguments):
         try:
             return await fetch_page(
                 url,
-                timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS","5")),
+                timeout_seconds=min(2.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "2.5"))),
                 max_redirects=min(3,int(os.getenv("WEB_FETCH_MAX_REDIRECTS","3"))),
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
                 fresh=True,
@@ -1624,7 +1625,18 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(source.get("snippet") or "")[:1500],
             }
 
-    candidates = list(sources.values())[:2]
+    # Keep a bounded, domain-diverse candidate pool so a blocked publisher
+    # cannot prevent DEEP33 from reading the next independent source.
+    candidates = []
+    seen_domains = set()
+    for source in sources.values():
+        host = (urlparse(str(source.get("url") or "")).hostname or "").casefold()
+        if not host or host in seen_domains:
+            continue
+        seen_domains.add(host)
+        candidates.append(source)
+        if len(candidates) >= 5:
+            break
     fetched_pages = []
     compact_search_results = [
         {
@@ -1646,18 +1658,30 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     )
     explicit_research = bool(deep and not realtime)
     if candidates and (explicit_research or not snippets_sufficient):
-        results = await asyncio.gather(
-            *(execute_web_tool("web_fetch", {"url": source["url"]}) for source in candidates),
-            return_exceptions=True,
-        )
-        for source, result in zip(candidates, results):
-            if isinstance(result, Exception):
-                continue
-            fetched_pages.append({
-                "title": source["title"],
-                "url": source["url"],
-                "text": str(result.get("text") or result.get("snippet") or "")[:2200],
-            })
+        # Try two distinct publishers at a time. If both are blocked or time out,
+        # continue with the next batch instead of treating the first failures as
+        # a failed search. Stop as soon as two readable pages are available.
+        for offset in range(0, len(candidates), 2):
+            if len(fetched_pages) >= 2:
+                break
+            batch = candidates[offset:offset + 2]
+            results = await asyncio.gather(
+                *(execute_web_tool("web_fetch", {"url": source["url"]}) for source in batch),
+                return_exceptions=True,
+            )
+            for source, result in zip(batch, results):
+                if isinstance(result, BaseException) or not isinstance(result, dict):
+                    continue
+                if not result.get("ok"):
+                    continue
+                page_text = str(result.get("text") or result.get("snippet") or "").strip()
+                if len(page_text) < 20:
+                    continue
+                fetched_pages.append({
+                    "title": str(result.get("title") or source["title"])[:300],
+                    "url": str(result.get("final_url") or result.get("url") or source["url"])[:2000],
+                    "text": page_text[:2200],
+                })
 
     compact_fetched_pages = [
         {

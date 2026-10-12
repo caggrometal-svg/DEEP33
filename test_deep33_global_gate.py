@@ -328,7 +328,10 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
 
             fetch_ok = 0
             fetch_fail = 0
-            for url in urls[:3]:
+            # A failed publisher is not a failed web search. Try up to five
+            # independent result domains, stopping once two readable pages prove
+            # that search-to-page navigation works.
+            for url in urls[:5]:
                 fetched = await client.get(
                     f"{base}/v1/web/fetch",
                     params={"url": url},
@@ -342,11 +345,14 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                 body = fetched.json()
                 if body.get("ok"):
                     fetch_ok += 1
+                    if fetch_ok >= 2:
+                        break
                 else:
                     fetch_fail += 1
             if fetch_ok < 2:
                 raise AssertionError(
-                    f"Real navigation gate failed for {query!r}: fetch_success={fetch_ok}/3"
+                    f"Real navigation gate failed for {query!r}: "
+                    f"fetch_success={fetch_ok}/5 candidates, failed={fetch_fail}, domains={domains[:5]}"
                 )
             multidomain_evidence.append(
                 {
