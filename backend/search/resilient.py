@@ -4,11 +4,13 @@ import asyncio
 import copy
 import hashlib
 import time
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import deduplicate, rank_results
+from backend.search.engine import deduplicate, is_realtime_query, rank_results
 from tools.web_search import _bing_search, _duckduckgo_search, _mojeek_search
 
 PROVIDER_TOTAL_SECONDS = 2.5
@@ -301,6 +303,19 @@ class WebOrchestrator:
         providers_used = [o.provider for o in outcomes if o.ok]
         attempted = [o.provider for o in outcomes]
         winner = next((o.provider for o in outcomes if o.ok and o.results), None)
+        realtime = is_realtime_query(query)
+        domains = sorted({
+            (urlparse(str(item.get("url") or "")).hostname or "").casefold()
+            for item in selected
+            if str(item.get("url") or "").strip()
+        } - {""})
+        verification_level = (
+            "multi-source"
+            if len(domains) >= 2
+            else "single-source"
+            if selected
+            else "none"
+        )
         return {
             "ok": bool(selected),
             "status": status,
@@ -308,12 +323,30 @@ class WebOrchestrator:
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "query": query,
+            "depth": "realtime" if realtime else "standard",
+            "realtime": realtime,
+            "queries": [query],
+            "queries_executed": [query],
             "results": selected,
             "sources": selected,
             "providers": providers_used,
             "providers_attempted": attempted,
+            "provider": (
+                providers_used[0]
+                if len(providers_used) == 1
+                else "multi"
+                if providers_used
+                else None
+            ),
             "winner_provider": winner,
+            "verification": {
+                "level": verification_level,
+                "distinct_domains": len(domains),
+                "distinct_providers": len(set(providers_used)),
+                "corroborated_results": 0,
+            },
             "errors": errors[:8],
             "provider_latency_ms": {
                 o.provider: o.latency_ms for o in outcomes if o.latency_ms > 0
