@@ -389,10 +389,10 @@ async def _fetch_page_uncached(
     user_agent: str,
 ) -> dict:
     timeout=httpx.Timeout(
-        connect=min(timeout_seconds,5.0),
-        read=timeout_seconds,
-        write=timeout_seconds,
-        pool=min(1.0,timeout_seconds),
+        connect=min(timeout_seconds, 1.0),
+        read=min(timeout_seconds, 1.5),
+        write=min(timeout_seconds, 1.0),
+        pool=min(timeout_seconds, 0.5),
     )
     client=await _fetch_http_client()
     headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}
