@@ -17,6 +17,7 @@ on:
       - ".github/workflows/warmup.yml"
       - "backend/search/engine.py"
       - "tests/test_search_engine.py"
+      - "test_deep33_global_gate.py"
       - "render.yaml"
       - "supabase/functions/deep33-proxy/index.ts"
       - "supabase/functions/deep33-tertiary/index.ts"
