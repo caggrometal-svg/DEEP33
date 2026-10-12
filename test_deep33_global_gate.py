@@ -65,6 +65,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         orchestrator.providers["bing"] = offline
+        orchestrator.providers["google"] = offline
         orchestrator.providers["mojeek"] = offline
         orchestrator.providers["duckduckgo"] = ddg
 
@@ -76,6 +77,50 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("mojeek", result["providers"])
         # Include small event-loop scheduling overhead around the 400 ms mock budget.
         self.assertLess(result["latency_ms"], 500.0)
+
+    async def test_general_google_provider_recovers_when_other_providers_are_empty(self) -> None:
+        orchestrator = WebOrchestrator(
+            max_results=3,
+            provider_total_seconds=0.08,
+            global_budget_seconds=0.50,
+            fallback_delay_seconds=0.0,
+            cache_ttl_seconds=30,
+        )
+
+        async def offline(_query: str, _timeout: float, _limit: int) -> list[dict]:
+            return []
+
+        async def google(_query: str, _timeout: float, _limit: int) -> list[dict]:
+            return [
+                _result(
+                    "asyncio TaskGroup — Python documentation",
+                    "https://docs.python.org/3/library/asyncio-task.html",
+                    "Python asyncio TaskGroup and task cancellation",
+                ),
+                _result(
+                    "Python asyncio concurrency guide",
+                    "https://realpython.com/async-io-python/",
+                    "Python asyncio concurrency and structured tasks",
+                ),
+                _result(
+                    "Python asyncio TaskGroup exception handling",
+                    "https://peps.python.org/pep-0654/",
+                    "Python asyncio task group exception handling",
+                ),
+            ]
+
+        orchestrator.providers["bing"] = offline
+        orchestrator.providers["mojeek"] = offline
+        orchestrator.providers["duckduckgo"] = offline
+        orchestrator.providers["google"] = google
+
+        result = await orchestrator.search(
+            "Python asyncio TaskGroup official documentation", fresh=True
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertIn("google", result["providers"])
+        self.assertEqual(result["winner_provider"], "google")
+        self.assertEqual(len({item["source_domain"] for item in result["results"]}), 3)
 
     async def test_recovery_broadens_query_without_relaxing_original_ranking(self) -> None:
         orchestrator = WebOrchestrator(
@@ -110,7 +155,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             seen.append((name, query))
             return candidates if query == "python asyncio" else []
 
-        for provider_name in ("bing", "mojeek", "duckduckgo"):
+        for provider_name in ("bing", "google", "mojeek", "duckduckgo"):
             async def bound(
                 query: str, timeout: float, limit: int, _name=provider_name
             ) -> list[dict]:
@@ -159,6 +204,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         orchestrator.providers["bing"] = provider
+        orchestrator.providers["google"] = provider
         orchestrator.providers["mojeek"] = provider
         orchestrator.providers["duckduckgo"] = provider
         original = "Python asyncio official documentation"
@@ -331,6 +377,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("chaos")
 
         orchestrator.providers["bing"] = explode
+        orchestrator.providers["google"] = explode
         orchestrator.providers["mojeek"] = explode
         orchestrator.providers["duckduckgo"] = explode
         result = await orchestrator.search("política Chile hoy", fresh=True)

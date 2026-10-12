@@ -20,6 +20,27 @@ def test_search_plan_expands_deep_queries():
     assert plan.queries[0] == "investiga DEEP33"
 
 
+def test_rank_results_requires_two_topic_anchors_for_two_term_query():
+    results = rank_results(
+        "Python asyncio official documentation",
+        [
+            {
+                "title": "Python tutorial only",
+                "url": "https://example.org/python",
+                "snippet": "A guide to Python programming.",
+            },
+            {
+                "title": "asyncio — Asynchronous I/O",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+                "snippet": "Python asyncio documentation and event loop APIs.",
+            },
+        ],
+    )
+    assert [item["url"] for item in results] == [
+        "https://docs.python.org/3/library/asyncio.html"
+    ]
+
+
 def test_rank_results_prefers_relevant_and_corroborated_sources():
     results = rank_results(
         "DEEP33 internet",
@@ -361,8 +382,10 @@ def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
         realtime=False,
     )
 
-    assert len(ranked) == 2
-    assert all("astronomy" not in item["url"] for item in ranked)
+    # The query explicitly names WHO. A generic dengue page that doesn't
+    # identify that organization cannot satisfy the second topic anchor.
+    assert len(ranked) == 1
+    assert ranked[0]["url"].startswith("https://www.who.int/")
 
 
 def test_generic_medical_terms_do_not_overfilter_distinct_influenza_topic():
