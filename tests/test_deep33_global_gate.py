@@ -395,6 +395,10 @@ def test_sse_status_frame_is_android_safe():
     reason="Live production gate requires DEEP33_PRODUCTION_GATE_URL",
 )
 def test_live_production_gate_zero_5xx_multidomain_and_android_sse():
+    require_live = os.getenv("DEEP33_REQUIRE_LIVE_GATE", "").strip().lower()
+    assert require_live in {"1", "true", "yes"}, (
+        "Live production gate requires DEEP33_REQUIRE_LIVE_GATE=true"
+    )
     async def scenario() -> None:
         base_url = os.environ["DEEP33_PRODUCTION_GATE_URL"].rstrip("/")
         token = os.getenv("DEEP33_E2E_TOKEN", "")
@@ -468,7 +472,7 @@ def test_global_gate_does_not_probe_live_without_explicit_flag(monkeypatch, caps
     monkeypatch.setattr(gate, "live_gate", unexpected_live_probe)
 
     assert gate.main() == 0
-    payload = __import__("json").loads(capsys.readouterr().out.strip())
+    payload = json.loads(capsys.readouterr().out.strip())
     assert payload["status"] == "PASS"
     assert payload["live"] is False
 

@@ -10,12 +10,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import _bing_search, _duckduckgo_search, _mojeek_search
 
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
-FALLBACK_DELAY_SECONDS = 2.0
+FALLBACK_DELAY_SECONDS = 0.35
 CIRCUIT_FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN_SECONDS = 60.0
 CACHE_TTL_SECONDS = 60.0
@@ -122,6 +122,21 @@ class WebOrchestrator:
         normalized = " ".join(query.split()).strip().casefold()
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _provider_query(query: str) -> str:
+        """Reduce provider-side noise without changing the user's ranking query."""
+        cleaned = " ".join(str(query or "").split()).strip()
+        if not cleaned or is_realtime_query(cleaned):
+            return cleaned
+        topic_tokens = _topic_tokens(cleaned)
+        if not 2 <= len(topic_tokens) <= 8:
+            return cleaned
+        compact = " ".join(topic_tokens)
+        lowered = cleaned.casefold()
+        if "official" in lowered or "oficial" in lowered:
+            compact += " official"
+        return compact
+
     async def _call_provider(self, provider: str, query: str) -> ProviderOutcome:
         state = self.circuits[provider]
         now = time.monotonic()
@@ -200,11 +215,12 @@ class WebOrchestrator:
                 return cached
 
         started = time.perf_counter()
+        provider_query = self._provider_query(cleaned)
         tasks = {
-            asyncio.create_task(self._call_provider("bing", cleaned), name="search:bing"),
-            asyncio.create_task(self._call_provider("mojeek", cleaned), name="search:mojeek"),
+            asyncio.create_task(self._call_provider("bing", provider_query), name="search:bing"),
+            asyncio.create_task(self._call_provider("mojeek", provider_query), name="search:mojeek"),
             asyncio.create_task(
-                self._delayed_provider("duckduckgo", cleaned),
+                self._delayed_provider("duckduckgo", provider_query),
                 name="search:duckduckgo",
             ),
         }
@@ -250,7 +266,7 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(2, len(selected_now)):
+                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(3, len(selected_now)):
                     break
         finally:
             for task in pending:
@@ -284,6 +300,7 @@ class WebOrchestrator:
             outcomes=outcomes,
             started=started,
             results=selected,
+            executed_query=provider_query,
         )
         if selected:
             self.cache.put(cache_key, payload, self.cache_ttl_seconds)
@@ -298,6 +315,7 @@ class WebOrchestrator:
         outcomes: list[ProviderOutcome],
         started: float,
         results: list[dict] | None = None,
+        executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
         providers_used = [o.provider for o in outcomes if o.ok]
@@ -328,7 +346,7 @@ class WebOrchestrator:
             "depth": "realtime" if realtime else "standard",
             "realtime": realtime,
             "queries": [query],
-            "queries_executed": [query],
+            "queries_executed": [executed_query or query],
             "results": selected,
             "sources": selected,
             "providers": providers_used,
