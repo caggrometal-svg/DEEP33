@@ -40,6 +40,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
+from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
@@ -2440,56 +2441,141 @@ async def web_status() -> dict:
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
+    request_id = request_id_from_request(request)
+    started = time.perf_counter()
     if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+        return graceful_payload(
+            ok=False,
+            code=DiagnosticCode.PROVIDER_BLOCKED,
+            request_id=request_id,
+            errors=["WEB_TOOLS_DISABLED"],
+            query=q,
+            realtime=is_realtime_query(q),
+        )
     try:
-        return await search_web(
+        result = await search_web(
             q,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fresh=True,
         )
+        logger.info(
+            structured_observation(
+                "web_search_complete",
+                request_id=request_id,
+                search_ms=round((time.perf_counter() - started) * 1000, 2),
+                winner_provider=result.get("provider"),
+                providers=result.get("providers", []),
+                domains_used=(result.get("verification") or {}).get("distinct_domains", 0),
+                status="success",
+            )
+        )
+        return result
     except Exception as exc:
-        logger.warning("web_search_endpoint_failed request_id=%s error=%s detail=%s", request_id_from_request(request), type(exc).__name__, str(exc).replace("\\n", " ")[:400])
-        raise HTTPException(status_code=502, detail="WEB_SEARCH_FAILED") from exc
+        detail = str(exc).replace("\\n", " ")[:400]
+        code = (
+            DiagnosticCode.PROVIDER_TIMEOUT
+            if "timeout" in detail.lower() or "deadline" in detail.lower()
+            else DiagnosticCode.NO_RESULTS
+            if "no_results" in detail.lower() or "no relevant" in detail.lower()
+            else DiagnosticCode.PROVIDER_ERROR
+        )
+        logger.warning(
+            structured_observation(
+                "web_search_degraded",
+                request_id=request_id,
+                search_ms=round((time.perf_counter() - started) * 1000, 2),
+                status="degraded",
+                code=code,
+                error=type(exc).__name__,
+            )
+        )
+        return graceful_payload(
+            ok=False,
+            code=code,
+            request_id=request_id,
+            errors=[detail or type(exc).__name__],
+            query=q,
+            realtime=is_realtime_query(q),
+            provider=None,
+            providers=[],
+            verification={
+                "level": "none",
+                "distinct_domains": 0,
+                "distinct_providers": 0,
+                "corroborated_results": 0,
+            },
+        )
 
 
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
-    if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
-
     request_id = request_id_from_request(request)
     fetch_started = time.perf_counter()
+    if not DEEP33_WEB_TOOLS_ENABLED:
+        return graceful_payload(
+            ok=False,
+            code=DiagnosticCode.FETCH_BLOCKED,
+            request_id=request_id,
+            errors=["WEB_TOOLS_DISABLED"],
+            final_url=None,
+            title="",
+            text="",
+        )
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "5"))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
         )
         logger.info(
-            "web_fetch_stage request_id=%s elapsed_ms=%.2f status=success bytes=%s text_chars=%s redirects=%s",
-            request_id,
-            (time.perf_counter() - fetch_started) * 1000,
-            result.get("bytes"),
-            len(result.get("text") or ""),
-            result.get("redirects"),
+            structured_observation(
+                "web_fetch_complete",
+                request_id=request_id,
+                fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                status="success",
+                text_chars=len(result.get("text") or ""),
+                redirects=result.get("redirects"),
+            )
         )
         return result
     except Exception as exc:
-        # The reason is a bounded code, not a URL, response body, or page content.
-        logger.warning(
-            "web_fetch_endpoint_failed request_id=%s elapsed_ms=%.2f error=%s detail=%s",
-            request_id,
-            (time.perf_counter() - fetch_started) * 1000,
-            type(exc).__name__,
-            str(exc).replace("\n", " ")[:160],
+        detail = str(exc).replace("\n", " ")[:160]
+        lowered = detail.lower()
+        code = (
+            DiagnosticCode.FETCH_TIMEOUT
+            if "timeout" in lowered
+            else DiagnosticCode.FETCH_BLOCKED
+            if "ssrf" in lowered or "blocked" in lowered or "403" in lowered
+            else DiagnosticCode.DNS_FAILED
+            if "dns" in lowered or "name or service" in lowered
+            else DiagnosticCode.FETCH_FAILED
         )
-        raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
+        logger.warning(
+            structured_observation(
+                "web_fetch_degraded",
+                request_id=request_id,
+                fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                status="degraded",
+                code=code,
+                error=type(exc).__name__,
+            )
+        )
+        return graceful_payload(
+            ok=False,
+            code=code,
+            request_id=request_id,
+            errors=[detail or type(exc).__name__],
+            final_url=None,
+            title="",
+            text="",
+            bytes=0,
+            redirects=0,
+        )
 
 
 
