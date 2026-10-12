@@ -58,32 +58,19 @@ jobs:
           python -m py_compile             backend/search/resilient.py             backend/search/web_pipeline.py             tools/web_search.py             tools/web_fetch.py             backend/main.py             backend/gateway.py             test_deep33_global_gate.py
 
       - name: Create authenticated E2E session
-        if: env.DEEP33_REQUIRE_LIVE_GATE == 'true'
+        if: ${{ env.DEEP33_REQUIRE_LIVE_GATE == 'true' }}
         run: |
           set -euo pipefail
           token=""
           for attempt in $(seq 1 5); do
             profile_id="global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${attempt}"
-            response="$(curl -sS --connect-timeout 8 --max-time 30 \
-              -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
+            http_code="$(curl -sS --connect-timeout 8 --max-time 30 -o /tmp/deep33-auth.json -w '%{http_code}' \
               -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "content-type: application/json" \
               -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
-            status="${response##*DEEP33_HTTP_STATUS:}"
-            auth_json="${response%
-      - name: Enforce live production evidence on main
-        if: github.ref == 'refs/heads/main'
-        run: |
-          test -n "$DEEP33_BASE_URL"
-          test "$DEEP33_REQUIRE_LIVE_GATE" = "true"
-
-      - name: Existing search and performance regression tests
-        run: |
-          python -m pytest -q             tests/test_performance_contract.py             tests/test_hybrid_search.py             tests/test_connectivity_hardening.py             tests/test_ttft_fast_path.py
-\n'DEEP33_HTTP_STATUS:*}"
-            if [ "$status" = "200" ]; then
-              token="$(printf '%s' "$auth_json" | jq -r '.access_token // empty')"
+            if [ "$http_code" = "200" ]; then
+              token="$(jq -r '.access_token // empty' /tmp/deep33-auth.json)"
               [ -n "$token" ] && break
             fi
             [ "$attempt" -lt 5 ] && sleep 3
