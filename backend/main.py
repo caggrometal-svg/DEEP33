@@ -2440,57 +2440,123 @@ async def web_status() -> dict:
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
+    request_id = request_id_from_request(request)
+    started = time.perf_counter()
     if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+        return {
+            "ok": False,
+            "status": "WEB_TOOLS_DISABLED",
+            "diagnostic_code": "WEB_TOOLS_DISABLED",
+            "request_id": request_id,
+            "results": [],
+            "sources": [],
+        }
     try:
-        return await search_web(
+        result = await search_web(
             q,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
+            timeout_seconds=min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5"))),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fresh=True,
         )
+        logger.info(
+            structured_observation(
+                "web_search_summary",
+                request_id=request_id,
+                search_ms=round((time.perf_counter() - started) * 1000, 2),
+                fetch_ms=0,
+                winner_provider=result.get("winner_provider") or result.get("provider"),
+                domains_used=sorted({
+                    str(item.get("source_domain") or urlparse(str(item.get("url") or "")).hostname or "")
+                    for item in (result.get("results") or [])
+                    if str(item.get("url") or "").strip()
+                }),
+                ttft_ms=None,
+                total_ms=round((time.perf_counter() - started) * 1000, 2),
+                status=result.get("status") or ("OK" if result.get("ok") else "NO_RESULTS"),
+            )
+        )
+        return {**result, "request_id": request_id}
     except Exception as exc:
-        logger.warning("web_search_endpoint_failed request_id=%s error=%s detail=%s", request_id_from_request(request), type(exc).__name__, str(exc).replace("\\n", " ")[:400])
-        raise HTTPException(status_code=502, detail="WEB_SEARCH_FAILED") from exc
+        logger.warning(
+            "web_search_endpoint_degraded request_id=%s error=%s detail=%s",
+            request_id,
+            type(exc).__name__,
+            str(exc).replace("\n", " ")[:240],
+        )
+        return {
+            "ok": False,
+            "status": "DEGRADED",
+            "diagnostic_code": "SEARCH_INTERNAL_ERROR",
+            "request_id": request_id,
+            "results": [],
+            "sources": [],
+            "errors": [type(exc).__name__],
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
 
 
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
-    if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
-
     request_id = request_id_from_request(request)
     fetch_started = time.perf_counter()
+    if not DEEP33_WEB_TOOLS_ENABLED:
+        return {
+            "ok": False,
+            "status": "WEB_TOOLS_DISABLED",
+            "diagnostic_code": "WEB_TOOLS_DISABLED",
+            "request_id": request_id,
+        }
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=min(2.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "2.5"))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
         )
         logger.info(
-            "web_fetch_stage request_id=%s elapsed_ms=%.2f status=success bytes=%s text_chars=%s redirects=%s",
-            request_id,
-            (time.perf_counter() - fetch_started) * 1000,
-            result.get("bytes"),
-            len(result.get("text") or ""),
-            result.get("redirects"),
+            structured_observation(
+                "web_fetch_summary",
+                request_id=request_id,
+                search_ms=0,
+                fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                winner_provider=None,
+                domains_used=[urlparse(str(result.get("final_url") or result.get("url") or "")).hostname or ""],
+                ttft_ms=None,
+                total_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                status="OK",
+            )
         )
-        return result
+        return {**result, "status": "OK", "request_id": request_id}
     except Exception as exc:
-        # The reason is a bounded code, not a URL, response body, or page content.
+        detail = str(exc).strip()
+        if "TIMEOUT" in detail.upper():
+            code = "FETCH_TIMEOUT"
+        elif "403" in detail:
+            code = "SOURCE_HTTP_403"
+        elif "500" in detail:
+            code = "SOURCE_HTTP_500"
+        elif "SSRF" in detail.upper() or "PRIVATE" in detail.upper():
+            code = "SOURCE_BLOCKED"
+        else:
+            code = "SOURCE_UNAVAILABLE"
         logger.warning(
-            "web_fetch_endpoint_failed request_id=%s elapsed_ms=%.2f error=%s detail=%s",
+            "web_fetch_endpoint_degraded request_id=%s elapsed_ms=%.2f error=%s detail=%s",
             request_id,
             (time.perf_counter() - fetch_started) * 1000,
             type(exc).__name__,
-            str(exc).replace("\n", " ")[:160],
+            detail.replace("\n", " ")[:160],
         )
-        raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
-
+        return {
+            "ok": False,
+            "status": "DEGRADED",
+            "diagnostic_code": code,
+            "request_id": request_id,
+            "text": "",
+            "latency_ms": round((time.perf_counter() - fetch_started) * 1000, 2),
+        }
 
 
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
