@@ -1,0 +1,99 @@
+name: DEEP33 Global Internet Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "backend/search/**"
+      - "tools/web_search.py"
+      - "tools/web_fetch.py"
+      - "backend/main.py"
+      - "tests/test_deep33_global_gate.py"
+      - ".github/workflows/deep33-global-internet-gate.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "backend/search/**"
+      - "tools/web_search.py"
+      - "tools/web_fetch.py"
+      - "backend/main.py"
+      - "tests/test_deep33_global_gate.py"
+      - ".github/workflows/deep33-global-internet-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep33-global-internet-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+  SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
+  DEEP33_PRODUCTION_GATE_URL: https://deep33-backend.onrender.com
+
+jobs:
+  chaos-unit-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Run deterministic resilience and chaos gate
+        env:
+          DEEP33_PRODUCTION_GATE_URL: ""
+        run: |
+          set -euo pipefail
+          pytest -q             tests/test_deep33_global_gate.py             tests/test_search_engine.py             tests/test_web_search.py             tests/test_web_fetch.py             tests/test_web_tools.py             tests/test_sse_contract.py
+      - name: Compile production Python modules
+        run: |
+          python -m py_compile             backend/main.py             backend/search/engine.py             backend/search/resilience.py             tools/web_search.py             tools/web_fetch.py
+
+  production-render-gate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    needs: chaos-unit-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Create authenticated E2E session
+        run: |
+          set -euo pipefail
+          profile_id="global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+          response="$(curl -sS --connect-timeout 8 --max-time 30             -w '\nDEEP33_HTTP_STATUS:%{http_code}'             -X POST "$SUPABASE_URL/functions/v1/deep33-auth"             -H "apikey: $SUPABASE_PUBLISHABLE_KEY"             -H "content-type: application/json"             -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}")"
+          status="${response##*DEEP33_HTTP_STATUS:}"
+          body="${response%$'\n'DEEP33_HTTP_STATUS:*}"
+          test "$status" = "200" || { echo "$body"; exit 1; }
+          token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
+          test -n "$token"
+          echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Wait for Render revision to become healthy
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 12); do
+            code="$(curl -sS --connect-timeout 8 --max-time 30               -o /tmp/health.json -w "%{http_code}"               -H "Authorization: Bearer $DEEP33_E2E_TOKEN"               "$DEEP33_PRODUCTION_GATE_URL/health" || true)"
+            if [ "$code" = "200" ] && jq -e '.status=="PASS"' /tmp/health.json >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ok" = "1"
+      - name: Run live multidomain, stress and Android SSE gate
+        run: |
+          set -euo pipefail
+          pytest -q tests/test_deep33_global_gate.py::test_live_production_gate_zero_5xx_multidomain_and_android_sse
