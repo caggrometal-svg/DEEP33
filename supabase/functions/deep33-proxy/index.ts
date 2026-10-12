@@ -254,10 +254,15 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
 const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").trim() || "vireonix";
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
-const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "google/gemma-4-26b-a4b-it:free").trim();
+const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
 // Internal DEEP33 fallback: keep the client endpoint unchanged and reuse the existing
 // Render backend only when the direct edge provider cannot produce a safe response.
-const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";
+const EDGE_AI_UPSTREAM_URLS = [
+  "https://deep33-backend.onrender.com",
+  "https://deep33-api.onrender.com",
+  "https://deep33-backup.onrender.com",
+] as const;
+const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];
 const EDGE_AI_REQUIRES_AUTH =
   (Deno.env.get("AI_GATEWAY_REQUIRES_AUTH") || "").trim().toLowerCase() === "true" ||
   EDGE_AI_PROVIDER.toLowerCase() === "kilo";
@@ -475,6 +480,34 @@ function isSecureHttpsUrl(value: string): boolean {
 
 type EdgeAIProvider = { name: string; url: string; stream_url?: string; api_key: string; model: string; requires_auth: boolean };
 
+function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
+  return EDGE_AI_UPSTREAM_URLS.some((base) =>
+    provider.url.startsWith(base + "/") ||
+    Boolean(provider.stream_url?.startsWith(base + "/"))
+  );
+}
+
+function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
+  const names = [
+    "render-backend-fallback",
+    "render-api-fallback",
+    "render-backup-fallback",
+  ] as const;
+  EDGE_AI_UPSTREAM_URLS.forEach((base, index) => {
+    const url = base + "/v1/ai/generate";
+    const streamUrl = base + "/v1/chat/stream";
+    if (providers.some((provider) => provider.url === url || provider.stream_url === streamUrl)) return;
+    providers.push({
+      name: names[index],
+      url,
+      stream_url: streamUrl,
+      api_key: "",
+      model: "",
+      requires_auth: true,
+    });
+  });
+}
+
 const FREE_INFERENCE_REQUEST_TIMEOUT_MS = 7000;
 const FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS = 4000;
 
@@ -638,17 +671,7 @@ function edgeProviders(): EdgeAIProvider[] {
   addFreeInferenceProviders(providers);
   addPublicInferenceProviders(providers);
 
-  if (!providers.some((provider) => provider.name === "render-backend-fallback")) {
-    providers.push({
-      name: "render-backend-fallback",
-      url: EDGE_AI_UPSTREAM_URL + "/v1/ai/generate",
-      stream_url: EDGE_AI_UPSTREAM_URL + "/v1/chat/stream",
-      api_key: "",
-      // Keep the existing explicit free model for the Render fallback.
-      model: "google/gemma-4-26b-a4b-it:free",
-      requires_auth: true,
-    });
-  }
+  addInternalInferenceBackends(providers);
 
   const seen = new Set<string>();
   return providers.filter((provider) => {
@@ -733,9 +756,7 @@ async function providerRequestHeaders(
   idempotencyKey = "",
   personality = "",
 ): Promise<Record<string, string>> {
-  const renderBackendFallback =
-    provider.name === "render-backend-fallback" ||
-    provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+  const renderBackendFallback = isInternalBackendProvider(provider);
   const fallbackSessionId = renderBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
     : "";
@@ -1129,8 +1150,7 @@ async function callEdgeAI(
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
       const criticalRenderFallback =
-        provider.name === "render-backend-fallback" ||
-        provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+        providers.length === 1 && isInternalBackendProvider(provider);
       if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
@@ -1499,8 +1519,7 @@ async function streamEdgeAI(
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
       const criticalRenderFallback =
-        provider.name === "render-backend-fallback" ||
-        provider.url.startsWith(EDGE_AI_UPSTREAM_URL + "/");
+        providers.length === 1 && isInternalBackendProvider(provider);
       if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
