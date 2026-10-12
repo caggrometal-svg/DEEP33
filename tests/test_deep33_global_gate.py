@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from backend.search.engine import SearchEngine, is_realtime_query
+from backend.search.resilient import WebOrchestrator
 from backend.search.resilience import (
     DiagnosticCode,
     NetworkBudgets,
@@ -120,6 +121,49 @@ def test_t0_primary_and_tplus_fallback_recovers_without_orphans():
             and (task.get_name() or "").startswith("web-search:")
         ]
         assert dangling == []
+
+    asyncio.run(scenario())
+
+
+def test_resilient_orchestrator_uses_one_semantic_recovery_wave_after_zero_evidence():
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.5,
+            global_budget_seconds=2.0,
+            fallback_delay_seconds=0.0,
+        )
+        calls: list[tuple[str, str]] = []
+
+        async def provider(name: str, query: str, timeout: float, limit: int) -> list[dict]:
+            calls.append((name, query))
+            if query == "python asyncio":
+                return [{
+                    "title": "Python asyncio documentation",
+                    "url": f"https://{name}.example/python-asyncio",
+                    "snippet": "Python asyncio library reference",
+                }]
+            return [{
+                "title": "Unrelated result",
+                "url": f"https://{name}.example/unrelated",
+                "snippet": "Unrelated content",
+            }]
+
+        for provider_name in ("bing", "mojeek", "duckduckgo"):
+            async def bound(query: str, timeout: float, limit: int, _name=provider_name):
+                return await provider(_name, query, timeout, limit)
+            orchestrator.providers[provider_name] = bound
+
+        payload = await orchestrator.search(
+            "Python asyncio official documentation",
+            fresh=True,
+        )
+
+        assert payload["ok"] is True
+        assert payload["results"]
+        recovery_calls = [item for item in calls if item[1] == "python asyncio"]
+        assert {name for name, _ in recovery_calls} == {"bing", "duckduckgo"}
+        assert all(name != "mojeek" for name, _ in recovery_calls)
 
     asyncio.run(scenario())
 
