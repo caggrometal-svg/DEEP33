@@ -76,6 +76,47 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("mojeek", result["providers"])
         self.assertLess(result["latency_ms"], 400.0)
 
+    async def test_general_provider_query_compacts_search_noise_but_preserves_ranking_query(self) -> None:
+        orchestrator = WebOrchestrator(
+            max_results=3,
+            provider_total_seconds=0.08,
+            global_budget_seconds=0.30,
+            fallback_delay_seconds=0.01,
+        )
+        seen: list[str] = []
+
+        async def provider(query: str, _timeout: float, _limit: int) -> list[dict]:
+            seen.append(query)
+            return [
+                _result(
+                    "asyncio — Asynchronous I/O",
+                    "https://docs.python.org/3/library/asyncio.html",
+                    "Python asyncio documentation and event loop APIs",
+                ),
+                _result(
+                    "Python asyncio tutorial",
+                    "https://realpython.com/async-io-python/",
+                    "Python asyncio guide",
+                ),
+                _result(
+                    "PEP 3156",
+                    "https://peps.python.org/pep-3156/",
+                    "Python asyncio event loop design",
+                ),
+            ]
+
+        orchestrator.providers["bing"] = provider
+        orchestrator.providers["mojeek"] = provider
+        orchestrator.providers["duckduckgo"] = provider
+        original = "Python asyncio official documentation"
+        result = await orchestrator.search(original, fresh=True)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["query"], original)
+        self.assertEqual(result["queries_executed"], ["python asyncio official"])
+        self.assertTrue(seen)
+        self.assertTrue(all(query == "python asyncio official" for query in seen))
+
     async def test_circuit_breaker_opens_after_five_consecutive_failures(self) -> None:
         orchestrator = WebOrchestrator(
             provider_total_seconds=0.05,

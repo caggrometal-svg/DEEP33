@@ -7,6 +7,7 @@ on:
       - fix/deep33-test-global-101026-resilience-v2
       - fix/deep33-ttft-under-3s
       - fix/deep33-global-101026-final-gates
+      - fix/deep33-global-101026-live-search
   pull_request:
     branches:
       - main
@@ -27,7 +28,7 @@ permissions:
 jobs:
   production_gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
       DEEP33_BASE_URL: https://deep33-backend.onrender.com
@@ -52,6 +53,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+
+      - name: Enable canonical live production target
+        if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_BASE_URL == ''
+        run: echo "DEEP33_BASE_URL=https://deep33-backend.onrender.com" >> "$GITHUB_ENV"
+
+      - name: Prepare authenticated live production session
+        if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
+        run: |
+          set -euo pipefail
+          token=""
+          for attempt in 1 2 3; do
+            profile_id="global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${attempt}"
+            status="$(curl -sS --connect-timeout 8 --max-time 30               -o /tmp/deep33-global-auth.json -w "%{http_code}"               -X POST "$SUPABASE_URL/functions/v1/deep33-auth"               -H "apikey: $SUPABASE_PUBLISHABLE_KEY"               -H "content-type: application/json"               -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            if [ "$status" = "200" ]; then
+              token="$(jq -r '.access_token // empty' /tmp/deep33-global-auth.json)"
+              [ -n "$token" ] && break
+            fi
+            echo "GLOBAL_GATE_AUTH_RETRY attempt=$attempt http=$status"
+            [ "$attempt" -lt 3 ] && sleep 2
+          done
+          test -n "$token"
+          echo "::add-mask::$token"
+          echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Compile changed Python
         run: |
@@ -105,6 +129,7 @@ jobs:
         run: |
           test -n "$DEEP33_BASE_URL"
           test "$DEEP33_REQUIRE_LIVE_GATE" = "true"
+          test -n "$DEEP33_TEST_AUTH_TOKEN"
 
       - name: Existing search and performance regression tests
         run: |
