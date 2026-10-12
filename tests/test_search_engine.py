@@ -336,6 +336,35 @@ def test_controversial_queries_expand_against_official_and_independent_versions(
     assert any("evidencia independiente" in q.lower() for q in plan.queries[1:])
 
 
+def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
+    from backend.search.engine import rank_results
+
+    ranked = rank_results(
+        "World Health Organization dengue fact sheet",
+        [
+            {
+                "title": "Dengue",
+                "url": "https://www.who.int/news-room/fact-sheets/detail/dengue-and-severe-dengue",
+                "snippet": "Dengue is a viral infection transmitted by mosquitoes.",
+            },
+            {
+                "title": "Dengue clinical overview",
+                "url": "https://public-health.example/dengue",
+                "snippet": "Evidence and prevention guidance for dengue infection.",
+            },
+            {
+                "title": "Unrelated astronomy report",
+                "url": "https://science.example/astronomy",
+                "snippet": "Stars and galaxies.",
+            },
+        ],
+        realtime=False,
+    )
+
+    assert len(ranked) == 2
+    assert all("astronomy" not in item["url"] for item in ranked)
+
+
 def test_realtime_weather_ranking_accepts_spanish_english_semantic_equivalence():
     from backend.search.engine import rank_results
 
