@@ -196,7 +196,7 @@ def test_no_results_logs_redacted_rank_diagnostics(caplog):
         fallback_delay_seconds=0.0,
         cache_ttl_seconds=30,
     )
-    private_query = "Python asyncio TaskGroup private-query-marker"
+    private_query = "Python asyncio TaskGroup documentación oficial"
     private_snippet = "PRIVATE-SNIPPET-MARKER unrelated gardening content"
 
     async def unrelated(_query, _timeout, _limit):
@@ -219,7 +219,7 @@ def test_no_results_logs_redacted_rank_diagnostics(caplog):
         if "web_search_rank_rejected_candidates" in record.getMessage()
     ]
     assert matches, "Expected aggregate rank diagnostics for rejected provider candidates"
-    assert "anchor_count=4" in matches[-1]
+    assert "anchor_count=3" in matches[-1]
     assert private_query not in matches[-1]
     assert private_snippet not in matches[-1]
 
