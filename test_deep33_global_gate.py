@@ -218,8 +218,9 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         end = source.index("async def run_inference_check", start)
         web_routes = source[start:end]
         self.assertNotIn('status_code=502', web_routes)
-        self.assertIn('"diagnostic_code": "SEARCH_INTERNAL_ERROR"', web_routes)
-        self.assertIn('"diagnostic_code": code', web_routes)
+        self.assertIn("graceful_payload(", web_routes)
+        self.assertIn("DiagnosticCode.PROVIDER_TIMEOUT", web_routes)
+        self.assertIn("DiagnosticCode.FETCH_TIMEOUT", web_routes)
 
     async def test_no_async_task_exception_leak_in_search_chaos(self) -> None:
         orchestrator = WebOrchestrator(
@@ -271,7 +272,8 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                     f"Expected HTTP 200 for web search, got {response.status_code}: {response.text[:300]}"
                 )
             payload = response.json()
-            if "ok" not in payload or "diagnostic_code" not in payload and not payload.get("ok"):
+            diagnostic = payload.get("diagnostic_code") or payload.get("code")
+            if "ok" not in payload or (not payload.get("ok") and not diagnostic):
                 raise AssertionError(f"Invalid Android-safe web payload: {payload}")
 
         chat_payload = {
