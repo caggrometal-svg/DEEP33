@@ -1,0 +1,57 @@
+name: DEEP33 Global Gate
+
+on:
+  push:
+    branches:
+      - fix/deep33-test-global-101026-resilience
+  workflow_dispatch:
+    inputs:
+      require_live:
+        description: Require live Render/Android SSE validation
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  production_gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: "1"
+      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL }}
+      DEEP33_TEST_AUTH_TOKEN: ${{ secrets.DEEP33_TEST_AUTH_TOKEN }}
+      DEEP33_TEST_SESSION_ID: deep33-global-gate
+      DEEP33_REQUIRE_LIVE_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+
+      - name: Compile changed Python
+        run: |
+          python -m py_compile             backend/search/resilient.py             backend/search/web_pipeline.py             tools/web_search.py             tools/web_fetch.py             backend/main.py             test_deep33_global_gate.py
+
+      - name: DEEP33-TEST-GLOBAL-101026
+        run: python test_deep33_global_gate.py
+
+      - name: Existing search and performance regression tests
+        run: |
+          python -m pytest -q             tests/test_performance_contract.py             tests/test_hybrid_search.py             tests/test_connectivity_hardening.py
