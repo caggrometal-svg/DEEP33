@@ -184,7 +184,9 @@ class WebOrchestrator:
                     results=list(results),
                     latency_ms=round(latency_ms, 2),
                 )
-            state.failure(time.monotonic())
+            # An empty result set is a valid provider response, not a transport
+            # failure. Do not poison the circuit breaker for topical misses.
+            state.success()
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
@@ -303,7 +305,16 @@ class WebOrchestrator:
         selected = deduplicate(ranked, self.max_results)
 
         recovery_query = self._recovery_query(cleaned)
-        if not selected and recovery_query.casefold() != provider_query.casefold():
+        selected_domains = {
+            item.get("source_domain") or ""
+            for item in selected
+            if item.get("source_domain")
+        }
+        needs_recovery = (
+            len(selected) < min(3, self.max_results)
+            or len(selected_domains) < min(3, max(1, len(selected)))
+        )
+        if needs_recovery and recovery_query.casefold() != provider_query.casefold():
             recovery_started = asyncio.get_running_loop().time()
             recovery_tasks = [
                 asyncio.create_task(
