@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
-from tools.web_search import _bing_search, _duckduckgo_search, _mojeek_search
+from tools.web_search import _bing_search, _duckduckgo_search, _google_search, _mojeek_search
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +103,13 @@ class WebOrchestrator:
         self.cache = TTLRUCache()
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
+            "google": CircuitState(),
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
+            "google": self._google,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
@@ -117,6 +119,9 @@ class WebOrchestrator:
 
     async def _mojeek(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _mojeek_search(query, timeout, limit)
+
+    async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _google_search(query, timeout, limit)
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
@@ -154,6 +159,20 @@ class WebOrchestrator:
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()
+        news_intent = any(
+            term in lowered
+            for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
+        )
+        politics_intent = any(
+            term in lowered
+            for term in ("política", "politica", "presidente", "elecciones", "elección", "eleccion", "gobierno", "congreso", "senado", "ministro")
+        )
+        if news_intent and politics_intent and "chile" in lowered:
+            return "política Chile últimas noticias hoy"
+        if news_intent and "chile" in lowered:
+            return "Chile últimas noticias hoy"
+        if news_intent and compact:
+            return f"{compact} latest news today"
         if compact:
             # If a query with several anchors yields no rankable evidence, use a
             # broader provider query in the recovery wave. The final ranking still
@@ -248,6 +267,7 @@ class WebOrchestrator:
         provider_query = self._provider_query(cleaned)
         tasks = {
             asyncio.create_task(self._call_provider("bing", provider_query), name="search:bing"),
+            asyncio.create_task(self._call_provider("google", provider_query), name="search:google"),
             asyncio.create_task(self._call_provider("mojeek", provider_query), name="search:mojeek"),
             asyncio.create_task(
                 self._delayed_provider("duckduckgo", provider_query),
