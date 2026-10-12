@@ -180,6 +180,81 @@ def test_safe_task_consumes_background_exception():
     asyncio.run(scenario())
 
 
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    [
+        (RuntimeError("upstream returned HTTP 403"), "FETCH_BLOCKED"),
+        (RuntimeError("upstream returned HTTP 500"), "FETCH_FAILED"),
+        (TimeoutError("upstream timeout"), "FETCH_TIMEOUT"),
+    ],
+)
+def test_web_fetch_partial_failures_are_http_200(monkeypatch, failure, expected_code):
+    import backend.main as main
+    from fastapi.testclient import TestClient
+
+    async def allow(_request, _session_id):
+        return None
+
+    async def fail_fetch(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow)
+    monkeypatch.setattr(main, "fetch_page", fail_fetch)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    response = TestClient(main.app).get(
+        "/v1/web/fetch",
+        params={"url": "https://example.com/article"},
+        headers={
+            "X-DEEP33-Session-Id": "global-gate-fetch",
+            "X-Request-ID": "global-gate-fetch",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["degraded"] is True
+    assert body["code"] == expected_code
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    [
+        (RuntimeError("provider timeout"), "PROVIDER_TIMEOUT"),
+        (RuntimeError("NO_RESULTS"), "NO_RESULTS"),
+        (RuntimeError("provider exploded"), "PROVIDER_ERROR"),
+    ],
+)
+def test_web_search_partial_failures_are_http_200(monkeypatch, failure, expected_code):
+    import backend.main as main
+    from fastapi.testclient import TestClient
+
+    async def allow(_request, _session_id):
+        return None
+
+    async def fail_search(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow)
+    monkeypatch.setattr(main, "search_web", fail_search)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    response = TestClient(main.app).get(
+        "/v1/web/search",
+        params={"q": "Python asyncio official documentation"},
+        headers={
+            "X-DEEP33-Session-Id": "global-gate-search",
+            "X-Request-ID": "global-gate-search",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["degraded"] is True
+    assert body["code"] == expected_code
+
+
 def _auth_headers(token: str) -> dict[str, str]:
     headers = {
         "Cache-Control": "no-cache",
@@ -217,7 +292,7 @@ async def _live_fetch(client: httpx.AsyncClient, base_url: str, token: str, url:
     return payload
 
 
-def _parse_sse(raw: str) -> tuple[str, bool, list[str]]:
+def _parse_sse(raw: str) -> tuple[str, bool, list[str], list[str]]:
     chunks: list[str] = []
     done = False
     events: list[str] = []
@@ -241,7 +316,7 @@ def _parse_sse(raw: str) -> tuple[str, bool, list[str]]:
                     value = delta.get("content") if isinstance(delta, dict) else None
                     if isinstance(value, str) and value:
                         chunks.append(value)
-    return "".join(chunks), done, events
+    return "".join(chunks), done, events, chunks
 
 
 async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, token: str) -> float:
@@ -271,10 +346,11 @@ async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, t
     assert first_byte is not None
     ttft = first_byte - started
     raw = "".join(pieces)
-    answer, done, events = _parse_sse(raw)
+    answer, done, events, chunks = _parse_sse(raw)
     assert done
     assert len(answer.strip()) >= 20
     assert "error" not in events
+    assert all(left != right for left, right in zip(chunks, chunks[1:]))
     return ttft
 
 
