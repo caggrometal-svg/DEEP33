@@ -368,10 +368,12 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda _max_results=5: fake)
     web_search_module._SEARCH_INFLIGHT.clear()
 
-    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
-    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+    first = asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+    second = asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
 
     assert calls["count"] == 2
+    assert first["fresh_request"] is True
+    assert second["fresh_request"] is True
 
 def test_realtime_policy_detects_local_current_situation_as_news_intent():
     query = "situación actual de la comuna de Las Condes en Chile"
