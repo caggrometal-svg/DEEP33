@@ -79,6 +79,24 @@ jobs:
           echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
           echo "DEEP33_TEST_SESSION_ID=global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
+      - name: Wait for exact main SHA on canonical Render
+        if: ${{ env.DEEP33_REQUIRE_LIVE_GATE == 'true' }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 36); do
+            health="$(curl -fsS --connect-timeout 8 --max-time 20 "$DEEP33_BASE_URL/health" || true)"
+            live_sha="$(printf '%s' "$health" | jq -r '.git_sha // empty' 2>/dev/null || true)"
+            status="$(printf '%s' "$health" | jq -r '.status // empty' 2>/dev/null || true)"
+            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status"
+            if [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
+              echo "RENDER_EXACT_SHA_PASS=$live_sha"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "RENDER_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          exit 1
+
       - name: DEEP33-TEST-GLOBAL-101026
         run: python test_deep33_global_gate.py
 
