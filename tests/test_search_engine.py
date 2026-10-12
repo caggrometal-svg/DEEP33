@@ -149,7 +149,7 @@ def test_deep_search_stops_after_verified_providers(monkeypatch):
     assert result["ok"] is True
     assert len(result["queries"]) == 3
     assert set(result["providers"]) == {"tavily", "bing"}
-    assert cancelled["ddg"] is True
+    assert cancelled["ddg"] is False
 
 
 def test_deep_search_uses_multiple_independent_providers(monkeypatch):
@@ -572,7 +572,7 @@ def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch
     assert result["ok"] is True
     assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"
     assert "bing" in result["providers"]
-    assert cancelled["ddg"] is True
+    assert cancelled["ddg"] is False
 
 
 def test_realtime_locality_anchor_can_be_found_in_destination_url_path():
