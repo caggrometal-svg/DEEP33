@@ -2455,7 +2455,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     try:
         result = await search_web(
             q,
-            timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            timeout_seconds=min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5"))),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fresh=True,
         )
@@ -2527,7 +2527,7 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=min(5.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "5"))),
+            timeout_seconds=min(2.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "2.5"))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
@@ -3881,8 +3881,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         },
     )
 
-def _sse_text_chunks(value,chunk_size=120):
-    return [value[i:i+chunk_size] for i in range(0,len(value),chunk_size)] or [""]
+def _sse_text_chunks(value, chunk_size=120):
+    text = str(value or "")
+    return [
+        text[i:i + chunk_size]
+        for i in range(0, len(text), chunk_size)
+        if text[i:i + chunk_size]
+    ]
 
 def _sse_status(state: str, request_id: str, **metadata: Any) -> bytes:
     payload = {
