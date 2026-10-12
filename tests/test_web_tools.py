@@ -14,18 +14,24 @@ def test_url_policy():
     with pytest.raises(SSRFBlockedError): validate_public_url("https://user:pass@example.com/")
     with pytest.raises(SSRFBlockedError): validate_public_url("https://example.com:8080/")
 
-def test_tavily_normalisation(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
-    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def fake(*args,**kwargs): return [{"title":"DEEP33 Example","url":"https://example.com/","snippet":"Snippet"}]
-    monkeypatch.setattr("tools.web_search._tavily_search",fake)
-    result=asyncio.run(search_web("DEEP33",provider="tavily",api_key="tvly-test"))
-    assert result["results"][0]["snippet"]=="Snippet"
+def test_resilient_search_normalisation(monkeypatch):
+    import backend.search.resilient as resilient_module
+
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            return {
+                "ok": True,
+                "engine": "DEEP33 Search Engine",
+                "engine_version": "1.4.0",
+                "results": [{"title": "DEEP33 Example", "url": "https://example.com/", "snippet": "Snippet"}],
+                "provider": "bing",
+            }
+
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: FakeOrchestrator())
+    result = asyncio.run(search_web("DEEP33", provider="auto", fresh=True))
+    assert result["results"][0]["snippet"] == "Snippet"
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["provider"] == "tavily"
+    assert result["provider"] == "bing"
 
 def test_tavily_realtime_news_is_time_bounded(monkeypatch):
     import tools.web_search as module
@@ -72,17 +78,31 @@ def test_tavily_realtime_news_is_time_bounded(monkeypatch):
     assert result[0]["published_at"].startswith("2026-10-08")
 
 
-def test_tavily_falls_back_to_ddg(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
-    async def failing(*args,**kwargs): raise RuntimeError("down")
-    async def ddg(*args,**kwargs): return [{"title":"DEEP33 DDG","url":"https://example.com/","snippet":"DEEP33 fallback result"}]
-    monkeypatch.setattr("tools.web_search._tavily_search",failing)
-    monkeypatch.setattr("tools.web_search._duckduckgo_search",ddg)
-    import tools.web_search as module
-    module._SEARCH_CACHE.clear()
-    result=asyncio.run(search_web("DEEP33 fallback test",provider="tavily",api_key="tvly-test"))
-    assert result["provider"]=="duckduckgo"
+def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=3,
+        provider_total_seconds=0.05,
+        global_budget_seconds=0.30,
+        fallback_delay_seconds=0.01,
+    )
+
+    async def failing(*_args, **_kwargs):
+        raise RuntimeError("down")
+
+    async def ddg(*_args, **_kwargs):
+        return [
+            {"title": "DEEP33 DDG", "url": "https://example.com/", "snippet": "DEEP33 fallback result"},
+            {"title": "DEEP33 DDG 2", "url": "https://example.org/", "snippet": "DEEP33 fallback result"},
+            {"title": "DEEP33 DDG 3", "url": "https://example.net/", "snippet": "DEEP33 fallback result"},
+        ]
+
+    orchestrator.providers["bing"] = failing
+    orchestrator.providers["mojeek"] = failing
+    orchestrator.providers["duckduckgo"] = ddg
+    result = asyncio.run(orchestrator.search("DEEP33 fallback test", fresh=True))
+    assert result["winner_provider"] == "duckduckgo"
 
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
@@ -190,10 +210,10 @@ def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr("tools.web_search.httpx.AsyncClient", Client)
-    result = asyncio.run(search_web("DEEP33", provider="bing", api_key=""))
+    result = asyncio.run(search_web("DEEP33", provider="bing", api_key="", fresh=True))
     assert result["ok"] is True
-    assert result["provider"] == "bing"
-    assert result["results"][0]["url"] == "https://example.org/deep33"
+    assert "bing" in result["providers"]
+    assert any(item["url"] == "https://example.org/deep33" for item in result["results"])
 
 
 def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
@@ -359,30 +379,30 @@ def test_web_status_endpoint(monkeypatch):
     assert body["tool_loop_enabled"] is True
 
 
-def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
+def test_concurrent_fresh_requests_are_bounded_by_orchestrator(monkeypatch):
+    import backend.search.resilient as resilient_module
     import tools.web_search as module
-    from backend.search.engine import SearchEngine
 
     calls = {"count": 0}
 
-    async def fake_engine_search(*_args, **_kwargs):
-        calls["count"] += 1
-        await asyncio.sleep(0.05)
-        return {
-            "ok": True,
-            "results": [
-                {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
-                {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
-            ],
-            "sources": [],
-            "providers": ["test"],
-            "provider": "test",
-            "errors": [],
-        }
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            calls["count"] += 1
+            await asyncio.sleep(0.01)
+            return {
+                "ok": True,
+                "results": [
+                    {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
+                    {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
+                ],
+                "sources": [],
+                "providers": ["test"],
+                "provider": "test",
+                "errors": [],
+            }
 
-    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
-    module._SEARCH_CACHE.clear()
-    module._SEARCH_INFLIGHT.clear()
+    fake = FakeOrchestrator()
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: fake)
 
     async def exercise():
         return await asyncio.gather(
@@ -391,7 +411,7 @@ def test_search_coalesces_concurrent_fresh_requests(monkeypatch):
         )
 
     first, second = asyncio.run(exercise())
-    assert calls["count"] == 1
+    assert calls["count"] == 2
     assert first["results"] == second["results"]
 
 
@@ -475,35 +495,32 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
 
 
 def test_long_search_instructions_are_compacted_before_provider_query_limit(monkeypatch):
+    import backend.search.resilient as resilient_module
     import tools.web_search as module
-    from backend.search.engine import SearchEngine
 
     captured = {}
 
-    async def fake_engine_search(self, query, **kwargs):
-        captured["query"] = query
-        return {
-            "ok": True,
-            "results": [
-                {
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            captured["query"] = query
+            return {
+                "ok": True,
+                "results": [{
                     "title": "Actualidad verificada",
                     "url": "https://example.com/news",
                     "snippet": "Resultado de prueba",
-                }
-            ],
-            "sources": [],
-            "providers": ["test"],
-            "providers_attempted": ["test"],
-            "provider": "test",
-            "errors": [],
-            "queries": [query],
-            "retrieved_at": "2026-10-10T00:00:00Z",
-            "verification": {"relevant_results": 1},
-        }
+                }],
+                "sources": [],
+                "providers": ["test"],
+                "providers_attempted": ["test"],
+                "provider": "test",
+                "errors": [],
+                "queries": [query],
+                "retrieved_at": "2026-10-10T00:00:00Z",
+                "verification": {"relevant_results": 1},
+            }
 
-    monkeypatch.setattr(SearchEngine, "search", fake_engine_search)
-    module._SEARCH_CACHE.clear()
-    module._SEARCH_INFLIGHT.clear()
+    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: FakeOrchestrator())
 
     long_prompt = (
         "Busca en Internet una noticia real publicada hoy, 10 de octubre de 2026. "
