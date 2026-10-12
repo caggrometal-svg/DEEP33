@@ -338,34 +338,80 @@ def test_controversial_queries_expand_against_official_and_independent_versions(
 
 def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     import tools.web_search as web_search_module
-    import backend.search.resilient as resilient_module
 
     calls = {"count": 0}
 
-    class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
-            assert fresh is True
-            calls["count"] += 1
-            return {
-                "ok": True,
-                "engine": "DEEP33 Search Engine",
-                "engine_version": "1.4.0",
-                "provider_independent": True,
-                "results": [{
-                    "title": "Live result",
-                    "url": f"https://example.com/live-{calls['count']}",
-                    "snippet": "fresh",
-                }],
-            }
+    async def fake_search(self, query, **kwargs):
+        calls["count"] += 1
+        return {
+            "ok": True,
+            "engine": "DEEP33 Search Engine",
+            "engine_version": "1.3.0",
+            "provider_independent": True,
+            "providers": ["bing"],
+            "results": [{
+                "title": "Live result",
+                "url": f"https://example.com/live-{calls['count']}",
+                "snippet": "fresh",
+            }],
+        }
 
-    fake = FakeOrchestrator()
-    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: fake)
+    monkeypatch.setattr(SearchEngine, "search", fake_search)
+    web_search_module._SEARCH_CACHE.clear()
+    web_search_module._SEARCH_INFLIGHT.clear()
 
-    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
-    asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+    first = asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
+    second = asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
 
     assert calls["count"] == 2
+    assert first["results"][0]["url"] != second["results"][0]["url"]
 
+
+def test_standard_search_rescues_official_asyncio_query(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
+
+    calls = []
+
+    async def fake_bing(query, timeout_seconds, max_results):
+        calls.append(query)
+        if query == "Python asyncio":
+            return [
+                {
+                    "title": "asyncio — Asynchronous I/O — Python documentation",
+                    "url": "https://docs.python.org/3/library/asyncio.html",
+                    "snippet": "Python asyncio library documentation for async and await.",
+                },
+                {
+                    "title": "Coroutines and Tasks — Python documentation",
+                    "url": "https://docs.python.org/3/library/asyncio-task.html",
+                    "snippet": "Python asyncio coroutines tasks and TaskGroup.",
+                },
+            ]
+        return [
+            {
+                "title": "Unrelated official documentation",
+                "url": "https://example.org/docs",
+                "snippet": "An unrelated topic.",
+            }
+        ]
+
+    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
+
+    result = asyncio.run(
+        SearchEngine(max_results=5, max_queries=1).search(
+            "Python asyncio official documentation",
+            provider="bing",
+            api_key="",
+            timeout_seconds=2.5,
+            fallback_ddg=False,
+        )
+    )
+
+    assert result["ok"] is True
+    assert "Python asyncio" in result["queries_executed"]
+    assert any("docs.python.org" in item["url"] for item in result["results"])
+    assert calls[:2] == ["Python asyncio official documentation", "Python asyncio"]
 
 def test_realtime_policy_detects_local_current_situation_as_news_intent():
     query = "situación actual de la comuna de Las Condes en Chile"
