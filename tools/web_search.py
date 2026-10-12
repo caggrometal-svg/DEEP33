@@ -33,10 +33,10 @@ _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 def _http_timeout(seconds: float) -> httpx.Timeout:
     bounded = max(0.5, float(seconds))
     return httpx.Timeout(
-        connect=min(2.5, bounded),
-        read=bounded,
-        write=min(5.0, bounded),
-        pool=min(2.0, bounded),
+        connect=min(1.0, bounded),
+        read=min(1.5, bounded),
+        write=min(1.5, bounded),
+        pool=min(1.0, bounded),
     )
 
 
