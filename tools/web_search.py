@@ -634,7 +634,7 @@ async def _bing_search(query, timeout_seconds, max_results):
     try:
         rss = await client.get(
             os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-            params={"q": query, "format": "rss", "setlang": "es", "cc": "cl"},
+            params={"q": query, "format": "rss", **_bing_market_params(query)},
             headers={
                 "User-Agent": "DEEP33-WebSearch/1.0",
                 "Accept": "application/rss+xml,application/xml,text/xml",
@@ -644,7 +644,15 @@ async def _bing_search(query, timeout_seconds, max_results):
         rss_results = await _parse_bing_rss(rss, max_results)
     except Exception as rss_error:
         if html_results:
-            return html_results
+            # RSS can fail after HTML returned an unrelated result page. Never
+            # let the transport failure bypass topic relevance filtering.
+            from backend.search.engine import is_realtime_query, rank_results
+
+            return rank_results(
+                query,
+                html_results,
+                realtime=is_realtime_query(query),
+            )[:max_results]
         if html_error is not None:
             raise WebSearchError(f"{html_error};{rss_error}") from rss_error
         raise
@@ -659,25 +667,21 @@ async def _bing_search(query, timeout_seconds, max_results):
             if index < len(html_results):
                 combined.append(html_results[index])
         normalized = _normalise_results(combined, max_results)
-        if not realtime_news:
-            from backend.search.engine import is_realtime_query, rank_results
+        from backend.search.engine import is_realtime_query, rank_results
 
-            return rank_results(
-                query,
-                normalized,
-                realtime=is_realtime_query(query),
-            )[:max_results]
-        return normalized
+        return rank_results(
+            query,
+            normalized,
+            realtime=is_realtime_query(query),
+        )[:max_results]
     if html_results:
-        if not realtime_news:
-            from backend.search.engine import is_realtime_query, rank_results
+        from backend.search.engine import is_realtime_query, rank_results
 
-            return rank_results(
-                query,
-                html_results,
-                realtime=is_realtime_query(query),
-            )[:max_results]
-        return html_results
+        return rank_results(
+            query,
+            html_results,
+            realtime=is_realtime_query(query),
+        )[:max_results]
     if html_error is not None:
         raise WebSearchError(str(html_error)) from html_error
     return []
