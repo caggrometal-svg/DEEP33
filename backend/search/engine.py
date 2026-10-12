@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from backend.search.resilience import DiagnosticCode, controller
+
 
 ENGINE_VERSION = "1.3.0"
 TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
@@ -128,7 +130,7 @@ MAX_QUERY_FANOUT = max(1, min(2, int(os.getenv("WEB_SEARCH_MAX_QUERY_FANOUT", "2
 MIN_VERIFIED_RESULTS = max(2, min(3, int(os.getenv("WEB_SEARCH_MIN_VERIFIED_RESULTS", "2"))))
 TOTAL_SEARCH_TIMEOUT_SECONDS = max(
     3.0,
-    min(15.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "8"))),
+    min(5.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "5"))),
 )
 
 
@@ -428,35 +430,66 @@ def rank_results(
         if not realtime and topic_tokens and topic_hits < required_topic_hits:
             # Domain reputation and corroboration must never make unrelated results relevant.
             continue
-        relevance = max(
-            _text_score(query_tokens, item),
-            _text_score(topic_tokens, item) if topic_tokens else 0.0,
+        scoring_tokens = topic_tokens or query_tokens
+        title_tokens = _token_set(str(item.get("title") or ""))
+        snippet_tokens = _token_set(str(item.get("snippet") or ""))
+        query_token_set = set(scoring_tokens)
+        title_score = (
+            len(query_token_set & title_tokens) / max(1, len(query_token_set))
         )
-        anchor_score = (
-            min(1.0, anchor_hits / max(1, min(2, len(anchor_tokens))))
-            if anchor_tokens
-            else 0.0
+        snippet_score = (
+            len(query_token_set & snippet_tokens) / max(1, len(query_token_set))
         )
         quality = _domain_quality(url)
         freshness = _freshness_score(item)
-        corroboration = min(1.0, support.get(id(item), 0) / 2.0)
-        if realtime:
-            score = (
-                relevance * 0.42
-                + anchor_score * 0.28
-                + quality * 0.15
-                + freshness * 0.05
-                + corroboration * 0.10
-            )
-        else:
-            score = relevance * 0.50 + quality * 0.20 + freshness * 0.10 + corroboration * 0.20
+        query_match = max(
+            _text_score(query_tokens, item),
+            _text_score(topic_tokens, item) if topic_tokens else 0.0,
+        )
+
+        # The relevance/locality filters above are hard gates. These penalties only
+        # break ties and demote weak/intermediary result shapes; they never make an
+        # unrelated result eligible.
+        penalties = 0.0
+        host = _host(url)
+        if host in {"news.google.com", "www.google.com", "google.com"}:
+            penalties += 0.10
+        if not str(item.get("title") or "").strip():
+            penalties += 0.05
+        if not str(item.get("snippet") or "").strip():
+            penalties += 0.05
+        if urlparse(url).query and any(
+            marker in urlparse(url).query.lower()
+            for marker in ("utm_", "gclid=", "fbclid=", "mc_cid=")
+        ):
+            penalties += 0.03
+
+        # Contract requested by DEEP33-TEST-GLOBAL-101026:
+        # 0.30 Title + 0.25 Snippet + 0.20 Domain + 0.15 Freshness
+        # + 0.10 QueryMatch - penalties.
+        score = (
+            0.30 * title_score
+            + 0.25 * snippet_score
+            + 0.20 * quality
+            + 0.15 * freshness
+            + 0.10 * query_match
+            - penalties
+        )
         ranked.append({
             **item,
-            "score": round(score, 6),
+            "score": round(max(0.0, score), 6),
+            "score_components": {
+                "title": round(title_score, 6),
+                "snippet": round(snippet_score, 6),
+                "domain": round(quality, 6),
+                "freshness": round(freshness, 6),
+                "query_match": round(query_match, 6),
+                "penalties": round(penalties, 6),
+            },
             "corroboration_count": support.get(id(item), 0),
             "corroborated": support.get(id(item), 0) >= 1,
             "anchor_hits": anchor_hits,
-            "source_domain": _host(url),
+            "source_domain": host,
         })
     ranked.sort(
         key=lambda item: (
@@ -624,7 +657,7 @@ class SearchEngine:
 
     def _providers(self, provider_name: str, api_key: str, fallback_ddg: bool) -> list[str]:
         bing_enabled = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
-        mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "false").strip().lower() == "true"
+        mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() == "true"
         if provider_name == "tavily":
             providers = ["tavily"]
             if bing_enabled:
@@ -666,220 +699,156 @@ class SearchEngine:
         api_key: str,
         fast_mode: bool = False,
     ) -> tuple[list[tuple[str, list[dict]]], list[str], list[str]]:
+        """Run independent providers with a strict staged failover budget.
+
+        T0 starts the configured primary providers. DuckDuckGo is held back as an
+        independent fallback until T+2s unless the primary stage already produced
+        sufficient relevant evidence. Every created task is cancelled and drained.
+        """
         successful: list[tuple[str, list[dict]]] = []
         errors: list[str] = []
         attempted: list[str] = []
-        required_coverage = min(self.max_results, MIN_FALLBACK_RESULTS)
+        required_coverage = 1 if fast_mode or plan_depth == "realtime" else min(
+            self.max_results, MIN_FALLBACK_RESULTS
+        )
 
-        def has_sufficient_relevant_coverage(
-            batches: list[tuple[str, list[dict]]],
-        ) -> bool:
-            combined = [item for _provider, batch in batches for item in batch]
-            relevant = rank_results(
+        def relevant(items: list[dict]) -> list[dict]:
+            return rank_results(
                 planned_query,
-                combined,
+                items,
                 realtime=plan_depth == "realtime",
             )
+
+        def enough() -> bool:
+            combined = [item for _provider, batch in successful for item in batch]
+            ranked = relevant(combined)
             urls = {
                 _canonical_url(str(item.get("url") or ""))
-                for item in relevant
+                for item in ranked
                 if str(item.get("url") or "").strip()
             }
             domains = {_host(url) for url in urls if _host(url)}
-            return len(urls) >= required_coverage and len(domains) >= required_coverage
+            if fast_mode or plan_depth == "realtime":
+                return bool(ranked)
+            if plan_depth == "deep" and len(providers) > 1:
+                return len({name for name, _batch in successful}) >= 2 and len(urls) >= min(3, self.max_results)
+            return len(urls) >= required_coverage and len(domains) >= min(required_coverage, 2)
 
         async def call(name: str) -> tuple[str, list[dict], list[str]]:
-            results, provider_errors = await self._provider_search_with_retry(
+            wrapper_errors: list[str] = []
+
+            async def operation() -> list[dict]:
+                results, existing_errors = await self._provider_search_with_retry(
+                    name,
+                    planned_query,
+                    timeout_seconds=min(
+                        float(timeout_seconds),
+                        controller.budgets.provider_total_seconds,
+                    ),
+                    api_key=api_key,
+                    fast_mode=fast_mode or plan_depth == "realtime",
+                )
+                wrapper_errors.extend(existing_errors)
+                return results
+
+            results, attempt = await controller.run_provider(
                 name,
-                planned_query,
-                timeout_seconds=timeout_seconds,
-                api_key=api_key,
-                # Real-time queries already race independent providers, so avoid
-                # a second call to the same provider inside the shared deadline.
-                fast_mode=fast_mode or plan_depth == "realtime",
+                operation,
+                timeout_seconds=min(
+                    float(timeout_seconds),
+                    controller.budgets.provider_total_seconds,
+                ),
             )
+            provider_errors = list(wrapper_errors)
+            if not attempt.ok and not provider_errors:
+                provider_errors.append(
+                    f"{name}:{attempt.code}:elapsed_ms={attempt.elapsed_ms:.2f}"
+                )
             return name, results, provider_errors
 
-        if fast_mode and len(providers) > 1:
-            # Race providers, but only count relevant results on independent domains.
-            # Fast mode deliberately omits retries and deep query fan-out.
-            tasks = [asyncio.create_task(call(name)) for name in providers]
-            try:
-                for task in asyncio.as_completed(tasks):
-                    name, results, provider_errors = await task
+        async def collect(tasks: list[asyncio.Task], timeout: float | None) -> list[asyncio.Task]:
+            if not tasks:
+                return []
+            done, pending = await asyncio.wait(
+                tasks,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            pending_list = list(pending)
+            for task in done:
+                try:
+                    name, results, provider_errors = task.result()
+                except asyncio.CancelledError:
+                    continue
+                except Exception as exc:
+                    errors.append(f"provider_task:{type(exc).__name__}")
+                    continue
+                if name and name not in attempted:
                     attempted.append(name)
-                    errors.extend(provider_errors)
-                    relevant = rank_results(
-                        planned_query,
-                        results,
-                        realtime=plan_depth == "realtime",
-                    )
-                    if relevant:
-                        successful.append((name, results))
-                        # Fast mode optimizes first useful output, not deep-source
-                        # corroboration. Standard/deep searches enforce domain coverage.
-                        if len(relevant) >= min(self.max_results, MIN_FALLBACK_RESULTS):
-                            for other in tasks:
-                                if not other.done():
-                                    other.cancel()
-                            break
-                    elif results:
-                        errors.append(f"{name}:no_relevant_results:{len(results)}")
-            finally:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            return successful, errors, attempted
-
-        if fast_mode:
-            name, results, provider_errors = await call(providers[0]) if providers else ("", [], [])
-            if name:
-                attempted.append(name)
                 errors.extend(provider_errors)
-                relevant = rank_results(
-                    planned_query,
-                    results,
-                    realtime=plan_depth == "realtime",
-                )
-                if relevant:
+                ranked = relevant(results)
+                if ranked:
                     successful.append((name, results))
-                elif results:
-                    errors.append(f"{name}:no_relevant_results:{len(results)}")
-            return successful, errors, attempted
-
-        if plan_depth == "realtime":
-            # Realtime answers must not be held hostage by a dead secondary
-            # provider. Accept one relevant provider and give other providers a
-            # short corroboration window before cancelling stragglers.
-            if not providers:
-                return successful, errors, attempted
-            pending = {
-                asyncio.create_task(call(name))
-                for name in providers
-            }
-            has_relevant = False
-
-            def record_provider_result(task: asyncio.Task) -> bool:
-                nonlocal has_relevant
-                name, results, provider_errors = task.result()
-                attempted.append(name)
-                errors.extend(provider_errors)
-                relevant_results = rank_results(
-                    planned_query,
-                    results,
-                    realtime=True,
-                )
-                if relevant_results:
-                    successful.append((name, results))
-                    has_relevant = True
                 elif results:
                     errors.append(f"{name}:no_relevant_results:{len(results)}")
                 elif not provider_errors:
-                    errors.append(f"{name}:no_results")
-                return bool(relevant_results)
+                    errors.append(f"{name}:{DiagnosticCode.NO_RESULTS}")
+            return pending_list
 
-            try:
-                while pending:
-                    done, pending = await asyncio.wait(
-                        pending,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for task in done:
-                        record_provider_result(task)
-                        if len(successful) >= 2:
-                            break
-                    if has_relevant:
-                        if pending and len(successful) < 2:
-                            more_done, pending = await asyncio.wait(
-                                pending,
-                                timeout=REALTIME_CORROBORATION_WINDOW_SECONDS,
-                            )
-                            for task in more_done:
-                                record_provider_result(task)
-                                if len(successful) >= 2:
-                                    break
-                        break
-            finally:
-                for task in pending:
-                    if not task.done():
-                        task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-            return successful, errors, attempted
+        # Preserve explicitly configured premium/news providers at T0, while the
+        # public general-web path uses Bing + Mojeek first and DDG as delayed fallback.
+        primary_names = [name for name in providers if name != "duckduckgo"]
+        fallback_names = [name for name in providers if name == "duckduckgo"]
+        if not primary_names and fallback_names:
+            primary_names = fallback_names
+            fallback_names = []
 
-        if plan_depth == "deep":
-            # Deep research continues to require independent evidence when
-            # several providers are configured; realtime is handled above with
-            # a bounded corroboration window.
-            if not providers:
-                return successful, errors, attempted
-            tasks = [asyncio.create_task(call(name)) for name in providers]
-            provider_results = 0
-            total_relevant_results = 0
-            min_provider_successes = 1 if len(providers) == 1 else 2
-            required_results = min(3, self.max_results)
-            try:
-                for task in asyncio.as_completed(tasks):
-                    name, results, provider_errors = await task
-                    attempted.append(name)
-                    errors.extend(provider_errors)
-                    relevant_results = rank_results(planned_query, results)
-                    if relevant_results:
-                        successful.append((name, results))
-                        provider_results += 1
-                        total_relevant_results += len(relevant_results)
-                    elif results:
-                        errors.append(f"{name}:no_relevant_results:{len(results)}")
-                    elif not provider_errors:
-                        errors.append(f"{name}:no_results")
-                    if (
-                        provider_results >= min_provider_successes
-                        and total_relevant_results >= required_results
-                    ):
-                        for other in tasks:
-                            if not other.done():
-                                other.cancel()
-                        break
-            finally:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            return successful, errors, attempted
-
-        if PARALLEL_PROVIDERS and len(providers) > 1:
-            tasks = [asyncio.create_task(call(name)) for name in providers]
-            try:
-                for task in asyncio.as_completed(tasks):
-                    name, results, provider_errors = await task
-                    attempted.append(name)
-                    errors.extend(provider_errors)
-                    relevant = rank_results(planned_query, results)
-                    if relevant:
-                        successful.append((name, results))
-                        if has_sufficient_relevant_coverage(successful):
-                            for other in tasks:
-                                if not other.done():
-                                    other.cancel()
-                            break
-                    elif results:
-                        errors.append(f"{name}:no_relevant_results:{len(results)}")
-            finally:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            return successful, errors, attempted
-
-        for name in providers:
-            attempted.append(name)
-            results, provider_errors = await self._provider_search_with_retry(
-                name,
-                planned_query,
-                timeout_seconds=timeout_seconds,
-                api_key=api_key,
+        primary_tasks = [
+            controller.safe_task(
+                call(name),
+                name=f"web-search:{name}",
             )
-            errors.extend(provider_errors)
-            relevant = rank_results(planned_query, results)
-            if relevant:
-                successful.append((name, results))
-                if has_sufficient_relevant_coverage(successful):
-                    break
-            elif results:
-                errors.append(f"{name}:no_relevant_results:{len(results)}")
-        return successful, errors, attempted
+            for name in primary_names
+        ]
+        all_tasks = list(primary_tasks)
+        try:
+            # T0 -> T+2: accept early useful evidence without waiting for dead peers.
+            deadline = asyncio.get_running_loop().time() + max(
+                0.1,
+                min(float(timeout_seconds), controller.budgets.global_search_seconds),
+            )
+            staged_until = min(
+                deadline,
+                asyncio.get_running_loop().time() + controller.budgets.fallback_delay_seconds,
+            )
+            pending = list(primary_tasks)
+            while pending and asyncio.get_running_loop().time() < staged_until and not enough():
+                remaining = max(0.0, staged_until - asyncio.get_running_loop().time())
+                pending = await collect(pending, remaining)
+
+            if enough():
+                return successful, errors, attempted
+
+            fallback_tasks = [
+                controller.safe_task(
+                    call(name),
+                    name=f"web-search:{name}",
+                )
+                for name in fallback_names
+            ]
+            all_tasks.extend(fallback_tasks)
+            pending.extend(fallback_tasks)
+
+            # Continue within the strict provider/global caller budget.
+            while pending and asyncio.get_running_loop().time() < deadline and not enough():
+                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                pending = await collect(pending, remaining)
+
+            if not successful and asyncio.get_running_loop().time() >= deadline:
+                errors.append("search:deadline")
+            return successful, errors, attempted
+        finally:
+            await controller.cancel_and_drain(all_tasks)
 
     async def search(
         self,

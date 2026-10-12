@@ -351,7 +351,9 @@ def test_redirect_to_private_is_blocked(monkeypatch):
 
 
 def test_web_status_endpoint(monkeypatch):
-    response = __import__("fastapi").testclient.TestClient(__import__("backend.main", fromlist=["app"]).app).get("/v1/web/status")
+    from fastapi.testclient import TestClient
+
+    response = TestClient(__import__("backend.main", fromlist=["app"]).app).get("/v1/web/status")
     assert response.status_code == 200
     body = response.json()
     assert body["tool_loop_enabled"] is True

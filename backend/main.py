@@ -40,6 +40,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
+from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
 
 APP_NAME = "DEEP33 Backend"
@@ -2440,56 +2441,141 @@ async def web_status() -> dict:
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
+    request_id = request_id_from_request(request)
+    started = time.perf_counter()
     if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
+        return graceful_payload(
+            ok=False,
+            code=DiagnosticCode.PROVIDER_BLOCKED,
+            request_id=request_id,
+            errors=["WEB_TOOLS_DISABLED"],
+            query=q,
+            realtime=is_realtime_query(q),
+        )
     try:
-        return await search_web(
+        result = await search_web(
             q,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
             fresh=True,
         )
+        logger.info(
+            structured_observation(
+                "web_search_complete",
+                request_id=request_id,
+                search_ms=round((time.perf_counter() - started) * 1000, 2),
+                winner_provider=result.get("provider"),
+                providers=result.get("providers", []),
+                domains_used=(result.get("verification") or {}).get("distinct_domains", 0),
+                status="success",
+            )
+        )
+        return result
     except Exception as exc:
-        logger.warning("web_search_endpoint_failed request_id=%s error=%s detail=%s", request_id_from_request(request), type(exc).__name__, str(exc).replace("\\n", " ")[:400])
-        raise HTTPException(status_code=502, detail="WEB_SEARCH_FAILED") from exc
+        detail = str(exc).replace("\\n", " ")[:400]
+        code = (
+            DiagnosticCode.PROVIDER_TIMEOUT
+            if "timeout" in detail.lower() or "deadline" in detail.lower()
+            else DiagnosticCode.NO_RESULTS
+            if "no_results" in detail.lower() or "no relevant" in detail.lower()
+            else DiagnosticCode.PROVIDER_ERROR
+        )
+        logger.warning(
+            structured_observation(
+                "web_search_degraded",
+                request_id=request_id,
+                search_ms=round((time.perf_counter() - started) * 1000, 2),
+                status="degraded",
+                code=code,
+                error=type(exc).__name__,
+            )
+        )
+        return graceful_payload(
+            ok=False,
+            code=code,
+            request_id=request_id,
+            errors=[detail or type(exc).__name__],
+            query=q,
+            realtime=is_realtime_query(q),
+            provider=None,
+            providers=[],
+            verification={
+                "level": "none",
+                "distinct_domains": 0,
+                "distinct_providers": 0,
+                "corroborated_results": 0,
+            },
+        )
 
 
 @app.get("/v1/web/fetch")
 async def web_fetch_endpoint(request: Request, url: str) -> dict:
     session_id = session_id_from_request(request)
     await enforce_client_controls(request, session_id)
-    if not DEEP33_WEB_TOOLS_ENABLED:
-        raise HTTPException(status_code=503, detail="WEB_TOOLS_DISABLED")
-
     request_id = request_id_from_request(request)
     fetch_started = time.perf_counter()
+    if not DEEP33_WEB_TOOLS_ENABLED:
+        return graceful_payload(
+            ok=False,
+            code=DiagnosticCode.FETCH_BLOCKED,
+            request_id=request_id,
+            errors=["WEB_TOOLS_DISABLED"],
+            final_url=None,
+            title="",
+            text="",
+        )
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "8")),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "5"))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
         )
         logger.info(
-            "web_fetch_stage request_id=%s elapsed_ms=%.2f status=success bytes=%s text_chars=%s redirects=%s",
-            request_id,
-            (time.perf_counter() - fetch_started) * 1000,
-            result.get("bytes"),
-            len(result.get("text") or ""),
-            result.get("redirects"),
+            structured_observation(
+                "web_fetch_complete",
+                request_id=request_id,
+                fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                status="success",
+                text_chars=len(result.get("text") or ""),
+                redirects=result.get("redirects"),
+            )
         )
         return result
     except Exception as exc:
-        # The reason is a bounded code, not a URL, response body, or page content.
-        logger.warning(
-            "web_fetch_endpoint_failed request_id=%s elapsed_ms=%.2f error=%s detail=%s",
-            request_id,
-            (time.perf_counter() - fetch_started) * 1000,
-            type(exc).__name__,
-            str(exc).replace("\n", " ")[:160],
+        detail = str(exc).replace("\n", " ")[:160]
+        lowered = detail.lower()
+        code = (
+            DiagnosticCode.FETCH_TIMEOUT
+            if "timeout" in lowered
+            else DiagnosticCode.FETCH_BLOCKED
+            if "ssrf" in lowered or "blocked" in lowered or "403" in lowered
+            else DiagnosticCode.DNS_FAILED
+            if "dns" in lowered or "name or service" in lowered
+            else DiagnosticCode.FETCH_FAILED
         )
-        raise HTTPException(status_code=502, detail="WEB_FETCH_FAILED") from exc
+        logger.warning(
+            structured_observation(
+                "web_fetch_degraded",
+                request_id=request_id,
+                fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
+                status="degraded",
+                code=code,
+                error=type(exc).__name__,
+            )
+        )
+        return graceful_payload(
+            ok=False,
+            code=code,
+            request_id=request_id,
+            errors=[detail or type(exc).__name__],
+            final_url=None,
+            title="",
+            text="",
+            bytes=0,
+            redirects=0,
+        )
 
 
 
@@ -3463,6 +3549,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     if cached is not None:
         text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
         async def cached_stream():
+            yield _sse_status("token_stream", request_id, cached=True)
             for piece in _sse_text_chunks(text_value):
                 yield _sse_delta(piece)
             yield b"data: [DONE]\n\n"
@@ -3523,6 +3610,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             )
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
             async def replay_stream():
+                yield _sse_status("token_stream", request_id, replay=True)
                 for piece in _sse_text_chunks(text_value):
                     yield _sse_delta(piece)
                 yield b"data: [DONE]\n\n"
@@ -3573,141 +3661,242 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise
 
     profile = complexity_profile(messages)[2]
-    payload = _completion_payload(
+    base_payload = _completion_payload(
         messages,
         model_for_profile(request.model, profile),
         max_tokens=output_token_limit(profile),
         temperature=request.temperature,
     )
+    completion_state: dict[str, Any] = {}
+    runtime_state: dict[str, Any] = {
+        "payload": base_payload,
+        "personality": personality,
+    }
 
-    stream_answer_override: str | None = None
-    try:
-        if is_connectivity_question(latest_user_query(messages)):
-            logger.info("backend_connectivity_stream request_id=%s session_id=%s", request_id, session_id)
-            stream_answer_override = await _connectivity_status_answer()
-        elif not skip_web_tools and DEEP33_WEB_TOOLS_ENABLED and (
-            should_force_web(messages) or should_deep_web(messages, personality)
-        ):
-            logger.info("real_dialogue_stream_web request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            prefetched_weather = (
-                await weather_task
-                if weather_task is not None
-                else None
+    async def deferred_stream() -> AsyncIterator[bytes]:
+        payload = base_payload
+        resolved_personality = personality
+        sources_count = 0
+        web_required = (
+            not skip_web_tools
+            and DEEP33_WEB_TOOLS_ENABLED
+            and (
+                should_force_web(messages)
+                or should_deep_web(messages, resolved_personality)
             )
-            if prefetched_weather is not None:
-                # Keep the streaming transport unchanged; only bypass generic search
-                # and the extra navigation prompt for direct GPS weather.
-                working = [dict(message) for message in messages]
-                working.append({
-                    "role": "system",
-                    "content": build_weather_evidence(messages, prefetched_weather),
-                })
-                working.append(_web_personality_lock(personality))
-                weather_max_tokens = min(payload.get("max_tokens") or 384, 160)
-                payload = _completion_payload(
-                    working,
-                    payload["model"],
-                    max_tokens=weather_max_tokens,
-                    temperature=request.temperature,
+        )
+        try:
+            yield _sse_status("thinking", request_id)
+
+            stream_answer_override: str | None = None
+            if is_connectivity_question(latest_user_query(messages)):
+                logger.info(
+                    "backend_connectivity_stream request_id=%s session_id=%s",
+                    request_id,
+                    session_id,
                 )
-            else:
-                if prefetch_search_task is not None:
-                    working, _sources, _evidence_fragments, _search_results = await prefetch_search_task
-                else:
-                    working, _sources, _evidence_fragments, _search_results = await prepare_web_evidence(
-                        messages,
-                        request_id=request_id,
-                        deep=(should_deep_web(messages, personality) or is_realtime_query(latest_user_query(messages))),
-                    )
-                if working is None:
-                    stream_answer_override = _web_search_unavailable_answer(
-                        latest_user_query(messages)
-                    )
-                else:
-                    working.append(_web_personality_lock(personality))
+                stream_answer_override = await _connectivity_status_answer()
+            elif web_required:
+                yield _sse_status("searching", request_id)
+                logger.info(
+                    "real_dialogue_stream_web request_id=%s session_id=%s personality=%s",
+                    request_id,
+                    session_id,
+                    resolved_personality,
+                )
+                prefetched_weather = (
+                    await weather_task
+                    if weather_task is not None
+                    else None
+                )
+                if prefetched_weather is not None:
+                    working = [dict(message) for message in messages]
+                    working.append({
+                        "role": "system",
+                        "content": build_weather_evidence(messages, prefetched_weather),
+                    })
+                    working.append(_web_personality_lock(resolved_personality))
+                    weather_max_tokens = min(payload.get("max_tokens") or 384, 160)
                     payload = _completion_payload(
                         working,
                         payload["model"],
-                        max_tokens=payload.get("max_tokens"),
+                        max_tokens=weather_max_tokens,
                         temperature=request.temperature,
                     )
+                    sources_count = 1
+                else:
+                    if prefetch_search_task is not None:
+                        working, sources, _evidence_fragments, _search_results = (
+                            await prefetch_search_task
+                        )
+                    else:
+                        working, sources, _evidence_fragments, _search_results = (
+                            await prepare_web_evidence(
+                                messages,
+                                request_id=request_id,
+                                deep=(
+                                    should_deep_web(messages, resolved_personality)
+                                    or is_realtime_query(latest_user_query(messages))
+                                ),
+                            )
+                        )
+                    sources_count = len(sources or [])
+                    if working is None:
+                        stream_answer_override = _web_search_unavailable_answer(
+                            latest_user_query(messages)
+                        )
+                    else:
+                        working.append(_web_personality_lock(resolved_personality))
+                        payload = _completion_payload(
+                            working,
+                            payload["model"],
+                            max_tokens=payload.get("max_tokens"),
+                            temperature=request.temperature,
+                        )
+                runtime_state["payload"] = payload
+                yield _sse_status(
+                    "sources_ready",
+                    request_id,
+                    sources=sources_count,
+                    degraded=stream_answer_override is not None,
+                )
 
-        completion_state: dict[str, str] = {}
-        if stream_answer_override is not None:
-            fallback_text = stream_answer_override
+            yield _sse_status("token_stream", request_id)
 
-            async def unavailable_stream() -> AsyncIterator[bytes]:
+            if stream_answer_override is not None:
+                fallback_text = stream_answer_override
                 completion_state["assistant_text"] = fallback_text
                 first_piece = True
                 for piece in _sse_text_chunks(fallback_text):
                     if first_piece:
+                        elapsed_ms = (time.perf_counter() - request_started_at) * 1000
                         logger.info(
-                            "stream_end_to_end_ttft request_id=%s elapsed_ms=%.2f path=search_fallback",
-                            request_id,
-                            (time.perf_counter() - request_started_at) * 1000,
+                            structured_observation(
+                                "stream_summary",
+                                request_id=request_id,
+                                ttft_ms=round(elapsed_ms, 2),
+                                total_ms=None,
+                                status="degraded",
+                                sources=sources_count,
+                            )
                         )
                         first_piece = False
                     yield _sse_delta(piece)
+                logger.info(
+                    structured_observation(
+                        "stream_summary",
+                        request_id=request_id,
+                        ttft_ms=None,
+                        total_ms=round(
+                            (time.perf_counter() - request_started_at) * 1000,
+                            2,
+                        ),
+                        status="degraded",
+                        sources=sources_count,
+                    )
+                )
                 yield b"data: [DONE]\n\n"
+            else:
+                async for chunk in stream_gateway(
+                    payload,
+                    session_id,
+                    resolved_personality,
+                    request_id=request_id,
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    lease_token=lease_token,
+                    completion_state=completion_state,
+                    request_started_at=request_started_at,
+                ):
+                    yield chunk
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            status_code, stored = error_record(exc)
+            try:
+                await memory.idempotency_fail(
+                    session_id,
+                    idempotency_key,
+                    request_hash,
+                    lease_token,
+                    status_code,
+                    stored,
+                )
+            except Exception as store_exc:
+                logger.warning(
+                    "stream_idempotency_failure_record_failed request_id=%s error=%s",
+                    request_id,
+                    type(store_exc).__name__,
+                )
+            if isinstance(exc, GatewayTimeoutError):
+                yield _sse_error("AI_GATEWAY_TIMEOUT")
+            elif isinstance(exc, GatewayHTTPError):
+                yield _sse_error("AI_GATEWAY_HTTP_ERROR")
+            elif isinstance(exc, GatewayInvalidResponseError):
+                yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
+            else:
+                logger.exception(
+                    "stream_runtime_failed request_id=%s error=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
+                yield _sse_error("DEEP33_STREAM_FAILED")
+        finally:
+            pending_tasks = [
+                task
+                for task in (weather_task, prefetch_search_task)
+                if task is not None and not task.done()
+            ]
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
 
-            body = unavailable_stream()
-        else:
-            body = stream_gateway(
-                payload,
-                session_id,
-                personality,
-                request_id=request_id,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                lease_token=lease_token,
-                completion_state=completion_state,
-                request_started_at=request_started_at,
-            )
-
-        async def finalize_success() -> None:
-            assistant_text = completion_state.get("assistant_text", "")
-            if not assistant_text:
-                return
-            await _finalize_stream(
-                payload=payload,
-                session_id=session_id,
-                personality=personality,
-                request_id=request_id,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
-                lease_token=lease_token,
-                assistant_text=assistant_text,
-                memory_profile_id=memory_profile_id,
-            )
-
-        return StreamingResponse(
-            body,
-            media_type="text/event-stream",
-            background=BackgroundTask(finalize_success),
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "X-Request-ID": request_id,
-                "X-Idempotency-Key": idempotency_key,
-                "X-DEEP33-Personality": personality,
-            },
+    async def finalize_success() -> None:
+        assistant_text = str(completion_state.get("assistant_text") or "")
+        if not assistant_text:
+            return
+        await _finalize_stream(
+            payload=runtime_state.get("payload") or base_payload,
+            session_id=session_id,
+            personality=str(runtime_state.get("personality") or personality),
+            request_id=request_id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            lease_token=lease_token,
+            assistant_text=assistant_text,
+            memory_profile_id=memory_profile_id,
         )
-    except Exception as exc:
-        status_code,stored=error_record(exc)
-        try:
-            await memory.idempotency_fail(session_id,idempotency_key,request_hash,lease_token,status_code,stored)
-        except Exception as store_exc:
-            logger.warning("stream_idempotency_failure_record_failed request_id=%s error=%s",request_id,type(store_exc).__name__)
-        if isinstance(exc,GatewayTimeoutError):
-            raise HTTPException(status_code=504,detail="AI_GATEWAY_TIMEOUT") from exc
-        if isinstance(exc,GatewayHTTPError):
-            raise HTTPException(status_code=502,detail="AI_GATEWAY_HTTP_ERROR") from exc
-        if isinstance(exc,GatewayInvalidResponseError):
-            raise HTTPException(status_code=502,detail="AI_GATEWAY_INVALID_RESPONSE") from exc
-        raise
+
+    return StreamingResponse(
+        deferred_stream(),
+        media_type="text/event-stream",
+        background=BackgroundTask(finalize_success),
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Request-ID": request_id,
+            "X-Idempotency-Key": idempotency_key,
+            "X-DEEP33-Personality": personality,
+        },
+    )
 
 def _sse_text_chunks(value,chunk_size=120):
     return [value[i:i+chunk_size] for i in range(0,len(value),chunk_size)] or [""]
+
+def _sse_status(state: str, request_id: str, **metadata: Any) -> bytes:
+    payload = {
+        "state": state,
+        "request_id": request_id,
+        **metadata,
+    }
+    return (
+        "event: status\n"
+        + "data: "
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\n\n"
+    ).encode("utf-8")
+
 
 def _sse_error(code: str) -> bytes:
     return (

@@ -217,7 +217,10 @@ jobs:
       - name: Static performance invariants
         run: |
           set -euo pipefail
-          grep -q 'body = stream_gateway(' backend/main.py
+          grep -q 'async def deferred_stream()' backend/main.py
+          grep -q 'async for chunk in stream_gateway(' backend/main.py
+          grep -q '_sse_status("thinking"' backend/main.py
+          grep -q '_sse_status("token_stream"' backend/main.py
           ! grep -q '_sse_text_chunks(result\["text"\])' backend/main.py
           grep -q 'PARALLEL_PROVIDERS' backend/search/engine.py
           grep -q 'SEARCH_CACHE_TTL_SECONDS' tools/web_search.py

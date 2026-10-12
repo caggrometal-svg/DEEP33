@@ -24,7 +24,7 @@ def _max_response_bytes() -> int:
     except ValueError:
         return MAX_RESPONSE_BYTES
 MAX_TEXT_CHARS=50_000
-DEFAULT_TIMEOUT_SECONDS=8.0
+DEFAULT_TIMEOUT_SECONDS=5.0
 DEFAULT_USER_AGENT="DEEP33-WebFetcher/1.0"
 FETCH_CACHE_TTL_SECONDS = max(
     30.0, min(600.0, float(os.getenv("WEB_FETCH_CACHE_TTL_SECONDS", "300")))
@@ -41,9 +41,9 @@ async def _fetch_http_client() -> httpx.AsyncClient:
     if _FETCH_HTTP_CLIENT is None or _FETCH_HTTP_LOOP is not loop:
         _FETCH_HTTP_CLIENT = httpx.AsyncClient(
             timeout=httpx.Timeout(
-                connect=min(2.5, DEFAULT_TIMEOUT_SECONDS),
-                read=DEFAULT_TIMEOUT_SECONDS,
-                write=DEFAULT_TIMEOUT_SECONDS,
+                connect=min(1.0, DEFAULT_TIMEOUT_SECONDS),
+                read=min(1.5, DEFAULT_TIMEOUT_SECONDS),
+                write=min(1.5, DEFAULT_TIMEOUT_SECONDS),
                 pool=1.0,
             ),
             follow_redirects=False,
