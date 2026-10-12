@@ -311,6 +311,61 @@ def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
     }
 
 
+def test_bing_market_params_follow_query_language():
+    import tools.web_search as module
+
+    assert module._bing_market_params("python asyncio taskgroup official") == {
+        "setlang": "en",
+        "cc": "us",
+    }
+    assert module._bing_market_params("últimas noticias económicas de Chile") == {
+        "setlang": "es",
+        "cc": "cl",
+    }
+    assert module._bing_market_params("presidente actual de Chile") == {
+        "setlang": "es",
+        "cc": "cl",
+    }
+
+
+def test_bing_discards_off_topic_rss_when_html_is_also_off_topic(monkeypatch):
+    import tools.web_search as module
+
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+    requested = []
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                requested.append(request.url)
+                if request.url.params.get("format") == "rss":
+                    body = (
+                        b'<?xml version="1.0"?><rss><channel>'
+                        b"<item><title>Gardening basics</title>"
+                        b"<link>https://gardening.example/soil</link>"
+                        b"<description>Plant herbs and care for soil.</description></item>"
+                        b"</channel></rss>"
+                    )
+                    return httpx.Response(200, request=request, content=body)
+                body = (
+                    b'<html><body><li class="b_algo"><h2>'
+                    b'<a href="https://cooking.example/herbs">Cooking basics</a>'
+                    b"</h2><div class=\"b_caption\"><p>Herbs and recipes.</p>"
+                    b"</div></li></body></html>"
+                )
+                return httpx.Response(200, request=request, content=body)
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+    results = asyncio.run(module._bing_search("Python asyncio TaskGroup", 2.5, 5))
+    assert results == []
+    assert len(requested) == 2
+    assert requested[0].params["setlang"] == "en"
+    assert requested[0].params["cc"] == "us"
+
+
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
