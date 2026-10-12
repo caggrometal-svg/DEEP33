@@ -15,7 +15,7 @@ from tools.web_search import _bing_search, _duckduckgo_search, _mojeek_search
 
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
-FALLBACK_DELAY_SECONDS = 2.0
+FALLBACK_DELAY_SECONDS = 0.35
 CIRCUIT_FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN_SECONDS = 60.0
 CACHE_TTL_SECONDS = 60.0
@@ -266,7 +266,7 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(2, len(selected_now)):
+                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(3, len(selected_now)):
                     break
         finally:
             for task in pending:
