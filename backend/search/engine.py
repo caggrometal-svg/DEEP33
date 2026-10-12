@@ -279,6 +279,7 @@ _TOPIC_FILLERS = {
     "buscar", "busca", "internet", "web", "información", "informacion",
     "guía", "guia", "resumen", "sobre", "cuándo", "cuando", "dónde",
     "donde", "porqué", "porque", "cómo", "como", "mejor", "mejores",
+    "medicina", "medical", "medicine", "general", "salud", "health",
 }
 _TOPIC_PHRASE_ALIASES = (
     (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
