@@ -364,6 +364,34 @@ def test_bing_discards_off_topic_rss_when_html_is_also_off_topic(monkeypatch):
     assert len(requested) == 2
     assert requested[0].params["setlang"] == "en"
     assert requested[0].params["cc"] == "us"
+    assert requested[1].params["setlang"] == "en"
+    assert requested[1].params["cc"] == "us"
+
+
+def test_bing_rss_failure_does_not_leak_off_topic_html_results(monkeypatch):
+    import tools.web_search as module
+
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                if request.url.params.get("format") == "rss":
+                    return httpx.Response(502, request=request)
+                body = (
+                    b'<html><body><li class="b_algo"><h2>'
+                    b'<a href="https://gardening.example/soil">Gardening basics</a>'
+                    b"</h2><div class=\"b_caption\"><p>Plant herbs and care for soil.</p>"
+                    b"</div></li></body></html>"
+                )
+                return httpx.Response(200, request=request, content=body)
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Client)
+    results = asyncio.run(module._bing_search("Python asyncio TaskGroup", 2.5, 5))
+    assert results == []
 
 
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
