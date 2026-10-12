@@ -146,6 +146,46 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
     assert result["latency_ms"] < 250
 
 
+def test_recovery_broadens_provider_query_but_ranks_against_original_question():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.08,
+        global_budget_seconds=0.4,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    seen = []
+    candidates = [
+        {"title": "asyncio — Asynchronous I/O", "url": "https://docs.python.org/3/library/asyncio.html",
+         "snippet": "Python asyncio documentation and event loop APIs"},
+        {"title": "Python asyncio tutorial", "url": "https://realpython.com/async-io-python/",
+         "snippet": "Python asyncio guide and asynchronous programming"},
+        {"title": "Python asyncio event loop", "url": "https://peps.python.org/pep-3156/",
+         "snippet": "Python asyncio event loop design and APIs"},
+    ]
+
+    async def provider(query, _timeout, _limit):
+        seen.append(query)
+        if query == "python asyncio":
+            return candidates
+        return []
+
+    orchestrator.providers["bing"] = provider
+    orchestrator.providers["mojeek"] = provider
+    orchestrator.providers["duckduckgo"] = provider
+    original = "Python asyncio TaskGroup documentación oficial"
+    result = asyncio.run(orchestrator.search(original, fresh=True))
+
+    assert result["ok"] is True, result
+    assert result["query"] == original
+    assert result["queries_executed"] == ["python asyncio"]
+    assert len({item["source_domain"] for item in result["results"]}) >= 3
+    assert "python asyncio taskgroup official" in seen
+    assert "python asyncio" in seen
+
+
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
     from backend.search.engine import rank_results
