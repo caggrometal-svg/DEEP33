@@ -140,7 +140,10 @@ class WebOrchestrator:
             if weather_query:
                 topic_tokens = [
                     token for token in _topic_tokens(cleaned)
-                    if token not in {"clima", "tiempo", "temperatura", "pronóstico", "pronostico"}
+                    if token not in {
+                        "clima", "tiempo", "temperatura", "pronóstico", "pronostico",
+                        "actual", "actualmente", "ahora", "hoy", "current", "today", "now",
+                    }
                 ]
                 locality = " ".join(topic_tokens[:4]).strip()
                 return (
