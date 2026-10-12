@@ -336,6 +336,38 @@ def test_controversial_queries_expand_against_official_and_independent_versions(
     assert any("evidencia independiente" in q.lower() for q in plan.queries[1:])
 
 
+def test_realtime_weather_ranking_accepts_spanish_english_semantic_equivalence():
+    from backend.search.engine import rank_results
+
+    ranked = rank_results(
+        "clima actual Santiago Chile",
+        [
+            {
+                "title": "Santiago Weather Forecast",
+                "url": "https://weather.example/santiago",
+                "snippet": "Current forecast and temperature for Santiago",
+            },
+            {
+                "title": "Pronóstico del tiempo en Santiago",
+                "url": "https://meteo.example/santiago",
+                "snippet": "Temperatura y condiciones meteorológicas en Santiago",
+            },
+            {
+                "title": "Unrelated market report",
+                "url": "https://finance.example/report",
+                "snippet": "Stocks and bonds",
+            },
+        ],
+        realtime=True,
+    )
+
+    assert len(ranked) == 2
+    assert {item["source_domain"] for item in ranked} == {
+        "weather.example",
+        "meteo.example",
+    }
+
+
 def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     import tools.web_search as web_search_module
     import backend.search.resilient as resilient_module
