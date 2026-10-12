@@ -319,7 +319,7 @@ def test_google_general_web_search_parses_and_ranks_external_results(monkeypatch
 
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
 
-    html_page = b"""
+    html_page = """
     <html><body>
       <a href="https://www.google.com/url?q=https%3A%2F%2Fdocs.python.org%2F3%2Flibrary%2Fasyncio-task.html&sa=U">
         <h3>asyncio TaskGroup — Python documentation</h3>
@@ -331,7 +331,7 @@ def test_google_general_web_search_parses_and_ranks_external_results(monkeypatch
         <h3>Python asyncio TaskGroup exception handling</h3>
       </a>
     </body></html>
-    """
+    """.encode("utf-8")
 
     class Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
