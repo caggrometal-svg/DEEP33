@@ -1,0 +1,89 @@
+name: DEEP33 Railway realtime web gate
+
+on:
+  push:
+    branches:
+      - railway-deep33-realtime-search-20261012
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep33-railway-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-and-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+      - name: Run search, navigation, chaos and contract tests
+        run: |
+          set -euo pipefail
+          pytest -q tests
+          python -m py_compile backend/main.py backend/search/engine.py backend/search/resilient.py tools/web_search.py tools/web_fetch.py
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: v2.9.6
+      - name: Type-check both Edge gateways
+        run: |
+          deno check supabase/functions/deep33-proxy/index.ts
+          deno check supabase/functions/deep33-tertiary/index.ts
+
+  railway-live-navigation:
+    if: ${{ vars.DEEP33_RAILWAY_BASE_URL != '' }}
+    runs-on: ubuntu-latest
+    env:
+      DEEP33_RAILWAY_BASE_URL: ${{ vars.DEEP33_RAILWAY_BASE_URL }}
+      DEEP33_RAILWAY_TEST_TOKEN: ${{ secrets.DEEP33_RAILWAY_TEST_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Require healthy Railway deployment
+        run: |
+          set -euo pipefail
+          test -n "$DEEP33_RAILWAY_TEST_TOKEN" || { echo "RAILWAY_TEST_TOKEN_MISSING"; exit 1; }
+          base="${DEEP33_RAILWAY_BASE_URL%/}"
+          health_ok=0
+          for attempt in $(seq 1 6); do
+            code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/health.json -w '%{http_code}' "$base/health" || true)"
+            if [ "$code" = "200" ] && jq -e '.status == "PASS" or .ok == true' /tmp/health.json >/dev/null 2>&1; then
+              health_ok=1
+              break
+            fi
+            sleep 3
+          done
+          test "$health_ok" = "1" || { cat /tmp/health.json 2>/dev/null || true; echo "RAILWAY_HEALTH_FAIL"; exit 1; }
+      - name: Verify realtime general-web search and freshness metadata
+        run: |
+          set -euo pipefail
+          base="${DEEP33_RAILWAY_BASE_URL%/}"
+          curl -sS --connect-timeout 5 --max-time 20 -H "Authorization: Bearer $DEEP33_RAILWAY_TEST_TOKEN" "$base/v1/web/status" -o /tmp/status.json
+          jq -e '.engine == "DEEP33 Search Engine" and .engine_version == "1.4.0" and .tool_loop_enabled == true and .general_web_search_enabled == true and .realtime_search_enabled == true and (.provider_names | index("google") != null)' /tmp/status.json
+          query="noticias actuales de Chile hoy economía y política"
+          code="$(curl -sS --connect-timeout 5 --max-time 30 -o /tmp/search.json -w '%{http_code}' -H "Authorization: Bearer $DEEP33_RAILWAY_TEST_TOKEN" -H "X-DEEP33-Session-Id: railway-live-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -H "Cache-Control: no-cache" --get "$base/v1/web/search" --data-urlencode "q=$query" || true)"
+          test "$code" = "200" || { cat /tmp/search.json 2>/dev/null || true; echo "RAILWAY_LIVE_SEARCH_HTTP_$code"; exit 1; }
+          jq -e '.ok == true and .realtime == true and .fresh_request == true and .engine_version == "1.4.0" and (.results | type == "array" and length >= 1) and (.providers | type == "array" and length >= 1) and (.retrieved_at | type == "string" and length >= 10) and (.verification.distinct_domains // 0) >= 2' /tmp/search.json
+          first_url="$(jq -r '.results[0].url // empty' /tmp/search.json)"
+          test -n "$first_url"
+          code="$(curl -sS --connect-timeout 5 --max-time 12 -o /tmp/fetch.json -w '%{http_code}' -H "Authorization: Bearer $DEEP33_RAILWAY_TEST_TOKEN" -H "X-DEEP33-Session-Id: railway-live-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --get "$base/v1/web/fetch" --data-urlencode "url=$first_url" || true)"
+          test "$code" = "200" || { cat /tmp/fetch.json 2>/dev/null || true; echo "RAILWAY_WEB_FETCH_HTTP_$code"; exit 1; }
+          jq -e '.ok == true and (.text | type == "string" and length >= 40) and (.retrieved_at | type == "string" and length >= 10)' /tmp/fetch.json
+          echo "RAILWAY_REALTIME_SEARCH_AND_FETCH_PASS"
