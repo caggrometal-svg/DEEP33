@@ -6,6 +6,10 @@ on:
       - main
       - fix/deep33-test-global-101026-resilience-v2
       - fix/deep33-ttft-under-3s
+      - fix/deep33-global-101026-final-gates
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       require_live:
@@ -26,10 +30,10 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL }}
+      DEEP33_BASE_URL: https://deep33-backend.onrender.com
       DEEP33_TEST_AUTH_TOKEN: ${{ secrets.DEEP33_TEST_AUTH_TOKEN }}
       DEEP33_TEST_SESSION_ID: deep33-global-gate
-      DEEP33_REQUIRE_LIVE_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false' }}
+      DEEP33_REQUIRE_LIVE_GATE: ${{ github.ref == 'refs/heads/main' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
 
     steps:
       - name: Checkout
@@ -53,6 +57,12 @@ jobs:
 
       - name: DEEP33-TEST-GLOBAL-101026
         run: python test_deep33_global_gate.py
+
+      - name: Enforce live production evidence on main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          test -n "$DEEP33_BASE_URL"
+          test "$DEEP33_REQUIRE_LIVE_GATE" = "true"
 
       - name: Existing search and performance regression tests
         run: |
