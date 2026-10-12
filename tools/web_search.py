@@ -33,7 +33,9 @@ _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 def _http_timeout(seconds: float) -> httpx.Timeout:
     bounded = max(0.5, min(2.5, float(seconds)))
     return httpx.Timeout(
-        connect=min(1.0, bounded),
+        # One second was too tight for external-provider connection setup on Render.
+        # The provider and global search deadlines still cap total latency.
+        connect=min(1.5, bounded),
         read=min(1.5, bounded),
         write=min(1.0, bounded),
         pool=min(0.5, bounded),
