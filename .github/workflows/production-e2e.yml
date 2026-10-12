@@ -13,6 +13,7 @@ on:
     branches: ["main"]
     paths:
       - ".github/workflows/production-e2e.yml"
+      - ".github/workflows/deep33-global-internet-gate.yml"
       - ".github/workflows/ci.yml"
       - ".github/workflows/warmup.yml"
       - "backend/search/engine.py"
