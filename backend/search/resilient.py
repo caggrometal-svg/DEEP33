@@ -126,13 +126,33 @@ class WebOrchestrator:
     def _provider_query(query: str) -> str:
         """Reduce provider-side noise without changing the user's ranking query."""
         cleaned = " ".join(str(query or "").split()).strip()
-        if not cleaned or is_realtime_query(cleaned):
+        if not cleaned:
+            return cleaned
+        lowered = cleaned.casefold()
+        weather_query = any(
+            term in lowered
+            for term in (
+                "clima", "tiempo", "temperatura", "pronóstico", "pronostico",
+                "weather", "forecast", "temperature",
+            )
+        )
+        if is_realtime_query(cleaned):
+            if weather_query:
+                topic_tokens = [
+                    token for token in _topic_tokens(cleaned)
+                    if token not in {"clima", "tiempo", "temperatura", "pronóstico", "pronostico"}
+                ]
+                locality = " ".join(topic_tokens[:4]).strip()
+                return (
+                    f"{locality} weather forecast temperature clima tiempo"
+                    if locality
+                    else "weather forecast temperature clima tiempo"
+                )
             return cleaned
         topic_tokens = _topic_tokens(cleaned)
         if not 2 <= len(topic_tokens) <= 8:
             return cleaned
         compact = " ".join(topic_tokens)
-        lowered = cleaned.casefold()
         if "official" in lowered or "oficial" in lowered:
             compact += " official"
         return compact
