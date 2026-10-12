@@ -121,6 +121,32 @@ const EDGE_AI_UPSTREAM_URLS = [
   "https://deep33-backup.onrender.com",
 ] as const;
 const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];
+
+// This opt-in target is only read from server-side Edge secrets; never from
+// request parameters. Restrict it to Railway's generated HTTPS service domain.
+function configuredRailwayWebBackend(): string {
+  const raw = (Deno.env.get("DEEP33_RAILWAY_BACKEND_URL") || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (
+      parsed.protocol !== "https:" ||
+      !parsed.hostname.toLowerCase().endsWith(".up.railway.app") ||
+      parsed.username || parsed.password || parsed.search || parsed.hash ||
+      (parsed.port !== "" && parsed.port !== "443") ||
+      (parsed.pathname !== "" && parsed.pathname !== "/")
+    ) return "";
+    return parsed.origin;
+  } catch {
+    return "";
+  }
+}
+
+const RAILWAY_WEB_BACKEND_URL = configuredRailwayWebBackend();
+const EDGE_WEB_FETCH_BACKEND_URLS = Array.from(new Set([
+  ...(RAILWAY_WEB_BACKEND_URL ? [RAILWAY_WEB_BACKEND_URL] : []),
+  ...(RAILWAY_WEB_BACKEND_URL ? EDGE_AI_UPSTREAM_URLS : [EDGE_AI_UPSTREAM_URL]),
+]));
 const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 
 const MAX_WEB_SEARCH_RESULTS = 12;
@@ -193,10 +219,65 @@ async function buildNavigatedWebEvidence(
   const pageByUrl = new Map<string, Record<string, unknown>>();
   const fetchedDomains = new Set<string>();
   const seenCandidates = new Set<string>();
+  const seenCandidateDomains = new Set<string>();
   let attempted = 0;
   const batchSize = 4;
-  const sourceReadTimeoutMs = 2500;
+  const sourceReadTimeoutMs = 1400;
+  const sourceReadBudgetMs = 4400;
   const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);
+
+  // Retry a candidate through independent DEEP33 backends inside one short
+  // per-candidate budget. With no Railway URL configured, the deployed route
+  // remains exactly the existing primary backend.
+  const fetchReadablePage = async (
+    source: NavigatedWebSource,
+  ): Promise<Record<string, unknown> | null> => {
+    const deadline = performance.now() + sourceReadBudgetMs;
+    for (const baseUrl of EDGE_WEB_FETCH_BACKEND_URLS) {
+      const remainingMs = deadline - performance.now();
+      if (remainingMs <= 0) break;
+      try {
+        const response = await fetch(
+          baseUrl + "/v1/web/fetch?url=" + encodeURIComponent(source.url),
+          {
+            method: "GET",
+            headers: {
+              "Authorization": userAuthorization,
+              "Accept": "application/json",
+              "X-DEEP33-Session-Id": sessionId,
+            },
+            redirect: "error",
+            signal: AbortSignal.timeout(
+              Math.max(1, Math.floor(Math.min(sourceReadTimeoutMs, remainingMs))),
+            ),
+          },
+        );
+        if (!response.ok) continue;
+
+        const body = await readJson(response);
+        const pageText = typeof body.text === "string" ? body.text.trim() : "";
+        if (body.ok !== true || pageText.length < 40) continue;
+
+        const finalUrl = typeof body.final_url === "string"
+          ? body.final_url.slice(0, 2000)
+          : source.url;
+        if (isSearchWrapper(finalUrl)) continue;
+
+        return {
+          url: source.url,
+          page_text: pageText.slice(0, 3500),
+          final_url: finalUrl,
+          retrieved_at: typeof body.retrieved_at === "string"
+            ? body.retrieved_at.slice(0, 100)
+            : undefined,
+        };
+      } catch {
+        // Network/timeout failure: try the next configured backend, once.
+        continue;
+      }
+    }
+    return null;
+  };
 
   for (
     let offset = 0;
@@ -209,8 +290,30 @@ async function buildNavigatedWebEvidence(
         try {
           const parsed = new URL(source.url);
           if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
-          if (seenCandidates.has(parsed.href)) return false;
-          seenCandidates.add(parsed.href);
+          const domain = parsed.hostname.toLowerCase().replace(/^www\\./, "");
+          const normalized = new URL(parsed.href);
+          normalized.hash = "";
+          for (const key of [...normalized.searchParams.keys()]) {
+            if (/^utm_/i.test(key) || [
+              "gclid", "fbclid", "msclkid", "ref", "source",
+            ].includes(key.toLowerCase())) {
+              normalized.searchParams.delete(key);
+            }
+          }
+          if (normalized.pathname.length > 1) {
+            normalized.pathname = normalized.pathname.replace(/\\/+$/, "");
+          }
+          const urlKey = normalized.href;
+          if (
+            !domain ||
+            seenCandidates.has(urlKey) ||
+            seenCandidateDomains.has(domain) ||
+            fetchedDomains.has(domain)
+          ) return false;
+          seenCandidates.add(urlKey);
+          // One candidate per hostname per request: do not spend latency
+          // retrying alternate URLs on a domain already attempted or failed.
+          seenCandidateDomains.add(domain);
           return true;
         } catch {
           return false;
@@ -220,39 +323,7 @@ async function buildNavigatedWebEvidence(
 
     attempted += targets.length;
     const settled = await Promise.allSettled(
-      targets.map(async (source) => {
-        const response = await fetch(
-          EDGE_AI_UPSTREAM_URL + "/v1/web/fetch?url=" + encodeURIComponent(source.url),
-          {
-            method: "GET",
-            headers: {
-              "Authorization": userAuthorization,
-              "Accept": "application/json",
-              "X-DEEP33-Session-Id": sessionId,
-            },
-            redirect: "error",
-            signal: AbortSignal.timeout(sourceReadTimeoutMs),
-          },
-        );
-        if (!response.ok) return null;
-        const body = await readJson(response);
-        const pageText = typeof body.text === "string" ? body.text.trim() : "";
-        if (body.ok !== true || pageText.length < 40) return null;
-
-        const finalUrl = typeof body.final_url === "string"
-          ? body.final_url.slice(0, 2000)
-          : source.url;
-        if (isSearchWrapper(finalUrl)) return null;
-
-        return {
-          url: source.url,
-          page_text: pageText.slice(0, 3500),
-          final_url: finalUrl,
-          retrieved_at: typeof body.retrieved_at === "string"
-            ? body.retrieved_at.slice(0, 100)
-            : undefined,
-        };
-      }),
+      targets.map((source) => fetchReadablePage(source)),
     );
 
     for (const item of settled) {
