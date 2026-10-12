@@ -217,7 +217,7 @@ async function buildNavigatedWebEvidence(
         try {
           const parsed = new URL(source.url);
           if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
-          const domain = parsed.hostname.toLowerCase().replace(/^www\\./, "");
+          const domain = parsed.hostname.toLowerCase().replace(/^www\./, "");
           const normalized = new URL(parsed.href);
           normalized.hash = "";
           for (const key of [...normalized.searchParams.keys()]) {
@@ -228,7 +228,7 @@ async function buildNavigatedWebEvidence(
             }
           }
           if (normalized.pathname.length > 1) {
-            normalized.pathname = normalized.pathname.replace(/\\/+$/, "");
+            normalized.pathname = normalized.pathname.replace(/\/+$/, "");
           }
           const urlKey = normalized.href;
           if (
