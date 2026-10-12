@@ -209,10 +209,10 @@ def _google_result_url(value: str) -> str:
     candidate = html.unescape(str(value or "").strip())
     if not candidate:
         return ""
+    if candidate.startswith("/url?"):
+        candidate = "https://www.google.com" + candidate
     parsed = urlparse(candidate)
     host = (parsed.hostname or "").lower().rstrip(".")
-    if parsed.scheme.lower() not in {"http", "https"}:
-        return ""
     if host == "google.com" or host.endswith(".google.com"):
         if parsed.path != "/url":
             return ""
@@ -222,9 +222,15 @@ def _google_result_url(value: str) -> str:
         destination_host = (destination.hostname or "").lower().rstrip(".")
         if destination.scheme.lower() not in {"http", "https"} or not destination_host:
             return ""
+        if destination.username or destination.password or destination.port not in (None, 80, 443):
+            return ""
         if destination_host == "google.com" or destination_host.endswith(".google.com"):
             return ""
         return target
+    if parsed.scheme.lower() not in {"http", "https"} or not host:
+        return ""
+    if parsed.username or parsed.password or parsed.port not in (None, 80, 443):
+        return ""
     return candidate
 
 
@@ -241,9 +247,7 @@ class GoogleSearchParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs_map = dict(attrs)
         if tag == "a":
-            destination = _google_result_url(attrs_map.get("href") or "")
-            if destination:
-                self._pending_url = destination
+            self._pending_url = _google_result_url(attrs_map.get("href") or "")
         elif tag == "h3" and self._pending_url:
             self._capture_title = True
             self._buffer = []
