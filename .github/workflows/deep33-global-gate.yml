@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL }}
+      DEEP33_BASE_URL: https://deep33-backend.onrender.com
       DEEP33_TEST_AUTH_TOKEN: ${{ secrets.DEEP33_TEST_AUTH_TOKEN }}
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       DEEP33_REQUIRE_LIVE_GATE: ${{ github.ref == 'refs/heads/main' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
