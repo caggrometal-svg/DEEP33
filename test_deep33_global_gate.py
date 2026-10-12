@@ -65,6 +65,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         orchestrator.providers["bing"] = offline
+        orchestrator.providers["google"] = offline
         orchestrator.providers["mojeek"] = offline
         orchestrator.providers["duckduckgo"] = ddg
 
@@ -154,7 +155,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             seen.append((name, query))
             return candidates if query == "python asyncio" else []
 
-        for provider_name in ("bing", "mojeek", "duckduckgo"):
+        for provider_name in ("bing", "google", "mojeek", "duckduckgo"):
             async def bound(
                 query: str, timeout: float, limit: int, _name=provider_name
             ) -> list[dict]:
@@ -203,6 +204,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             ]
 
         orchestrator.providers["bing"] = provider
+        orchestrator.providers["google"] = provider
         orchestrator.providers["mojeek"] = provider
         orchestrator.providers["duckduckgo"] = provider
         original = "Python asyncio official documentation"
@@ -375,6 +377,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("chaos")
 
         orchestrator.providers["bing"] = explode
+        orchestrator.providers["google"] = explode
         orchestrator.providers["mojeek"] = explode
         orchestrator.providers["duckduckgo"] = explode
         result = await orchestrator.search("política Chile hoy", fresh=True)
