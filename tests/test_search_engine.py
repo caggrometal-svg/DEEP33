@@ -365,6 +365,38 @@ def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
     assert all("astronomy" not in item["url"] for item in ranked)
 
 
+def test_realtime_economics_ranking_normalizes_cross_language_and_inflections():
+    from backend.search.engine import rank_results
+
+    ranked = rank_results(
+        "noticias económicas Chile hoy",
+        [
+            {
+                "title": "Economía y mercados: últimas noticias",
+                "url": "https://economia.example/chile",
+                "snippet": "Finanzas, mercados y actividad económica en Chile.",
+            },
+            {
+                "title": "Chile economy and financial markets",
+                "url": "https://markets.example/chile",
+                "snippet": "Current economic and market developments.",
+            },
+            {
+                "title": "Football results",
+                "url": "https://sports.example/results",
+                "snippet": "International match scores.",
+            },
+        ],
+        realtime=True,
+    )
+
+    assert len(ranked) == 2
+    assert {item["source_domain"] for item in ranked} == {
+        "economia.example",
+        "markets.example",
+    }
+
+
 def test_realtime_weather_ranking_accepts_spanish_english_semantic_equivalence():
     from backend.search.engine import rank_results
 
