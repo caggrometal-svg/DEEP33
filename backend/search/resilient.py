@@ -152,6 +152,11 @@ class WebOrchestrator:
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()
         if compact:
+            # If a query with several anchors yields no rankable evidence, use a
+            # broader provider query in the recovery wave. The final ranking still
+            # evaluates every candidate against the original user query.
+            if len(topics) >= 3:
+                return " ".join(dict.fromkeys(topics[:2]))
             return compact
         return cleaned
 
