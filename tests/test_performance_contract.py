@@ -11,7 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_chat_stream_uses_live_streaming_path():
     source = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
     route = source[source.index('@app.post("/v1/chat/stream")'):]
-    assert "body = stream_gateway(" in route
+    assert "async def deferred_stream()" in route
+    assert "async for chunk in stream_gateway(" in route
+    assert 'yield _sse_status("thinking"' in route
+    assert 'yield _sse_status("token_stream"' in route
     assert '_sse_text_chunks(result["text"])' not in route
 
 
