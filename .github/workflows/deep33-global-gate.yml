@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL || 'https://deep33-backend.onrender.com' }}
+      DEEP33_BASE_URL: ${{ secrets.DEEP33_BASE_URL }}
       DEEP33_TEST_AUTH_TOKEN: ${{ secrets.DEEP33_TEST_AUTH_TOKEN }}
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
@@ -53,6 +53,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+
+      - name: Enable canonical live production target
+        if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_BASE_URL == ''
+        run: echo "DEEP33_BASE_URL=https://deep33-backend.onrender.com" >> "$GITHUB_ENV"
 
       - name: Prepare authenticated live production session
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
