@@ -235,6 +235,8 @@ class WebOrchestrator:
                 return cached
 
         started = time.perf_counter()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.global_budget_seconds
         provider_query = self._provider_query(cleaned)
         tasks = {
             asyncio.create_task(self._call_provider("bing", provider_query), name="search:bing"),
@@ -248,9 +250,8 @@ class WebOrchestrator:
         pending = set(tasks)
 
         try:
-            deadline = asyncio.get_running_loop().time() + self.global_budget_seconds
             while pending:
-                remaining = deadline - asyncio.get_running_loop().time()
+                remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
                 done, pending = await asyncio.wait(
@@ -314,34 +315,72 @@ class WebOrchestrator:
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
         )
-        if needs_recovery and recovery_query.casefold() != provider_query.casefold():
-            recovery_started = asyncio.get_running_loop().time()
-            recovery_tasks = [
+        if (
+            needs_recovery
+            and recovery_query.casefold() != provider_query.casefold()
+            and deadline > loop.time()
+        ):
+            # Keep every successful recovery result even if another provider hangs.
+            # The same end-to-end deadline covers the primary and recovery phases.
+            recovery_tasks = {
                 asyncio.create_task(
                     self._call_provider(provider, recovery_query),
                     name=f"search-recovery:{provider}",
                 )
-                for provider in ("bing", "duckduckgo")
-            ]
+                for provider in self.providers
+            }
+            pending_recovery = set(recovery_tasks)
             try:
-                remaining = max(
-                    0.0,
-                    self.global_budget_seconds
-                    - (asyncio.get_running_loop().time() - recovery_started),
-                )
-                if remaining > 0:
-                    recovery_outcomes = await asyncio.wait_for(
-                        asyncio.gather(*recovery_tasks, return_exceptions=False),
-                        timeout=min(self.provider_total_seconds, remaining),
+                while pending_recovery:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    done, pending_recovery = await asyncio.wait(
+                        pending_recovery,
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                    outcomes.extend(recovery_outcomes)
-            except (asyncio.TimeoutError, Exception):
-                pass
+                    if not done:
+                        break
+                    for task in done:
+                        try:
+                            outcome = task.result()
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception as exc:
+                            outcome = ProviderOutcome(
+                                provider=task.get_name().split(":")[-1],
+                                ok=False,
+                                error_code=f"UNEXPECTED:{type(exc).__name__.upper()}",
+                            )
+                        outcomes.append(outcome)
+
+                    merged_now = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked_now = rank_results(
+                        cleaned, merged_now, realtime=is_realtime_query(cleaned)
+                    )
+                    selected_now = deduplicate(ranked_now, self.max_results)
+                    distinct_domains_now = {
+                        item.get("source_domain") or ""
+                        for item in selected_now
+                        if item.get("source_domain")
+                    }
+                    if (
+                        len(selected_now) >= min(3, self.max_results)
+                        and len(distinct_domains_now) >= min(3, len(selected_now))
+                    ):
+                        break
             finally:
-                for task in recovery_tasks:
+                for task in pending_recovery:
                     if not task.done():
                         task.cancel()
-                await asyncio.gather(*recovery_tasks, return_exceptions=True)
+                if pending_recovery:
+                    await asyncio.gather(*pending_recovery, return_exceptions=True)
 
             merged = [
                 {**item, "provider": outcome.provider}
