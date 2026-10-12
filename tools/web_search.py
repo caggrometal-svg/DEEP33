@@ -310,6 +310,24 @@ def _unwrap_bing_url(value):
     return ""
 
 
+def _bing_market_params(query: str) -> dict[str, str]:
+    """Choose a search market from the query language rather than forcing Chilean Spanish on all topics."""
+    text = " ".join(str(query or "").casefold().split())
+    tokens = set(re.findall(r"[\wáéíóúüñ]+", text, flags=re.UNICODE))
+    spanish_markers = {
+        "actualidad", "ayer", "búsqueda", "busqueda", "chile", "chileno",
+        "chilena", "clima", "comuna", "cotización", "cotizacion",
+        "dólar", "dolar", "elecciones", "fútbol", "futbol", "gobierno",
+        "hoy", "municipalidad", "noticia", "noticias", "presidente",
+        "pronóstico", "pronostico", "región", "region", "santiago",
+        "temperatura", "última", "ultimas", "último", "ultimos",
+    }
+    has_spanish_diacritic = bool(re.search(r"[áéíóúüñ¿¡]", text))
+    if has_spanish_diacritic or tokens & spanish_markers:
+        return {"setlang": "es", "cc": "cl"}
+    return {"setlang": "en", "cc": "us"}
+
+
 def _looks_realtime_news(query: str) -> bool:
     lowered = " ".join(str(query or "").split()).strip().lower()
     return any(
@@ -570,7 +588,7 @@ async def _bing_search(query, timeout_seconds, max_results):
     try:
         response = await client.get(
             os.getenv("WEB_SEARCH_BING_URL", BING_URL),
-            params={"q": query, "setlang": "es", "cc": "cl"},
+            params={"q": query, **_bing_market_params(query)},
             headers={
                 "User-Agent": "DEEP33-WebSearch/1.0",
                 "Accept": "text/html,application/xhtml+xml",
@@ -590,9 +608,17 @@ async def _bing_search(query, timeout_seconds, max_results):
         # representation of the same broad-web provider before failing over.
         # This keeps the fast path for relevant HTML while rescuing polluted SERPs.
         if html_results and not realtime_news:
-            from backend.search.engine import MIN_FALLBACK_RESULTS, rank_results
+            from backend.search.engine import (
+                MIN_FALLBACK_RESULTS,
+                is_realtime_query,
+                rank_results,
+            )
 
-            relevant_html = rank_results(query, html_results)
+            relevant_html = rank_results(
+                query,
+                html_results,
+                realtime=is_realtime_query(query),
+            )
             relevant_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "").lower().removeprefix("www.")
                 for item in relevant_html
@@ -600,7 +626,7 @@ async def _bing_search(query, timeout_seconds, max_results):
             }
             required_coverage = min(max_results, MIN_FALLBACK_RESULTS)
             if len(relevant_html) >= required_coverage and len(relevant_domains) >= required_coverage:
-                return html_results
+                return relevant_html[:max_results]
     except Exception as exc:
         html_error = exc
 
@@ -624,16 +650,33 @@ async def _bing_search(query, timeout_seconds, max_results):
         raise
 
     if rss_results:
-        # Interleave sources so one result format cannot crowd out the other
-        # before the relevance ranker evaluates them.
+        # Interleave sources so neither format crowds out the other, then
+        # reject off-topic candidates before they leave the Bing provider.
         combined = []
         for index in range(max(len(rss_results), len(html_results))):
             if index < len(rss_results):
                 combined.append(rss_results[index])
             if index < len(html_results):
                 combined.append(html_results[index])
-        return _normalise_results(combined, max_results)
+        normalized = _normalise_results(combined, max_results)
+        if not realtime_news:
+            from backend.search.engine import is_realtime_query, rank_results
+
+            return rank_results(
+                query,
+                normalized,
+                realtime=is_realtime_query(query),
+            )[:max_results]
+        return normalized
     if html_results:
+        if not realtime_news:
+            from backend.search.engine import is_realtime_query, rank_results
+
+            return rank_results(
+                query,
+                html_results,
+                realtime=is_realtime_query(query),
+            )[:max_results]
         return html_results
     if html_error is not None:
         raise WebSearchError(str(html_error)) from html_error
