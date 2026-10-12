@@ -531,7 +531,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         default=os.getenv("DEEP33_BASE_URL", ""),
-        help="Live DEEP33 base URL. When supplied, Android SSE TTFT and HTTP contract are validated.",
+        help="Live DEEP33 base URL. Probed only when --require-live is enabled.",
     )
     parser.add_argument(
         "--token",
@@ -555,9 +555,23 @@ def main() -> int:
     if not run_unit_gate():
         return 1
 
-    if args.base_url:
+    # A configured URL is not authorization to probe production. The live gate
+    # must be explicitly enabled, and the authenticated session must be present.
+    if args.require_live:
+        if not args.base_url:
+            print(
+                "DEEP33_REQUIRE_LIVE_GATE is enabled but DEEP33_BASE_URL is empty",
+                file=sys.stderr,
+            )
+            return 1
+        if not args.token:
+            print(
+                "DEEP33_REQUIRE_LIVE_GATE is enabled but DEEP33_TEST_AUTH_TOKEN is empty",
+                file=sys.stderr,
+            )
+            return 1
         try:
-            asyncio.run(live_gate(args.base_url, args.token or None, args.session_id))
+            asyncio.run(live_gate(args.base_url, args.token, args.session_id))
         except Exception as exc:
             print(
                 json.dumps(
@@ -572,19 +586,13 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-    elif args.require_live:
-        print(
-            "DEEP33_REQUIRE_LIVE_GATE is enabled but DEEP33_BASE_URL is empty",
-            file=sys.stderr,
-        )
-        return 1
 
     print(
         json.dumps(
             {
                 "gate": "DEEP33-TEST-GLOBAL-101026",
                 "unit": True,
-                "live": bool(args.base_url),
+                "live": bool(args.require_live),
                 "status": "PASS",
             },
             ensure_ascii=False,
