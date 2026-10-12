@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import logging
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -10,8 +11,10 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import _bing_search, _duckduckgo_search, _mojeek_search
+
+logger = logging.getLogger(__name__)
 
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
@@ -397,6 +400,39 @@ class WebOrchestrator:
             selected = deduplicate(ranked, self.max_results)
             if selected:
                 provider_query = recovery_query
+
+        if not selected and merged:
+            # Diagnose relevance rejection without recording query text, titles,
+            # snippets, or full URLs. This lets production logs distinguish
+            # provider-empty responses from candidates excluded by ranking.
+            anchors = set(_topic_tokens(cleaned))
+            required_hits = min(2, len(anchors))
+            diagnostics = []
+            for item in merged[:8]:
+                parsed = urlparse(str(item.get("url") or ""))
+                url_evidence = (
+                    f"{parsed.hostname or ''} "
+                    f"{parsed.path.replace('-', ' ').replace('_', ' ').replace('/', ' ')}"
+                )
+                title_tokens = set(_tokens(str(item.get("title") or "")))
+                snippet_tokens = set(_tokens(str(item.get("snippet") or "")))
+                url_tokens = set(_tokens(url_evidence))
+                combined_tokens = title_tokens | snippet_tokens | url_tokens
+                diagnostics.append({
+                    "provider": str(item.get("provider") or "unknown"),
+                    "title_hits": len(anchors & title_tokens),
+                    "snippet_hits": len(anchors & snippet_tokens),
+                    "url_hits": len(anchors & url_tokens),
+                    "combined_hits": len(anchors & combined_tokens),
+                })
+            logger.warning(
+                "web_search_rank_rejected_candidates anchor_count=%d required_hits=%d "
+                "candidate_count=%d candidates=%s",
+                len(anchors),
+                required_hits,
+                len(merged),
+                diagnostics,
+            )
 
         errors = [
             f"{outcome.provider}:{outcome.error_code}"
