@@ -130,7 +130,7 @@ MAX_QUERY_FANOUT = max(1, min(2, int(os.getenv("WEB_SEARCH_MAX_QUERY_FANOUT", "2
 MIN_VERIFIED_RESULTS = max(2, min(3, int(os.getenv("WEB_SEARCH_MIN_VERIFIED_RESULTS", "2"))))
 TOTAL_SEARCH_TIMEOUT_SECONDS = max(
     3.0,
-    min(15.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "8"))),
+    min(5.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "5"))),
 )
 
 
@@ -626,7 +626,7 @@ class SearchEngine:
 
     def _providers(self, provider_name: str, api_key: str, fallback_ddg: bool) -> list[str]:
         bing_enabled = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
-        mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "false").strip().lower() == "true"
+        mojeek_enabled = os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() == "true"
         if provider_name == "tavily":
             providers = ["tavily"]
             if bing_enabled:
