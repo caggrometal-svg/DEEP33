@@ -104,6 +104,48 @@ def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     result = asyncio.run(orchestrator.search("DEEP33 fallback test", fresh=True))
     assert result["winner_provider"] == "duckduckgo"
 
+def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
+    from backend.search.resilient import ProviderOutcome, WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=3,
+        provider_total_seconds=0.05,
+        global_budget_seconds=0.25,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    recovered = []
+
+    results = [
+        {"title": "asyncio — Asynchronous I/O", "url": "https://docs.python.org/3/library/asyncio.html",
+         "snippet": "Python asyncio documentation and event loop APIs"},
+        {"title": "Python asyncio tutorial", "url": "https://realpython.com/async-io-python/",
+         "snippet": "Python asyncio guide and asynchronous programming"},
+        {"title": "PEP 3156", "url": "https://peps.python.org/pep-3156/",
+         "snippet": "Python asyncio event loop design and APIs"},
+    ]
+
+    async def fake_call_provider(provider, query):
+        if "official" in query.casefold():
+            return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
+        recovered.append(provider)
+        if provider == "bing":
+            return ProviderOutcome(provider=provider, ok=True, results=results)
+        await asyncio.sleep(0.5)
+        return ProviderOutcome(provider=provider, ok=False, error_code="PROVIDER_TIMEOUT")
+
+    orchestrator._call_provider = fake_call_provider
+    result = asyncio.run(
+        orchestrator.search("Python asyncio official documentation", fresh=True)
+    )
+
+    assert result["ok"] is True, result
+    assert result["status"] == "OK", result
+    assert len({item["source_domain"] for item in result["results"]}) >= 3
+    assert "bing" in recovered
+    assert result["latency_ms"] < 250
+
+
 def test_mojeek_search_parses_relevant_general_web_results(monkeypatch):
     import tools.web_search as module
     from backend.search.engine import rank_results
