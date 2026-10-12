@@ -3772,8 +3772,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             raise HTTPException(status_code=502,detail="AI_GATEWAY_INVALID_RESPONSE") from exc
         raise
 
-def _sse_text_chunks(value,chunk_size=120):
-    return [value[i:i+chunk_size] for i in range(0,len(value),chunk_size)] or [""]
+def _sse_text_chunks(value, chunk_size=120):
+    text = str(value or "")
+    return [
+        text[i:i + chunk_size]
+        for i in range(0, len(text), chunk_size)
+        if text[i:i + chunk_size]
+    ]
 
 def _sse_error(code: str) -> bytes:
     return (
