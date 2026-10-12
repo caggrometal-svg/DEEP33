@@ -909,11 +909,12 @@ class AIGateway:
                                     )
                                 circuit.success()
                                 logger.info(
-                                    "ai_stream_provider_success request_id=%s provider=%s fallback_used=%s first_chunk_ms=%.2f elapsed_ms=%.2f",
+                                    "ai_stream_provider_success request_id=%s provider=%s fallback_used=%s first_chunk_ms=%.2f first_visible_ms=%.2f elapsed_ms=%.2f",
                                     request_id,
                                     provider.name,
                                     bool(self.config.providers and provider.name != self.config.providers[0].name),
                                     (first_chunk_at - started_request) * 1000 if first_chunk_at else -1.0,
+                                    (first_visible_at - started_request) * 1000 if first_visible_at else -1.0,
                                     elapsed_ms,
                                 )
                                 return
