@@ -648,15 +648,14 @@ async def search_web(
     fast: bool = False,
     fresh: bool = False,
 ):
-    from backend.search.engine import SearchEngine, _normalise_lookup_query
+    from backend.search.engine import _normalise_lookup_query
+    from backend.search.resilient import get_web_orchestrator
 
     raw_query = " ".join(str(query or "").split()).strip()
     cleaned = _normalise_lookup_query(raw_query) or raw_query
     if not cleaned:
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
     if len(cleaned) > MAX_QUERY_CHARS:
-        # Last-resort bound for verbose but legitimate requests. Normalization
-        # above normally removes response instructions before this point.
         first_sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0].strip()
         if first_sentence and len(first_sentence) <= MAX_QUERY_CHARS:
             cleaned = first_sentence
@@ -665,69 +664,14 @@ async def search_web(
     if not cleaned:
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
-    timeout_seconds = max(1.0, min(5.0, timeout_seconds))
     max_results = max(1, min(8, int(max_results)))
-    selected_provider = (
+    orchestrator = get_web_orchestrator(max_results)
+    result = await orchestrator.search(cleaned, fresh=fresh)
+    result["fresh_request"] = bool(fresh)
+    result["configured_provider"] = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")
     ).strip().lower()
-    key = (
-        api_key if api_key is not None else os.getenv("WEB_SEARCH_API_KEY", "")
-    ).strip()
-
-    engine = SearchEngine(
-        max_results=max_results,
-        max_queries=(
-            1
-            if fast
-            else max(1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3"))))
-        ),
-    )
-    cache_key = _search_cache_key(
-        cleaned, selected_provider, key, timeout_seconds, max_results
-    )
-    now = time.monotonic()
-    cached = _SEARCH_CACHE.get(cache_key)
-    # Explicit/current web requests must reach the Internet on every call.
-    # Cache remains available only for non-fresh repeated searches.
-    if not fresh and cached and cached[0] > now:
-        return copy.deepcopy(cached[1])
-
-    started = time.perf_counter()
-    inflight = _SEARCH_INFLIGHT.get(cache_key)
-    if inflight is not None and not inflight.done():
-        shared = await inflight
-        return {
-            **copy.deepcopy(shared),
-            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-        }
-
-    task = asyncio.create_task(
-        engine.search(
-            cleaned,
-            provider=selected_provider,
-            api_key=key,
-            timeout_seconds=timeout_seconds,
-            fallback_ddg=os.getenv("WEB_SEARCH_FALLBACK_DDG", "true").strip().lower() == "true",
-            fast_mode=fast,
-        )
-    )
-    _SEARCH_INFLIGHT[cache_key] = task
-    try:
-        result = await task
-        result = {
-            **result,
-            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
-        }
-        if result.get("ok"):
-            _SEARCH_CACHE[cache_key] = (
-                time.monotonic() + SEARCH_CACHE_TTL_SECONDS,
-                copy.deepcopy(result),
-            )
-        result["fresh_request"] = bool(fresh)
-        return copy.deepcopy(result)
-    finally:
-        if _SEARCH_INFLIGHT.get(cache_key) is task:
-            _SEARCH_INFLIGHT.pop(cache_key, None)
+    return result
 
 
 def web_search_status():
