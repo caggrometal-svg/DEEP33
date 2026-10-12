@@ -6,6 +6,7 @@ on:
       - main
       - fix/deep33-test-global-101026-resilience-v2
       - fix/deep33-ttft-under-3s
+      - fix/deep33-global-101026-final-gates
   workflow_dispatch:
     inputs:
       require_live:
