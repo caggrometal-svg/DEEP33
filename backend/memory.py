@@ -109,6 +109,7 @@ class MemoryClient:
         idempotency_key: str | None = None,
         request_hash: str | None = None,
         memory_profile_id: str | None = None,
+        access_token: str | None = None,
         **payload: Any,
     ) -> dict:
         if not self.enabled:
@@ -122,13 +123,12 @@ class MemoryClient:
         if request_hash:
             body["request_hash"] = request_hash
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {access_token or self.api_key}",
             "apikey": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
-            # Server-to-server memory access uses the service role key as the
-            # explicit internal credential; the end-user ID is carried only in
-            # the scoped body field after backend authentication.
+            # The Edge Function validates user JWTs and binds each operation to
+            # that JWT's user ID. Keep the internal header for legacy callers.
             "X-DEEP33-Internal-Token": self.api_key,
         }
 
@@ -180,14 +180,22 @@ class MemoryClient:
     async def ping(self) -> dict:
         return await self._call("ping", "deep33-health")
 
-    async def context(self, session_id: str, memory_profile_id: str | None = None) -> dict:
+    async def context(
+        self,
+        session_id: str,
+        memory_profile_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict:
         key = (session_id, memory_profile_id or "")
         now = time.monotonic()
         cached = self._context_cache.get(key)
         if cached and cached[0] > now:
             return json.loads(json.dumps(cached[1], ensure_ascii=False))
 
-        result = await self._call("context", session_id, memory_profile_id=memory_profile_id)
+        result = await self._call(
+            "context", session_id, memory_profile_id=memory_profile_id,
+            access_token=access_token,
+        )
         self._context_cache[key] = (
             time.monotonic() + self.context_cache_ttl_seconds,
             json.loads(json.dumps(result, ensure_ascii=False)),
@@ -201,6 +209,7 @@ class MemoryClient:
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
         memory_profile_id: str | None = None,
+        access_token: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"messages": messages[-50:]}
         if personality:
@@ -214,12 +223,17 @@ class MemoryClient:
             idempotency_key=f"memory:sync:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
             **payload,
         )
         self._context_cache.pop((session_id, memory_profile_id or ""), None)
         return result
 
-    async def remember(self, session_id: str, kind: str, content: str, memory_profile_id: str | None = None) -> dict:
+    async def remember(
+        self, session_id: str, kind: str, content: str,
+        memory_profile_id: str | None = None,
+        access_token: str | None = None,
+    ) -> dict:
         payload = {"kind": kind, "content": content}
         request_hash = self._request_hash("remember", session_id, payload)
         return await self._call(
@@ -237,6 +251,7 @@ class MemoryClient:
         personality: str | None = None,
         preferences: dict[str, Any] | None = None,
         memory_profile_id: str | None = None,
+        access_token: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {}
         if personality:
@@ -260,6 +275,7 @@ class MemoryClient:
         operation: str,
         request_hash: str,
         lease_seconds: int = 180,
+        access_token: str | None = None,
     ) -> dict:
         return await self._call(
             "idempotency_claim",
@@ -268,6 +284,7 @@ class MemoryClient:
             request_hash=request_hash,
             operation=operation,
             lease_seconds=lease_seconds,
+            access_token=access_token,
         )
 
     async def idempotency_status(
@@ -275,12 +292,14 @@ class MemoryClient:
         session_id: str,
         idempotency_key: str,
         request_hash: str,
+        access_token: str | None = None,
     ) -> dict:
         return await self._call(
             "idempotency_status",
             session_id,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
+            access_token=access_token,
         )
 
     async def idempotency_complete(
@@ -291,6 +310,7 @@ class MemoryClient:
         lease_token: str,
         status_code: int,
         response: dict,
+        access_token: str | None = None,
     ) -> dict:
         return await self._call(
             "idempotency_complete",
@@ -300,6 +320,7 @@ class MemoryClient:
             lease_token=lease_token,
             status_code=status_code,
             response=response,
+            access_token=access_token,
         )
 
     async def idempotency_fail(
@@ -310,6 +331,7 @@ class MemoryClient:
         lease_token: str,
         status_code: int,
         response: dict,
+        access_token: str | None = None,
     ) -> dict:
         return await self._call(
             "idempotency_fail",
@@ -319,6 +341,7 @@ class MemoryClient:
             lease_token=lease_token,
             status_code=status_code,
             response=response,
+            access_token=access_token,
         )
 
 

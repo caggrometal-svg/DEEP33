@@ -137,7 +137,7 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
     class StubMemory:
         enabled = True
 
-        async def sync(self, session_id, messages, personality=None, preferences=None, memory_profile_id=None):
+        async def sync(self, session_id, messages, personality=None, preferences=None, memory_profile_id=None, access_token=None):
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -175,3 +175,60 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
             main.memory = original
 
     asyncio.run(exercise())
+
+
+def test_memory_client_uses_user_token_as_bearer_and_keeps_api_key_separate():
+    import json
+
+    seen = {}
+
+    def handler(request):
+        seen["authorization"] = request.headers.get("authorization")
+        seen["apikey"] = request.headers.get("apikey")
+        seen["internal_token"] = request.headers.get("x-deep33-internal-token")
+        seen["payload"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, json={"ok": True, "messages": []})
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 2)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(2),
+        )
+        try:
+            result = await client.context(
+                "session",
+                memory_profile_id="user-uuid",
+                access_token="verified-user-jwt",
+            )
+            assert result["ok"] is True
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert seen["authorization"] == "Bearer verified-user-jwt"
+    assert seen["apikey"] == "anon-api-key"
+    assert seen["internal_token"] == "anon-api-key"
+    assert seen["payload"]["memory_profile_id"] == "user-uuid"
+
+
+def test_memory_client_defaults_to_configured_api_key_without_user_token():
+    seen = {}
+
+    def handler(request):
+        seen["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"ok": True})
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 2)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(2),
+        )
+        try:
+            assert (await client.ping())["ok"] is True
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert seen["authorization"] == "Bearer anon-api-key"
