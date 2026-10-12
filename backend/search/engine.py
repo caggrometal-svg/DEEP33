@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from backend.search.resilience import DiagnosticCode, controller
 
 
-ENGINE_VERSION = "1.3.0"
+ENGINE_VERSION = "1.4.0"
 TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",

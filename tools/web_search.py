@@ -827,6 +827,8 @@ async def search_web(
 
 
 def web_search_status():
+    from backend.search.engine import ENGINE_VERSION
+
     provider = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower()
     key = bool(os.getenv("WEB_SEARCH_API_KEY", "").strip())
     bing = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
@@ -842,7 +844,11 @@ def web_search_status():
     return {
         "enabled": True,
         "engine": "DEEP33 Search Engine",
-        "engine_version": "1.3.0",
+        "engine_version": ENGINE_VERSION,
+        "tool_loop_enabled": os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip().lower() == "true",
+        "general_web_search_enabled": True,
+        "realtime_search_enabled": True,
+        "provider_names": ["bing", "google", "mojeek", "duckduckgo"],
         "configured_provider": provider,
         "active_provider": active,
         "tavily_configured": key,
