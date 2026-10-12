@@ -144,9 +144,9 @@ def test_resilient_orchestrator_uses_one_semantic_recovery_wave_after_zero_evide
                     "snippet": "Python asyncio library reference",
                 }]
             return [{
-                "title": "Unrelated result",
-                "url": f"https://{name}.example/unrelated",
-                "snippet": "Unrelated content",
+                "title": "Python asyncio tutorial",
+                "url": "https://single.example/python-asyncio",
+                "snippet": "Python asyncio reference material",
             }]
 
         for provider_name in ("bing", "mojeek", "duckduckgo"):
@@ -160,10 +160,34 @@ def test_resilient_orchestrator_uses_one_semantic_recovery_wave_after_zero_evide
         )
 
         assert payload["ok"] is True
-        assert payload["results"]
+        assert len({item["source_domain"] for item in payload["results"]}) >= 2
         recovery_calls = [item for item in calls if item[1] == "python asyncio"]
         assert {name for name, _ in recovery_calls} == {"bing", "duckduckgo"}
         assert all(name != "mojeek" for name, _ in recovery_calls)
+
+    asyncio.run(scenario())
+
+
+def test_no_results_does_not_poison_resilient_provider_circuit():
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.2,
+            global_budget_seconds=1.0,
+            fallback_delay_seconds=0.0,
+        )
+
+        async def empty_provider(query: str, timeout: float, limit: int) -> list[dict]:
+            return []
+
+        orchestrator.providers["bing"] = empty_provider
+        for _ in range(8):
+            outcome = await orchestrator._call_provider("bing", "topic with no matches")
+            assert outcome.error_code == "NO_RESULTS"
+
+        state = orchestrator.circuits["bing"]
+        assert state.consecutive_failures == 0
+        assert state.opened_until == 0.0
 
     asyncio.run(scenario())
 
