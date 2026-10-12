@@ -11,7 +11,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import ENGINE_VERSION, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import _bing_search, _duckduckgo_search, _google_search, _mojeek_search
 
 logger = logging.getLogger(__name__)
@@ -510,7 +510,7 @@ class WebOrchestrator:
             "status": status,
             "diagnostic_code": None if selected else status,
             "engine": "DEEP33 Search Engine",
-            "engine_version": "1.4.0",
+            "engine_version": ENGINE_VERSION,
             "provider_independent": True,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "query": query,
