@@ -77,6 +77,58 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         # Include small event-loop scheduling overhead around the 400 ms mock budget.
         self.assertLess(result["latency_ms"], 500.0)
 
+    async def test_recovery_broadens_query_without_relaxing_original_ranking(self) -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.08,
+            global_budget_seconds=0.50,
+            fallback_delay_seconds=0.0,
+            cache_ttl_seconds=30,
+        )
+        seen: list[tuple[str, str]] = []
+        candidates = [
+            _result(
+                "Python asyncio TaskGroup documentation",
+                "https://docs.python.org/3/library/asyncio-task.html",
+                "Python asyncio TaskGroup cancellation and task groups",
+            ),
+            _result(
+                "Python asyncio tutorial",
+                "https://realpython.com/async-io-python/",
+                "Python asyncio guide and asynchronous programming",
+            ),
+            _result(
+                "Python asyncio event loop",
+                "https://peps.python.org/pep-3156/",
+                "Python asyncio event loop design and APIs",
+            ),
+        ]
+
+        async def provider(
+            name: str, query: str, _timeout: float, _limit: int
+        ) -> list[dict]:
+            seen.append((name, query))
+            return candidates if query == "python asyncio" else []
+
+        for provider_name in ("bing", "mojeek", "duckduckgo"):
+            async def bound(
+                query: str, timeout: float, limit: int, _name=provider_name
+            ) -> list[dict]:
+                return await provider(_name, query, timeout, limit)
+            orchestrator.providers[provider_name] = bound
+
+        original = "Python asyncio TaskGroup documentación oficial"
+        result = await orchestrator.search(original, fresh=True)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["query"], original)
+        self.assertEqual(result["queries_executed"], ["python asyncio"])
+        self.assertGreaterEqual(
+            len({item["source_domain"] for item in result["results"]}), 3
+        )
+        self.assertTrue(any(query == "python asyncio taskgroup official" for _, query in seen))
+        self.assertTrue(any(query == "python asyncio" for _, query in seen))
+
     async def test_general_provider_query_compacts_search_noise_but_preserves_ranking_query(self) -> None:
         orchestrator = WebOrchestrator(
             max_results=3,
