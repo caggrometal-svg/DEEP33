@@ -15,20 +15,25 @@ def test_url_policy():
     with pytest.raises(SSRFBlockedError): validate_public_url("https://example.com:8080/")
 
 def test_resilient_search_normalisation(monkeypatch):
-    import backend.search.resilient as resilient_module
+    from backend.search.engine import SearchEngine
 
-    class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
-            return {
-                "ok": True,
-                "engine": "DEEP33 Search Engine",
-                "engine_version": "1.4.0",
-                "results": [{"title": "DEEP33 Example", "url": "https://example.com/", "snippet": "Snippet"}],
-                "provider": "bing",
-            }
+    captured = {}
 
-    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: FakeOrchestrator())
-    result = asyncio.run(search_web("DEEP33", provider="auto", fresh=True))
+    async def fake_search(self, query, **kwargs):
+        captured["query"] = query
+        return {
+            "ok": True,
+            "engine": "DEEP33 Search Engine",
+            "engine_version": "1.3.0",
+            "results": [{"title": "DEEP33 Example", "url": "https://example.com/", "snippet": "Snippet"}],
+            "providers": ["bing"],
+            "provider": "bing",
+            "errors": [],
+        }
+
+    monkeypatch.setattr(SearchEngine, "search", fake_search)
+    result = asyncio.run(search_web("  DEEP33  ", provider="auto", fresh=True))
+    assert captured["query"] == "DEEP33"
     assert result["results"][0]["snippet"] == "Snippet"
     assert result["engine"] == "DEEP33 Search Engine"
     assert result["provider"] == "bing"
@@ -379,30 +384,30 @@ def test_web_status_endpoint(monkeypatch):
     assert body["tool_loop_enabled"] is True
 
 
-def test_concurrent_fresh_requests_are_bounded_by_orchestrator(monkeypatch):
-    import backend.search.resilient as resilient_module
+def test_concurrent_fresh_requests_coalesce_into_one_engine_call(monkeypatch):
     import tools.web_search as module
+    from backend.search.engine import SearchEngine
 
     calls = {"count": 0}
 
-    class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
-            calls["count"] += 1
-            await asyncio.sleep(0.01)
-            return {
-                "ok": True,
-                "results": [
-                    {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
-                    {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
-                ],
-                "sources": [],
-                "providers": ["test"],
-                "provider": "test",
-                "errors": [],
-            }
+    async def fake_search(self, query, **kwargs):
+        calls["count"] += 1
+        await asyncio.sleep(0.05)
+        return {
+            "ok": True,
+            "results": [
+                {"title": "A", "url": "https://coalesce.example/a", "snippet": "A"},
+                {"title": "B", "url": "https://coalesce.example/b", "snippet": "B"},
+            ],
+            "sources": [],
+            "providers": ["test"],
+            "provider": "test",
+            "errors": [],
+        }
 
-    fake = FakeOrchestrator()
-    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: fake)
+    monkeypatch.setattr(SearchEngine, "search", fake_search)
+    module._SEARCH_CACHE.clear()
+    module._SEARCH_INFLIGHT.clear()
 
     async def exercise():
         return await asyncio.gather(
@@ -411,9 +416,8 @@ def test_concurrent_fresh_requests_are_bounded_by_orchestrator(monkeypatch):
         )
 
     first, second = asyncio.run(exercise())
-    assert calls["count"] == 2
+    assert calls["count"] == 1
     assert first["results"] == second["results"]
-
 
 def test_fetch_coalesces_concurrent_fresh_requests(monkeypatch):
     import tools.web_fetch as module
@@ -495,32 +499,31 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
 
 
 def test_long_search_instructions_are_compacted_before_provider_query_limit(monkeypatch):
-    import backend.search.resilient as resilient_module
     import tools.web_search as module
+    from backend.search.engine import SearchEngine
 
     captured = {}
 
-    class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
-            captured["query"] = query
-            return {
-                "ok": True,
-                "results": [{
-                    "title": "Actualidad verificada",
-                    "url": "https://example.com/news",
-                    "snippet": "Resultado de prueba",
-                }],
-                "sources": [],
-                "providers": ["test"],
-                "providers_attempted": ["test"],
-                "provider": "test",
-                "errors": [],
-                "queries": [query],
-                "retrieved_at": "2026-10-10T00:00:00Z",
-                "verification": {"relevant_results": 1},
-            }
+    async def fake_search(self, query, **kwargs):
+        captured["query"] = query
+        return {
+            "ok": True,
+            "results": [{
+                "title": "Actualidad verificada",
+                "url": "https://example.com/news",
+                "snippet": "Resultado de prueba",
+            }],
+            "sources": [],
+            "providers": ["test"],
+            "providers_attempted": ["test"],
+            "provider": "test",
+            "errors": [],
+            "queries": [query],
+            "retrieved_at": "2026-10-10T00:00:00Z",
+            "verification": {"relevant_results": 1},
+        }
 
-    monkeypatch.setattr(resilient_module, "get_web_orchestrator", lambda max_results=5: FakeOrchestrator())
+    monkeypatch.setattr(SearchEngine, "search", fake_search)
 
     long_prompt = (
         "Busca en Internet una noticia real publicada hoy, 10 de octubre de 2026. "
@@ -539,8 +542,6 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
     assert len(captured["query"]) <= module.MAX_QUERY_CHARS
     assert "no inventes" not in captured["query"].lower()
     assert "noticia real publicada hoy" in captured["query"].lower()
-
-
 
 def test_fetch_bounds_large_html_without_failing_article_navigation(monkeypatch):
     import tools.web_fetch as module
