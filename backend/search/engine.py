@@ -779,7 +779,7 @@ class SearchEngine:
             # T0 -> T+2: accept early useful evidence without waiting for dead peers.
             deadline = asyncio.get_running_loop().time() + max(
                 0.1,
-                min(float(timeout_seconds), controller.budgets.provider_total_seconds),
+                min(float(timeout_seconds), controller.budgets.global_search_seconds),
             )
             staged_until = min(
                 deadline,
