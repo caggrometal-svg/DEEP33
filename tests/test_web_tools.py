@@ -311,6 +311,64 @@ def test_bing_rss_unwraps_tracking_urls_before_topic_ranking(monkeypatch):
     }
 
 
+def test_google_general_web_search_parses_and_ranks_external_results(monkeypatch):
+    import tools.web_search as module
+
+    monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
+
+    html_page = b"""
+    <html><body>
+      <a href="https://www.google.com/url?q=https%3A%2F%2Fdocs.python.org%2F3%2Flibrary%2Fasyncio-task.html&sa=U">
+        <h3>asyncio TaskGroup — Python documentation</h3>
+      </a>
+      <a href="https://realpython.com/async-io-python/">
+        <h3>Python asyncio concurrency guide</h3>
+      </a>
+      <a href="https://peps.python.org/pep-0654/">
+        <h3>Python asyncio TaskGroup exception handling</h3>
+      </a>
+    </body></html>
+    """
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            async def handler(request):
+                assert request.url.host == "www.google.com"
+                assert request.url.path == "/search"
+                assert request.url.params["q"] == "Python asyncio TaskGroup official documentation"
+                assert request.url.params["hl"] == "en"
+                assert request.url.params["gl"] == "US"
+                return httpx.Response(200, request=request, content=html_page)
+
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(module, "_search_http_client", client)
+    results = asyncio.run(
+        module._google_search("Python asyncio TaskGroup official documentation", 2.5, 5)
+    )
+    assert len(results) == 3
+    assert {item["source_domain"] for item in results} == {
+        "docs.python.org",
+        "realpython.com",
+        "peps.python.org",
+    }
+    assert all(item["title"] for item in results)
+
+
+def test_google_result_url_unwraps_only_external_destinations():
+    from tools.web_search import _google_result_url
+
+    assert _google_result_url(
+        "https://www.google.com/url?q=https%3A%2F%2Fdocs.python.org%2F3%2Flibrary%2Fasyncio.html"
+    ) == "https://docs.python.org/3/library/asyncio.html"
+    assert _google_result_url("https://www.google.com/search?q=python") == ""
+    assert _google_result_url("javascript:alert(1)") == ""
+
+
 def test_bing_market_params_follow_query_language():
     import tools.web_search as module
 
