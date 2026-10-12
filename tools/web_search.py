@@ -204,6 +204,70 @@ class BingParser(HTMLParser):
 
 
 
+def _google_result_url(value: str) -> str:
+    """Return an external destination URL from a Google search result link."""
+    candidate = html.unescape(str(value or "").strip())
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return ""
+    if host == "google.com" or host.endswith(".google.com"):
+        if parsed.path != "/url":
+            return ""
+        params = parse_qs(parsed.query)
+        target = (params.get("q") or params.get("url") or [""])[0].strip()
+        destination = urlparse(target)
+        destination_host = (destination.hostname or "").lower().rstrip(".")
+        if destination.scheme.lower() not in {"http", "https"} or not destination_host:
+            return ""
+        if destination_host == "google.com" or destination_host.endswith(".google.com"):
+            return ""
+        return target
+    return candidate
+
+
+class GoogleSearchParser(HTMLParser):
+    """Extract public general-web results from Google's standard HTML SERP."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self._pending_url = ""
+        self._capture_title = False
+        self._buffer = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs_map = dict(attrs)
+        if tag == "a":
+            destination = _google_result_url(attrs_map.get("href") or "")
+            if destination:
+                self._pending_url = destination
+        elif tag == "h3" and self._pending_url:
+            self._capture_title = True
+            self._buffer = []
+
+    def handle_data(self, data):
+        if self._capture_title:
+            value = html.unescape(data).strip()
+            if value:
+                self._buffer.append(value)
+
+    def handle_endtag(self, tag):
+        if tag == "h3" and self._capture_title:
+            title = " ".join(self._buffer).strip()
+            if title and self._pending_url:
+                self.results.append({
+                    "title": title,
+                    "url": self._pending_url,
+                    "snippet": "",
+                })
+            self._pending_url = ""
+            self._capture_title = False
+            self._buffer = []
+
+
 class MojeekParser(HTMLParser):
     """Small parser for Mojeek's public general-web results page."""
 
@@ -685,6 +749,41 @@ async def _bing_search(query, timeout_seconds, max_results):
     if html_error is not None:
         raise WebSearchError(str(html_error)) from html_error
     return []
+
+
+async def _google_search(query, timeout_seconds, max_results):
+    """Search general public web pages with Google, not a news-only feed."""
+    client = await _search_http_client()
+    market = _bing_market_params(query)
+    response = await client.get(
+        "https://www.google.com/search",
+        params={
+            "q": query,
+            "hl": market["setlang"],
+            "gl": market["cc"].upper(),
+            "num": str(min(10, max(3, int(max_results) * 2))),
+        },
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        timeout=_http_timeout(timeout_seconds),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_GOOGLE_HTTP_{response.status_code}")
+    if len(response.content) > 3 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_GOOGLE_RESPONSE_TOO_LARGE")
+    parser = GoogleSearchParser()
+    parser.feed(response.text)
+    parser.close()
+    normalized = _normalise_results(parser.results, max_results)
+    from backend.search.engine import is_realtime_query, rank_results
+
+    return rank_results(
+        query,
+        normalized,
+        realtime=is_realtime_query(query),
+    )[:max_results]
 
 
 async def search_web(
