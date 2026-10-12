@@ -452,7 +452,14 @@ if __name__ == "__main__":
 
 def test_global_gate_does_not_probe_live_without_explicit_flag(monkeypatch, capsys):
     from types import SimpleNamespace
-    import test_deep33_global_gate as gate
+    import importlib.util
+    from pathlib import Path
+
+    root_script = Path(__file__).resolve().parents[1] / "test_deep33_global_gate.py"
+    spec = importlib.util.spec_from_file_location("_deep33_root_global_gate", root_script)
+    assert spec is not None and spec.loader is not None
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
 
     monkeypatch.setattr(
         gate,
@@ -479,7 +486,14 @@ def test_global_gate_does_not_probe_live_without_explicit_flag(monkeypatch, caps
 
 def test_global_gate_requires_authenticated_token_for_live_mode(monkeypatch, capsys):
     from types import SimpleNamespace
-    import test_deep33_global_gate as gate
+    import importlib.util
+    from pathlib import Path
+
+    root_script = Path(__file__).resolve().parents[1] / "test_deep33_global_gate.py"
+    spec = importlib.util.spec_from_file_location("_deep33_root_global_gate", root_script)
+    assert spec is not None and spec.loader is not None
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
 
     monkeypatch.setattr(
         gate,
