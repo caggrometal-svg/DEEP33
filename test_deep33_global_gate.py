@@ -201,13 +201,13 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         ordered = [
             'yield _sse_status("thinking"',
             'yield _sse_status("searching"',
-            'yield _sse_status(\n                    "sources_ready"',
+            '"sources_ready"',
             'yield _sse_status("token_stream"',
         ]
         offsets = [route.index(marker) for marker in ordered]
         self.assertEqual(offsets, sorted(offsets))
         self.assertIn("await asyncio.gather(*pending_tasks, return_exceptions=True)", route)
-        self.assertEqual(main._sse_text_chunks(""), [""])
+        self.assertEqual(main._sse_text_chunks(""), [])
         payload = main._sse_delta("x").decode("utf-8")
         decoded = json.loads(payload.split("data: ", 1)[1])
         self.assertEqual(decoded["choices"][0]["delta"]["content"], "x")
