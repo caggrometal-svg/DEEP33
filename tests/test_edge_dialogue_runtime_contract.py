@@ -48,11 +48,14 @@ def test_web_final_style_lock_reasserts_conversation_policy() -> None:
         ) in source
 
 
-def test_edge_provider_fallback_url_is_declared_before_use() -> None:
+def test_edge_provider_fallback_urls_are_declared_before_use() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
-        if "EDGE_AI_UPSTREAM_URL" in source:
-            assert 'const EDGE_AI_UPSTREAM_URL = "https://deep33-backend.onrender.com";' in source
+        assert "const EDGE_AI_UPSTREAM_URLS = [" in source
+        assert '"https://deep33-backend.onrender.com"' in source
+        assert '"https://deep33-api.onrender.com"' in source
+        assert '"https://deep33-backup.onrender.com"' in source
+        assert "const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];" in source
 
 
 def test_realtime_search_does_not_discard_all_undated_current_results() -> None:
@@ -99,11 +102,11 @@ def test_edge_fallback_accepts_native_deep33_response_text() -> None:
         assert 'if (result && typeof result.text === "string") return result.text;' in source
 
 
-def test_critical_render_fallback_is_not_skipped_by_open_provider_circuit() -> None:
+def test_internal_render_failover_uses_circuit_breaker_when_redundant() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const criticalRenderFallback =" in source
-        assert 'provider.name === "render-backend-fallback"' in source
+        assert "providers.length === 1 && isInternalBackendProvider(provider)" in source
         assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
 
 
@@ -138,7 +141,10 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         source = path.read_text(encoding="utf-8")
         assert "const EDGE_AI_RETRY_COUNT = 0;" in source
         assert "for (const provider of providers)" in source
-        assert 'provider.name === "render-backend-fallback"' in source
+        assert "addInternalInferenceBackends(providers);" in source
+        assert "render-backend-fallback" in source
+        assert "render-api-fallback" in source
+        assert "render-backup-fallback" in source
 
 
 def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
