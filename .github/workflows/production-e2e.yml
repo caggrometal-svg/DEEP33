@@ -3,6 +3,7 @@ concurrency:
   cancel-in-progress: true
 
 name: DEEP33 Production E2E
+# closure exact-SHA evidence
 
 on:
   workflow_dispatch:
