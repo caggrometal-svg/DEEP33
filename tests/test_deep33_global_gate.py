@@ -292,10 +292,11 @@ async def _live_fetch(client: httpx.AsyncClient, base_url: str, token: str, url:
     return payload
 
 
-def _parse_sse(raw: str) -> tuple[str, bool, list[str], list[str]]:
+def _parse_sse(raw: str) -> tuple[str, bool, list[str], list[str], list[str]]:
     chunks: list[str] = []
     done = False
     events: list[str] = []
+    states: list[str] = []
     for block in raw.split("\n\n"):
         event_name = ""
         for line in block.splitlines():
@@ -310,13 +311,16 @@ def _parse_sse(raw: str) -> tuple[str, bool, list[str], list[str]]:
                 continue
             with suppress(json.JSONDecodeError):
                 payload = json.loads(data)
+                state = payload.get("state")
+                if isinstance(state, str) and state:
+                    states.append(state)
                 choices = payload.get("choices")
                 if isinstance(choices, list) and choices:
                     delta = choices[0].get("delta") or {}
                     value = delta.get("content") if isinstance(delta, dict) else None
                     if isinstance(value, str) and value:
                         chunks.append(value)
-    return "".join(chunks), done, events, chunks
+    return "".join(chunks), done, events, chunks, states
 
 
 async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, token: str) -> float:
@@ -330,8 +334,8 @@ async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, t
         "personality": "NEUTRO",
     }
     started = time.perf_counter()
-    first_byte: float | None = None
-    pieces: list[str] = []
+    first_text_at: float | None = None
+    lines: list[str] = []
     async with client.stream(
         "POST",
         f"{base_url}/v1/chat/stream",
@@ -339,19 +343,51 @@ async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, t
         json=payload,
     ) as response:
         assert response.status_code == 200
-        async for chunk in response.aiter_text():
-            if chunk and first_byte is None:
-                first_byte = time.perf_counter()
-            pieces.append(chunk)
-    assert first_byte is not None
-    ttft = first_byte - started
-    raw = "".join(pieces)
-    answer, done, events, chunks = _parse_sse(raw)
+        async for line in response.aiter_lines():
+            lines.append(line)
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if not data or data == "[DONE]":
+                continue
+            with suppress(json.JSONDecodeError):
+                event = json.loads(data)
+                choices = event.get("choices")
+                if isinstance(choices, list) and choices:
+                    delta = choices[0].get("delta") or {}
+                    value = delta.get("content") if isinstance(delta, dict) else None
+                    if isinstance(value, str) and value and first_text_at is None:
+                        first_text_at = time.perf_counter()
+    assert first_text_at is not None
+    ttft = first_text_at - started
+    raw = "\n".join(lines) + "\n"
+    answer, done, events, chunks, states = _parse_sse(raw)
     assert done
     assert len(answer.strip()) >= 20
     assert "error" not in events
     assert all(left != right for left, right in zip(chunks, chunks[1:]))
+    expected = ["thinking", "searching", "sources_ready", "token_stream"]
+    positions = [states.index(state) for state in expected]
+    assert positions == sorted(positions)
     return ttft
+
+
+
+def test_sse_status_frame_is_android_safe():
+    import backend.main as main
+
+    frame = main._sse_status("searching", "gate-status", sources=0)
+    raw = frame.decode("utf-8")
+    assert raw.startswith("event: status\n")
+    payload = json.loads(
+        next(line[6:] for line in raw.splitlines() if line.startswith("data: "))
+    )
+    assert payload == {
+        "state": "searching",
+        "request_id": "gate-status",
+        "sources": 0,
+    }
+    assert "choices" not in payload
 
 
 @pytest.mark.skipif(
