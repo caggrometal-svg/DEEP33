@@ -700,7 +700,7 @@ async def _google_news_search(query, timeout_seconds, max_results):
     return await _parse_bing_rss(response, max_results)
 
 
-async def _bing_search(query, timeout_seconds, max_results):
+async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
     client = await _search_http_client()
     html_error = None
     html_results = []
@@ -727,7 +727,7 @@ async def _bing_search(query, timeout_seconds, max_results):
         # results don't match the requested topic. In that case, try the RSS
         # representation of the same broad-web provider before failing over.
         # This keeps the fast path for relevant HTML while rescuing polluted SERPs.
-        if html_results and not realtime_news:
+        if html_results and not realtime_news and not preserve_candidates:
             from backend.search.engine import (
                 MIN_FALLBACK_RESULTS,
                 is_realtime_query,
@@ -764,9 +764,10 @@ async def _bing_search(query, timeout_seconds, max_results):
         rss_results = await _parse_bing_rss(rss, max_results)
     except Exception as rss_error:
         if html_results:
-            # Return bounded candidates to the orchestrator. Relevance is decided
-            # centrally against the original query, with all provider evidence.
-            return html_results[:max_results]
+            if preserve_candidates:
+                return html_results[:max_results]
+            from backend.search.engine import is_realtime_query, rank_results
+            return rank_results(query, html_results, realtime=is_realtime_query(query))[:max_results]
         if html_error is not None:
             raise WebSearchError(f"{html_error};{rss_error}") from rss_error
         raise
@@ -783,15 +784,21 @@ async def _bing_search(query, timeout_seconds, max_results):
         normalized = _normalise_results(combined, max_results)
         from backend.search.engine import is_realtime_query, rank_results
 
-        return normalized[:max_results]
+        if preserve_candidates:
+            return normalized[:max_results]
+        from backend.search.engine import is_realtime_query, rank_results
+        return rank_results(query, normalized, realtime=is_realtime_query(query))[:max_results]
     if html_results:
-        return html_results[:max_results]
+        if preserve_candidates:
+            return html_results[:max_results]
+        from backend.search.engine import is_realtime_query, rank_results
+        return rank_results(query, html_results, realtime=is_realtime_query(query))[:max_results]
     if html_error is not None:
         raise WebSearchError(str(html_error)) from html_error
     return []
 
 
-async def _google_search(query, timeout_seconds, max_results):
+async def _google_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
     """Search general public web pages with Google, not a news-only feed."""
     client = await _search_http_client()
     market = _bing_market_params(query)
@@ -817,9 +824,14 @@ async def _google_search(query, timeout_seconds, max_results):
     parser.feed(response.text)
     parser.close()
     normalized = _normalise_results(parser.results, max_results)
-    # Keep source titles/URLs intact; the orchestrator performs the single strict
-    # relevance pass using title, snippet, URL, language aliases and locality.
-    return normalized[:max_results]
+    if preserve_candidates:
+        return normalized[:max_results]
+    from backend.search.engine import is_realtime_query, rank_results
+    return rank_results(
+        query,
+        normalized,
+        realtime=is_realtime_query(query),
+    )[:max_results]
 
 
 async def search_web(
