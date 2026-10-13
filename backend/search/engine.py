@@ -302,12 +302,7 @@ _TOPIC_PHRASE_ALIASES = (
     # Normalize equivalent political terms before applying strict realtime relevance.
     (
         re.compile(
-            r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies)|"
-            r"gobierno|gobiernos|gubernamental(?:es)?|government(?:al)?|governments?|"
-            r"president(?:e|es)?|presidencia|presidential|congreso|congress|"
-            r"parlament(?:o|ario|aria|arios|arias)?|parliament(?:ary)?|"
-            r"elecci[oó]n(?:es)?|election(?:s)?|ministro(?:s)?|minister(?:s)?|"
-            r"senado|senate|candidatura(?:s)?|campaign(?:s)?|campa[nñ]a(?:s)?)\b",
+            r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies))\b",
             re.IGNORECASE,
         ),
         "politics",
@@ -521,6 +516,20 @@ def rank_results(
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             normalized_anchor_evidence = pattern.sub(replacement, normalized_anchor_evidence)
             normalized_anchor_query = pattern.sub(replacement, normalized_anchor_query)
+        if chile_current_news_intent:
+            # Only for a Chile-focused political-news ranking, treat offices,
+            # elections and legislative terms as political evidence. Keep this
+            # contextual: the same aliases must not rewrite provider search queries.
+            political_context = re.compile(
+                r"\b(?:gobierno|gobiernos|gubernamental(?:es)?|government(?:al)?|governments?|"
+                r"president(?:e|es)?|presidencia|presidential|congreso|congress|"
+                r"parlament(?:o|ario|aria|arios|arias)?|parliament(?:ary)?|"
+                r"elecci[oó]n(?:es)?|election(?:s)?|ministro(?:s)?|minister(?:s)?|"
+                r"senado|senate|candidatura(?:s)?|campaign(?:s)?|campa[nñ]a(?:s)?)\b",
+                re.IGNORECASE,
+            )
+            normalized_anchor_evidence = political_context.sub(" politics ", normalized_anchor_evidence)
+            normalized_anchor_query = political_context.sub(" politics ", normalized_anchor_query)
         effective_anchor_tokens = _token_set(normalized_anchor_query)
         evidence_tokens = _token_set(normalized_anchor_evidence)
         anchor_hits = len(effective_anchor_tokens & evidence_tokens)

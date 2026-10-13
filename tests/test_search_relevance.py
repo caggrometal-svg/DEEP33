@@ -478,3 +478,35 @@ def test_spanish_political_headlines_without_the_literal_word_politics_remain_re
     )
     assert len(ranked) == 2
     assert all("weather.example.cl" not in item["url"] for item in ranked)
+
+
+def test_current_chile_politics_synonyms_are_scoped_to_ranking_not_other_queries() -> None:
+    # Official public-information pages may use "government" without being political news.
+    from backend.search.resilient import WebOrchestrator
+
+    portal_query = "sitio gubernamental Chile información pública"
+    assert WebOrchestrator._provider_query(portal_query) == (
+        "Chile official government public services information "
+        "transparency open data ChileAtiende gob.cl"
+    )
+
+    politics_query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        politics_query,
+        [
+            {
+                "title": "El presidente presenta una reforma hoy",
+                "url": "https://politica.example.cl/noticias/reforma",
+                "snippet": "El Congreso y los ministros debatieron la reforma.",
+            },
+            {
+                "title": "Pronóstico meteorológico para hoy",
+                "url": "https://tiempo.example.cl/pronostico",
+                "snippet": "Temperatura, viento y lluvia en la región.",
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["url"] for item in ranked] == [
+        "https://politica.example.cl/noticias/reforma"
+    ]

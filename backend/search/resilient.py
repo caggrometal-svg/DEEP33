@@ -151,6 +151,23 @@ class WebOrchestrator:
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned or is_realtime_query(cleaned):
             return cleaned
+        lowered = cleaned.casefold()
+        government_site_intent = any(
+            term in lowered
+            for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            )
+        )
+        if "chile" in lowered and government_site_intent:
+            # Preserve the country's name and official-portal intent on the initial
+            # provider call; topic compression would otherwise reduce it to
+            # "politics public" and discard the government-site search entirely.
+            return (
+                "Chile official government public services information "
+                "transparency open data ChileAtiende gob.cl"
+            )
         topic_tokens = _topic_tokens(cleaned)
         if not 2 <= len(topic_tokens) <= 8:
             return cleaned
