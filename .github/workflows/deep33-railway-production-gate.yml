@@ -138,7 +138,7 @@ jobs:
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and (.results | type == "array")' >/dev/null
+          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and ((.results // []) | length) >= 1' >/dev/null
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
           echo "RAILWAY_HYBRID_SEARCH_PASS"
 

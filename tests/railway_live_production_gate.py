@@ -57,9 +57,12 @@ def http_json(method: str, url: str, *, token: str | None = None,
     return status, payload, elapsed_ms
 
 
-def assert_http(ok: bool, label: str, status: int, payload: dict):
+def assert_http(ok: bool, label: str, status: int, payload: object):
     if not ok:
-        safe = {key: payload.get(key) for key in ("ok", "status", "code", "detail", "error", "errors", "engine")}
+        if isinstance(payload, dict):
+            safe = {key: payload.get(key) for key in ("ok", "status", "code", "detail", "error", "errors", "engine")}
+        else:
+            safe = {"payload_type": type(payload).__name__}
         raise AssertionError(f"{label} failed: http={status}, detail={json.dumps(safe, ensure_ascii=False)[:600]}")
 
 
