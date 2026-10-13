@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from backend.search.resilience import DiagnosticCode, controller
+from backend.search.web_pipeline import BINARY_EXTENSIONS
 
 
 ENGINE_VERSION = "1.3.0"
@@ -122,6 +123,13 @@ REALTIME_CORROBORATION_WINDOW_SECONDS = max(
     0.0,
     min(0.5, float(os.getenv("WEB_SEARCH_REALTIME_CORROBORATION_WINDOW_SECONDS", "0.20"))),
 )
+
+def _realtime_source_target(query: str, max_results: int) -> int:
+    """Use a wider candidate pool for live news because publishers may block fetching."""
+    lowered = str(query or "").casefold()
+    news_intent = any(term in lowered for term in REALTIME_NEWS_TERMS)
+    return min(5 if news_intent else 3, max(1, int(max_results)))
+
 PROVIDER_RETRIES = max(0, min(1, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "0"))))
 RETRY_BACKOFF_SECONDS = max(0.0, min(1.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.25"))))
 PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().lower() == "true"
@@ -282,6 +290,8 @@ _TOPIC_FILLERS = {
     "medicina", "medical", "medicine", "general", "salud", "health",
 }
 _TOPIC_PHRASE_ALIASES = (
+    # Treat government and institutional reporting as political evidence for current-politics queries.
+    (re.compile(r"\b(?:pol[ií]tica|political|politics|presidenta?|presidential|elecciones?|elections?|congreso|congress|senado|senate|diputad[oa]s?|senador[ae]s?|parlamento|parliament|legislativo|legislative|policy|policies)\b", re.IGNORECASE), "politica"),
     # Normalize common industry abbreviations before strict topic filtering.
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
@@ -428,6 +438,17 @@ def rank_results(
         url = str(item.get("url") or "").strip()
         if not url:
             continue
+        # This fetcher only extracts HTML/text. Exclude unsupported binaries before ranking
+        # so source navigation can continue to independent, readable candidates.
+        path = urlparse(url).path.casefold().rstrip("/")
+        if any(path.endswith(extension) for extension in BINARY_EXTENSIONS):
+            # Preserve direct PDF discovery when the user explicitly asks for a PDF;
+            # otherwise avoid ranking files that the source reader cannot extract.
+            explicit_pdf_request = path.endswith(".pdf") and bool(
+                re.search(r"\bpdf\b", query, re.IGNORECASE)
+            )
+            if not explicit_pdf_request:
+                continue
         if realtime and _host(url).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
@@ -541,6 +562,9 @@ def rank_results(
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             topic_evidence = pattern.sub(replacement, topic_evidence)
         topic_evidence_tokens = _token_set(topic_evidence)
+        if chile_current_news_intent and "politics" not in topic_evidence_tokens:
+            # A Chilean weather page is not evidence for current Chilean politics.
+            continue
         topic_hits = len(set(topic_tokens) & topic_evidence_tokens)
         required_topic_hits = min(2, len(topic_tokens))
         if not realtime and topic_tokens and topic_hits < required_topic_hits:
@@ -831,6 +855,8 @@ class SearchEngine:
         successful: list[tuple[str, list[dict]]] = []
         errors: list[str] = []
         attempted: list[str] = []
+        loop = asyncio.get_running_loop()
+        first_relevant_at: float | None = None
         required_coverage = 1 if fast_mode or plan_depth == "realtime" else min(
             self.max_results, MIN_FALLBACK_RESULTS
         )
@@ -851,10 +877,30 @@ class SearchEngine:
                 if str(item.get("url") or "").strip()
             }
             domains = {_host(url) for url in urls if _host(url)}
-            if fast_mode or plan_depth == "realtime":
+            successful_providers = {
+                name for name, batch in successful if relevant(batch)
+            }
+            if fast_mode and plan_depth != "realtime":
                 return bool(ranked)
+            if plan_depth == "realtime":
+                # Current answers require independent providers and domains when available.
+                # Never wait indefinitely: after the corroboration window, return partial
+                # evidence so query expansion/rescue can continue within the global budget.
+                target = _realtime_source_target(planned_query, self.max_results)
+                if (
+                    len(successful_providers) >= min(2, len(providers))
+                    and len(urls) >= target
+                    and len(domains) >= target
+                ):
+                    return True
+                grace = max(0.0, REALTIME_CORROBORATION_WINDOW_SECONDS)
+                return bool(
+                    ranked
+                    and first_relevant_at is not None
+                    and loop.time() - first_relevant_at >= grace
+                )
             if plan_depth == "deep" and len(providers) > 1:
-                return len({name for name, _batch in successful}) >= 2 and len(urls) >= min(3, self.max_results)
+                return len(successful_providers) >= 2 and len(urls) >= min(3, self.max_results)
             return len(urls) >= required_coverage and len(domains) >= min(required_coverage, 2)
 
         async def call(name: str) -> tuple[str, list[dict], list[str]]:
@@ -890,6 +936,7 @@ class SearchEngine:
             return name, results, provider_errors
 
         async def collect(tasks: list[asyncio.Task], timeout: float | None) -> list[asyncio.Task]:
+            nonlocal first_relevant_at
             if not tasks:
                 return []
             done, pending = await asyncio.wait(
@@ -911,6 +958,8 @@ class SearchEngine:
                 errors.extend(provider_errors)
                 ranked = relevant(results)
                 if ranked:
+                    if first_relevant_at is None:
+                        first_relevant_at = loop.time()
                     successful.append((name, results))
                 elif results:
                     errors.append(f"{name}:no_relevant_results:{len(results)}")
@@ -946,7 +995,10 @@ class SearchEngine:
             )
             pending = list(primary_tasks)
             while pending and asyncio.get_running_loop().time() < staged_until and not enough():
-                remaining = max(0.0, staged_until - asyncio.get_running_loop().time())
+                remaining = max(0.0, staged_until - loop.time())
+                if plan_depth == "realtime" and first_relevant_at is not None:
+                    grace_deadline = first_relevant_at + max(0.0, REALTIME_CORROBORATION_WINDOW_SECONDS)
+                    remaining = min(remaining, max(0.0, grace_deadline - loop.time()))
                 pending = await collect(pending, remaining)
 
             if enough():
@@ -964,7 +1016,10 @@ class SearchEngine:
 
             # Continue within the strict provider/global caller budget.
             while pending and asyncio.get_running_loop().time() < deadline and not enough():
-                remaining = max(0.0, deadline - asyncio.get_running_loop().time())
+                remaining = max(0.0, deadline - loop.time())
+                if plan_depth == "realtime" and first_relevant_at is not None:
+                    grace_deadline = first_relevant_at + max(0.0, REALTIME_CORROBORATION_WINDOW_SECONDS)
+                    remaining = min(remaining, max(0.0, grace_deadline - loop.time()))
                 pending = await collect(pending, remaining)
 
             if not successful and asyncio.get_running_loop().time() >= deadline:
@@ -995,39 +1050,44 @@ class SearchEngine:
         errors: list[str] = []
         providers_attempted: list[str] = []
 
-        planned_queries = plan.queries[:1] if fast_mode else plan.queries
+        planned_queries = plan.queries[:1] if fast_mode and plan.depth != "realtime" else plan.queries
 
         search_deadline = asyncio.get_running_loop().time() + TOTAL_SEARCH_TIMEOUT_SECONDS
 
-        async def run_planned(planned_query: str):
+        async def run_planned(planned_query: str, *, reserve_recovery: bool = False):
             remaining = search_deadline - asyncio.get_running_loop().time()
             if remaining <= 0.25:
                 return planned_query, ([], ["search:deadline"], [])
+            # Current-news/locality searches reserve part of the total budget for a
+            # targeted recovery query if the broad provider fan-out returns nothing.
+            query_budget = remaining
+            if reserve_recovery and plan.depth == "realtime":
+                query_budget = max(0.25, remaining - min(1.5, remaining * 0.30))
             try:
                 batch = await asyncio.wait_for(
                     self._run_query(
                         providers,
                         planned_query,
                         plan_depth=plan.depth,
-                        timeout_seconds=min(timeout_seconds, max(1.0, remaining)),
+                        timeout_seconds=min(timeout_seconds, max(0.5, query_budget)),
                         api_key=api_key,
                         fast_mode=fast_mode,
                     ),
-                    timeout=remaining,
+                    timeout=query_budget,
                 )
                 return planned_query, batch
             except asyncio.TimeoutError:
                 return planned_query, ([], ["search:deadline"], [])
 
         if (
-            not fast_mode
+            (not fast_mode or plan.depth == "realtime")
             and plan.depth in {"deep", "realtime"}
             and len(planned_queries) > 1
         ):
             # First query is authoritative. Expand only when the initial result
             # set is not sufficiently verified, instead of always running all
             # variants in parallel.
-            first_batch = await run_planned(planned_queries[0])
+            first_batch = await run_planned(planned_queries[0], reserve_recovery=True)
             planned_batches = [first_batch]
             first_results, _first_errors, _first_attempted = first_batch[1]
             first_relevant_by_provider = [
@@ -1054,10 +1114,19 @@ class SearchEngine:
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
             if plan.depth == "realtime":
-                # _run_query already races providers and gives them a short
-                # corroboration window. Any relevant result can answer a broad
-                # current-news request without launching another query variant.
-                sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
+                first_urls = {
+                    _canonical_url(str(item.get("url") or ""))
+                    for _name, items in first_relevant_by_provider
+                    for item in items
+                    if str(item.get("url") or "").strip()
+                }
+                first_domains = {_host(url) for url in first_urls if _host(url)}
+                required_evidence = _realtime_source_target(plan.original_query, self.max_results)
+                sufficiently_verified = (
+                    first_provider_count >= min(2, len(providers))
+                    and len(first_urls) >= required_evidence
+                    and len(first_domains) >= required_evidence
+                )
             else:
                 min_provider_successes = 1 if len(providers) == 1 else 2
                 sufficiently_verified = (
@@ -1065,7 +1134,12 @@ class SearchEngine:
                     and first_result_count >= required_results
                 )
             if not sufficiently_verified:
-                remaining = planned_queries[1:MAX_QUERY_FANOUT]
+                # If the initial live search found no relevant result at all, skip
+                # generic variants and preserve time for the locality-aware rescue.
+                if plan.depth == "realtime" and first_result_count == 0:
+                    remaining = []
+                else:
+                    remaining = planned_queries[1:MAX_QUERY_FANOUT]
                 if remaining:
                     planned_batches.extend(
                         await asyncio.gather(*(run_planned(q) for q in remaining))
@@ -1084,7 +1158,15 @@ class SearchEngine:
                 successful.append((planned_query, provider_used, items))
 
         executed_queries = [query for query, _batch in planned_batches]
-        if not successful:
+        has_usable_evidence = any(
+            rank_results(
+                plan.original_query,
+                items,
+                realtime=plan.depth == "realtime",
+            )
+            for _planned_query, _provider_name, items in successful
+        )
+        if not has_usable_evidence:
             locality = _extract_realtime_locality(plan.original_query)
             local_date = datetime.now(timezone.utc).date().isoformat()
             lowered_original = plan.original_query.lower()

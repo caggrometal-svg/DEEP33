@@ -491,7 +491,7 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     calls = {"count": 0}
 
     class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
+        async def search(self, query, *, fresh=False, timeout_seconds=None):
             assert fresh is True
             calls["count"] += 1
             return {
@@ -676,7 +676,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 3
-    assert len(result["providers"]) == 2
+    assert len(result["providers"]) >= 2
     assert result["verification"]["distinct_providers"] == 2
 
 
@@ -767,6 +767,9 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
     monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
     monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
     monkeypatch.setattr("tools.web_search._google_news_search", fake_google_news)
+    async def fake_mojeek(query, timeout_seconds, max_results):
+        return []
+    monkeypatch.setattr("tools.web_search._mojeek_search", fake_mojeek)
 
     result = asyncio.run(
         SearchEngine(max_results=5, max_queries=3).search(
@@ -816,26 +819,45 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
     assert len(ranked) == 1
 
 
-def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
+def test_realtime_search_stops_after_independent_provider_evidence(monkeypatch):
     queries = []
 
     async def fake_run_query(self, providers, planned_query, **kwargs):
         queries.append(planned_query)
         return (
-            [("google_news", [
-                {
-                    "title": "Chile anuncia nuevas medidas",
-                    "url": "https://news.example/chile-medidas",
-                    "snippet": "Noticia actual publicada hoy en Chile.",
-                },
-                {
-                    "title": "Gobierno de Chile informa nuevos cambios",
-                    "url": "https://report.example/chile-cambios",
-                    "snippet": "Actualización reciente de una fuente informativa.",
-                },
-            ])],
+            [
+                ("google_news", [
+                    {
+                        "title": "Chile anuncia nuevas medidas",
+                        "url": "https://news.example/chile-medidas",
+                        "snippet": "Noticia actual publicada hoy en Chile.",
+                    },
+                    {
+                        "title": "Gobierno de Chile informa nuevos cambios",
+                        "url": "https://report.example/chile-cambios",
+                        "snippet": "Actualización reciente de una fuente informativa.",
+                    },
+                    {
+                        "title": "Senado analiza medidas recientes",
+                        "url": "https://senado.example/chile-medidas",
+                        "snippet": "Información de actualidad sobre el debate legislativo en Chile.",
+                    },
+                    {
+                        "title": "Biblioteca del Congreso publica actualización",
+                        "url": "https://bcn.example/chile-actualizacion",
+                        "snippet": "Fuente pública con datos recientes y documentos legislativos de Chile.",
+                    },
+                ]),
+                ("bing", [
+                    {
+                        "title": "Congreso publica nuevas medidas en Chile",
+                        "url": "https://congreso.example/chile-medidas",
+                        "snippet": "Actualización reciente sobre el Congreso de Chile y nuevas medidas.",
+                    },
+                ]),
+            ],
             [],
-            ["google_news"],
+            ["google_news", "bing"],
         )
 
     monkeypatch.setattr(SearchEngine, "_run_query", fake_run_query)
@@ -849,8 +871,9 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
         )
     )
     assert result["ok"] is True
+    # Real-time news keeps five unique candidates so blocked publishers can be replaced.
     assert len(queries) == 1
-    assert result["queries_executed"] == [queries[0]]
+    assert result["queries_executed"] == queries
 
 
 def test_rank_results_normalizes_ai_and_technology_synonyms():

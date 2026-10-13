@@ -291,13 +291,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Internal DEEP33 fallback: keep the public API unchanged. Try the canonical
-// Railway deployment first, then preserve the existing Render fallbacks as-is.
+// Internal DEEP33 inference uses Railway only. Keep all public API contracts unchanged.
+// Render services remain untouched but are not active inference routes.
 const EDGE_AI_UPSTREAM_URLS = [
   "https://iac33-fastapi-edge-production.up.railway.app",
-  "https://deep33-backend.onrender.com",
-  "https://deep33-api.onrender.com",
-  "https://deep33-backup.onrender.com",
 ] as const;
 const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];
 const EDGE_AI_REQUIRES_AUTH =
@@ -528,12 +525,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 }
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
-  const names = [
-    "railway-backend-fallback",
-    "render-backend-fallback",
-    "render-api-fallback",
-    "render-backup-fallback",
-  ] as const;
+  const names = ["railway-backend-fallback"] as const;
   EDGE_AI_UPSTREAM_URLS.forEach((base, index) => {
     const url = base + "/v1/ai/generate";
     const streamUrl = base + "/v1/chat/stream";
@@ -557,7 +549,7 @@ function isFreeInferenceProvider(provider: EdgeAIProvider): boolean {
 }
 
 // Free alternatives are opt-in and read credentials only from server-side function secrets.
-// They are inserted before the cold Render fallback so a rate-limited/slow upstream can fail fast.
+// They are inserted before the bounded Railway backend fallback so slow inference providers fail fast.
 function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
   if (
     (Deno.env.get("DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS") || "")
@@ -797,11 +789,11 @@ async function providerRequestHeaders(
   idempotencyKey = "",
   personality = "",
 ): Promise<Record<string, string>> {
-  const renderBackendFallback = isInternalBackendProvider(provider);
-  const fallbackSessionId = renderBackendFallback && !sessionId
+  const internalBackendFallback = isInternalBackendProvider(provider);
+  const fallbackSessionId = internalBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
     : "";
-  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+  const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")
     ? userAuthorization
     : provider.api_key
       ? "Bearer " + provider.api_key
@@ -809,7 +801,7 @@ async function providerRequestHeaders(
   // Render must claim its own child operation while Edge retains the public request
   // lease. This avoids two concurrent claims on the same shared row but keeps the
   // public X-Idempotency-Key unchanged across Edge and direct Render retries.
-  const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
+  const delegatedIdempotencyKey = internalBackendFallback && idempotencyKey
     ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
@@ -819,8 +811,8 @@ async function providerRequestHeaders(
     // The edge gateway already ran web search and appended evidence before entering
     // the provider loop. Prevent the Render fallback from launching a second nested
     // web-tool loop, which can turn a valid researched response into a 502/503.
-    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
-    ...(renderBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
@@ -1190,9 +1182,9 @@ async function callEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -1290,7 +1282,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "render-backend-fallback" &&
+              isInternalBackendProvider(provider) &&
               response.status >= 500 &&
               provider.stream_url
             ) {
@@ -1560,9 +1552,9 @@ async function streamEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -3076,6 +3068,37 @@ function edgeFilterNonRealtimeResults(
   });
 }
 
+function edgeHasRecentNewsEvidence(item: Record<string, unknown>, parsedUrl: URL): boolean {
+  const evidence = [
+    String(item.title ?? ""),
+    String(item.snippet ?? ""),
+    parsedUrl.pathname,
+  ].join(" ").toLowerCase();
+
+  if (/\b(?:hoy|ayer|esta mañana|esta tarde|esta noche|esta semana|última hora|ultima hora|today|yesterday|this morning|this afternoon|tonight|breaking)\b/i.test(evidence)) {
+    return true;
+  }
+
+  const isRecentDate = (year: number, month: number, day: number): boolean => {
+    const value = new Date(Date.UTC(year, month - 1, day));
+    if (
+      value.getUTCFullYear() !== year ||
+      value.getUTCMonth() !== month - 1 ||
+      value.getUTCDate() !== day
+    ) return false;
+    const ageDays = (Date.now() - value.getTime()) / 86_400_000;
+    return ageDays >= -1 && ageDays <= 7;
+  };
+
+  for (const match of evidence.matchAll(/\b((?:19|20)\d{2})[\/_.-](\d{1,2})[\/_.-](\d{1,2})\b/g)) {
+    if (isRecentDate(Number(match[1]), Number(match[2]), Number(match[3]))) return true;
+  }
+  for (const match of evidence.matchAll(/\b(\d{1,2})[\/_.-](\d{1,2})[\/_.-]((?:19|20)\d{2})\b/g)) {
+    if (isRecentDate(Number(match[3]), Number(match[2]), Number(match[1]))) return true;
+  }
+  return false;
+}
+
 function edgeFilterSearchResults(
   query: string,
   items: Array<Record<string, unknown>>,
@@ -3099,7 +3122,7 @@ function edgeFilterSearchResults(
       const publicationTimestamp = Date.parse(publishedAt);
       const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);
       const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||
-        (googleNewsStory && publicationDateUnknown);
+        (publicationDateUnknown && (googleNewsStory || edgeHasRecentNewsEvidence(item, parsedUrl)));
       return host !== "wikipedia.org" && !host.endsWith(".wikipedia.org") &&
         newsFreshEnough;
     } catch {
@@ -3528,6 +3551,17 @@ async function publicWebSearch(query: string): Promise<Record<string, unknown>> 
 }
 
 
+function edgeHasIndependentSearchEvidence(data: Record<string, unknown>): boolean {
+  const results = Array.isArray(data.results)
+    ? data.results.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    : [];
+  const domains = new Set(results.map((item) => {
+    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+  }).filter(Boolean));
+  const providers = edgeProvidersForResults(results);
+  return domains.size >= 3 && providers.length >= 2;
+}
+
 async function edgeSearch(
   query: string,
   sessionId = "deep33-edge-search",
@@ -3574,7 +3608,8 @@ async function edgeSearch(
     !railwayOnly &&
     direct.ok === true &&
     Array.isArray(direct.results) &&
-    direct.results.length > 0
+    direct.results.length > 0 &&
+    edgeHasIndependentSearchEvidence(direct)
   ) {
     logSearchStage("success", "edge-direct", direct);
     return direct;

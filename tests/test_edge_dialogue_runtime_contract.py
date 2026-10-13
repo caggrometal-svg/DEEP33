@@ -52,9 +52,9 @@ def test_edge_provider_fallback_urls_are_declared_before_use() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const EDGE_AI_UPSTREAM_URLS = [" in source
-        assert '"https://deep33-backend.onrender.com"' in source
-        assert '"https://deep33-api.onrender.com"' in source
-        assert '"https://deep33-backup.onrender.com"' in source
+        assert '"https://iac33-fastapi-edge-production.up.railway.app"' in source
+        upstreams = source.split("const EDGE_AI_UPSTREAM_URLS = [", 1)[1].split("] as const", 1)[0]
+        assert "onrender.com" not in upstreams
         assert "const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];" in source
 
 
@@ -63,7 +63,7 @@ def test_realtime_search_does_not_discard_all_undated_current_results() -> None:
         source = path.read_text(encoding="utf-8")
         assert "const publicationDateUnknown = !publishedAt || !Number.isFinite(publicationTimestamp);" in source
         assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||" in source
-        assert "(googleNewsStory && publicationDateUnknown)" in source
+        assert "(publicationDateUnknown && (googleNewsStory || edgeHasRecentNewsEvidence(item, parsedUrl)))" in source
         assert "googleNewsStory || publicationDateUnknown" not in source
 
 
@@ -105,9 +105,9 @@ def test_edge_fallback_accepts_native_deep33_response_text() -> None:
 def test_internal_render_failover_uses_circuit_breaker_when_redundant() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
-        assert "const criticalRenderFallback =" in source
+        assert "const criticalInternalFallback =" in source
         assert "providers.length === 1 && isInternalBackendProvider(provider)" in source
-        assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
+        assert "Date.now() < circuit.openUntil && !criticalInternalFallback" in source
 
 
 def test_explicit_inference_probe_uses_the_streaming_chat_path() -> None:
@@ -142,9 +142,12 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         assert "const EDGE_AI_RETRY_COUNT = 0;" in source
         assert "for (const provider of providers)" in source
         assert "addInternalInferenceBackends(providers);" in source
-        assert "render-backend-fallback" in source
-        assert "render-api-fallback" in source
-        assert "render-backup-fallback" in source
+        internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
+            "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
+        )[0]
+        assert '"railway-backend-fallback"' in internal
+        for inactive_name in ("render-backend-fallback", "render-api-fallback", "render-backup-fallback"):
+            assert f'"{inactive_name}"' not in internal
 
 
 def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:

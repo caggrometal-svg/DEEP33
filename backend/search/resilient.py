@@ -199,6 +199,20 @@ class WebOrchestrator:
                 "transparency open data ChileAtiende gob.cl"
             )
 
+        date_time_intent = any(
+            term in lowered
+            for term in (
+                "fecha actual", "fecha de hoy", "fecha y hora", "hora actual",
+                "current date", "date today", "current time", "time in chile",
+            )
+        )
+        if date_time_intent:
+            locality = "Santiago Chile" if "santiago" in lowered else "Chile"
+            return (
+                f"{locality} fecha y hora actual de hoy "
+                "timeanddate.com worldclock chile santiago fecha"
+            )
+
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.
         smartphone_intent = any(term in lowered for term in (
@@ -213,6 +227,27 @@ class WebOrchestrator:
             # English phrases are commonly indexed more consistently by public
             # search pages; rank every candidate against the original user query.
             return f"{locality} weather forecast temperature".strip()
+        health_intent = any(
+            term in lowered
+            for term in (
+                "influenza", "gripe", "salud", "medicina", "health", "medical",
+                "síntomas", "sintomas", "vacuna", "vacunas", "tratamiento", "prevenir",
+            )
+        )
+        news_query_intent = any(
+            term in lowered
+            for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            )
+        )
+        if health_intent and not news_query_intent:
+            core = " ".join(dict.fromkeys(
+                token for token in topics
+                if token not in {"informacion", "información", "oficial", "official", "general"}
+            ))
+            region = "Chile" if any(term in lowered for term in ("chile", "minsal")) else ""
+            return f"{core} {region} salud información oficial OMS OPS CDC MedlinePlus WHO".strip()
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()
@@ -327,7 +362,13 @@ class WebOrchestrator:
             await asyncio.sleep(self.fallback_delay_seconds)
         return await self._bounded_call_provider(provider, query)
 
-    async def search(self, query: str, *, fresh: bool = False) -> dict:
+    async def search(
+        self,
+        query: str,
+        *,
+        fresh: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return self._empty_payload(
@@ -347,15 +388,44 @@ class WebOrchestrator:
 
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.global_budget_seconds
-        # Reserve almost half of the end-to-end budget for recovery. Without a
-        # separate primary deadline, slow providers can consume all 5s and prevent
-        # the fallback query from ever running.
+        requested_budget = (
+            self.global_budget_seconds
+            if timeout_seconds is None
+            else min(self.global_budget_seconds, max(0.10, float(timeout_seconds)))
+        )
+        deadline = loop.time() + requested_budget
+        # Reserve almost half of the requested end-to-end budget for recovery.
+        # Slow providers cannot consume the budget and suppress failover.
         primary_deadline = min(
             deadline,
-            loop.time() + max(0.05, self.global_budget_seconds * 0.55),
+            loop.time() + max(0.05, requested_budget * 0.55),
         )
         provider_query = self._provider_query(cleaned)
+        normalized_query = cleaned.casefold()
+        news_intent = any(
+            term in normalized_query
+            for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            )
+        )
+        health_intent = any(
+            term in normalized_query
+            for term in (
+                "influenza", "gripe", "salud", "medicina", "health", "medical",
+                "síntomas", "sintomas", "vacuna", "vacunas", "tratamiento", "prevenir",
+            )
+        )
+        official_intent = any(
+            term in normalized_query
+            for term in (
+                "oficial", "official", "información pública", "informacion publica",
+                "government", "gubernamental", "sitio oficial", "información oficial",
+            )
+        )
+        live_news_intent = is_realtime_query(cleaned) and news_intent
+        source_richness_intent = live_news_intent or health_intent or official_intent
+        required_source_count = min(5 if source_richness_intent else 3, self.max_results)
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -410,8 +480,8 @@ class WebOrchestrator:
                     outcome.provider for outcome in outcomes if outcome.ok and outcome.results
                 }
                 if (
-                    len(selected_now) >= min(3, self.max_results)
-                    and len(distinct_domains) >= min(3, len(selected_now))
+                    len(selected_now) >= required_source_count
+                    and len(distinct_domains) >= required_source_count
                     and len(distinct_providers) >= min(2, len(self.providers))
                 ):
                     break
@@ -455,6 +525,7 @@ class WebOrchestrator:
         needs_recovery = (
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
+            or len(selected_domains) < required_source_count
             or needs_news_source_diversity
             or needs_provider_diversity
         )
@@ -517,8 +588,8 @@ class WebOrchestrator:
                         outcome.provider for outcome in outcomes if outcome.ok and outcome.results
                     }
                     if (
-                        len(selected_now) >= min(3, self.max_results)
-                        and len(distinct_domains_now) >= min(3, len(selected_now))
+                        len(selected_now) >= required_source_count
+                        and len(distinct_domains_now) >= required_source_count
                         and len(distinct_providers_now) >= min(2, len(self.providers))
                     ):
                         break
