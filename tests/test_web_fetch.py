@@ -85,3 +85,90 @@ def test_title_alone_is_not_misreported_as_readable_page_text() -> None:
 
     assert title == "Only a page title"
     assert text == ""
+
+
+def test_reader_parser_accepts_real_article_text_and_rejects_challenge_content() -> None:
+    from tools.web_fetch import _parse_reader_markdown
+
+    content = (
+        "Title: Chile current report\n"
+        "URL Source: https://news.example.cl/article\n"
+        "Markdown Content:\n"
+        + (
+            "The article reports current developments in Chile, describes the "
+            "people and institutions involved, provides the relevant timeline, "
+            "and explains the confirmed public information in detail. "
+        ) * 2
+    ).encode()
+
+    parsed = _parse_reader_markdown(content, 5000)
+    assert parsed is not None
+    title, body = parsed
+    assert title == "Chile current report"
+    assert "current developments in Chile" in body
+    assert len(body) >= 80
+
+    challenge = (
+        "Title: Security check\n"
+        "URL Source: https://news.example.cl/article\n"
+        "Markdown Content:\n"
+        "Please enable JavaScript to view this page. "
+        "Please enable JavaScript to view this page. "
+    ).encode()
+    assert _parse_reader_markdown(challenge, 5000) is None
+
+
+def test_reader_fallback_policy_never_bypasses_ssrf_or_download_limits() -> None:
+    from tools.web_fetch import (
+        DownloadLimitError,
+        SSRFBlockedError,
+        WebFetchError,
+        _reader_fallback_allowed,
+    )
+
+    assert _reader_fallback_allowed(WebFetchError("WEB_FETCH_HTTP_403"))
+    assert _reader_fallback_allowed(WebFetchError("WEB_FETCH_TIMEOUT"))
+    assert _reader_fallback_allowed(WebFetchError("WEB_FETCH_HTTP_503"))
+    assert not _reader_fallback_allowed(WebFetchError("WEB_FETCH_HTTP_404"))
+    assert not _reader_fallback_allowed(SSRFBlockedError("WEB_FETCH_HOST_PRIVATE"))
+    assert not _reader_fallback_allowed(DownloadLimitError("WEB_FETCH_DOWNLOAD_LIMIT"))
+
+
+def test_fetch_page_uses_reader_only_after_direct_access_fails(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    url = "https://news.example.cl/current-report"
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda candidate: candidate)
+
+    async def direct_failure(**kwargs):
+        raise web_fetch.WebFetchError("WEB_FETCH_HTTP_403")
+
+    async def reader_success(**kwargs):
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Current report",
+            "text": "Verified article content. " * 12,
+            "content_type": "text/plain",
+            "bytes": 300,
+            "redirects": 0,
+            "retrieved_at": "2026-10-13T00:00:00+00:00",
+            "reader_fallback": "jina_reader",
+            "direct_fetch_error": "WEB_FETCH_HTTP_403",
+        }
+
+    monkeypatch.setattr(web_fetch, "_fetch_page_uncached", direct_failure)
+    monkeypatch.setattr(web_fetch, "_fetch_with_reader_fallback", reader_success)
+    # Exercise the shared cache path with a unique URL and remove old in-flight state.
+    web_fetch._FETCH_CACHE.clear()
+    web_fetch._FETCH_INFLIGHT.clear()
+
+    async def exercise():
+        return await web_fetch.fetch_page(url, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True
+    assert result["reader_fallback"] == "jina_reader"
+    assert len(result["text"]) >= 80

@@ -379,6 +379,154 @@ def _extract_text(content, content_type, max_text_chars):
     return title, visible_text
 
 
+def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, str] | None:
+    """Return real article text from Reader output; never treat challenge pages as evidence."""
+    decoded = content.decode("utf-8", errors="replace").strip()
+    if not decoded:
+        return None
+
+    lines = decoded.splitlines()
+    title = ""
+    body_start = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not title and stripped.casefold().startswith("title:"):
+            title = stripped.partition(":")[2].strip()[:500]
+        if stripped.casefold() in {"markdown content:", "markdown content"}:
+            body_start = index + 1
+            break
+
+    if body_start:
+        body = "\n".join(lines[body_start:]).strip()
+    else:
+        body = "\n".join(
+            line for line in lines
+            if not line.strip().casefold().startswith(
+                ("title:", "url source:", "published time:", "warning:")
+            )
+        ).strip()
+
+    if len(body) < 80:
+        return None
+    folded = body.lstrip().casefold()
+    blocked_prefixes = (
+        "access denied", "403 forbidden", "404 not found", "page not found",
+        "please enable javascript", "just a moment...", "attention required",
+        "verify you are human", "this site can’t be reached",
+        "this site can't be reached", "too many requests", "failed to fetch url",
+        "error: unable to access", "robot or human?",
+    )
+    if folded.startswith(blocked_prefixes):
+        return None
+    if "cloudflare ray id" in folded[:700] and "checking your browser" in folded[:700]:
+        return None
+    return title, body[:max(1000, min(MAX_TEXT_CHARS, max_text_chars))]
+
+
+def _reader_fallback_allowed(exc: WebFetchError) -> bool:
+    """Only retry page-access failures through Reader; never bypass SSRF controls."""
+    if isinstance(exc, (SSRFBlockedError, DownloadLimitError)):
+        return False
+    code = str(exc)
+    if code in {
+        "WEB_FETCH_TIMEOUT",
+        "WEB_FETCH_NETWORK_ERROR",
+        "WEB_FETCH_EMPTY_TEXT",
+        "WEB_FETCH_CONTENT_TYPE_BLOCKED",
+    }:
+        return True
+    prefix = "WEB_FETCH_HTTP_"
+    if code.startswith(prefix):
+        try:
+            status = int(code[len(prefix):].split("_", 1)[0])
+        except ValueError:
+            return False
+        return status in {403, 408, 429} or 500 <= status <= 599
+    return False
+
+
+async def _fetch_with_reader_fallback(
+    *,
+    original_url: str,
+    current_url: str,
+    timeout_seconds: float,
+    max_redirects: int,
+    max_text_chars: int,
+    user_agent: str,
+) -> dict:
+    try:
+        return await _fetch_page_uncached(
+            original_url=original_url,
+            current_url=current_url,
+            timeout_seconds=timeout_seconds,
+            max_redirects=max_redirects,
+            max_text_chars=max_text_chars,
+            user_agent=user_agent,
+        )
+    except WebFetchError as direct_error:
+        if not _reader_fallback_allowed(direct_error):
+            raise
+
+        # Reader receives only the original URL after the normal public-host
+        # validation in fetch_page. Its output is accepted only when actual,
+        # non-challenge article text can be extracted.
+        try:
+            raw_timeout = float(os.getenv("WEB_FETCH_READER_TIMEOUT_SECONDS", "4.0"))
+        except ValueError:
+            raw_timeout = 4.0
+        reader_timeout = max(2.0, min(4.5, raw_timeout))
+        timeout = httpx.Timeout(
+            connect=min(1.0, reader_timeout),
+            read=reader_timeout,
+            write=min(1.0, reader_timeout),
+            pool=min(0.5, reader_timeout),
+        )
+        client = await _fetch_http_client()
+        try:
+            async with client.stream(
+                "GET",
+                "https://r.jina.ai/",
+                params={"url": original_url},
+                headers={
+                    "User-Agent": user_agent,
+                    "Accept": "text/plain",
+                },
+                timeout=timeout,
+                follow_redirects=False,
+            ) as response:
+                if response.status_code >= 400:
+                    raise WebFetchError(f"WEB_FETCH_READER_HTTP_{response.status_code}")
+                if response.status_code in REDIRECT_STATUSES:
+                    raise WebFetchError("WEB_FETCH_READER_REDIRECT_BLOCKED")
+                content = await _read_limited(response, min(256 * 1024, _max_response_bytes()))
+                mime = response.headers.get("content-type", "text/plain").split(";", 1)[0].strip().lower()
+            if mime not in {"text/plain", "text/markdown", "text/x-markdown"}:
+                raise WebFetchError("WEB_FETCH_READER_CONTENT_TYPE_BLOCKED")
+            parsed = _parse_reader_markdown(content, max_text_chars)
+            if parsed is None:
+                raise WebFetchError("WEB_FETCH_READER_EMPTY_OR_BLOCKED")
+            title, text = parsed
+            return {
+                "ok": True,
+                "url": original_url,
+                "final_url": original_url,
+                "title": title or original_url,
+                "text": text,
+                "content_type": mime,
+                "bytes": len(content),
+                "redirects": 0,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                "reader_fallback": "jina_reader",
+                "direct_fetch_error": str(direct_error)[:100],
+            }
+        except httpx.TimeoutException as reader_error:
+            raise direct_error from reader_error
+        except httpx.HTTPError as reader_error:
+            raise direct_error from reader_error
+        except WebFetchError as reader_error:
+            raise direct_error from reader_error
+
+
 async def _fetch_page_uncached(
     *,
     original_url: str,
@@ -451,7 +599,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
         return copy.deepcopy(await inflight)
 
     task = asyncio.create_task(
-        _fetch_page_uncached(
+        _fetch_with_reader_fallback(
             original_url=original_url,
             current_url=current_url,
             timeout_seconds=timeout_seconds,
