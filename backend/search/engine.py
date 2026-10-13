@@ -515,6 +515,28 @@ def rank_results(
             host = source_host
             if "chile" not in _token_set(anchor_evidence) and not host.endswith(".cl"):
                 continue
+            # Official Chilean public-information domains carry reliable locality
+            # and government semantics even when a terse result title omits those
+            # words. This preserves strict topical ranking while allowing distinct
+            # official portals (Gobierno, ChileAtiende, Datos, Transparencia) to
+            # contribute independent evidence.
+            official_public_hosts = {
+                "gob.cl",
+                "www.gob.cl",
+                "datos.gob.cl",
+                "www.datos.gob.cl",
+                "chileatiende.gob.cl",
+                "www.chileatiende.gob.cl",
+                "cplt.cl",
+                "www.cplt.cl",
+                "portaltransparencia.cl",
+                "www.portaltransparencia.cl",
+            }
+            if host in official_public_hosts or host.endswith(".gob.cl"):
+                anchor_evidence = (
+                    f"{anchor_evidence} Chile government gobierno "
+                    "public information información pública transparencia"
+                )
         normalized_anchor_evidence = re.sub(
             r"\b(?:f[uú]tbol|soccer)\b",
             " football ",

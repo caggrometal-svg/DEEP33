@@ -558,3 +558,38 @@ def test_realtime_football_query_matches_english_and_spanish_publisher_terms():
     assert len(ranked) >= 2
     assert all(any(word in (item.get("title", "") + " " + item.get("snippet", "")).casefold()
                    for word in ("football", "fútbol", "soccer")) for item in ranked)
+
+
+def test_chile_public_information_recovery_expands_official_domains():
+    from backend.search.engine import rank_results
+    from backend.search.resilient import WebOrchestrator
+
+    query = "sitio gubernamental Chile información pública"
+    recovery = WebOrchestrator._recovery_query(query)
+    folded = recovery.casefold()
+
+    assert "chileatiende" in folded
+    assert "datos.gob.cl" in folded
+    assert "gob.cl" in folded
+    assert "cplt.cl" in folded
+
+    candidates = [
+        {
+            "title": "ChileAtiende",
+            "url": "https://www.chileatiende.gob.cl/",
+            "snippet": "Servicios y trámites del Estado.",
+        },
+        {
+            "title": "Datos abiertos",
+            "url": "https://datos.gob.cl/",
+            "snippet": "Catálogo de datos públicos.",
+        },
+        {
+            "title": "Consejo para la Transparencia",
+            "url": "https://www.cplt.cl/",
+            "snippet": "Portal institucional y transparencia.",
+        },
+    ]
+    ranked = rank_results(query, candidates, realtime=False)
+    domains = {item.get("source_domain") for item in ranked}
+    assert len(domains) >= 3

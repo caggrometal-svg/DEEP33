@@ -187,8 +187,9 @@ class WebOrchestrator:
             # provider call; topic compression would otherwise reduce it to
             # "politics public" and discard the government-site search entirely.
             return (
-                "Chile official government public services information "
-                "transparency open data ChileAtiende gob.cl"
+                "Chile gobierno government public information servicios públicos trámites "
+                "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
+                "Consejo para la Transparencia cplt.cl"
             )
         topic_tokens = list(_topic_tokens(cleaned))
         website_intent = any(
