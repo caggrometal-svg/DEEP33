@@ -602,5 +602,57 @@ def test_wikipedia_asyncio_recovery_broadens_to_independent_python_sources():
     query = "Wikipedia asyncio Python"
     recovery = WebOrchestrator._recovery_query(query)
 
-    assert recovery == "Python asyncio asynchronous IO documentation tutorial Wikipedia"
+    assert recovery == "Python asyncio documentation tutorial docs.python.org Real Python"
     assert recovery.casefold() != query.casefold()
+
+
+def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provider_is_single():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "latest artificial intelligence research and technology news today"
+    bing_results = [
+        {
+            "title": f"Artificial intelligence research technology news today {index}",
+            "url": f"https://ai-source-{index}.example.com/article",
+            "snippet": "Latest artificial intelligence research and technology news today.",
+        }
+        for index in range(5)
+    ]
+    yahoo_results = [
+        {
+            "title": "Artificial intelligence research technology news today independent",
+            "url": "https://independent-ai.example.org/article",
+            "snippet": "Latest artificial intelligence research and technology news today.",
+        }
+    ]
+    yahoo_calls = {"count": 0}
+
+    async def bing_provider(_query, _timeout, _limit):
+        return bing_results
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def yahoo_provider(_query, _timeout, _limit):
+        yahoo_calls["count"] += 1
+        return yahoo_results
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=8,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.7,
+            fallback_delay_seconds=0,
+        )
+        for provider in tuple(orchestrator.providers):
+            orchestrator.providers[provider] = empty_provider
+        orchestrator.providers["bing"] = bing_provider
+        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        return await orchestrator.search(query, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True, result
+    assert yahoo_calls["count"] == 1
+    assert result["verification"]["distinct_domains"] >= 3
+    assert result["verification"]["distinct_providers"] >= 2
+    assert {"bing", "yahoo"}.issubset(set(result["providers"]))

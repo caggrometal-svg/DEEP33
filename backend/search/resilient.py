@@ -254,7 +254,7 @@ class WebOrchestrator:
         if wikipedia_asyncio_intent:
             # Preserve Wikipedia as one candidate while broadening to independent
             # Python references so a single index/source cannot collapse coverage.
-            return "Python asyncio asynchronous IO documentation tutorial Wikipedia"
+            return "Python asyncio documentation tutorial docs.python.org Real Python"
 
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.
@@ -642,11 +642,18 @@ class WebOrchestrator:
             len(selected) < minimum_coverage
             or len(selected_domains - {""}) < minimum_coverage
         )
-        if insufficient_evidence and loop.time() < deadline:
-            # One independent general-web fallback is reserved for incomplete search
-            # coverage: no evidence, fewer than three useful results, or fewer than
-            # three unique domains. Avoid extra provider traffic when coverage is
-            # already sufficient.
+        selected_providers = {
+            str(item.get("provider") or "").strip()
+            for item in selected
+            if str(item.get("provider") or "").strip()
+        }
+        insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
+        if (insufficient_evidence or insufficient_provider_diversity) and loop.time() < deadline:
+            # Reserve one independent general-web fallback when either evidence
+            # coverage OR provider diversity is incomplete. Several domains from
+            # one index are useful, but they are not independent provider failover.
+            # This preserves the latency-first primary wave while guaranteeing a
+            # second provider attempt only when the final evidence still needs it.
             remaining = deadline - loop.time()
             # Reuse the normalized, broadened query already sent to the primary
             # providers. The user's raw phrasing can be too narrow or noisy for a
