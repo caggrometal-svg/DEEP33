@@ -209,7 +209,9 @@ def test_memory_client_uses_user_token_as_bearer_and_keeps_api_key_separate():
     assert seen["authorization"] == "Bearer verified-user-jwt"
     assert seen["apikey"] == "anon-api-key"
     assert seen["internal_token"] == "anon-api-key"
-    assert seen["payload"]["memory_profile_id"] == "user-uuid"
+    # Ownership comes only from the verified JWT subject; a separate client
+    # profile id must not override or conflict with the authenticated identity.
+    assert "memory_profile_id" not in seen["payload"]
 
 
 def test_memory_client_defaults_to_configured_api_key_without_user_token():
@@ -232,3 +234,44 @@ def test_memory_client_defaults_to_configured_api_key_without_user_token():
 
     asyncio.run(exercise())
     assert seen["authorization"] == "Bearer anon-api-key"
+
+def test_memory_write_actions_forward_user_token_and_use_jwt_subject():
+    import json
+
+    seen = []
+
+    def handler(request):
+        seen.append({
+            "authorization": request.headers.get("authorization"),
+            "payload": json.loads(request.content.decode("utf-8")),
+        })
+        return httpx.Response(200, json={"ok": True})
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 2)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(2),
+        )
+        try:
+            await client.remember(
+                "session",
+                "context",
+                "saved",
+                memory_profile_id="client-profile-id",
+                access_token="verified-user-jwt",
+            )
+            await client.set_preferences(
+                "session",
+                personality="NEUTRO",
+                memory_profile_id="client-profile-id",
+                access_token="verified-user-jwt",
+            )
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert len(seen) == 2
+    assert all(item["authorization"] == "Bearer verified-user-jwt" for item in seen)
+    assert all("memory_profile_id" not in item["payload"] for item in seen)
+
