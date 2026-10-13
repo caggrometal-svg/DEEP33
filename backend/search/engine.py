@@ -79,6 +79,9 @@ _REALTIME_QUERY_FILLERS = {
     "noticia", "noticias", "actualidad", "reciente", "recientes", "información", "informacion",
     "actualización", "actualizacion", "novedad", "novedades", "desarrollo", "estado",
     "pasa", "pasando", "ocurre", "ocurriendo", "sucede", "sucediendo", "en", "vivo",
+    "resultado", "resultados", "result", "results", "marcador", "marcadores",
+    "score", "scores", "fixture", "fixtures", "standings", "schedule",
+    "partidos", "matches", "match", "internacional", "international",
     "chile", "comuna", "comunas", "municipio", "municipios", "municipalidad",
     "municipalidades", "región", "region", "regiones", "mundial", "mundiales",
     "internacional", "internacionales", "global", "globales", "mundo", "world",
@@ -91,6 +94,12 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
     lookup_query = re.sub(
         r"^(?:busca|buscar|consulta|consultar|investiga|investigar)\s+",
         "",
+        lookup_query,
+        flags=re.IGNORECASE,
+    )
+    lookup_query = re.sub(
+        r"\b(?:f[uú]tbol|soccer)\b",
+        "football",
         lookup_query,
         flags=re.IGNORECASE,
     )
@@ -507,9 +516,15 @@ def rank_results(
             if "chile" not in _token_set(anchor_evidence) and not host.endswith(".cl"):
                 continue
         normalized_anchor_evidence = re.sub(
+            r"\b(?:f[uú]tbol|soccer)\b",
+            " football ",
+            anchor_evidence,
+            flags=re.IGNORECASE,
+        )
+        normalized_anchor_evidence = re.sub(
             r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
             " clima ",
-            anchor_evidence,
+            normalized_anchor_evidence,
             flags=re.IGNORECASE,
         )
         normalized_anchor_evidence = re.sub(
