@@ -148,7 +148,7 @@ def test_prepare_messages_preserves_thread_and_attaches_dialogue_policy(monkeypa
     class FakeMemory:
         enabled = True
 
-        async def context(self, session_id: str, memory_profile_id=None) -> dict:
+        async def context(self, session_id: str, memory_profile_id=None, access_token=None) -> dict:
             return {
                 "session": {"session_id": session_id, "personality": "NEUTRO", "preferences": {}},
                 "messages": [
