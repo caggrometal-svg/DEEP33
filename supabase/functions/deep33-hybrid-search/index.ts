@@ -70,7 +70,9 @@ Deno.serve(async (req) => {
 
     if (action === "search") {
       const query = String(body.query || "").trim();
-      const embedding = vectorLiteral(body.embedding);
+      let embeddingValues = suppliedVector(body.embedding);
+      if (!embeddingValues && query) embeddingValues = await embedText(query);
+      const embedding = vectorLiteral(embeddingValues);
       const limit = Math.max(1, Math.min(20, Number(body.limit || 8)));
       const metadataFilter =
         body.metadata_filter && typeof body.metadata_filter === "object"
@@ -92,7 +94,10 @@ Deno.serve(async (req) => {
         console.error("search_deep33_chunks", error);
         return json({ error: "HYBRID_SEARCH_DATABASE_ERROR" }, 502);
       }
-      return json(Array.isArray(data) ? data : []);
+      return json(Array.isArray(data) ? data : [], 200, {
+        "x-deep33-search-mode": query && embeddingValues ? "hybrid" : "vector",
+        "x-deep33-embedding-model": "Supabase/gte-small",
+      });
     }
 
     if (action === "index") {
@@ -113,7 +118,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "ping") {
-      return json({ ok: true, service: "deep33-hybrid-search", version: 1 });
+      return json({ ok: true, service: "deep33-hybrid-search", version: 2, embedding_model: "Supabase/gte-small", storage_dimensions: STORAGE_VECTOR_DIMENSIONS });
     }
 
     return json({ error: "ACTION_NOT_SUPPORTED" }, 400);
