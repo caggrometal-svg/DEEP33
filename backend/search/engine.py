@@ -94,6 +94,11 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
         lookup_query,
         flags=re.IGNORECASE,
     )
+    # Canonicalize topic aliases before tokenizing anchors. Evidence is normalized
+    # the same way in rank_results, so Spanish and English forms can match without
+    # relaxing the live-source relevance threshold.
+    for pattern, replacement in _TOPIC_PHRASE_ALIASES:
+        lookup_query = pattern.sub(replacement, lookup_query)
     tokens = _tokens(lookup_query)
     anchors = {
         token for token in tokens
