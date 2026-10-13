@@ -38,25 +38,25 @@ jobs:
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
     steps:
-      - name: Wait for healthy Railway deployment
+      - name: Wait for exact Railway revision to become healthy
         shell: bash
         run: |
           set -euo pipefail
           ready=0
-          for attempt in $(seq 1 12); do
-            response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' "$RAILWAY_BASE_URL/ready" || true)"
-            status="${response##*STATUS:}"
-            body="${response%$'\n'STATUS:*}"
-            if [ "$status" = "200" ]; then
-              printf '%s' "$body" | jq -c '{status, git_sha, build_id, timestamp}'
+          for attempt in $(seq 1 36); do
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/railway-ready.json -w '%{http_code}' "$RAILWAY_BASE_URL/ready" || true)"
+            live_sha="$(jq -r '.git_sha // empty' /tmp/railway-ready.json 2>/dev/null || true)"
+            live_status="$(jq -r '.status // empty' /tmp/railway-ready.json 2>/dev/null || true)"
+            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status http=$code"
+            if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
+              jq -c '{status, git_sha, build_id, timestamp}' /tmp/railway-ready.json
               ready=1
               break
             fi
-            echo "RAILWAY_READY_WAIT attempt=$attempt http=$status"
-            [ "$attempt" -lt 12 ] && sleep 5
+            [ "$attempt" -lt 36 ] && sleep 5
           done
-          test "$ready" = "1" || { echo "RAILWAY_READY_FAIL"; exit 1; }
-          echo "RAILWAY_READY_PASS"
+          test "$ready" = "1" || { echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"; exit 1; }
+          echo "RAILWAY_EXACT_SHA_PASS=$GITHUB_SHA"
 
       - name: Verify real AI inference
         shell: bash
