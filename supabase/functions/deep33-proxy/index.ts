@@ -3531,6 +3531,46 @@ async function publicWebSearchUncached(
       plan.depth === "realtime",
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
+  const candidateItems = [...merged.values()];
+  const providerFilterSummary = [...new Set(candidateItems.map((item) => String(item.provider || "")))]
+    .filter(Boolean)
+    .map((provider) => {
+      const candidates = candidateItems.filter((item) => String(item.provider || "") === provider);
+      const accepted = finalResults.filter((item) => String(item.provider || "") === provider);
+      const domains = (items: Array<Record<string, unknown>>) => new Set(items.flatMap((item) => {
+        try {
+          return [String(item.source_domain || item.domain || new URL(String(item.url || "")).hostname)
+            .toLowerCase().replace(/^www\\./, "")];
+        } catch {
+          return [];
+        }
+      })).size;
+      const dated = candidates.filter((item) => Number.isFinite(Date.parse(String(item.published_at || ""))));
+      const recent = dated.filter((item) => hasRecentPublication(item.published_at, 7));
+      return {
+        provider,
+        candidates: candidates.length,
+        accepted: accepted.length,
+        candidate_domains: domains(candidates),
+        accepted_domains: domains(accepted),
+        dated_candidates: dated.length,
+        recent_candidates: recent.length,
+      };
+    });
+  console.log(JSON.stringify({
+    event: "edge_web_search_result_filter_summary",
+    candidate_results: candidateItems.length,
+    accepted_results: finalResults.length,
+    accepted_domains: new Set(finalResults.flatMap((item) => {
+      try {
+        return [String(item.source_domain || item.domain || new URL(String(item.url || "")).hostname)
+          .toLowerCase().replace(/^www\\./, "")];
+      } catch {
+        return [];
+      }
+    })).size,
+    provider_stats: providerFilterSummary,
+  }));
   const providerNames = edgeProvidersForResults(finalResults);
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
