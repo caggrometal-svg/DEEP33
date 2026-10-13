@@ -142,45 +142,8 @@ jobs:
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
           echo "RAILWAY_HYBRID_SEARCH_PASS"
 
-      - name: Verify live multi-domain web search
+      - name: Run live Railway memory, web, stream, idempotency and latency gates
         shell: bash
         run: |
           set -euo pipefail
-          query="latest artificial intelligence research and technology news today"
-          response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-            --get "$RAILWAY_BASE_URL/v1/web/search" --data-urlencode "q=$query" || true)"
-          status="${response##*STATUS:}"
-          body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" > /tmp/railway-live-search.json
-          printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null
-          printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
-          echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_PASS"
-
-      - name: Verify source-page fetch from web-search result
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t urls < <(jq -r '.results[0:2][]?.url // empty' /tmp/railway-live-search.json)
-          fetched=0
-          index=0
-          for url in "${urls[@]}"; do
-            index=$((index + 1))
-            [ -n "$url" ] || continue
-            response="$(curl -sS --connect-timeout 5 --max-time 8 -w '\nSTATUS:%{http_code}' \
-              -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-              -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-              --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
-            status="${response##*STATUS:}"
-            body="${response%$'\n'STATUS:*}"
-            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ok == true and ((.text // "") | length) > 80' >/dev/null 2>&1; then
-              printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
-              fetched=1
-              break
-            fi
-            echo "RAILWAY_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
-          done
-          test "$fetched" = "1" || { echo "RAILWAY_WEB_FETCH_FAIL"; exit 1; }
-          echo "RAILWAY_WEB_FETCH_PASS"
+          python3 tests/railway_live_production_gate.py
