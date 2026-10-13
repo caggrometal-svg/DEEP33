@@ -203,7 +203,14 @@ class WebOrchestrator:
                 "síntomas", "sintomas", "vacuna", "vacunas", "tratamiento", "prevenir",
             )
         )
-        if health_intent:
+        news_query_intent = any(
+            term in lowered
+            for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            )
+        )
+        if health_intent and not news_query_intent:
             core = " ".join(dict.fromkeys(
                 token for token in topics
                 if token not in {"informacion", "información", "oficial", "official", "general"}
