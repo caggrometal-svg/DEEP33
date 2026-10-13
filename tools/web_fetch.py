@@ -449,7 +449,7 @@ def _reader_fallback_allowed(exc: WebFetchError) -> bool:
             status = int(code[len(prefix):].split("_", 1)[0])
         except ValueError:
             return False
-        return status in {403, 408, 429} or 500 <= status <= 599
+        return status in {403, 405, 408, 429} or 500 <= status <= 599
     return False
 
 
@@ -583,7 +583,7 @@ async def _fetch_page_uncached(
 ) -> dict:
     timeout=httpx.Timeout(
         connect=min(timeout_seconds, 1.0),
-        read=min(timeout_seconds, 1.5),
+        read=min(timeout_seconds, 1.0),
         write=min(timeout_seconds, 1.0),
         pool=min(timeout_seconds, 0.5),
     )

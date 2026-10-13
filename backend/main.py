@@ -1453,7 +1453,7 @@ async def execute_web_tool(name,arguments):
         try:
             return await fetch_page(
                 url,
-                timeout_seconds=max(1.0, min(2.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "2.5")))),
+                timeout_seconds=max(1.0, min(3.4, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "3.4")))),
                 max_redirects=min(3,int(os.getenv("WEB_FETCH_MAX_REDIRECTS","3"))),
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
                 fresh=True,
@@ -2630,7 +2630,7 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=max(1.0, min(2.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "2.5")))),
+            timeout_seconds=max(1.0, min(3.4, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "3.4")))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,

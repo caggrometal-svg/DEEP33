@@ -346,3 +346,10 @@ def test_fetch_page_enforces_one_total_budget_across_direct_and_reader(monkeypat
     elapsed = time.perf_counter() - started
 
     assert elapsed < 1.1
+
+
+def test_reader_fallback_allows_method_not_allowed() -> None:
+    from tools.web_fetch import WebFetchError, _reader_fallback_allowed
+
+    assert _reader_fallback_allowed(WebFetchError("WEB_FETCH_HTTP_405")) is True
+
