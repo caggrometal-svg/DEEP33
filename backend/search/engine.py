@@ -681,7 +681,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     for item in results:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
-        domain = _host(url)
+        domain = _source_host(item)
         title_key = (domain, title) if title else None
         if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
