@@ -837,6 +837,16 @@ def test_realtime_search_stops_after_independent_provider_evidence(monkeypatch):
                         "url": "https://report.example/chile-cambios",
                         "snippet": "Actualización reciente de una fuente informativa.",
                     },
+                    {
+                        "title": "Senado analiza medidas recientes",
+                        "url": "https://senado.example/chile-medidas",
+                        "snippet": "Información de actualidad sobre el debate legislativo en Chile.",
+                    },
+                    {
+                        "title": "Biblioteca del Congreso publica actualización",
+                        "url": "https://bcn.example/chile-actualizacion",
+                        "snippet": "Fuente pública con datos recientes y documentos legislativos de Chile.",
+                    },
                 ]),
                 ("bing", [
                     {
@@ -861,7 +871,7 @@ def test_realtime_search_stops_after_independent_provider_evidence(monkeypatch):
         )
     )
     assert result["ok"] is True
-    # Two independent providers and three domains satisfy the realtime evidence gate.
+    # Real-time news keeps five unique candidates so blocked publishers can be replaced.
     assert len(queries) == 1
     assert result["queries_executed"] == queries
 
