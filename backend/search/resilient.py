@@ -149,7 +149,18 @@ class WebOrchestrator:
     def _provider_query(query: str) -> str:
         """Reduce provider-side noise without changing the user's ranking query."""
         cleaned = " ".join(str(query or "").split()).strip()
-        if not cleaned or is_realtime_query(cleaned):
+        if not cleaned:
+            return cleaned
+        lowered = cleaned.casefold()
+        if is_realtime_query(cleaned):
+            if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
+                # Public search engines often under-index accented Spanish news queries.
+                # Expand only the provider query; rank every candidate against the
+                # unchanged original query so this cannot admit unrelated sources.
+                return (
+                    "Chile economia economía mercados finanzas copper cobre inflación "
+                    "IPC Banco Central noticias económicas hoy"
+                )
             return cleaned
         topic_tokens = _topic_tokens(cleaned)
         if not 2 <= len(topic_tokens) <= 8:
