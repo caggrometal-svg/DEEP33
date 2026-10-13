@@ -309,6 +309,10 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800;
+// Railway already passes the live inference gate; allow its streamed first token to arrive without aborting at 1.8s.
+const EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS = 6000;
+// Bound the non-streaming recovery phase so failed providers cannot stall a user request.
+const EDGE_AI_WEB_RECOVERY_TIMEOUT_MS = 12000;
 const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 const EDGE_SEARCH_CACHE_TTL_MS = Math.max(0, Math.min(120000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_CACHE_TTL_MS") || "45000")));
 const edgeSearchCache = new Map<string, { expiresAt: number; data: Record<string, unknown> }>();
@@ -522,6 +526,12 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
     provider.url.startsWith(base + "/") ||
     Boolean(provider.stream_url?.startsWith(base + "/"))
   );
+}
+
+function isRailwayBackendProvider(provider: EdgeAIProvider): boolean {
+  const railwayBase = EDGE_AI_UPSTREAM_URLS[0];
+  return provider.url.startsWith(railwayBase + "/") ||
+    Boolean(provider.stream_url?.startsWith(railwayBase + "/"));
 }
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
@@ -1161,10 +1171,20 @@ async function callEdgeAI(
   idempotencyContext: EdgeIdempotencyContext | null = null,
   userAuthorization = "",
   sessionId = "",
+  maxTotalTimeMs = 0,
+  preferRailwayBackend = false,
 ): Promise<{ body: Record<string, unknown>; provider: string; model: string }> {
   const providers = edgeProviders();
+  if (preferRailwayBackend) {
+    providers.sort((a, b) =>
+      Number(isRailwayBackendProvider(b)) - Number(isRailwayBackendProvider(a))
+    );
+  }
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
 
+  const totalDeadline = maxTotalTimeMs > 0
+    ? performance.now() + maxTotalTimeMs
+    : Number.POSITIVE_INFINITY;
   let leaseContext: EdgeIdempotencyContext | null = idempotencyContext;
   let lastError = "EDGE_AI_GATEWAY_UNAVAILABLE";
 
@@ -1186,10 +1206,19 @@ async function callEdgeAI(
 
   try {
     for (const provider of providers) {
+      const remainingTotalMs = totalDeadline - performance.now();
+      if (remainingTotalMs <= 0) {
+        lastError = "EDGE_AI_RECOVERY_DEADLINE_EXCEEDED";
+        break;
+      }
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
       const criticalRenderFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (
+        Date.now() < circuit.openUntil &&
+        !criticalRenderFallback &&
+        !(preferRailwayBackend && isRailwayBackendProvider(provider))
+      ) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -1202,9 +1231,18 @@ async function callEdgeAI(
       for (let attempt = 0; attempt <= EDGE_AI_RETRY_COUNT; attempt++) {
         const started = performance.now();
         const controller = new AbortController();
-        const providerTimeoutMs = isFreeInferenceProvider(provider)
+        const configuredProviderTimeoutMs = isFreeInferenceProvider(provider)
           ? FREE_INFERENCE_REQUEST_TIMEOUT_MS
           : EDGE_AI_TIMEOUT_MS;
+        const remainingProviderBudgetMs = totalDeadline - performance.now();
+        if (remainingProviderBudgetMs <= 0) {
+          lastError = "EDGE_AI_RECOVERY_DEADLINE_EXCEEDED";
+          break;
+        }
+        const providerTimeoutMs = Math.max(
+          1,
+          Math.min(configuredProviderTimeoutMs, Math.floor(remainingProviderBudgetMs)),
+        );
         const timer = setTimeout(() => controller.abort(), providerTimeoutMs);
 
         try {
@@ -1574,9 +1612,11 @@ async function streamEdgeAI(
         const controller = new AbortController();
         onController(controller);
         const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-        const firstChunkTimeoutMs = isFreeInferenceProvider(provider)
-          ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
-          : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
+        const firstChunkTimeoutMs = isRailwayBackendProvider(provider)
+          ? EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS
+          : isFreeInferenceProvider(provider)
+            ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
+            : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
         let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
           () => controller.abort(),
           firstChunkTimeoutMs,
@@ -4097,6 +4137,8 @@ Deno.serve(async (req) => {
                   null,
                   req.headers.get("authorization") || "",
                   sessionId,
+                  EDGE_AI_WEB_RECOVERY_TIMEOUT_MS,
+                  true,
                 );
                 const recoveredText = sanitizeAssistantText(extractProviderText(recovered.body));
                 if (!recoveredText) throw new Error("EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE");

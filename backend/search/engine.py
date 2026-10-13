@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from backend.search.resilience import DiagnosticCode, controller
+from backend.search.web_pipeline import BINARY_EXTENSIONS
 
 
 ENGINE_VERSION = "1.3.0"
@@ -408,6 +409,13 @@ def rank_results(
     for item in results:
         url = str(item.get("url") or "").strip()
         if not url:
+            continue
+        # The fetcher intentionally rejects binary formats (PDF, Office, image,
+        # archive, media, etc.). Do not rank them as navigable evidence; filtering
+        # them here activates the existing provider recovery path when alternatives
+        # are needed, rather than passing dead-end links to source navigation.
+        path = urlparse(url).path.casefold().rstrip("/")
+        if any(path.endswith(extension) for extension in BINARY_EXTENSIONS):
             continue
         if realtime and _host(url).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
