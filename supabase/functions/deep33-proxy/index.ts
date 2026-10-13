@@ -255,9 +255,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Internal DEEP33 fallback: keep the client endpoint unchanged and reuse the existing
-// Render backend only when the direct edge provider cannot produce a safe response.
+// DEEP33 backend fallback order is Railway first, followed by the existing Render services.
+// Public endpoint URLs remain unchanged and Render stays available as failover.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
   "https://deep33-backup.onrender.com",
@@ -489,6 +490,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",
@@ -769,7 +771,9 @@ async function providerRequestHeaders(
   // lease. This avoids two concurrent claims on the same shared row but keeps the
   // public X-Idempotency-Key unchanged across Edge and direct Render retries.
   const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
-    ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+    ? provider.name.startsWith("render-")
+      ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+      : "edge-railway:" + await sha256("deep33|railway-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
     "Content-Type": "application/json",
@@ -1249,7 +1253,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "render-backend-fallback" &&
+              (provider.name === "railway-backend-fallback" || provider.name === "render-backend-fallback") &&
               response.status >= 500 &&
               provider.stream_url
             ) {
