@@ -2752,7 +2752,8 @@ function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
 }
 
 function edgeCurrentNewsQuery(query: string): boolean {
-  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra)\b/i.test(query);
+  // Classify English live-news phrasing alongside Spanish without routing every realtime query through a news-only filter.
+  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra|latest(?:\s+update)?|current|today|breaking(?:\s+news)?|world\s+news|news\s+update|recent\s+update)\b/i.test(query);
 }
 
 async function runPublicWebSearchQuery(
