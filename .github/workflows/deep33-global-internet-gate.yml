@@ -36,7 +36,7 @@ concurrency:
 env:
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-  DEEP33_PRODUCTION_GATE_URL: https://iacgrometal-svg-production.up.railway.app
+  DEEP33_PRODUCTION_GATE_URL: https://iac33-fastapi-edge-production.up.railway.app
   DEEP33_REQUIRE_LIVE_GATE: "true"
   PYTHONPATH: .
 
