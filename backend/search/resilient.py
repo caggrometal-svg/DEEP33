@@ -194,7 +194,10 @@ class WebOrchestrator:
             for term in ("política", "politica", "presidente", "elecciones", "elección", "eleccion", "gobierno", "congreso", "senado", "ministro")
         )
         if news_intent and politics_intent and "chile" in lowered:
-            return "política Chile últimas noticias hoy"
+            # The first phrase is too close to the user's wording and tends to
+            # return the same small publisher set. Broaden the provider query;
+            # every candidate is still ranked against the original user query.
+            return "Chile política gobierno Congreso elecciones actualidad noticias"
         if news_intent and "chile" in lowered:
             return "Chile últimas noticias hoy"
         if news_intent and compact:
@@ -393,9 +396,19 @@ class WebOrchestrator:
             for item in selected
             if item.get("source_domain")
         }
+        news_intent = any(
+            term in cleaned.casefold()
+            for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
+        )
+        needs_news_source_diversity = (
+            is_realtime_query(cleaned)
+            and news_intent
+            and len(selected_domains) < min(5, self.max_results)
+        )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
+            or needs_news_source_diversity
         )
         if (
             needs_recovery

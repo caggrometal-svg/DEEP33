@@ -155,3 +155,58 @@ def test_smartphone_recovery_query_uses_common_web_search_terms():
     assert WebOrchestrator._recovery_query(query) == (
         "smartphone specifications current models comparison review"
     )
+
+
+def test_current_chile_politics_search_recovers_when_only_three_domains_are_found():
+    from backend.search.resilient import WebOrchestrator
+
+    initial_query = "política Chile hoy últimas noticias"
+    recovered_queries = []
+
+    def news_item(domain, title_suffix):
+        return {
+            "title": f"Últimas noticias de política en Chile: {title_suffix}",
+            "url": f"https://{domain}/chile/politica",
+            "snippet": (
+                f"Chile política: noticias actuales del gobierno y Congreso. "
+                f"Información sobre {title_suffix}."
+            ),
+        }
+
+    async def provider(query, timeout, limit):
+        recovered_queries.append(query)
+        if "gobierno Congreso elecciones actualidad" in query:
+            return [
+                news_item("gobierno.example", "Gobierno y Congreso"),
+                news_item("radio.example", "Actualidad política"),
+                news_item("diario.example", "Noticias nacionales"),
+            ]
+        return [
+            news_item("megapublisher.example", "Últimas noticias"),
+            news_item("international.example", "Actualidad en Chile"),
+            news_item("regional.example", "Política nacional"),
+        ]
+
+    async def empty(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.2,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            "bing": provider,
+            "google": empty,
+            "cl0q": empty,
+            "mojeek": empty,
+            "duckduckgo": empty,
+        }
+        return await orchestrator.search(initial_query, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True
+    assert "Chile política gobierno Congreso elecciones actualidad noticias" in recovered_queries
+    assert result["verification"]["distinct_domains"] >= 5
