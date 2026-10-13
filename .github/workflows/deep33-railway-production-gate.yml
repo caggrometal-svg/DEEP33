@@ -158,7 +158,7 @@ jobs:
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '.ok == true and .mode == "hybrid" and (.results | type == "array") and (.results | length) > 0' >/dev/null || {
+          printf '%s' "$body" | jq -e '.ok == true and .mode == "hybrid" and .embedding_model == "Supabase/gte-small" and (.results | type == "array") and (.results | length) > 0 and any(.results[]; (.vector_rank // 0) > 0) and any(.results[]; (.keyword_rank // 0) > 0)' >/dev/null || {
             printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
             echo "RAILWAY_HYBRID_SEARCH_FAIL: semantic embeddings and keyword/vector fusion are not both confirmed"
             exit 1
