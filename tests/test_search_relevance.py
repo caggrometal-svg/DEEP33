@@ -376,7 +376,7 @@ def test_chilean_news_domain_counts_as_country_evidence_without_lowering_topic_f
                 "snippet": "Debate político, propuestas del gobierno y actividad parlamentaria.",
             },
             {
-                "title": "Gobierno anuncia pronóstico de lluvias",
+                "title": "Pronóstico meteorológico de lluvias para hoy",
                 "url": "https://weather.example.cl/lluvia/hoy",
                 "snippet": "Temperatura, viento y lluvias previstas para hoy.",
             },
