@@ -496,8 +496,7 @@ async def _fetch_with_reader_fallback(
     try:
         async with client.stream(
             "GET",
-            "https://r.jina.ai/",
-            params={"url": original_url},
+            f"https://r.jina.ai/{original_url}",
             headers={
                 "User-Agent": user_agent,
                 "Accept": "text/plain",

@@ -223,8 +223,8 @@ def test_fetch_page_uses_reader_when_direct_response_has_only_short_text(monkeyp
     class ReaderClient:
         def stream(self, method, reader_url, **kwargs):
             assert method == "GET"
-            assert reader_url == "https://r.jina.ai/"
-            assert kwargs["params"] == {"url": url}
+            assert reader_url == f"https://r.jina.ai/{url}"
+            assert "params" not in kwargs
             assert kwargs["follow_redirects"] is False
             return ReaderResponse()
 
