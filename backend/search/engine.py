@@ -518,13 +518,13 @@ def rank_results(
         normalized_anchor_evidence = re.sub(
             r"\b(?:f[uú]tbol|soccer)\b",
             " football ",
-            normalized_anchor_evidence,
+            anchor_evidence,
             flags=re.IGNORECASE,
         )
         normalized_anchor_evidence = re.sub(
             r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
             " clima ",
-            anchor_evidence,
+            normalized_anchor_evidence,
             flags=re.IGNORECASE,
         )
         normalized_anchor_evidence = re.sub(
