@@ -2825,7 +2825,14 @@ async function runPublicWebSearchQuery(
           ? Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
           : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
-    if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
+    if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_http",
+        provider: provider.name,
+        status: response.status,
+      }));
+      return { name: provider.name, results: [] as Array<Record<string, string>> };
+    }
     const html = await response.text();
     const results: Array<Record<string, string>> = [];
 
@@ -2909,6 +2916,22 @@ async function runPublicWebSearchQuery(
         if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
       }
     }
+    const providerDomains = new Set(results.flatMap((result) => {
+      try {
+        return [String(result.source_domain || new URL(result.url).hostname)
+          .toLowerCase().replace(/^www\./, "")];
+      } catch {
+        return [];
+      }
+    }));
+    console.log(JSON.stringify({
+      event: "edge_public_search_provider_result",
+      provider: provider.name,
+      status: response.status,
+      parsed_results: results.length,
+      distinct_domains: providerDomains.size,
+      content_type: response.headers.get("content-type") || "",
+    }));
     return { name: provider.name, results };
   };
 
@@ -2921,8 +2944,17 @@ async function runPublicWebSearchQuery(
       ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
-  for (const item of settled) {
-    if (item.status !== "fulfilled" || !item.value.results.length) continue;
+  for (let settledIndex = 0; settledIndex < settled.length; settledIndex++) {
+    const item = settled[settledIndex];
+    if (item.status !== "fulfilled") {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_failed",
+        provider: activeProviders[settledIndex]?.name || "unknown",
+        error: item.reason instanceof Error ? item.reason.name : "unknown",
+      }));
+      continue;
+    }
+    if (!item.value.results.length) continue;
     providerNames.push(item.value.name);
     for (const result of item.value.results) {
       try {
