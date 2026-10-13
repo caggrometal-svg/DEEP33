@@ -242,8 +242,9 @@ class WebOrchestrator:
         )
         if "chile" in lowered and government_site_intent:
             return (
-                "Chile official government public services information "
-                "transparency open data ChileAtiende gob.cl"
+                "Chile gobierno government public information servicios públicos trámites "
+                "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
+                "Consejo para la Transparencia cplt.cl"
             )
 
         # Reframe generic current smartphone/product queries into common web-search
