@@ -123,6 +123,13 @@ REALTIME_CORROBORATION_WINDOW_SECONDS = max(
     0.0,
     min(0.5, float(os.getenv("WEB_SEARCH_REALTIME_CORROBORATION_WINDOW_SECONDS", "0.20"))),
 )
+
+def _realtime_source_target(query: str, max_results: int) -> int:
+    """Use a wider candidate pool for live news because publishers may block fetching."""
+    lowered = str(query or "").casefold()
+    news_intent = any(term in lowered for term in REALTIME_NEWS_TERMS)
+    return min(5 if news_intent else 3, max(1, int(max_results)))
+
 PROVIDER_RETRIES = max(0, min(1, int(os.getenv("WEB_SEARCH_PROVIDER_RETRIES", "0"))))
 RETRY_BACKOFF_SECONDS = max(0.0, min(1.0, float(os.getenv("WEB_SEARCH_RETRY_BACKOFF_SECONDS", "0.25"))))
 PARALLEL_PROVIDERS = os.getenv("WEB_SEARCH_PARALLEL_PROVIDERS", "true").strip().lower() == "true"
@@ -858,7 +865,7 @@ class SearchEngine:
                 # Current answers require independent providers and domains when available.
                 # Never wait indefinitely: after the corroboration window, return partial
                 # evidence so query expansion/rescue can continue within the global budget.
-                target = min(3, self.max_results)
+                target = _realtime_source_target(planned_query, self.max_results)
                 if (
                     len(successful_providers) >= min(2, len(providers))
                     and len(urls) >= target
@@ -1093,7 +1100,7 @@ class SearchEngine:
                     if str(item.get("url") or "").strip()
                 }
                 first_domains = {_host(url) for url in first_urls if _host(url)}
-                required_evidence = min(3, self.max_results)
+                required_evidence = _realtime_source_target(plan.original_query, self.max_results)
                 sufficiently_verified = (
                     first_provider_count >= min(2, len(providers))
                     and len(first_urls) >= required_evidence
