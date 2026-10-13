@@ -2775,7 +2775,7 @@ async function runPublicWebSearchQuery(
     },
     {
       name: "google_news_public",
-      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(currentNewsRequest ? q + " when:7d" : q) +
+      url: "https://news.google.com/rss/search?q=" + encodeURIComponent(currentNewsRequest ? q + " when:1d" : q) +
         "&hl=es-419&gl=CL&ceid=CL:es-419",
       headers: {
         "Accept": "application/rss+xml,application/xml,text/xml",
