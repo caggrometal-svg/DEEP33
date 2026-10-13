@@ -451,3 +451,30 @@ def test_current_chile_politics_matches_government_and_election_vocabulary() -> 
     domains = {item["source_domain"] for item in ranked}
     assert len(domains) >= 3
     assert not any("tiempo.example.cl" in item["url"] for item in ranked)
+
+
+def test_spanish_political_headlines_without_the_literal_word_politics_remain_relevant() -> None:
+    query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Gobierno chileno publica nuevas medidas hoy",
+                "url": "https://gobierno.example.cl/noticias/medidas",
+                "snippet": "El presidente y los ministros detallaron la propuesta ante el Congreso.",
+            },
+            {
+                "title": "Cambios del gabinete y debate en el Senado",
+                "url": "https://actualidad.example.cl/politica/gabinete",
+                "snippet": "La reforma fue discutida por senadores y parlamentarios durante la sesión.",
+            },
+            {
+                "title": "Pronóstico del tiempo: lluvias para la tarde",
+                "url": "https://weather.example.cl/forecast",
+                "snippet": "Temperaturas, viento y precipitación en la zona central.",
+            },
+        ],
+        realtime=True,
+    )
+    assert len(ranked) == 2
+    assert all("weather.example.cl" not in item["url"] for item in ranked)
