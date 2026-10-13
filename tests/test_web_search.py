@@ -514,3 +514,16 @@ def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
             5,
         )
     ]
+
+
+def test_provider_query_preserves_country_and_website_intent():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "sitio comercial tecnología Chile"
+    provider_query = WebOrchestrator._provider_query(query)
+
+    assert "chile" in provider_query.casefold()
+    assert "commercial" in provider_query.casefold()
+    assert "technology" in provider_query.casefold()
+    assert "website" in provider_query.casefold()
+    assert provider_query.casefold() != "comercial technology"
