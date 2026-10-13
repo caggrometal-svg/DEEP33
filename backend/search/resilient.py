@@ -182,6 +182,20 @@ class WebOrchestrator:
                 "transparency open data ChileAtiende gob.cl"
             )
 
+        date_time_intent = any(
+            term in lowered
+            for term in (
+                "fecha actual", "fecha de hoy", "fecha y hora", "hora actual",
+                "current date", "date today", "current time", "time in chile",
+            )
+        )
+        if date_time_intent:
+            locality = "Santiago Chile" if "santiago" in lowered else "Chile"
+            return (
+                f"{locality} fecha y hora actual de hoy "
+                "timeanddate.com worldclock chile santiago fecha"
+            )
+
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.
         smartphone_intent = any(term in lowered for term in (
