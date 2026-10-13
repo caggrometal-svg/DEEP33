@@ -527,3 +527,34 @@ def test_provider_query_preserves_country_and_website_intent():
     assert "technology" in provider_query.casefold()
     assert "website" in provider_query.casefold()
     assert provider_query.casefold() != "comercial technology"
+
+
+def test_realtime_football_query_matches_english_and_spanish_publisher_terms():
+    from backend.search.engine import rank_results
+    from backend.search.resilient import WebOrchestrator
+
+    query = "fútbol internacional resultados hoy"
+    recovery = WebOrchestrator._recovery_query(query)
+    assert recovery == "international football soccer results scores fixtures standings today"
+
+    results = [
+        {
+            "title": "International soccer scores and results",
+            "url": "https://www.espn.com/soccer/scores",
+            "snippet": "Latest international football results, fixtures, standings and scores.",
+        },
+        {
+            "title": "Resultados de fútbol internacional",
+            "url": "https://www.ole.com.ar/futbol-internacional/resultados",
+            "snippet": "Últimos resultados y marcadores de fútbol internacional.",
+        },
+        {
+            "title": "Weather in Santiago",
+            "url": "https://weather.example/santiago",
+            "snippet": "Current temperature and weather forecast.",
+        },
+    ]
+    ranked = rank_results(query, results, realtime=True)
+    assert len(ranked) >= 2
+    assert all(any(word in (item.get("title", "") + " " + item.get("snippet", "")).casefold()
+                   for word in ("football", "fútbol", "soccer")) for item in ranked)

@@ -254,6 +254,16 @@ class WebOrchestrator:
         if smartphone_intent:
             return "smartphone specifications current models comparison review"
 
+        football_intent = any(
+            term in lowered
+            for term in ("fútbol", "futbol", "football", "soccer")
+        )
+        if football_intent and any(
+            term in lowered
+            for term in ("resultado", "resultados", "marcador", "score", "partido", "hoy", "actual", "latest")
+        ):
+            return "international football soccer results scores fixtures standings today"
+
         if any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico", "weather", "forecast")):
             locality = "Santiago Chile" if "santiago" in lowered else compact
             # English phrases are commonly indexed more consistently by public
