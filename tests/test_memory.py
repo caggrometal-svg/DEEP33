@@ -275,3 +275,16 @@ def test_memory_write_actions_forward_user_token_and_use_jwt_subject():
     assert all(item["authorization"] == "Bearer verified-user-jwt" for item in seen)
     assert all("memory_profile_id" not in item["payload"] for item in seen)
 
+
+
+def test_streaming_generation_passes_verified_user_token_to_memory_context() -> None:
+    from pathlib import Path
+    import backend.main as main
+
+    source = Path(main.__file__).read_text(encoding="utf-8")
+    stream_section_start = source.index("context_task = asyncio.create_task(\n        prepare_messages(")
+    stream_section_end = source.index("raw_messages = [", stream_section_start)
+    context_call = source[stream_section_start:stream_section_end]
+
+    assert "memory_profile_id," in context_call
+    assert "access_token=access_token," in context_call

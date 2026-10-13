@@ -3681,6 +3681,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             session_id,
             memory_profile_id,
             request_id=request_id,
+            access_token=access_token,
         )
     )
     raw_messages = [
