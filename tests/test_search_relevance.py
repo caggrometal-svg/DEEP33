@@ -386,3 +386,35 @@ def test_chilean_news_domain_counts_as_country_evidence_without_lowering_topic_f
     assert [item["url"] for item in ranked] == [
         "https://radio.example.cl/politica/actualidad"
     ]
+
+
+def test_current_chile_news_can_return_three_independent_local_publishers() -> None:
+    query = "política Chile hoy últimas noticias"
+    results = rank_results(
+        query,
+        [
+            {
+                "title": "Política nacional: Gobierno y Congreso",
+                "url": "https://radio.example.cl/politica/gobierno",
+                "snippet": "Últimas noticias políticas sobre gobierno y actividad parlamentaria.",
+            },
+            {
+                "title": "Actualidad política y debate público",
+                "url": "https://diario.example.cl/actualidad/politica",
+                "snippet": "Noticias de política, gobierno y elecciones publicadas hoy.",
+            },
+            {
+                "title": "Congreso: noticias y decisiones políticas",
+                "url": "https://noticias.example.cl/congreso/politica",
+                "snippet": "Actualidad política sobre el Congreso y sus decisiones.",
+            },
+            {
+                "title": "Pronóstico meteorológico para la región",
+                "url": "https://tiempo.example.cl/pronostico",
+                "snippet": "Temperaturas, lluvia y viento para hoy.",
+            },
+        ],
+        realtime=True,
+    )
+    assert len({item["source_domain"] for item in results}) >= 3
+    assert all("pronostico" not in item["url"] for item in results)
