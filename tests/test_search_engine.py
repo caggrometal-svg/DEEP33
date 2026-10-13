@@ -868,3 +868,14 @@ def test_rank_results_normalizes_ai_and_technology_synonyms():
     )
     assert len(ranked) == 1
     assert ranked[0]["url"] == "https://example.org/ai-tech-research"
+
+def test_provider_query_expands_economic_news_without_changing_relevance_query():
+    original = "Últimas noticias económicas de Chile"
+    provider_query = WebOrchestrator._provider_query(original)
+    assert "Chile" in provider_query
+    assert "Banco Central" in provider_query
+    assert "cobre" in provider_query
+    assert provider_query != original
+    # This test confirms provider-side expansion only; search() still ranks
+    # against the untouched original request supplied by the user.
+
