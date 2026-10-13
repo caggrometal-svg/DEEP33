@@ -1155,6 +1155,7 @@ async function streamEdgeAI(
   onChunk: (chunk: string) => void,
   idempotencyContext: EdgeIdempotencyContext | null = null,
   userAuthorization = "",
+  fallbackSessionId = "",
 ): Promise<{ text: string; provider: string; model: string }> {
   const providers = edgeProviders();
   if (!providers.length) throw new Error("EDGE_AI_GATEWAY_NOT_CONFIGURED");
@@ -1231,7 +1232,7 @@ async function streamEdgeAI(
               requestId,
               "text/event-stream",
               userAuthorization,
-              idempotencyContext?.sessionId || "",
+              idempotencyContext?.sessionId || fallbackSessionId || "",
               idempotencyContext?.idempotencyKey || "",
             ),
             body: JSON.stringify(providerRequestBody(provider, payload, true)),
@@ -2183,7 +2184,7 @@ async function probeHealth(sessionId: string) {
   }
 }
 
-async function probeInference(_sessionId: string, userAuthorization = "") {
+async function probeInference(sessionId: string, userAuthorization = "") {
   if (!edgeAIConfigured()) {
     return {
       ok: false,
@@ -2203,7 +2204,7 @@ async function probeInference(_sessionId: string, userAuthorization = "") {
         { role: "system", content: "Return the requested diagnostic token exactly." },
         { role: "user", content: "DEEP33_DIAGNOSTIC_OK" },
       ],
-    }, requestId, () => {}, () => {}, null, userAuthorization);
+    }, requestId, () => {}, () => {}, null, userAuthorization, sessionId);
     const text = response.text;
     const ok = text.trim().length > 0;
     return {
