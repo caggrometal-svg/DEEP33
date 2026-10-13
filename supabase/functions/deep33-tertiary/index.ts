@@ -2346,7 +2346,21 @@ async function runPublicWebSearchQuery(
         const url = rssText(itemXml, "link");
         const snippet = rssText(itemXml, "description");
         const published_at = rssText(itemXml, "pubDate");
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
+        // Google News RSS wraps many publishers under news.google.com. The RSS
+        // source URL is the grounded publisher domain and must count as that source.
+        const sourceMatch = itemXml.match(/<source\b[^>]*\burl=(["'])(.*?)\1[^>]*>/i);
+        let source_domain = "";
+        if (sourceMatch) {
+          try {
+            source_domain = new URL(decodeHtml(String(sourceMatch[2] || "")))
+              .hostname.toLowerCase().replace(/^www\./, "");
+          } catch {
+            source_domain = "";
+          }
+        }
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({ title, url, snippet, published_at, ...(source_domain ? { source_domain } : {}) });
+        }
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -2403,7 +2417,7 @@ async function runPublicWebSearchQuery(
     providerNames.push(item.value.name);
     for (const result of item.value.results) {
       try {
-        const domain = new URL(result.url).hostname;
+        const domain = String(result.source_domain || new URL(result.url).hostname).toLowerCase().replace(/^www\./, "");
         if (!merged.has(result.url)) {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
@@ -2442,7 +2456,9 @@ async function runPublicWebSearchQuery(
       results: finalResults,
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) =>
+          String(item.source_domain || new URL(item.url).hostname).toLowerCase().replace(/^www\./, "")
+        )).size,
       },
     };
   }
@@ -2660,7 +2676,10 @@ function edgeSearchVerification(
   providers: string[],
 ): Record<string, unknown> {
   const domains = new Set(items.map((item) => {
-    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+    try {
+      return String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "");
+    } catch { return ""; }
   }).filter(Boolean));
   return {
     level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
@@ -2824,7 +2843,10 @@ async function publicWebSearch(query: string) {
   // One final alternate-topic query prevents transient empty RSS responses from
   // turning into a user-facing 503. It only runs after bounded provider retries fail.
   const distinctDomainCount = () => new Set(results.flatMap((item) => {
-    try { return [new URL(String(item.url || "")).hostname.toLowerCase()]; } catch { return []; }
+    try {
+      return [String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "")];
+    } catch { return []; }
   })).size;
   if (realtimeNewsPlan && results.length > 0 && distinctDomainCount() < 3) {
     // Restore domain diversity with two already-planned query variants only when
