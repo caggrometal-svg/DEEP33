@@ -190,7 +190,31 @@ class WebOrchestrator:
                 "Chile official government public services information "
                 "transparency open data ChileAtiende gob.cl"
             )
-        topic_tokens = _topic_tokens(cleaned)
+        topic_tokens = list(_topic_tokens(cleaned))
+        website_intent = any(
+            term in lowered
+            for term in (
+                "sitio", "sitio web", "página web", "pagina web",
+                "página comercial", "pagina comercial", "website", "web site",
+                "commercial site", "company website", "portal",
+            )
+        )
+        # Query compression must not erase a country/locality or the fact that
+        # the user is looking for a site. Preserve both before provider dispatch.
+        if "chile" in lowered and "chile" not in {token.casefold() for token in topic_tokens}:
+            topic_tokens.append("Chile")
+        if website_intent:
+            if "comercial" in lowered or "commercial" in lowered or "comercio" in lowered:
+                topic_tokens = [
+                    token for token in topic_tokens if token.casefold() not in {"comercial", "comercio"}
+                ]
+                topic_tokens.append("commercial")
+            if "tecnología" in lowered or "tecnologia" in lowered or "technology" in lowered:
+                if "technology" not in {token.casefold() for token in topic_tokens}:
+                    topic_tokens.append("technology")
+            if not any(token.casefold() in {"site", "website", "web", "portal"} for token in topic_tokens):
+                topic_tokens.append("website")
+            return " ".join(dict.fromkeys(topic_tokens))
         if not 2 <= len(topic_tokens) <= 8:
             return cleaned
         compact = " ".join(topic_tokens)
