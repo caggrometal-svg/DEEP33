@@ -24,6 +24,7 @@ on:
       - "render.yaml"
       - "supabase/functions/deep33-proxy/index.ts"
       - "supabase/functions/deep33-tertiary/index.ts"
+      - "tests/test_edge_tertiary_idempotency_contract.py"
       - "tests/test_connectivity_hardening.py"
       - "tools/web_fetch.py"
       - "tools/web_search.py"

@@ -358,6 +358,63 @@ jobs:
           BASH
           echo "DEEP33_GATE_TOKEN=$token" >> "$GITHUB_ENV"
           echo "BASH_ENV=$RUNNER_TEMP/deep33-authenticated-curl.sh" >> "$GITHUB_ENV"
+      - name: Verify real multiuser memory isolation by JWT sub
+        run: |
+          set -euo pipefail
+          session="ci-isolation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          marker_a="DEEP33_USER_A_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${RANDOM}"
+          marker_b="DEEP33_USER_B_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${RANDOM}"
+
+          profile_b="ci-isolation-b-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}"
+          command curl -sS --connect-timeout 8 --max-time 30 \
+            -o "$RUNNER_TEMP/deep33-isolation-auth-b.json" -w "%{http_code}" \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "content-type: application/json" \
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"${profile_b}\"}" \
+            > "$RUNNER_TEMP/deep33-isolation-auth-b.status"
+          test "$(cat "$RUNNER_TEMP/deep33-isolation-auth-b.status")" = "200" || {
+            echo "MULTIUSER_AUTH_B_FAIL"
+            cat "$RUNNER_TEMP/deep33-isolation-auth-b.json" || true
+            exit 1
+          }
+          token_b="$(jq -r '.access_token // empty' "$RUNNER_TEMP/deep33-isolation-auth-b.json")"
+          test -n "$token_b"
+
+          remember() {
+            local token="$1" marker="$2" out="$3"
+            local status
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -o "$out" -w "%{http_code}" \
+              -X POST "$PRIMARY_URL/v1/memory/remember" \
+              -H "Authorization: Bearer $token" \
+              -H "X-DEEP33-Session-Id: $session" \
+              -H "content-type: application/json" \
+              -d "$(jq -nc --arg content "$marker" '{kind:"explicit",content:$content}')" || true)"
+            test "$status" = "200" || { echo "MULTIUSER_REMEMBER_FAIL http=$status"; cat "$out" || true; exit 1; }
+          }
+
+          remember "$DEEP33_GATE_TOKEN" "$marker_a" "$RUNNER_TEMP/deep33-user-a-remember.json"
+          remember "$token_b" "$marker_b" "$RUNNER_TEMP/deep33-user-b-remember.json"
+
+          context() {
+            local token="$1" out="$2"
+            local status
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -o "$out" -w "%{http_code}" \
+              "$PRIMARY_URL/v1/memory/context" \
+              -H "Authorization: Bearer $token" \
+              -H "X-DEEP33-Session-Id: $session" || true)"
+            test "$status" = "200" || { echo "MULTIUSER_CONTEXT_FAIL http=$status"; cat "$out" || true; exit 1; }
+          }
+
+          context "$DEEP33_GATE_TOKEN" "$RUNNER_TEMP/deep33-user-a-context.json"
+          context "$token_b" "$RUNNER_TEMP/deep33-user-b-context.json"
+
+          jq -e --arg own "$marker_a" 'tostring | contains($own)' "$RUNNER_TEMP/deep33-user-a-context.json" >/dev/null
+          jq -e --arg other "$marker_b" 'tostring | contains($other) | not' "$RUNNER_TEMP/deep33-user-a-context.json" >/dev/null
+          jq -e --arg own "$marker_b" 'tostring | contains($own)' "$RUNNER_TEMP/deep33-user-b-context.json" >/dev/null
+          jq -e --arg other "$marker_a" 'tostring | contains($other) | not' "$RUNNER_TEMP/deep33-user-b-context.json" >/dev/null
+          echo "DEEP33_MULTIUSER_JWT_ISOLATION_PASS"
+
       - name: Validate PRIMARY deployment when backend changed
         run: |
           set -euo pipefail

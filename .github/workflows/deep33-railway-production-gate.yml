@@ -9,6 +9,8 @@ on:
       - ".github/workflows/deep33-railway-production-gate.yml"
       - "backend/requirements.txt"
       - "supabase/functions/deep33-proxy/**"
+      - "supabase/functions/deep33-tertiary/**"
+      - "tests/test_edge_tertiary_idempotency_contract.py"
       - "supabase/functions/deep33-hybrid-search/**"
   workflow_dispatch:
     inputs:
