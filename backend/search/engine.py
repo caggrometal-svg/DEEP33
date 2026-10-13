@@ -292,6 +292,7 @@ _TOPIC_FILLERS = {
 }
 _TOPIC_PHRASE_ALIASES = (
     # Normalize common industry abbreviations before strict topic filtering.
+    (re.compile(r"\basync[\s-]+io\b", re.IGNORECASE), "asyncio"),
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
     (re.compile(r"\b(?:tech|technology|technologies|technological|tecnolog[ií]a|tecnol[oó]gic[oa]s?)\b", re.IGNORECASE), "technology"),

@@ -254,7 +254,7 @@ class WebOrchestrator:
         if wikipedia_asyncio_intent:
             # Preserve Wikipedia as one candidate while broadening to independent
             # Python references so a single index/source cannot collapse coverage.
-            return "Python asyncio documentation tutorial docs.python.org Real Python"
+            return "Python asyncio"
 
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.

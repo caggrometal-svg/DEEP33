@@ -602,7 +602,7 @@ def test_wikipedia_asyncio_recovery_broadens_to_independent_python_sources():
     query = "Wikipedia asyncio Python"
     recovery = WebOrchestrator._recovery_query(query)
 
-    assert recovery == "Python asyncio documentation tutorial docs.python.org Real Python"
+    assert recovery == "Python asyncio"
     assert recovery.casefold() != query.casefold()
 
 
@@ -656,3 +656,32 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
     assert result["verification"]["distinct_domains"] >= 3
     assert result["verification"]["distinct_providers"] >= 2
     assert {"bing", "yahoo"}.issubset(set(result["providers"]))
+
+
+def test_wikipedia_asyncio_ranking_accepts_independent_async_io_sources():
+    from backend.search.engine import rank_results
+
+    query = "Wikipedia asyncio Python"
+    candidates = [
+        {
+            "title": "asyncio — Asynchronous I/O — Python documentation",
+            "url": "https://docs.python.org/3/library/asyncio.html",
+            "snippet": "Python asyncio library for asynchronous I/O.",
+        },
+        {
+            "title": "Async IO in Python: A Complete Walkthrough",
+            "url": "https://realpython.com/async-io-python/",
+            "snippet": "Learn asynchronous IO and Python concurrency.",
+        },
+        {
+            "title": "Asyncio in Python",
+            "url": "https://www.geeksforgeeks.org/python/asyncio-in-python/",
+            "snippet": "Python asyncio tutorial and examples.",
+        },
+    ]
+
+    ranked = rank_results(query, candidates, realtime=False)
+    domains = {item.get("source_domain") for item in ranked}
+    assert len(domains) >= 3
+    assert "docs.python.org" in domains
+    assert "realpython.com" in domains
