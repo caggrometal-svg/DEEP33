@@ -250,6 +250,15 @@ class WebOrchestrator:
                 "public information government transparency servicios públicos"
             )
 
+        commercial_technology_site_intent = (
+            "chile" in lowered
+            and any(term in lowered for term in ("comercial", "commercial", "empresa", "company"))
+            and any(term in lowered for term in ("tecnología", "tecnologia", "technology", "tech"))
+            and any(term in lowered for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
+        )
+        if commercial_technology_site_intent:
+            return "Chile technology companies software ecommerce official websites"
+
         wikipedia_asyncio_intent = (
             "wikipedia" in lowered
             and "asyncio" in lowered

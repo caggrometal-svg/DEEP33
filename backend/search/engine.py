@@ -457,6 +457,15 @@ def rank_results(
             # Google News can wrap social-media reposts in RSS article URLs;
             # they are not independent newsroom sources for a current-news answer.
             continue
+        query_folded_for_site = str(query or "").casefold()
+        commercial_site_intent = (
+            any(term in query_folded_for_site for term in ("sitio comercial", "commercial site", "company website"))
+            and any(term in query_folded_for_site for term in ("tecnología", "tecnologia", "technology", "tech"))
+        )
+        if commercial_site_intent and _source_host(item).removeprefix("www.") in {
+            "facebook.com", "instagram.com", "tiktok.com", "youtube.com", "linkedin.com"
+        }:
+            continue
         parsed_url = urlparse(url)
         source_host = _source_host(item)
         anchor_evidence = (

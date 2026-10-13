@@ -622,6 +622,40 @@ def test_chile_public_information_recovery_expands_official_domains():
     assert len(domains) >= 3
 
 
+
+def test_chile_commercial_technology_recovery_preserves_country_and_topic():
+    from backend.search.resilient import WebOrchestrator
+
+    recovery = WebOrchestrator._recovery_query("sitio comercial tecnología Chile")
+    folded = recovery.casefold()
+
+    assert "chile" in folded
+    assert "technology" in folded
+    assert "companies" in folded
+
+
+def test_commercial_technology_site_ranking_rejects_social_network_profiles():
+    from backend.search.engine import rank_results
+
+    query = "sitio comercial tecnología Chile"
+    candidates = [
+        {
+            "title": "Empresa de tecnología en Chile",
+            "url": "https://www.facebook.com/exampletech",
+            "snippet": "Tecnología comercial en Chile",
+        },
+        {
+            "title": "Empresa de tecnología en Chile",
+            "url": "https://exampletech.cl/",
+            "snippet": "Soluciones de tecnología para empresas en Chile",
+        },
+    ]
+
+    ranked = rank_results(query, candidates, realtime=False)
+
+    assert ranked
+    assert all("facebook.com" not in item["source_domain"] for item in ranked)
+
 def test_wikipedia_asyncio_recovery_broadens_to_independent_python_sources():
     from backend.search.resilient import WebOrchestrator
 
