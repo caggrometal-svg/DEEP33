@@ -444,6 +444,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",
@@ -701,14 +702,15 @@ function providerRequestBody(
 }
 
 
-function providerRequestHeaders(
+async function providerRequestHeaders(
   provider: EdgeAIProvider,
   requestId: string,
   accept: string,
   userAuthorization = "",
   sessionId = "",
   idempotencyKey = "",
-): Record<string, string> {
+  personality = "",
+): Promise<Record<string, string>> {
   const renderBackendFallback = isInternalBackendProvider(provider);
   const fallbackSessionId = renderBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
@@ -718,15 +720,25 @@ function providerRequestHeaders(
     : provider.api_key
       ? "Bearer " + provider.api_key
       : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
+  // Render must claim its own child operation while Edge retains the public request
+  // lease. This avoids two concurrent claims on the same shared row but keeps the
+  // public X-Idempotency-Key unchanged across Edge and direct Render retries.
+  const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
+    ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+    : idempotencyKey;
   return {
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
+    // The edge gateway already ran web search and appended evidence before entering
+    // the provider loop. Prevent the Render fallback from launching a second nested
+    // web-tool loop, which can turn a valid researched response into a 502/503.
     ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
+    ...(renderBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
-    ...(idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : {}),
+    ...(delegatedIdempotencyKey ? { "X-Idempotency-Key": delegatedIdempotencyKey } : {}),
   };
 }
 
@@ -782,15 +794,94 @@ type EdgeIdempotencyContext = {
 };
 
 type EdgeIdempotencyRecord = {
-  text: string;
+  text?: string;
   provider?: string;
   model?: string;
+  result?: Record<string, unknown>;
+  response?: Record<string, unknown>;
 };
 
-function idempotencyResultBody(record: EdgeIdempotencyRecord): Record<string, unknown> {
+function idempotencyRecordText(record: Record<string, unknown>): string {
+  if (typeof record.text === "string") return record.text;
+  const result = record.result && typeof record.result === "object"
+    ? record.result as Record<string, unknown>
+    : {};
+  if (typeof result.text === "string") return result.text;
+  const response = record.response && typeof record.response === "object"
+    ? record.response as Record<string, unknown>
+    : {};
+  const choices = Array.isArray(response.choices) ? response.choices : [];
+  const first = choices[0] && typeof choices[0] === "object"
+    ? choices[0] as Record<string, unknown>
+    : {};
+  const message = first.message && typeof first.message === "object"
+    ? first.message as Record<string, unknown>
+    : {};
+  return typeof message.content === "string" ? message.content : "";
+}
+
+function idempotencyRecordModel(record: Record<string, unknown>): string {
+  if (typeof record.model === "string") return record.model;
+  const result = record.result && typeof record.result === "object"
+    ? record.result as Record<string, unknown>
+    : {};
+  return typeof result.model === "string" ? result.model : "";
+}
+
+function canonicalizeIdempotencyValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeIdempotencyValue);
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const target: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      target[key] = canonicalizeIdempotencyValue(source[key]);
+    }
+    return target;
+  }
+  return value;
+}
+
+function pythonFloatJson(value: number): string {
+  if (Object.is(value, -0)) return "-0.0";
+  if (value === 0 || Number.isInteger(value)) return value.toFixed(1);
+  if (Math.abs(value) < 0.0001) {
+    const [mantissa, exponentRaw] = value.toExponential().split("e");
+    const exponent = Number(exponentRaw);
+    return mantissa + "e-" + String(Math.abs(exponent)).padStart(2, "0");
+  }
+  return String(value);
+}
+
+function canonicalIdempotencyJson(value: unknown, parentKey = ""): string {
+  if (typeof value === "number" && parentKey === "temperature") {
+    return pythonFloatJson(value);
+  }
+  if (Array.isArray(value)) {
+    return "[" + value.map((item) => canonicalIdempotencyJson(item)).join(",") + "]";
+  }
+  if (value && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    return "{" + Object.keys(source).sort().map((key) =>
+      JSON.stringify(key) + ":" + canonicalIdempotencyJson(source[key], key)
+    ).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function idempotencyResultBody(record: Record<string, unknown>): Record<string, unknown> {
+  const text = idempotencyRecordText(record);
+  if (!text.trim()) throw new Error("IDEMPOTENCY_COMPLETED_RESPONSE_INVALID");
+  const result = record.result && typeof record.result === "object"
+    ? record.result as Record<string, unknown>
+    : {};
+  const model = idempotencyRecordModel(record);
+  const provider = typeof record.provider === "string"
+    ? record.provider
+    : typeof result.provider === "string" ? result.provider : "";
   return {
-    choices: [{ message: { role: "assistant", content: record.text } }],
-    model: record.model || "",
+    choices: [{ message: { role: "assistant", content: text } }],
+    model,
+    ...(provider ? { provider } : {}),
   };
 }
 
@@ -799,24 +890,36 @@ async function buildEdgeIdempotencyContext(
   sessionId: string,
   memoryProfileId: string,
   idempotencyKey: string,
-  operation: string,
-  stream: boolean,
+  personality: unknown,
 ): Promise<EdgeIdempotencyContext | null> {
   const key = idempotencyKey.trim();
   const session = sessionId.trim();
   if (!key || !session) return null;
-  const requestHash = await sha256(
-    JSON.stringify({
-      operation,
-      stream,
-      provider_payload: providerPayload(payload, stream),
-    }),
-  );
+
+  // Match backend/main.py generation_request_hash(): the shared key must have one
+  // request fingerprint across Edge, direct Render, /v1/ai/generate and /v1/chat/stream.
+  // System prompts injected by Edge are excluded exactly as Render excludes system
+  // messages; provider, operation and transport mode must not change request identity.
+  const messages = (Array.isArray(payload.messages) ? payload.messages : [])
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item && typeof item === "object" &&
+        ["user", "assistant"].includes(String((item as Record<string, unknown>).role || ""))),
+    )
+    .map((item) => ({
+      role: String(item.role || ""),
+      content: String(item.content ?? ""),
+    }));
+  const requestHash = await sha256(canonicalIdempotencyJson({
+    messages,
+    model: payload.model === undefined ? null : payload.model,
+    temperature: payload.temperature === undefined ? null : payload.temperature,
+    personality: normalizePersonality(personality),
+  }));
   return {
     sessionId: session,
     memoryProfileId: memoryProfileId.trim(),
     idempotencyKey: key,
-    operation,
+    operation: "deep33.ai.generate",
     requestHash,
   };
 }
@@ -900,7 +1003,6 @@ async function edgeIdempotencyRelease(context: EdgeIdempotencyContext): Promise<
 async function acquireEdgeIdempotency(
   context: EdgeIdempotencyContext,
 ): Promise<{ context: EdgeIdempotencyContext; completed: EdgeIdempotencyRecord | null }> {
-
   const initial = await edgeIdempotencyAction("idempotency_claim", context);
   const state = String(initial.state || "").toUpperCase();
 
@@ -1021,13 +1123,14 @@ async function callEdgeAI(
         try {
           const response = await fetch(provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(
+            headers: await providerRequestHeaders(
               provider,
               requestId,
               "application/json",
               userAuthorization,
-              leaseContext?.sessionId || sessionId,
+              leaseContext?.sessionId || sessionId || "",
               leaseContext?.idempotencyKey || "",
+              normalizePersonality(payload.personality),
             ),
             body: JSON.stringify(providerRequestBody(provider, payload, false)),
             signal: controller.signal,
@@ -1232,13 +1335,14 @@ async function streamEdgeAI(
         try {
           const response = await fetch(provider.stream_url || provider.url, {
             method: "POST",
-            headers: providerRequestHeaders(
+            headers: await providerRequestHeaders(
               provider,
               requestId,
               "text/event-stream",
               userAuthorization,
               idempotencyContext?.sessionId || fallbackSessionId || "",
               idempotencyContext?.idempotencyKey || "",
+              normalizePersonality(payload.personality),
             ),
             body: JSON.stringify(providerRequestBody(provider, payload, true)),
             signal: controller.signal,
@@ -3391,8 +3495,7 @@ Deno.serve(async (req) => {
                 sessionId,
                 memoryProfileId,
                 idempotencyKey,
-                "ai.chat.stream",
-                true,
+                activePersonality,
               );
               const ai = await streamEdgeAI(
                 {
@@ -3715,8 +3818,7 @@ Deno.serve(async (req) => {
               sessionId,
               memoryProfileId,
               idempotencyKey,
-              "ai.generate",
-              false,
+              payload.personality,
             );
             const ai = await callEdgeAI(
               { ...payload, messages: edgeMessages },
@@ -3813,9 +3915,8 @@ return json({
             sessionId,
             memoryProfileId,
             idempotencyKey,
-            "ai.generate",
-            false,
-          );
+              payload.personality,
+            );
           const ai = await callEdgeAI(
             { ...payload, messages: edgeMessages },
             requestId,
