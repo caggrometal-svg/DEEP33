@@ -2884,39 +2884,104 @@ async function publicWebSearch(query: string) {
   };
 }
 
-async function edgeSearch(query: string, sessionId = "deep33-edge-search") {
-  const q = query.trim();
+async function edgeSearch(
+  query: string,
+  sessionId = "deep33-edge-search",
+  userAuthorization = "",
+) {
+  const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
+  const searchStarted = performance.now();
+
+  const logSearchStage = (
+    status: string,
+    path: string,
+    result: Record<string, unknown>,
+  ) => {
+    console.log(JSON.stringify({
+      event: "edge_web_search_stage",
+      elapsed_ms: Math.round(performance.now() - searchStarted),
+      status,
+      path,
+      result_count: Array.isArray(result.results) ? result.results.length : 0,
+      providers: Array.isArray(result.providers) ? result.providers : [],
+      request_scope: sessionId.slice(0, 128),
+    }));
+  };
+
+  // Prefer direct public Edge providers. If they return no usable evidence,
+  // use Railway's already-configured DEEP33 web-search endpoint as a bounded,
+  // authenticated fallback. This does not invoke or modify Render.
+  const direct = await publicWebSearch(q).catch((error) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+    results: [],
+    providers: [],
+  })) as Record<string, unknown>;
+
+  if (
+    direct.ok === true &&
+    Array.isArray(direct.results) &&
+    direct.results.length > 0
+  ) {
+    logSearchStage("success", "edge-direct", direct);
+    return direct;
+  }
+
+  if (!userAuthorization.startsWith("Bearer ")) {
+    logSearchStage("unavailable", "edge-direct", direct);
+    return direct;
+  }
+
   try {
-    const res = await fetchUpstream("/v1/web/search?q=" + encodeURIComponent(q), {}, sessionId);
+    const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
+    const res = await fetch(railwaySearchUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": userAuthorization,
+        "Accept": "application/json",
+        "Cache-Control": "no-cache",
+        "X-DEEP33-Session-Id": sessionId,
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
+    });
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
       const realtime = data.realtime === true || edgeRealtimeQuery(q);
-      const filtered = edgeFilterSearchResults(q, data.results as Array<Record<string, unknown>>, realtime).slice(0, MAX_WEB_SEARCH_RESULTS);
+      const filtered = edgeFilterSearchResults(
+        q,
+        data.results as Array<Record<string, unknown>>,
+        realtime,
+      ).slice(0, MAX_WEB_SEARCH_RESULTS);
       if (filtered.length > 0) {
         const providers = edgeProvidersForResults(filtered);
-        const verification = edgeSearchVerification(filtered, providers);
         const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
-        return {
+        const response = {
           ...data,
           ok: true,
-          providers: providers.length ? providers : (Array.isArray(data.providers) ? data.providers : []),
+          providers,
+          provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
           results: publicResults,
           sources: publicResults,
-          verification: {
-            ...verification,
-            distinct_providers: providers.length || Number((data.verification as Record<string, unknown> | undefined)?.distinct_providers || 0),
-          },
+          verification: edgeSearchVerification(filtered, providers),
+          fallback_path: "railway",
         };
+        logSearchStage("success", "railway-fallback", response);
+        return response;
       }
     }
-    const fallback = await publicWebSearch(q);
-    return fallback.ok ? fallback : {
-      ...data, ok: false, error: "SEARCH_HTTP_" + res.status, results: [], upstream: data,
-    };
+    logSearchStage("unavailable", "railway-fallback", direct);
+    return direct;
   } catch (error) {
-    const fallback = await publicWebSearch(q);
-    return fallback.ok ? fallback : { ok: false, error: error instanceof Error ? error.message : String(error), results: [] };
+    console.warn(JSON.stringify({
+      event: "edge_web_search_fallback_error",
+      path: "railway-fallback",
+      error: error instanceof Error ? error.name : "UNKNOWN",
+      request_scope: sessionId.slice(0, 128),
+    }));
+    logSearchStage("unavailable", "railway-fallback", direct);
+    return direct;
   }
 }
 
