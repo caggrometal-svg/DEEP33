@@ -3511,8 +3511,9 @@ async function edgeSearch(
     }));
   };
 
-  // Edge direct is the latency-first canonical search path. Render remains an
-  // authenticated fallback when every public Edge provider is empty/unavailable.
+  // Prefer direct public Edge providers. If they return no usable evidence,
+  // use Railway's already-configured DEEP33 web-search endpoint as a bounded,
+  // authenticated fallback. This does not invoke or modify Render.
   const direct = await publicWebSearch(q).catch((error) => ({
     ok: false,
     error: error instanceof Error ? error.message : String(error),
@@ -3529,23 +3530,24 @@ async function edgeSearch(
     return direct;
   }
 
-  if (!UPSTREAM || !userAuthorization.startsWith("Bearer ")) {
+  if (!userAuthorization.startsWith("Bearer ")) {
     logSearchStage("unavailable", "edge-direct", direct);
     return direct;
   }
 
   try {
-    const res = await fetchUpstream(
-      "/v1/web/search?q=" + encodeURIComponent(q),
-      {
-        headers: {
-          "Authorization": userAuthorization,
-          "Accept": "application/json",
-        },
-        signal: AbortSignal.timeout(3500),
+    const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
+    const res = await fetch(railwaySearchUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": userAuthorization,
+        "Accept": "application/json",
+        "Cache-Control": "no-cache",
+        "X-DEEP33-Session-Id": sessionId,
       },
-      sessionId,
-    );
+      redirect: "error",
+      signal: AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
+    });
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
       const realtime = data.realtime === true || edgeRealtimeQuery(q);
@@ -3565,16 +3567,22 @@ async function edgeSearch(
           results: publicResults,
           sources: publicResults,
           verification: edgeSearchVerification(filtered, providers),
-          fallback_path: "render",
+          fallback_path: "railway",
         };
-        logSearchStage("success", "render-fallback", response);
+        logSearchStage("success", "railway-fallback", response);
         return response;
       }
     }
-    logSearchStage("unavailable", "render-fallback", direct);
+    logSearchStage("unavailable", "railway-fallback", direct);
     return direct;
-  } catch {
-    logSearchStage("unavailable", "render-fallback", direct);
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: "edge_web_search_fallback_error",
+      path: "railway-fallback",
+      error: error instanceof Error ? error.name : "UNKNOWN",
+      request_scope: sessionId.slice(0, 128),
+    }));
+    logSearchStage("unavailable", "railway-fallback", direct);
     return direct;
   }
 }
