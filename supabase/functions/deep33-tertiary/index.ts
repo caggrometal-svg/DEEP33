@@ -114,8 +114,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Keep provider fallback URL classification defined in this edge runtime as in the primary gateway.
+// DEEP33 backend fallback order is Railway first, followed by the existing Render services.
+// Public endpoint URLs remain unchanged and Render stays available as failover.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
   "https://deep33-backup.onrender.com",
@@ -403,6 +405,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",
@@ -2274,7 +2277,8 @@ function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
 }
 
 function edgeCurrentNewsQuery(query: string): boolean {
-  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra)\b/i.test(query);
+  // Classify English live-news phrasing alongside Spanish without routing every realtime query through a news-only filter.
+  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra|latest(?:\s+update)?|current|today|breaking(?:\s+news)?|world\s+news|news\s+update|recent\s+update)\b/i.test(query);
 }
 
 async function runPublicWebSearchQuery(
@@ -2330,7 +2334,14 @@ async function runPublicWebSearchQuery(
       redirect: "follow",
       signal: AbortSignal.timeout(providerTimeoutMs ?? (fastNewsQuery ? 1800 : forceFullSearch && currentNewsRequest ? 2500 : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
-    if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
+    if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_http",
+        provider: provider.name,
+        status: response.status,
+      }));
+      return { name: provider.name, results: [] as Array<Record<string, string>> };
+    }
     const html = await response.text();
     const results: Array<Record<string, string>> = [];
 
@@ -2342,7 +2353,21 @@ async function runPublicWebSearchQuery(
         const url = rssText(itemXml, "link");
         const snippet = rssText(itemXml, "description");
         const published_at = rssText(itemXml, "pubDate");
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
+        // Google News RSS wraps many publishers under news.google.com. The RSS
+        // source URL is the grounded publisher domain and must count as that source.
+        const sourceMatch = itemXml.match(/<source\b[^>]*\burl=(["'])(.*?)\1[^>]*>/i);
+        let source_domain = "";
+        if (sourceMatch) {
+          try {
+            source_domain = new URL(decodeHtml(String(sourceMatch[2] || "")))
+              .hostname.toLowerCase().replace(/^www\./, "");
+          } catch {
+            source_domain = "";
+          }
+        }
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({ title, url, snippet, published_at, ...(source_domain ? { source_domain } : {}) });
+        }
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -2382,6 +2407,22 @@ async function runPublicWebSearchQuery(
         if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
       }
     }
+    const providerDomains = new Set(results.flatMap((result) => {
+      try {
+        return [String(result.source_domain || new URL(result.url).hostname)
+          .toLowerCase().replace(/^www\./, "")];
+      } catch {
+        return [];
+      }
+    }));
+    console.log(JSON.stringify({
+      event: "edge_public_search_provider_result",
+      provider: provider.name,
+      status: response.status,
+      parsed_results: results.length,
+      distinct_domains: providerDomains.size,
+      content_type: response.headers.get("content-type") || "",
+    }));
     return { name: provider.name, results };
   };
 
@@ -2394,12 +2435,21 @@ async function runPublicWebSearchQuery(
       ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
-  for (const item of settled) {
-    if (item.status !== "fulfilled" || !item.value.results.length) continue;
+  for (let settledIndex = 0; settledIndex < settled.length; settledIndex++) {
+    const item = settled[settledIndex];
+    if (item.status !== "fulfilled") {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_failed",
+        provider: activeProviders[settledIndex]?.name || "unknown",
+        error: item.reason instanceof Error ? item.reason.name : "unknown",
+      }));
+      continue;
+    }
+    if (!item.value.results.length) continue;
     providerNames.push(item.value.name);
     for (const result of item.value.results) {
       try {
-        const domain = new URL(result.url).hostname;
+        const domain = String(result.source_domain || new URL(result.url).hostname).toLowerCase().replace(/^www\./, "");
         if (!merged.has(result.url)) {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
@@ -2438,7 +2488,9 @@ async function runPublicWebSearchQuery(
       results: finalResults,
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) =>
+          String(item.source_domain || new URL(item.url).hostname).toLowerCase().replace(/^www\./, "")
+        )).size,
       },
     };
   }
@@ -2656,7 +2708,10 @@ function edgeSearchVerification(
   providers: string[],
 ): Record<string, unknown> {
   const domains = new Set(items.map((item) => {
-    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+    try {
+      return String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "");
+    } catch { return ""; }
   }).filter(Boolean));
   return {
     level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
@@ -2819,6 +2874,31 @@ async function publicWebSearch(query: string) {
   }
   // One final alternate-topic query prevents transient empty RSS responses from
   // turning into a user-facing 503. It only runs after bounded provider retries fail.
+  const distinctDomainCount = () => new Set(results.flatMap((item) => {
+    try {
+      return [String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "")];
+    } catch { return []; }
+  })).size;
+  if (realtimeNewsPlan && results.length > 0 && distinctDomainCount() < 3) {
+    // Restore domain diversity with two already-planned query variants only when
+    // primary news feeds and independent indexes return fewer than three domains.
+    const diversityQueries = plan.queries.slice(1, 3);
+    const diversityBatches = await Promise.all(diversityQueries.map(async (query) => ({
+      query,
+      data: await runPublicWebSearchQuery(
+        query,
+        false,
+        Math.min(2400, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>,
+    })));
+    for (const batch of diversityBatches) {
+      batches.push(batch);
+      mergeBatch(batch);
+    }
+    results = filteredResults();
+  }
+
   if (realtimeNewsPlan && results.length < 1) {
     const locality = edgeExtractLocality(plan.original);
     const rescueQuery = edgeBroadWorldNewsQuery(plan.original)

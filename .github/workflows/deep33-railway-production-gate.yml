@@ -9,6 +9,12 @@ on:
       - ".github/workflows/deep33-railway-production-gate.yml"
       - "backend/requirements.txt"
   workflow_dispatch:
+    inputs:
+      require_live:
+        description: Require live Railway production evidence
+        type: boolean
+        required: true
+        default: true
 
 permissions:
   contents: read
@@ -20,31 +26,37 @@ concurrency:
 jobs:
   railway-production-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     env:
       RAILWAY_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
+      REQUIRE_LIVE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' || inputs.require_live }}
     steps:
-      - name: Wait for healthy Railway deployment
+      - name: Enforce require_live and wait for exact deployed SHA
         shell: bash
         run: |
           set -euo pipefail
+          test "$REQUIRE_LIVE" = "true" || { echo "PRODUCTION_GATE_REQUIRES_LIVE_TRUE"; exit 1; }
+          expected="$GITHUB_SHA"
           ready=0
-          for attempt in $(seq 1 12); do
-            response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' "$RAILWAY_BASE_URL/ready" || true)"
-            status="${response##*STATUS:}"
-            body="${response%$'\n'STATUS:*}"
-            if [ "$status" = "200" ]; then
-              printf '%s' "$body" | jq -c '{status, git_sha, build_id, timestamp}'
+          for attempt in $(seq 1 36); do
+            health_code="$(curl -sS --connect-timeout 4 --max-time 8 -o /tmp/railway-health.json -w '%{http_code}' "$RAILWAY_BASE_URL/health" 2>/dev/null || true)"
+            ready_code="$(curl -sS --connect-timeout 4 --max-time 8 -o /tmp/railway-ready.json -w '%{http_code}' "$RAILWAY_BASE_URL/ready" 2>/dev/null || true)"
+            live_sha="$(jq -r '.git_sha // empty' /tmp/railway-health.json 2>/dev/null || true)"
+            health_status="$(jq -r '.status // empty' /tmp/railway-health.json 2>/dev/null || true)"
+            ready_flag="$(jq -r '.ready // false' /tmp/railway-ready.json 2>/dev/null || true)"
+            echo "RAILWAY_DEPLOY_ATTEMPT=$attempt expected=$expected live=$live_sha health=$health_code ready=$ready_code ready_flag=$ready_flag"
+            if [ "$health_code" = "200" ] && [ "$ready_code" = "200" ] && [ "$health_status" = "PASS" ] && [ "$ready_flag" = "true" ] && [ "$live_sha" = "$expected" ]; then
+              jq -c '{status,git_sha,build_id,timestamp}' /tmp/railway-health.json
+              jq -c '{status,ready,memory_configured,memory_ready,network:{internet_available,dns_ok,https_ok},gateway:{gateway,provider,model}}' /tmp/railway-ready.json
               ready=1
               break
             fi
-            echo "RAILWAY_READY_WAIT attempt=$attempt http=$status"
-            [ "$attempt" -lt 12 ] && sleep 5
+            [ "$attempt" -lt 36 ] && sleep 5
           done
-          test "$ready" = "1" || { echo "RAILWAY_READY_FAIL"; exit 1; }
-          echo "RAILWAY_READY_PASS"
+          test "$ready" = "1" || { echo "RAILWAY_EXACT_SHA_HEALTH_READY_FAIL"; exit 1; }
+          echo "RAILWAY_HEALTH_READY_EXACT_SHA_PASS"
 
       - name: Verify real AI inference
         shell: bash
@@ -126,49 +138,12 @@ jobs:
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and (.results | type == "array")' >/dev/null
+          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and ((.results // []) | length) >= 1' >/dev/null
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
           echo "RAILWAY_HYBRID_SEARCH_PASS"
 
-      - name: Verify live multi-domain web search
+      - name: Run live Railway memory, web, stream, idempotency and latency gates
         shell: bash
         run: |
           set -euo pipefail
-          query="latest artificial intelligence research and technology news today"
-          response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-            --get "$RAILWAY_BASE_URL/v1/web/search" --data-urlencode "q=$query" || true)"
-          status="${response##*STATUS:}"
-          body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" > /tmp/railway-live-search.json
-          printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null
-          printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
-          echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_PASS"
-
-      - name: Verify source-page fetch from web-search result
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t urls < <(jq -r '.results[0:2][]?.url // empty' /tmp/railway-live-search.json)
-          fetched=0
-          index=0
-          for url in "${urls[@]}"; do
-            index=$((index + 1))
-            [ -n "$url" ] || continue
-            response="$(curl -sS --connect-timeout 5 --max-time 8 -w '\nSTATUS:%{http_code}' \
-              -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-              -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-              --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
-            status="${response##*STATUS:}"
-            body="${response%$'\n'STATUS:*}"
-            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ok == true and ((.text // "") | length) > 80' >/dev/null 2>&1; then
-              printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
-              fetched=1
-              break
-            fi
-            echo "RAILWAY_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
-          done
-          test "$fetched" = "1" || { echo "RAILWAY_WEB_FETCH_FAIL"; exit 1; }
-          echo "RAILWAY_WEB_FETCH_PASS"
+          python3 tests/railway_live_production_gate.py

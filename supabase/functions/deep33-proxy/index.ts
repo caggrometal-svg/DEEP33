@@ -255,9 +255,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Internal DEEP33 fallback: keep the client endpoint unchanged and reuse the existing
-// Render backend only when the direct edge provider cannot produce a safe response.
+// DEEP33 backend fallback order is Railway first, followed by the existing Render services.
+// Public endpoint URLs remain unchanged and Render stays available as failover.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
   "https://deep33-backup.onrender.com",
@@ -489,6 +490,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",
@@ -769,7 +771,9 @@ async function providerRequestHeaders(
   // lease. This avoids two concurrent claims on the same shared row but keeps the
   // public X-Idempotency-Key unchanged across Edge and direct Render retries.
   const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
-    ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+    ? provider.name.startsWith("render-")
+      ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+      : "edge-railway:" + await sha256("deep33|railway-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
     "Content-Type": "application/json",
@@ -1220,10 +1224,15 @@ async function callEdgeAI(
             }
             if (text.trim()) {
               edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+              const nestedResult = body.result && typeof body.result === "object"
+                ? body.result as Record<string, unknown>
+                : {};
               const record: EdgeIdempotencyRecord = {
                 text,
                 provider: provider.name,
-                model: provider.model || String(body.model || ""),
+                model: provider.model || String(
+                  body.model || nestedResult.model || nestedResult.model_name || ""
+                ).trim(),
               };
               if (leaseContext) {
                 try {
@@ -1249,7 +1258,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "render-backend-fallback" &&
+              (provider.name === "railway-backend-fallback" || provider.name === "render-backend-fallback") &&
               response.status >= 500 &&
               provider.stream_url
             ) {
@@ -1457,13 +1466,36 @@ async function completeViaStreamFallback(
     if (!done) throw new Error(provider.name + "_STREAM_FALLBACK_INCOMPLETE");
     if (!fullText.trim()) throw new Error(provider.name + "_STREAM_FALLBACK_EMPTY_RESPONSE");
 
+    let resolvedModel = provider.model || "";
+    if (!resolvedModel) {
+      const statusUrl = provider.url.replace(/\/v1\/ai\/generate\/?$/, "/v1/ai/status");
+      if (statusUrl !== provider.url) {
+        try {
+          // The internal DEEP33 backend exposes its actual configured model via
+          // /v1/ai/status; read metadata after successful streaming without rerunning inference.
+          const statusResponse = await fetch(statusUrl, {
+            method: "GET",
+            headers: { "Accept": "application/json" },
+            redirect: "error",
+            signal: AbortSignal.timeout(1500),
+          });
+          if (statusResponse.ok) {
+            const gatewayStatus = await readJson(statusResponse);
+            resolvedModel = String(gatewayStatus.model || "").trim();
+          }
+        } catch {
+          // Text delivery has already succeeded; metadata lookup must never discard it.
+        }
+      }
+    }
+
     return {
       body: {
         choices: [{ message: { role: "assistant", content: fullText } }],
-        model: provider.model || "",
+        model: resolvedModel,
       },
       provider: provider.name,
-      model: provider.model || "",
+      model: resolvedModel,
     };
   } finally {
     clearTimeout(timer);
@@ -2720,7 +2752,8 @@ function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
 }
 
 function edgeCurrentNewsQuery(query: string): boolean {
-  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra)\b/i.test(query);
+  // Classify English live-news phrasing alongside Spanish without routing every realtime query through a news-only filter.
+  return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra|latest(?:\s+update)?|current|today|breaking(?:\s+news)?|world\s+news|news\s+update|recent\s+update)\b/i.test(query);
 }
 
 async function runPublicWebSearchQuery(
@@ -2792,7 +2825,14 @@ async function runPublicWebSearchQuery(
           ? Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)
           : Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS))),
     });
-    if (!response.ok) return { name: provider.name, results: [] as Array<Record<string, string>> };
+    if (!response.ok) {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_http",
+        provider: provider.name,
+        status: response.status,
+      }));
+      return { name: provider.name, results: [] as Array<Record<string, string>> };
+    }
     const html = await response.text();
     const results: Array<Record<string, string>> = [];
 
@@ -2804,7 +2844,21 @@ async function runPublicWebSearchQuery(
         const url = rssText(itemXml, "link");
         const snippet = rssText(itemXml, "description");
         const published_at = rssText(itemXml, "pubDate");
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
+        // Google News RSS wraps many publishers under news.google.com. The RSS
+        // source URL is the grounded publisher domain and must count as that source.
+        const sourceMatch = itemXml.match(/<source\b[^>]*\burl=(["'])(.*?)\1[^>]*>/i);
+        let source_domain = "";
+        if (sourceMatch) {
+          try {
+            source_domain = new URL(decodeHtml(String(sourceMatch[2] || "")))
+              .hostname.toLowerCase().replace(/^www\./, "");
+          } catch {
+            source_domain = "";
+          }
+        }
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({ title, url, snippet, published_at, ...(source_domain ? { source_domain } : {}) });
+        }
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -2862,6 +2916,22 @@ async function runPublicWebSearchQuery(
         if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: "" });
       }
     }
+    const providerDomains = new Set(results.flatMap((result) => {
+      try {
+        return [String(result.source_domain || new URL(result.url).hostname)
+          .toLowerCase().replace(/^www\./, "")];
+      } catch {
+        return [];
+      }
+    }));
+    console.log(JSON.stringify({
+      event: "edge_public_search_provider_result",
+      provider: provider.name,
+      status: response.status,
+      parsed_results: results.length,
+      distinct_domains: providerDomains.size,
+      content_type: response.headers.get("content-type") || "",
+    }));
     return { name: provider.name, results };
   };
 
@@ -2874,12 +2944,21 @@ async function runPublicWebSearchQuery(
       ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
-  for (const item of settled) {
-    if (item.status !== "fulfilled" || !item.value.results.length) continue;
+  for (let settledIndex = 0; settledIndex < settled.length; settledIndex++) {
+    const item = settled[settledIndex];
+    if (item.status !== "fulfilled") {
+      console.warn(JSON.stringify({
+        event: "edge_public_search_provider_failed",
+        provider: activeProviders[settledIndex]?.name || "unknown",
+        error: item.reason instanceof Error ? item.reason.name : "unknown",
+      }));
+      continue;
+    }
+    if (!item.value.results.length) continue;
     providerNames.push(item.value.name);
     for (const result of item.value.results) {
       try {
-        const domain = new URL(result.url).hostname;
+        const domain = String(result.source_domain || new URL(result.url).hostname).toLowerCase().replace(/^www\./, "");
         if (!merged.has(result.url)) {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
@@ -2918,7 +2997,9 @@ async function runPublicWebSearchQuery(
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) =>
+          String(item.source_domain || new URL(item.url).hostname).toLowerCase().replace(/^www\./, "")
+        )).size,
       },
     };
   }
@@ -3154,7 +3235,10 @@ function edgeSearchVerification(
   providers: string[],
 ): Record<string, unknown> {
   const domains = new Set(items.map((item) => {
-    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+    try {
+      return String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "");
+    } catch { return ""; }
   }).filter(Boolean));
   return {
     level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
@@ -3329,22 +3413,48 @@ async function publicWebSearchUncached(
     edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
-  // Fresh news from a single provider is usable, but not yet independently corroborated.
-  // Give public secondary providers one short bounded window before returning.
+  // A second provider alone is insufficient when its results collapse onto one or two domains.
+  // Run the independent public indexes whenever provider or domain diversity is below target.
+  const uniqueResultDomainCount = () => new Set(finalResults.flatMap((item) => {
+    try {
+      return [String(item.source_domain || new URL(String(item.url || "")).hostname)
+        .toLowerCase().replace(/^www\./, "")];
+    } catch { return []; }
+  })).size;
   if (
     realtimeNewsPlan &&
     finalResults.length > 0 &&
-    edgeProvidersForResults(finalResults).length < 2
+    (edgeProvidersForResults(finalResults).length < 2 || uniqueResultDomainCount() < 3)
   ) {
     const corroborationQuery = plan.queries[0] || plan.original;
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
     mergeBatch(corroborationBatch);
+    finalResults = filteredResults();
+  }
+
+  // If RSS plus the first independent-index pass still return fewer than three
+  // real domains, use the existing date-bearing query variants once, in parallel.
+  // This is conditional fan-out: no extra provider calls on already-diverse results.
+  if (realtimeNewsPlan && finalResults.length > 0 && uniqueResultDomainCount() < 3) {
+    const diversityQueries = plan.queries.slice(1, 3);
+    const diversityBatches = await Promise.all(diversityQueries.map(async (query) => ({
+      query,
+      data: await runPublicWebSearchQuery(
+        query,
+        false,
+        Math.min(2400, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>,
+    })));
+    for (const batch of diversityBatches) {
+      batches.push(batch);
+      mergeBatch(batch);
+    }
     finalResults = filteredResults();
   }
 
@@ -3421,6 +3531,46 @@ async function publicWebSearchUncached(
       plan.depth === "realtime",
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
+  const candidateItems = [...merged.values()];
+  const providerFilterSummary = [...new Set(candidateItems.map((item) => String(item.provider || "")))]
+    .filter(Boolean)
+    .map((provider) => {
+      const candidates = candidateItems.filter((item) => String(item.provider || "") === provider);
+      const accepted = finalResults.filter((item) => String(item.provider || "") === provider);
+      const domains = (items: Array<Record<string, unknown>>) => new Set(items.flatMap((item) => {
+        try {
+          return [String(item.source_domain || item.domain || new URL(String(item.url || "")).hostname)
+            .toLowerCase().replace(/^www\\./, "")];
+        } catch {
+          return [];
+        }
+      })).size;
+      const dated = candidates.filter((item) => Number.isFinite(Date.parse(String(item.published_at || ""))));
+      const recent = dated.filter((item) => hasRecentPublication(item.published_at, 7));
+      return {
+        provider,
+        candidates: candidates.length,
+        accepted: accepted.length,
+        candidate_domains: domains(candidates),
+        accepted_domains: domains(accepted),
+        dated_candidates: dated.length,
+        recent_candidates: recent.length,
+      };
+    });
+  console.log(JSON.stringify({
+    event: "edge_web_search_result_filter_summary",
+    candidate_results: candidateItems.length,
+    accepted_results: finalResults.length,
+    accepted_domains: new Set(finalResults.flatMap((item) => {
+      try {
+        return [String(item.source_domain || item.domain || new URL(String(item.url || "")).hostname)
+          .toLowerCase().replace(/^www\\./, "")];
+      } catch {
+        return [];
+      }
+    })).size,
+    provider_stats: providerFilterSummary,
+  }));
   const providerNames = edgeProvidersForResults(finalResults);
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {

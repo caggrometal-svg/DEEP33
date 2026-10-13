@@ -42,6 +42,7 @@ jobs:
           echo "NO_LEGACY_UPSTREAM_PASS"
       - name: Import and syntax gate
         run: |
+          python -m py_compile tests/railway_live_production_gate.py
           python -c "import backend.main, backend.gateway, backend.memory; print('DEEP33_IMPORT_OK')"
           python -m compileall -q backend
       - name: Unit and contract tests

@@ -232,3 +232,74 @@ def test_memory_client_defaults_to_configured_api_key_without_user_token():
 
     asyncio.run(exercise())
     assert seen["authorization"] == "Bearer anon-api-key"
+
+
+def test_memory_write_actions_forward_user_jwt():
+    import json
+
+    seen = []
+
+    def handler(request):
+        seen.append({
+            "authorization": request.headers.get("authorization"),
+            "apikey": request.headers.get("apikey"),
+            "body": json.loads(request.content.decode("utf-8")),
+        })
+        return httpx.Response(200, json={"ok": True, "remembered": True})
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 2)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(2),
+        )
+        try:
+            await client.remember(
+                "session",
+                "explicit",
+                "DEEP33 regression token",
+                memory_profile_id="user-uuid",
+                access_token="verified-user-jwt",
+            )
+            await client.set_preferences(
+                "session",
+                personality="NEUTRO",
+                preferences={"language": "es"},
+                memory_profile_id="user-uuid",
+                access_token="verified-user-jwt",
+            )
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert len(seen) == 2
+    assert [item["body"]["action"] for item in seen] == ["remember", "preferences"]
+    assert all(item["authorization"] == "Bearer verified-user-jwt" for item in seen)
+    assert all(item["apikey"] == "anon-api-key" for item in seen)
+    assert all(item["body"]["memory_profile_id"] == "user-uuid" for item in seen)
+
+
+def test_chat_stream_passes_authenticated_jwt_to_memory_context():
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "backend" / "main.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    route = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "chat_stream"
+    )
+    call = next(
+        node for node in ast.walk(route)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "prepare_messages"
+    )
+    assert any(
+        keyword.arg == "access_token"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "access_token"
+        for keyword in call.keywords
+    )

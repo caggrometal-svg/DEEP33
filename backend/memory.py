@@ -242,6 +242,7 @@ class MemoryClient:
             idempotency_key=f"memory:remember:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
             **payload,
         )
 
@@ -265,6 +266,7 @@ class MemoryClient:
             idempotency_key=f"memory:preferences:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
             **payload,
         )
 
