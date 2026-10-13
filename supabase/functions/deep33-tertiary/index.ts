@@ -340,6 +340,8 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800;
+// Give the known-good Railway stream enough time to emit its first model token.
+const EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS = 6000;
 const EDGE_AI_RETRY_COUNT = 0; // Switch to the next provider immediately; never replay inference on the same provider.
 const EDGE_AI_RETRY_BACKOFF_MS = Math.max(100, Math.min(2000, Number(Deno.env.get("AI_PROVIDER_RETRY_BACKOFF_MS") || "250")));
 const EDGE_INTERNAL_FETCH_TIMEOUT_MS = Math.max(3000, Math.min(15000, Number(Deno.env.get("DEEP33_EDGE_INTERNAL_TIMEOUT_MS") || "10000")));
@@ -437,6 +439,12 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
     provider.url.startsWith(base + "/") ||
     Boolean(provider.stream_url?.startsWith(base + "/"))
   );
+}
+
+function isRailwayBackendProvider(provider: EdgeAIProvider): boolean {
+  const railwayBase = EDGE_AI_UPSTREAM_URLS[0];
+  return provider.url.startsWith(railwayBase + "/") ||
+    Boolean(provider.stream_url?.startsWith(railwayBase + "/"));
 }
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
@@ -1211,9 +1219,11 @@ async function streamEdgeAI(
         const controller = new AbortController();
         onController(controller);
         const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-        const firstChunkTimeoutMs = isFreeInferenceProvider(provider)
-          ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
-          : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
+        const firstChunkTimeoutMs = isRailwayBackendProvider(provider)
+          ? EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS
+          : isFreeInferenceProvider(provider)
+            ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
+            : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
         let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
           () => controller.abort(),
           firstChunkTimeoutMs,
