@@ -309,6 +309,8 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800;
+// Railway already passes the live inference gate; allow its streamed first token to arrive without aborting at 1.8s.
+const EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS = 6000;
 // Bound the non-streaming recovery phase so failed providers cannot stall a user request.
 const EDGE_AI_WEB_RECOVERY_TIMEOUT_MS = 12000;
 const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
@@ -1610,9 +1612,11 @@ async function streamEdgeAI(
         const controller = new AbortController();
         onController(controller);
         const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
-        const firstChunkTimeoutMs = isFreeInferenceProvider(provider)
-          ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
-          : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
+        const firstChunkTimeoutMs = isRailwayBackendProvider(provider)
+          ? EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS
+          : isFreeInferenceProvider(provider)
+            ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
+            : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
         let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
           () => controller.abort(),
           firstChunkTimeoutMs,
