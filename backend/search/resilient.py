@@ -648,7 +648,15 @@ class WebOrchestrator:
             if str(item.get("provider") or "").strip()
         }
         insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
-        if (insufficient_evidence or insufficient_provider_diversity) and loop.time() < deadline:
+        yahoo_available = (
+            "yahoo" in self.fallback_providers
+            and "yahoo" in self.circuits
+        )
+        if (
+            yahoo_available
+            and (insufficient_evidence or insufficient_provider_diversity)
+            and loop.time() < deadline
+        ):
             # Reserve one independent general-web fallback when either evidence
             # coverage OR provider diversity is incomplete. Several domains from
             # one index are useful, but they are not independent provider failover.
