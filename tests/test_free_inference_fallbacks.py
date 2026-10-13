@@ -219,3 +219,10 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
     assert result["ok"] is True
     assert "google_news" in result["providers"]
     assert result["verification"]["distinct_providers"] == 1
+
+
+@pytest.mark.parametrize("path", EDGE_PATHS)
+def test_edge_runtime_types_are_type_only_not_a_runtime_jsr_import(path: Path) -> None:
+    source = path.read_text(encoding="utf-8")
+    assert source.startswith('/// <reference types="jsr:@supabase/functions-js/edge-runtime.d.ts" />')
+    assert 'import "jsr:@supabase/functions-js/edge-runtime.d.ts";' not in source
