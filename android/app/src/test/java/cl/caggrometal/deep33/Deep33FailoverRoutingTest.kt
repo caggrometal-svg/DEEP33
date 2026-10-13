@@ -24,9 +24,9 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun tertiaryEndpointUsesCanonicalRenderFallback() {
+    fun tertiaryEndpointUsesCanonicalRailwayFallback() {
         assertEquals(
-            "https://deep33-backend.onrender.com",
+            "https://iac33-fastapi-edge-production.up.railway.app",
             BuildConfig.DEEP33_TERTIARY_URL.trim()
         )
     }
