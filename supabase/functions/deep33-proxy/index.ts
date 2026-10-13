@@ -1224,10 +1224,15 @@ async function callEdgeAI(
             }
             if (text.trim()) {
               edgeCircuit.set(provider.name, { failures: 0, openUntil: 0 });
+              const nestedResult = body.result && typeof body.result === "object"
+                ? body.result as Record<string, unknown>
+                : {};
               const record: EdgeIdempotencyRecord = {
                 text,
                 provider: provider.name,
-                model: provider.model || String(body.model || ""),
+                model: provider.model || String(
+                  body.model || nestedResult.model || nestedResult.model_name || ""
+                ).trim(),
               };
               if (leaseContext) {
                 try {
