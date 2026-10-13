@@ -284,7 +284,7 @@ _TOPIC_FILLERS = {
 }
 _TOPIC_PHRASE_ALIASES = (
     # Treat government and institutional reporting as political evidence for current-politics queries.
-    (re.compile(r"\b(?:pol[ií]tica|political|politics|government|governmental|gobierno|presidenta?|presidential|elecciones?|elections?|congreso|congress|senado|senate|diputad[oa]s?|senador[ae]s?|ministr[oa]s?|ministerio|minister|gabinete|cabinet|autoridades|authority|authorities|subsecretari[oa]s?|parlamento|parliament|legislativo|legislative|policy|policies|mop|senapred)\b", re.IGNORECASE), "politica"),
+    (re.compile(r"\b(?:pol[ií]tica|political|politics|presidenta?|presidential|elecciones?|elections?|congreso|congress|senado|senate|diputad[oa]s?|senador[ae]s?|parlamento|parliament|legislativo|legislative|policy|policies)\b", re.IGNORECASE), "politica"),
     # Normalize common industry abbreviations before strict topic filtering.
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
@@ -432,7 +432,13 @@ def rank_results(
         # so source navigation can continue to independent, readable candidates.
         path = urlparse(url).path.casefold().rstrip("/")
         if any(path.endswith(extension) for extension in BINARY_EXTENSIONS):
-            continue
+            # Preserve direct PDF discovery when the user explicitly asks for a PDF;
+            # otherwise avoid ranking files that the source reader cannot extract.
+            explicit_pdf_request = path.endswith(".pdf") and bool(
+                re.search(r"\bpdf\b", query, re.IGNORECASE)
+            )
+            if not explicit_pdf_request:
+                continue
         if realtime and _host(url).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
