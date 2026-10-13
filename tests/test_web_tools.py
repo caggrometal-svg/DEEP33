@@ -193,6 +193,55 @@ def test_live_news_keeps_searching_until_five_independent_domains() -> None:
     assert "mojeek" in result["providers"], result
 
 
+def test_official_health_search_recovers_independent_medical_domains() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.20,
+        global_budget_seconds=0.60,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    minsal = [
+        {"title": "Influenza - Minsal", "url": "https://www.minsal.cl/influenza",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública."},
+        {"title": "Influenza - Diprece", "url": "https://diprece.minsal.cl/temas-de-salud/influenza",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública."},
+        {"title": "Influenza - Epidemiología", "url": "https://epi.minsal.cl/influenza",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública."},
+    ]
+    independent = [
+        {"title": "Seasonal influenza - WHO", "url": "https://www.who.int/news-room/fact-sheets/detail/influenza",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública de WHO."},
+        {"title": "Influenza - PAHO", "url": "https://www.paho.org/en/topics/influenza",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública de PAHO."},
+        {"title": "About influenza - CDC", "url": "https://www.cdc.gov/flu/about/index.html",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública de CDC."},
+        {"title": "Influenza - MedlinePlus", "url": "https://medlineplus.gov/flu.html",
+         "snippet": "Información oficial sobre influenza, prevención, síntomas y salud pública de MedlinePlus."},
+    ]
+
+    async def provider(_query, _timeout, _limit):
+        query = _query.casefold()
+        if any(term in query for term in ("oms", "who", "cdc", "paho", "medlineplus")):
+            return independent
+        return minsal
+
+    for name in ("bing", "google", "cl0q", "mojeek", "duckduckgo"):
+        orchestrator.providers[name] = provider
+
+    result = asyncio.run(
+        orchestrator.search("medicina general influenza información oficial", fresh=True)
+    )
+    domains = {item["source_domain"] for item in result["results"]}
+
+    assert result["ok"] is True, result
+    assert len(domains) >= 5, result
+    assert any("who.int" in item["url"] for item in result["results"]), result
+    assert any("cdc.gov" in item["url"] for item in result["results"]), result
+
+
 def test_recovery_broadens_provider_query_but_ranks_against_original_question():
     from backend.search.resilient import WebOrchestrator
 
@@ -813,6 +862,7 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
     class FakeOrchestrator:
         async def search(self, query, *, fresh=False, timeout_seconds=None):
             captured["query"] = query
+            captured["timeout_seconds"] = timeout_seconds
             return {
                 "ok": True,
                 "results": [{
@@ -847,6 +897,7 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
 
     assert result["ok"] is True
     assert len(captured["query"]) <= module.MAX_QUERY_CHARS
+    assert captured["timeout_seconds"] == module.DEFAULT_TIMEOUT_SECONDS
     assert "no inventes" not in captured["query"].lower()
     assert "noticia real publicada hoy" in captured["query"].lower()
 
