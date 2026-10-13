@@ -406,7 +406,7 @@ def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, st
             )
         ).strip()
 
-    if len(body) < 80:
+    if len(body) <= 80:
         return None
     folded = body.lstrip().casefold()
     blocked_prefixes = (
@@ -432,6 +432,7 @@ def _reader_fallback_allowed(exc: WebFetchError) -> bool:
         "WEB_FETCH_TIMEOUT",
         "WEB_FETCH_NETWORK_ERROR",
         "WEB_FETCH_EMPTY_TEXT",
+        "WEB_FETCH_SHORT_TEXT",
         "WEB_FETCH_CONTENT_TYPE_BLOCKED",
     }:
         return True
@@ -454,8 +455,9 @@ async def _fetch_with_reader_fallback(
     max_text_chars: int,
     user_agent: str,
 ) -> dict:
+    direct_error: WebFetchError
     try:
-        return await _fetch_page_uncached(
+        direct_result = await _fetch_page_uncached(
             original_url=original_url,
             current_url=current_url,
             timeout_seconds=timeout_seconds,
@@ -463,9 +465,18 @@ async def _fetch_with_reader_fallback(
             max_text_chars=max_text_chars,
             user_agent=user_agent,
         )
-    except WebFetchError as direct_error:
-        if not _reader_fallback_allowed(direct_error):
+        # HTTP 200 is not sufficient evidence when the source yields only a
+        # short shell/metadata fragment. Let Reader try to extract real content.
+        if len(str(direct_result.get("text") or "").strip()) > 80:
+            return direct_result
+        direct_error = WebFetchError("WEB_FETCH_SHORT_TEXT")
+    except WebFetchError as direct_exception:
+        if not _reader_fallback_allowed(direct_exception):
             raise
+        direct_error = direct_exception
+
+    if not _reader_fallback_allowed(direct_error):
+        raise direct_error
 
         # Reader receives only the original URL after the normal public-host
         # validation in fetch_page. Its output is accepted only when actual,
