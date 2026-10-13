@@ -253,6 +253,64 @@ def test_google_news_recovery_keeps_realtime_marker(monkeypatch):
     assert module._looks_realtime_news(observed[0])
     assert "condes" in observed[0].casefold()
 
+
+def test_chile_public_information_fans_out_distinct_official_domains():
+    from backend.search.resilient import WebOrchestrator
+
+    calls = []
+
+    def item(domain, title, snippet):
+        return {
+            "title": title,
+            "url": f"https://{domain}/",
+            "snippet": snippet,
+            "source_domain": domain,
+        }
+
+    async def bing_provider(query, _timeout, _limit):
+        calls.append(query)
+        if "site:chileatiende.gob.cl" in query:
+            return [item("www.chileatiende.gob.cl", "ChileAtiende", "Servicios públicos y trámites en Chile")]
+        if "site:datos.gob.cl" in query:
+            return [item("datos.gob.cl", "Datos abiertos Chile", "Información pública y datos abiertos del Gobierno de Chile")]
+        if "site:cplt.cl" in query:
+            return [item("www.cplt.cl", "Consejo para la Transparencia", "Transparencia e información pública en Chile")]
+        return [item("www.gob.cl", "Gobierno de Chile", "Información pública del Gobierno de Chile")]
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            "bing": bing_provider,
+            "google": empty_provider,
+            "cl0q": empty_provider,
+            "mojeek": empty_provider,
+            "duckduckgo": empty_provider,
+        }
+        orchestrator.circuits = {
+            name: orchestrator.circuits[name]
+            for name in orchestrator.providers
+        } | {"yahoo": orchestrator.circuits["yahoo"]}
+        return await orchestrator.search(
+            "sitio gubernamental Chile información pública",
+            fresh=True,
+        )
+
+    result = asyncio.run(exercise())
+
+    assert result["ok"] is True, result
+    assert result["verification"]["distinct_domains"] >= 3
+    assert any("site:chileatiende.gob.cl" in query for query in calls)
+    assert any("site:datos.gob.cl" in query for query in calls)
+    assert any("site:cplt.cl" in query for query in calls)
+
 def test_primary_search_reserves_deadline_for_multisource_recovery():
     from backend.search.resilient import WebOrchestrator
 

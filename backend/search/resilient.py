@@ -535,6 +535,102 @@ class WebOrchestrator:
         ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
 
+        # Official/public-information discovery is a special case where one broad
+        # SERP often collapses every result onto gob.cl. If primary coverage is
+        # sparse, fan out a few distinct *search queries* to independent official
+        # Chilean domains, still through the live provider and still ranked against
+        # the user's untouched query. This is discovery, not synthetic evidence.
+        lowered_cleaned = cleaned.casefold()
+        chile_public_info_intent = (
+            "chile" in lowered_cleaned
+            and any(term in lowered_cleaned for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            ))
+        )
+        selected_domains_before_official = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            for item in selected
+            if item.get("url")
+        }
+        if (
+            chile_public_info_intent
+            and len(selected_domains_before_official - {""}) < min(3, self.max_results)
+            and loop.time() < deadline
+        ):
+            official_queries = (
+                "site:chileatiende.gob.cl Chile servicios trámites información pública",
+                "site:datos.gob.cl Chile datos abiertos información pública",
+                "site:cplt.cl Chile transparencia información pública",
+            )
+            official_tasks = {
+                asyncio.create_task(
+                    self._bounded_call_provider("bing", official_query),
+                    name=f"search-official:{index}",
+                )
+                for index, official_query in enumerate(official_queries)
+            }
+            pending_official = set(official_tasks)
+            try:
+                while pending_official:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    done, pending_official = await asyncio.wait(
+                        pending_official,
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        break
+                    for task in done:
+                        try:
+                            outcome = task.result()
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception as exc:
+                            outcome = ProviderOutcome(
+                                provider="bing",
+                                ok=False,
+                                error_code=f"UNEXPECTED:{type(exc).__name__.upper()}",
+                            )
+                        outcomes.append(outcome)
+                    merged_now = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    selected_now = deduplicate(
+                        rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned)),
+                        self.max_results,
+                    )
+                    distinct_domains_now = {
+                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                        for item in selected_now
+                        if item.get("url")
+                    }
+                    if len(distinct_domains_now - {""}) >= min(3, self.max_results):
+                        selected = selected_now
+                        merged = merged_now
+                        break
+            finally:
+                for task in pending_official:
+                    if not task.done():
+                        task.cancel()
+                if pending_official:
+                    await asyncio.gather(*pending_official, return_exceptions=True)
+
+            merged = [
+                {**item, "provider": outcome.provider}
+                for outcome in outcomes
+                if outcome.ok
+                for item in outcome.results
+            ]
+            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            selected = deduplicate(ranked, self.max_results)
+
         recovery_query = self._recovery_query(cleaned)
         selected_domains = {
             item.get("source_domain") or ""
