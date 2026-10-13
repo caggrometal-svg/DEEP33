@@ -16,6 +16,7 @@ from tools.web_search import (
     _bing_search,
     _cl0q_search,
     _duckduckgo_search,
+    _google_news_search,
     _google_search,
     _mojeek_search,
 )
@@ -111,6 +112,7 @@ class WebOrchestrator:
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
+            "google_news": CircuitState(),
             "cl0q": CircuitState(),
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
@@ -118,6 +120,7 @@ class WebOrchestrator:
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
             "google": self._google,
+            "google_news": self._google_news,
             "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
@@ -137,6 +140,11 @@ class WebOrchestrator:
         # Direct adapter callers keep strict legacy behavior; orchestration keeps
         # candidates so independent results can be ranked against the original query.
         return await _google_search(query, timeout, limit, preserve_candidates=True)
+
+    async def _google_news(self, query: str, timeout: float, limit: int) -> list[dict]:
+        # RSS news fallback is independent of general-search anti-bot HTML.
+        # Non-news queries return immediately without a network request.
+        return await _google_news_search(query, timeout, limit)
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
