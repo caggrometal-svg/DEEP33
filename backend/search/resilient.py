@@ -196,6 +196,20 @@ class WebOrchestrator:
             # English phrases are commonly indexed more consistently by public
             # search pages; rank every candidate against the original user query.
             return f"{locality} weather forecast temperature".strip()
+        health_intent = any(
+            term in lowered
+            for term in (
+                "influenza", "gripe", "salud", "medicina", "health", "medical",
+                "síntomas", "sintomas", "vacuna", "vacunas", "tratamiento", "prevenir",
+            )
+        )
+        if health_intent:
+            core = " ".join(dict.fromkeys(
+                token for token in topics
+                if token not in {"informacion", "información", "oficial", "official", "general"}
+            ))
+            region = "Chile" if any(term in lowered for term in ("chile", "minsal")) else ""
+            return f"{core} {region} salud información oficial OMS OPS CDC MedlinePlus WHO".strip()
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()
@@ -357,8 +371,23 @@ class WebOrchestrator:
                 "actualidad", "breaking", "latest news", "news",
             )
         )
+        health_intent = any(
+            term in normalized_query
+            for term in (
+                "influenza", "gripe", "salud", "medicina", "health", "medical",
+                "síntomas", "sintomas", "vacuna", "vacunas", "tratamiento", "prevenir",
+            )
+        )
+        official_intent = any(
+            term in normalized_query
+            for term in (
+                "oficial", "official", "información pública", "informacion publica",
+                "government", "gubernamental", "sitio oficial", "información oficial",
+            )
+        )
         live_news_intent = is_realtime_query(cleaned) and news_intent
-        required_source_count = min(5 if live_news_intent else 3, self.max_results)
+        source_richness_intent = live_news_intent or health_intent or official_intent
+        required_source_count = min(5 if source_richness_intent else 3, self.max_results)
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -458,6 +487,7 @@ class WebOrchestrator:
         needs_recovery = (
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
+            or len(selected_domains) < required_source_count
             or needs_news_source_diversity
             or needs_provider_diversity
         )
