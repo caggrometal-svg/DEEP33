@@ -439,3 +439,47 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
     assert result["ok"] is True, result
     assert "yahoo" in result["providers"]
     assert result["verification"]["distinct_domains"] >= 3
+
+
+def test_rss_publisher_metadata_preserves_real_domains_behind_google_news_links():
+    import tools.web_search as module
+    from backend.search.engine import deduplicate, rank_results
+
+    feed = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel>
+      <item>
+        <title>Política en Chile hoy: gobierno anuncia medidas</title>
+        <link>https://news.google.com/rss/articles/article-emol</link>
+        <description>Política y gobierno de Chile, medidas públicas anunciadas hoy.</description>
+        <source url="https://www.emol.com/">Emol</source>
+      </item>
+      <item>
+        <title>Política de Chile: Congreso y gobierno informan cambios</title>
+        <link>https://news.google.com/rss/articles/article-latercera</link>
+        <description>Últimas noticias de política y gobierno en Chile.</description>
+        <source url="https://www.latercera.com/">La Tercera</source>
+      </item>
+      <item>
+        <title>Gobierno de Chile comunica nuevas medidas políticas</title>
+        <link>https://news.google.com/rss/articles/article-biobio</link>
+        <description>Información actual de Chile y del gobierno.</description>
+        <source url="https://www.biobiochile.cl/">BioBioChile</source>
+      </item>
+    </channel></rss>"""
+
+    response = httpx.Response(
+        200,
+        text=feed,
+        request=httpx.Request("GET", "https://news.google.com/rss/search"),
+    )
+    parsed = asyncio.run(module._parse_bing_rss(response, 10))
+    assert [item["source_domain"] for item in parsed] == [
+        "www.emol.com",
+        "www.latercera.com",
+        "www.biobiochile.cl",
+    ]
+    assert all(item["url"].startswith("https://news.google.com/") for item in parsed)
+
+    ranked = rank_results("política Chile hoy últimas noticias", parsed, realtime=True)
+    selected = deduplicate(ranked, 5)
+    assert len({item["source_domain"] for item in selected}) >= 3
