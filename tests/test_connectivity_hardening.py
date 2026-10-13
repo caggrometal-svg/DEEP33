@@ -182,7 +182,7 @@ def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
     ):
         source = read(path)
         headers = source.split("function providerRequestHeaders(", 1)[1].split(
-            "\\nconst PROVIDER_POLICY_BLOCK_PATTERNS", 1
+            "\nconst PROVIDER_POLICY_BLOCK_PATTERNS", 1
         )[0]
         assert "const fallbackSessionId = internalBackendFallback && !sessionId" in headers
         assert '"X-DEEP33-Session-Id": fallbackSessionId' in headers
