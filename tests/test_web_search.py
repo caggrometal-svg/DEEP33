@@ -407,12 +407,14 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
         }
     ]
     yahoo_calls = {"count": 0}
+    yahoo_queries = []
 
     async def two_domains(_query, _timeout, _limit):
         return partial_results
 
-    async def yahoo_provider(_query, _timeout, _limit):
+    async def yahoo_provider(query, _timeout, _limit):
         yahoo_calls["count"] += 1
+        yahoo_queries.append(query)
         return yahoo_results
 
     async def exercise():
@@ -432,6 +434,8 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
 
     result = asyncio.run(exercise())
     assert yahoo_calls["count"] == 1
+    assert "ChileAtiende" in yahoo_queries[0]
+    assert "gob.cl" in yahoo_queries[0]
     assert result["ok"] is True, result
     assert "yahoo" in result["providers"]
     assert result["verification"]["distinct_domains"] >= 3
