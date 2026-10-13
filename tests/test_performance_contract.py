@@ -78,6 +78,7 @@ def test_phase_11_performance_trace_contract_exists():
         "T9_PERSISTENCE_FINISHED",
         "p50_ms",
         "p95_ms",
+        "p99_ms",
     ):
         assert marker in source
 
@@ -158,6 +159,7 @@ def test_performance_trace_exposes_backend_latency_metrics():
     assert "backend_total_ms" in snapshot["summary"]
     assert "p50_ms" in snapshot["summary"]["backend_total_ms"]
     assert "p95_ms" in snapshot["summary"]["backend_total_ms"]
+    assert "p99_ms" in snapshot["summary"]["backend_total_ms"]
 
 
 
