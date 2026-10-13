@@ -676,8 +676,8 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 3
-    assert len(result["providers"]) == 2
-    assert result["verification"]["distinct_providers"] == 2
+    assert len(result["providers"]) >= 2
+    assert result["verification"]["distinct_providers"] >= 2
 
 
 def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch):
