@@ -17,7 +17,7 @@ on:
 env:
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-  TERTIARY_URL: https://deep33-backend.onrender.com
+  TERTIARY_URL: https://iacgrometal-svg-production.up.railway.app
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
 
@@ -128,7 +128,7 @@ jobs:
             echo "TERTIARY_WEB_STATUS_ATTEMPT=$attempt"
             body="$(curl -sS --connect-timeout 8 --max-time 30 -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_CI_TOKEN" "$TERTIARY_URL/v1/web/status" || true)"
             printf '%s\n' "$body"
-            if printf '%s' "$body" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.4.0" and .tool_loop_enabled==true' >/dev/null 2>&1; then
+            if printf '%s' "$body" | jq -e '.engine=="DEEP33 Search Engine" and .engine_version=="1.3.0" and .tool_loop_enabled==true' >/dev/null 2>&1; then
               ready=1
               break
             fi
@@ -172,7 +172,7 @@ jobs:
     env:
       DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
       DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-      DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
+      DEEP33_TERTIARY_URL: https://iacgrometal-svg-production.up.railway.app
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
@@ -238,7 +238,7 @@ jobs:
     env:
       DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
       DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-      DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
+      DEEP33_TERTIARY_URL: https://iacgrometal-svg-production.up.railway.app
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
