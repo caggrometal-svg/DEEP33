@@ -331,7 +331,8 @@ def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None
         assert '"X-Idempotency-Key": idempotencyKey' in source
         assert '"X-DEEP33-Skip-Web-Tools": "true"' in source
     assert 'leaseContext?.sessionId || sessionId' in secondary
-    assert 'idempotencyContext?.sessionId || ""' in secondary
+    assert 'idempotencyContext?.sessionId || fallbackSessionId || ""' in secondary
+    assert 'fallbackSessionId = ""' in secondary
     assert 'leaseContext?.sessionId || ""' in primary
     assert 'leaseContext?.idempotencyKey || ""' in primary
     assert 'requestId + "-stream-fallback"' in primary

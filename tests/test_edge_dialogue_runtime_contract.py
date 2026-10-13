@@ -167,4 +167,62 @@ def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "realtimeNewsPlan &&" in search
 
+def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        search = source.split("async function edgeSearch(", 1)[1].split(
+            "async function readinessResponse()", 1
+        )[0]
+        assert 'const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
+        assert "await fetch(railwaySearchUrl" in search
+        assert '"Authorization": userAuthorization' in search
+        assert "AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS))" in search
+        assert 'fallback_path: "railway"' in search
+        assert 'logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response)' in search
+        assert "if (!UPSTREAM" not in search
+        assert "fetchUpstream(" not in search
 
+
+
+def test_edge_inference_probe_forwards_session_to_internal_backend() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        stream_start = source.index("async function streamEdgeAI(")
+        stream_end = source.index("function normalizePersonality(", stream_start)
+        stream = source[stream_start:stream_end]
+        probe_start = source.index("async function probeInference(")
+        probe_end = source.index("async function probeMemory(", probe_start)
+        probe = source[probe_start:probe_end]
+
+        assert 'fallbackSessionId = ""' in stream
+        assert 'idempotencyContext?.sessionId || fallbackSessionId || ""' in stream
+        assert "async function probeInference(sessionId: string" in probe
+        assert "null, userAuthorization, sessionId" in probe
+
+
+def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_sources() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        nav_start = source.index("async function buildNavigatedWebEvidence(")
+        nav_end = source.find("\nasync function readJson(", nav_start + 1)
+        if nav_end < 0:
+            nav_end = source.find("\nconst EDGE_AI_REQUIRES_AUTH", nav_start + 1)
+        assert nav_end > nav_start
+        navigation = source[nav_start:nav_end]
+        assert "excludedUrls: Set<string> = new Set<string>()" in navigation
+        assert "excludedDomains: Set<string> = new Set<string>()" in navigation
+        assert "attempted_urls: [...attemptedUrls]" in navigation
+        assert "attempted_domains: [...attemptedDomains]" in navigation
+        assert "scheduledDomains.has(hostname)" in navigation
+        assert "excludedDomains.has(hostname)" in navigation
+
+        chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
+        chat_end = source.index("if (!edgeAIConfigured())", chat_start)
+        chat = source[chat_start:chat_end]
+        assert 'search.fallback_path !== "railway"' in chat
+        assert "buildWebSearchQuery(query)," in chat
+        assert "userAuthorization," in chat
+        assert "recoverySearch," in chat
+        assert "!excludedDomains.has(hostname)" in chat
+        assert "const sources = readableSources;" in chat
+        assert "if (sources.length < MIN_READABLE_WEB_SOURCES)" in chat
