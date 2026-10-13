@@ -2822,6 +2822,28 @@ async function publicWebSearch(query: string) {
   }
   // One final alternate-topic query prevents transient empty RSS responses from
   // turning into a user-facing 503. It only runs after bounded provider retries fail.
+  const distinctDomainCount = () => new Set(results.flatMap((item) => {
+    try { return [new URL(String(item.url || "")).hostname.toLowerCase()]; } catch { return []; }
+  })).size;
+  if (realtimeNewsPlan && results.length > 0 && distinctDomainCount() < 3) {
+    // Restore domain diversity with two already-planned query variants only when
+    // primary news feeds and independent indexes return fewer than three domains.
+    const diversityQueries = plan.queries.slice(1, 3);
+    const diversityBatches = await Promise.all(diversityQueries.map(async (query) => ({
+      query,
+      data: await runPublicWebSearchQuery(
+        query,
+        true,
+        Math.min(2400, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>,
+    })));
+    for (const batch of diversityBatches) {
+      batches.push(batch);
+      mergeBatch(batch);
+    }
+    results = filteredResults();
+  }
+
   if (realtimeNewsPlan && results.length < 1) {
     const locality = edgeExtractLocality(plan.original);
     const rescueQuery = edgeBroadWorldNewsQuery(plan.original)
