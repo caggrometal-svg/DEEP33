@@ -105,6 +105,7 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
 
     production_e2e = read(".github/workflows/production-e2e.yml")
     assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
+    assert "https://iac33-fastapi-edge-production.up.railway.app" in production_e2e
     assert "http://" not in production_e2e
     assert "c-33.blitz.cloud" not in production_e2e.lower()
 
