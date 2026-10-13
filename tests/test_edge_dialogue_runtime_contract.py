@@ -200,6 +200,28 @@ def test_edge_inference_probe_forwards_session_to_internal_backend() -> None:
         assert "null, userAuthorization, sessionId" in probe
 
 
+def test_web_completion_recovery_is_railway_first_and_globally_bounded() -> None:
+    source = EDGE_FILES[0].read_text(encoding="utf-8")
+    call_start = source.index("async function callEdgeAI(")
+    call_end = source.index("async function completeViaStreamFallback(", call_start)
+    call = source[call_start:call_end]
+
+    assert "maxTotalTimeMs = 0" in call
+    assert "preferRailwayBackend = false" in call
+    assert "const totalDeadline = maxTotalTimeMs > 0" in call
+    assert "lastError = \"EDGE_AI_RECOVERY_DEADLINE_EXCEEDED\"" in call
+    assert "Math.min(configuredProviderTimeoutMs, Math.floor(remainingProviderBudgetMs))" in call
+    assert "providers.sort(" in call
+    assert "Number(isRailwayBackendProvider(b)) - Number(isRailwayBackendProvider(a))" in call
+
+    recovery_start = source.index("const recovered = await callEdgeAI(")
+    recovery_end = source.index("const recoveredText =", recovery_start)
+    recovery = source[recovery_start:recovery_end]
+    assert "EDGE_AI_WEB_RECOVERY_TIMEOUT_MS" in recovery
+    assert "true," in recovery
+    assert "const EDGE_AI_WEB_RECOVERY_TIMEOUT_MS = 12000;" in source
+
+
 def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_sources() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
