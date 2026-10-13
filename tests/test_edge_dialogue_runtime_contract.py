@@ -148,17 +148,16 @@ def test_provider_failover_switches_without_retry_waits() -> None:
 
 
 def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
-    function_names = (
-        "async function publicWebSearchUncached(",
-        "async function publicWebSearch(query: string)",
-    )
-    for path, function_name in zip(EDGE_FILES, function_names):
+    for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
+        uncached = "async function publicWebSearchUncached("
+        legacy = "async function publicWebSearch(query: string)"
+        function_name = uncached if uncached in source else legacy
         start = source.index(function_name)
         end = (
-            source.index("async function edgeSearch(", start)
-            if "publicWebSearch(query: string)" in function_name
-            else source.index("function edgeSearchCacheKey(", start)
+            source.index("function edgeSearchCacheKey(", start)
+            if function_name == uncached
+            else source.index("async function edgeSearch(", start)
         )
         search = source[start:end]
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in search
