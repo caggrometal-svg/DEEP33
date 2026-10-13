@@ -18,7 +18,7 @@ env:
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-  TERTIARY_URL: https://iac33-fastapi-edge-production.up.railway.app
+  TERTIARY_URL: https://deep33-backend.onrender.com
 
 jobs:
   backend:
