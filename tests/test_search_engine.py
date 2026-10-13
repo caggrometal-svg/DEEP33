@@ -825,20 +825,29 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
     async def fake_run_query(self, providers, planned_query, **kwargs):
         queries.append(planned_query)
         return (
-            [("google_news", [
-                {
-                    "title": "Chile anuncia nuevas medidas",
-                    "url": "https://news.example/chile-medidas",
-                    "snippet": "Noticia actual publicada hoy en Chile.",
-                },
-                {
-                    "title": "Gobierno de Chile informa nuevos cambios",
-                    "url": "https://report.example/chile-cambios",
-                    "snippet": "Actualización reciente de una fuente informativa.",
-                },
-            ])],
+            [
+                ("google_news", [
+                    {
+                        "title": "Chile anuncia nuevas medidas",
+                        "url": "https://news.example/chile-medidas",
+                        "snippet": "Noticia actual publicada hoy en Chile.",
+                    },
+                    {
+                        "title": "Gobierno de Chile informa nuevos cambios",
+                        "url": "https://report.example/chile-cambios",
+                        "snippet": "Actualización reciente de una fuente informativa.",
+                    },
+                ]),
+                ("bing", [
+                    {
+                        "title": "Congreso publica nuevas medidas en Chile",
+                        "url": "https://congreso.example/chile-medidas",
+                        "snippet": "Actualización reciente sobre el Congreso de Chile y nuevas medidas.",
+                    },
+                ]),
+            ],
             [],
-            ["google_news"],
+            ["google_news", "bing"],
         )
 
     monkeypatch.setattr(SearchEngine, "_run_query", fake_run_query)

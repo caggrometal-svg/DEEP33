@@ -528,6 +528,9 @@ def rank_results(
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             topic_evidence = pattern.sub(replacement, topic_evidence)
         topic_evidence_tokens = _token_set(topic_evidence)
+        if chile_current_news_intent and "politics" not in topic_evidence_tokens:
+            # A Chilean weather page is not evidence for current Chilean politics.
+            continue
         topic_hits = len(set(topic_tokens) & topic_evidence_tokens)
         required_topic_hits = min(2, len(topic_tokens))
         if not realtime and topic_tokens and topic_hits < required_topic_hits:

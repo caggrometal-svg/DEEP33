@@ -171,8 +171,8 @@ def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
     assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
     assert 'function isInternalBackendProvider(provider: EdgeAIProvider): boolean' in source
     assert 'EDGE_AI_UPSTREAM_URLS.some((base) =>' in source
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
-    assert 'const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")' in source
+    assert 'const internalBackendFallback = isInternalBackendProvider(provider);' in source
+    assert 'const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
 def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
@@ -184,7 +184,7 @@ def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
         headers = source.split("function providerRequestHeaders(", 1)[1].split(
             "\\nconst PROVIDER_POLICY_BLOCK_PATTERNS", 1
         )[0]
-        assert "const fallbackSessionId = renderBackendFallback && !sessionId" in headers
+        assert "const fallbackSessionId = internalBackendFallback && !sessionId" in headers
         assert '"X-DEEP33-Session-Id": fallbackSessionId' in headers
         assert '"X-DEEP33-Session-Id": sessionId' in headers
 
