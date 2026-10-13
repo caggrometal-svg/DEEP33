@@ -105,7 +105,7 @@ def test_edge_fallback_accepts_native_deep33_response_text() -> None:
 def test_internal_render_failover_uses_circuit_breaker_when_redundant() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
-        assert "const criticalRenderFallback =" in source
+        assert "const criticalInternalFallback =" in source
         assert "providers.length === 1 && isInternalBackendProvider(provider)" in source
         assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
 
