@@ -340,8 +340,8 @@ def _host(url: str) -> str:
     return (urlparse(url).hostname or "").lower().rstrip(".")
 
 
-def _domain_quality(url: str) -> float:
-    host = _host(url)
+def _domain_quality(url: str, source_domain: str | None = None) -> float:
+    host = str(source_domain or _host(url)).casefold().rstrip(".")
     if not host:
         return 0.0
     exact = {
@@ -366,6 +366,14 @@ def _evidence_text(item: dict) -> str:
     return f'{item.get("title", "")} {item.get("snippet", "")}'.lower()
 
 
+def _source_host(item: dict) -> str:
+    """Use a feed-provided publisher host when it is valid, otherwise the result URL host."""
+    domain = str(item.get("source_domain") or "").strip().casefold().rstrip(".")
+    if domain and re.fullmatch(r"[a-z0-9.-]{1,253}", domain) and "." in domain:
+        return domain
+    return _host(str(item.get("url") or ""))
+
+
 def _similarity(left: dict, right: dict) -> float:
     a = _token_set(_evidence_text(left))
     b = _token_set(_evidence_text(right))
@@ -377,7 +385,7 @@ def _similarity(left: dict, right: dict) -> float:
 def _corroboration_counts(results: list[dict]) -> dict[int, int]:
     counts = {id(item): 0 for item in results}
     prepared = [
-        (_host(str(item.get("url") or "")), _token_set(_evidence_text(item)))
+        (_source_host(item), _token_set(_evidence_text(item)))
         for item in results
     ]
     for index, (left_host, left_tokens) in enumerate(prepared):
@@ -428,7 +436,7 @@ def rank_results(
         url = str(item.get("url") or "").strip()
         if not url:
             continue
-        if realtime and _host(url).endswith("wikipedia.org"):
+        if realtime and _source_host(item).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
         if realtime and re.search(
@@ -440,10 +448,13 @@ def rank_results(
             # they are not independent newsroom sources for a current-news answer.
             continue
         parsed_url = urlparse(url)
+        source_host = _source_host(item)
         anchor_evidence = (
             _evidence_text(item)
             + " "
             + (parsed_url.hostname or "")
+            + " "
+            + source_host
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
@@ -465,7 +476,7 @@ def rank_results(
                 )
             )
         )
-        host = (parsed_url.hostname or "").casefold()
+        host = source_host
         if chile_current_news_intent:
             # A Chilean ccTLD is reliable locality metadata even when a result
             # headline omits the country name. Topic relevance remains mandatory.
@@ -492,7 +503,7 @@ def rank_results(
             ) is not None
         )
         if chile_public_info_intent:
-            host = (parsed_url.hostname or "").casefold()
+            host = source_host
             if "chile" not in _token_set(anchor_evidence) and not host.endswith(".cl"):
                 continue
         normalized_anchor_evidence = re.sub(
@@ -556,7 +567,7 @@ def rank_results(
         snippet_score = (
             len(query_token_set & snippet_tokens) / max(1, len(query_token_set))
         )
-        quality = _domain_quality(url)
+        quality = _domain_quality(url, source_host)
         freshness = _freshness_score(item)
         query_match = max(
             _text_score(query_tokens, item),
@@ -612,7 +623,7 @@ def rank_results(
             "corroboration_count": support.get(id(item), 0),
             "corroborated": support.get(id(item), 0) >= 1,
             "anchor_hits": anchor_hits,
-            "source_domain": host,
+            "source_domain": source_host,
         })
     ranked.sort(
         key=lambda item: (
@@ -646,7 +657,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     for item in results:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
-        domain = _host(url)
+        domain = _source_host(item)
         title_key = (domain, title) if title else None
         if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
@@ -664,7 +675,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     # Pass 2: fill remaining slots, capped by two results per domain.
     domain_counts: dict[str, int] = {}
     for item in output:
-        domain = _host(item["url"])
+        domain = _source_host(item)
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
     for item in results:

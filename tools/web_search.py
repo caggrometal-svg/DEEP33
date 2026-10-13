@@ -523,6 +523,9 @@ def _normalise_results(results, limit):
             "url": url[:2000],
             "snippet": snippet[:1500],
         }
+        source_domain = str(item.get("source_domain") or "").strip().casefold().rstrip(".")
+        if source_domain and re.fullmatch(r"[a-z0-9.-]{1,253}", source_domain) and "." in source_domain:
+            normalized["source_domain"] = source_domain
         published = (
             item.get("published_at")
             or item.get("published_date")
@@ -735,8 +738,23 @@ async def _parse_bing_rss(response, max_results):
                 or ""
             ).strip()
             snippet = _plain_rss_snippet(snippet)
+            source_node = item.find("source")
+            if source_node is None:
+                source_node = item.find("{*}source")
+            source_domain = ""
+            if source_node is not None:
+                source_url = (source_node.attrib.get("url") or "").strip()
+                if source_url:
+                    try:
+                        safe_source_url = _safe_search_result_url(source_url)
+                        source_domain = (urlparse(safe_source_url).hostname or "").casefold().rstrip(".")
+                    except Exception:
+                        source_domain = ""
             if title and url:
-                rss_results.append({"title": title, "url": url, "snippet": snippet})
+                result = {"title": title, "url": url, "snippet": snippet}
+                if source_domain:
+                    result["source_domain"] = source_domain
+                rss_results.append(result)
         normalized = _normalise_results(rss_results, max_results)
         if not normalized:
             root_name = str(root.tag).rsplit("}", 1)[-1].lower()
