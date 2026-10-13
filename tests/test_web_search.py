@@ -210,3 +210,14 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
     assert result["ok"] is True
     assert "Chile política gobierno Congreso elecciones actualidad noticias" in recovered_queries
     assert result["verification"]["distinct_domains"] >= 5
+
+
+def test_chile_government_site_recovery_uses_official_portal_terms():
+    from backend.search.resilient import WebOrchestrator
+
+    assert WebOrchestrator._recovery_query(
+        "sitio gubernamental Chile información pública"
+    ) == (
+        "Chile official government public services information "
+        "transparency open data ChileAtiende gob.cl"
+    )

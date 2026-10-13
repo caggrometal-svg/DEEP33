@@ -304,6 +304,14 @@ _TOPIC_PHRASE_ALIASES = (
         re.compile(r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies))\b", re.IGNORECASE),
         "politics",
     ),
+    (
+        re.compile(r"\b(?:gubernamental(?:es)?|government(?:al)?|governments?|gobierno|gobiernos|gob)\b", re.IGNORECASE),
+        "government",
+    ),
+    (
+        re.compile(r"\b(?:p[uú]blic[oa]s?|publicly|public|transparencia|transparency|open\s+data|datos\s+abiertos)\b", re.IGNORECASE),
+        "public",
+    ),
 )
 
 
@@ -436,6 +444,13 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
+        # Preserve an explicit country constraint for non-realtime and broad portal
+        # searches too. A random publisher from another country must not win merely
+        # because it discusses the same generic topic terms.
+        if "chile" in _token_set(query):
+            host = (parsed_url.hostname or "").casefold()
+            if "chile" not in _token_set(anchor_evidence) and not host.endswith(".cl"):
+                continue
         normalized_anchor_evidence = re.sub(
             r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
             " clima ",

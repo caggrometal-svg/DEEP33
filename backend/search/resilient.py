@@ -168,6 +168,20 @@ class WebOrchestrator:
         compact = " ".join(dict.fromkeys(topics))
         lowered = cleaned.casefold()
 
+        government_site_intent = any(
+            term in lowered
+            for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            )
+        )
+        if "chile" in lowered and government_site_intent:
+            return (
+                "Chile official government public services information "
+                "transparency open data ChileAtiende gob.cl"
+            )
+
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.
         smartphone_intent = any(term in lowered for term in (

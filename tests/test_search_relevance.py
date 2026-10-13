@@ -280,3 +280,37 @@ def test_realtime_santiago_weather_matches_weather_synonyms_but_not_city_news() 
         "https://weather.example.net/Santiago-Chile",
         "https://clima.example.cl/temperaturas/Santiago",
     }
+
+
+def test_chile_government_portal_query_ranks_local_public_sources_not_foreign_publishers() -> None:
+    query = "sitio gubernamental Chile información pública"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Gobierno de Chile - Servicios públicos",
+                "url": "https://www.gob.cl/",
+                "snippet": "Información de servicios públicos oficiales del Gobierno de Chile.",
+            },
+            {
+                "title": "ChileAtiende - trámites y beneficios del Gobierno de Chile",
+                "url": "https://www.chileatiende.gob.cl/",
+                "snippet": "Información sobre servicios públicos en Chile.",
+            },
+            {
+                "title": "Datos Abiertos del Gobierno de Chile",
+                "url": "https://www.datos.gob.cl/",
+                "snippet": "Catálogo de información pública y datos abiertos oficiales.",
+            },
+            {
+                "title": "Noticias de gobierno y servicios públicos",
+                "url": "https://cuscatlanhoy.com/",
+                "snippet": "Información pública y servicios del gobierno en El Salvador.",
+            },
+        ],
+    )
+    assert {item["url"] for item in ranked} == {
+        "https://www.gob.cl/",
+        "https://www.chileatiende.gob.cl/",
+        "https://www.datos.gob.cl/",
+    }
