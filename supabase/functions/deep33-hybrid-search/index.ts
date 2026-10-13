@@ -174,7 +174,17 @@ Deno.serve(async (req) => {
     }
 
     if (action === "ping") {
-      return json({ ok: true, service: "deep33-hybrid-search", version: 2, embedding_model: "Supabase/gte-small", storage_dimensions: STORAGE_VECTOR_DIMENSIONS });
+      const probe = await embedText("DEEP33 semantic embedding runtime readiness probe");
+      return json({
+        ok: true,
+        service: "deep33-hybrid-search",
+        version: 2,
+        embedding_model: "Supabase/gte-small",
+        model_dimensions: MODEL_VECTOR_DIMENSIONS,
+        storage_dimensions: STORAGE_VECTOR_DIMENSIONS,
+        embedding_smoke: probe.length === STORAGE_VECTOR_DIMENSIONS &&
+          probe.every((value) => Number.isFinite(value)),
+      });
     }
 
     return json({ error: "ACTION_NOT_SUPPORTED" }, 400);
