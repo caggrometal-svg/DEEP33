@@ -87,7 +87,7 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
 
 def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     expected = {
-        "https://deep33-backend.onrender.com",
+        "https://iac33-fastapi-edge-production.up.railway.app",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
     }
