@@ -439,6 +439,15 @@ class WebOrchestrator:
             loop.time() + max(0.05, self.global_budget_seconds * 0.55),
         )
         provider_query = self._provider_query(cleaned)
+        lowered_cleaned = cleaned.casefold()
+        chile_public_info_intent = (
+            "chile" in lowered_cleaned
+            and any(term in lowered_cleaned for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            ))
+        )
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -448,6 +457,22 @@ class WebOrchestrator:
             )
             for provider in self.providers
         }
+        if chile_public_info_intent:
+            # Start independent official-domain discovery in the primary wave so
+            # anti-bot delays from general indexes cannot consume the recovery
+            # budget before these live searches are even attempted.
+            official_queries = (
+                "site:chileatiende.gob.cl Chile servicios trámites información pública",
+                "site:datos.gob.cl Chile datos abiertos información pública",
+                "site:cplt.cl Chile transparencia información pública",
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider("bing", official_query),
+                    name=f"search:bing-official-{index}",
+                )
+                for index, official_query in enumerate(official_queries)
+            })
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
         standard_ready_deadline: float | None = None
@@ -509,6 +534,7 @@ class WebOrchestrator:
                     break
                 if (
                     enough_sources
+                    and not chile_public_info_intent
                     and not is_realtime_query(cleaned)
                     and standard_ready_deadline is None
                 ):
@@ -540,15 +566,6 @@ class WebOrchestrator:
         # sparse, fan out a few distinct *search queries* to independent official
         # Chilean domains, still through the live provider and still ranked against
         # the user's untouched query. This is discovery, not synthetic evidence.
-        lowered_cleaned = cleaned.casefold()
-        chile_public_info_intent = (
-            "chile" in lowered_cleaned
-            and any(term in lowered_cleaned for term in (
-                "sitio gubernamental", "sitio oficial", "información pública",
-                "informacion publica", "public information", "portal del gobierno",
-                "portal gubernamental", "datos abiertos", "transparencia",
-            ))
-        )
         selected_domains_before_official = {
             str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
             for item in selected
