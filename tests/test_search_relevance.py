@@ -314,3 +314,18 @@ def test_chile_government_portal_query_ranks_local_public_sources_not_foreign_pu
         "https://www.chileatiende.gob.cl/",
         "https://www.datos.gob.cl/",
     }
+
+
+def test_generic_chile_named_locality_results_are_not_rejected_by_government_portal_guard() -> None:
+    results = rank_results(
+        "clima Las Condes Chile",
+        [
+            {
+                "title": "Pronóstico del tiempo en Las Condes",
+                "url": "https://weather.example/las-condes-live",
+                "snippet": "Temperaturas actuales, lluvia y viento en Las Condes.",
+            }
+        ],
+        realtime=True,
+    )
+    assert [item["url"] for item in results] == ["https://weather.example/las-condes-live"]

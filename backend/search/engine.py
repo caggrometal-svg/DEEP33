@@ -444,10 +444,22 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
-        # Preserve an explicit country constraint for non-realtime and broad portal
-        # searches too. A random publisher from another country must not win merely
-        # because it discusses the same generic topic terms.
-        if "chile" in _token_set(query):
+        # For government/public-information portal intents, country locality is
+        # a hard constraint. Keep general locality and realtime searches governed by
+        # their existing anchor rules so named-city results on international domains
+        # are not incorrectly discarded.
+        query_folded = str(query or "").casefold()
+        chile_public_info_intent = (
+            "chile" in _token_set(query)
+            and re.search(
+                r"\b(?:sitio\s+gubernamental|sitio\s+oficial|informaci[oó]n\s+p[uú]blica|"
+                r"public\s+information|portal\s+del\s+gobierno|portal\s+gubernamental|"
+                r"datos\s+abiertos|transparencia)\b",
+                query_folded,
+                re.IGNORECASE,
+            ) is not None
+        )
+        if chile_public_info_intent:
             host = (parsed_url.hostname or "").casefold()
             if "chile" not in _token_set(anchor_evidence) and not host.endswith(".cl"):
                 continue
