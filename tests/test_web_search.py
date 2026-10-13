@@ -146,3 +146,12 @@ def test_google_provider_returns_parsed_candidates_for_central_relevance_filter(
     assert results[0]["title"] == "Santiago Chile Weather Forecast"
     assert results[0]["url"] == "https://weather.example/Santiago-Chile"
 
+
+
+def test_smartphone_recovery_query_uses_common_web_search_terms():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "producto tecnológico smartphone actual especificaciones"
+    assert WebOrchestrator._recovery_query(query) == (
+        "smartphone specifications current models comparison review"
+    )

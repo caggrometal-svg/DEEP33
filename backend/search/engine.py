@@ -285,7 +285,9 @@ _TOPIC_PHRASE_ALIASES = (
     # Normalize common industry abbreviations before strict topic filtering.
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
-    (re.compile(r"\b(?:tech|technology|technologies|technological)\b", re.IGNORECASE), "technology"),
+    (re.compile(r"\b(?:tech|technology|technologies|technological|tecnolog[ií]a|tecnol[oó]gic[oa]s?)\b", re.IGNORECASE), "technology"),
+    (re.compile(r"\b(?:smart\s?phones?|mobile\s+phones?|cell\s+phones?|tel[eé]fonos?\s+m[oó]viles?|celulares?)\b", re.IGNORECASE), "smartphone"),
+    (re.compile(r"\b(?:especificaci[oó]n(?:es)?|caracter[ií]sticas|technical\s+specifications?|specs?)\b", re.IGNORECASE), "specifications"),
     (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
     (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
     (

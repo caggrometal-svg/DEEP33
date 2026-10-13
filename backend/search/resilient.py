@@ -168,6 +168,15 @@ class WebOrchestrator:
         compact = " ".join(dict.fromkeys(topics))
         lowered = cleaned.casefold()
 
+        # Reframe generic current smartphone/product queries into common web-search
+        # vocabulary. Results are still ranked against the untouched original query.
+        smartphone_intent = any(term in lowered for term in (
+            "smartphone", "smart phone", "mobile phone", "cell phone",
+            "teléfono móvil", "telefono movil", "celular",
+        ))
+        if smartphone_intent:
+            return "smartphone specifications current models comparison review"
+
         if any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico", "weather", "forecast")):
             locality = "Santiago Chile" if "santiago" in lowered else compact
             # English phrases are commonly indexed more consistently by public

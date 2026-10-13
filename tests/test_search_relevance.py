@@ -196,3 +196,28 @@ def test_search_prefers_readable_html_over_pdf_unless_pdf_is_requested() -> None
 
     pdf_requested = rank_results("artificial intelligence research PDF", results)
     assert pdf_requested[0]["url"] == "https://research.example.edu/files/ai-research.pdf"
+
+
+def test_realtime_smartphone_query_matches_english_specs_evidence_without_weakening_relevance() -> None:
+    query = "producto tecnológico smartphone actual especificaciones"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Best smartphones: current models and specifications",
+                "url": "https://www.techradar.com/phones/best-phones",
+                "snippet": (
+                    "Compare smartphone specifications, prices, camera and battery "
+                    "for current mobile technology models."
+                ),
+            },
+            {
+                "title": "Top laptops and computer deals",
+                "url": "https://www.example.com/laptop-deals",
+                "snippet": "Current prices and technical specifications for laptop computers.",
+            },
+        ],
+        realtime=True,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["url"] == "https://www.techradar.com/phones/best-phones"
