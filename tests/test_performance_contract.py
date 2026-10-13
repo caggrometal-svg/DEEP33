@@ -236,7 +236,7 @@ def test_sse_frames_are_forwarded_without_unneeded_reserialization():
 def test_edge_runtime_performance_contract():
     source = (ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts").read_text(encoding="utf-8")
     assert '|| "25000"' in source
-    assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800" in source
+    assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 5280" in source
     assert "EDGE_SEARCH_PROVIDER_TIMEOUT_MS" in source
     assert "edgeSearchCache" in source
     assert "edgeSearchInflight" in source
