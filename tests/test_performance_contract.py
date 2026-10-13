@@ -355,7 +355,7 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
         ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
     ).read_text(encoding="utf-8")
     assert "const batchSize = 4;" in source
-    assert "const sourceReadTimeoutMs = 2500;" in source
+    assert "const sourceReadTimeoutMs = 4000;" in source
     assert "const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);" in source
     assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
     assert "isSearchWrapper(a.url)" in source
