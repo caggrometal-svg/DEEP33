@@ -311,3 +311,38 @@ def test_extracts_json_api_evidence_as_readable_text() -> None:
     assert title == ""
     assert '"temperature_2m": 21.4' in text
     assert "2026-10-13T01:00" in text
+
+
+def test_fetch_page_enforces_one_total_budget_across_direct_and_reader(monkeypatch) -> None:
+    import asyncio
+    import time
+    import pytest
+    from tools import web_fetch
+
+    url = "https://example.com/slow-reader"
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda candidate: candidate)
+
+    async def slow_pipeline(**kwargs):
+        await asyncio.sleep(2.0)
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "late",
+            "text": "late evidence " * 20,
+            "content_type": "text/plain",
+            "bytes": 100,
+            "redirects": 0,
+            "retrieved_at": "2026-10-13T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(web_fetch, "_fetch_with_reader_fallback", slow_pipeline)
+    web_fetch._FETCH_CACHE.clear()
+    web_fetch._FETCH_INFLIGHT.clear()
+
+    started = time.perf_counter()
+    with pytest.raises(web_fetch.WebFetchError, match="WEB_FETCH_TIMEOUT"):
+        asyncio.run(web_fetch.fetch_page(url, timeout_seconds=1.0, fresh=True))
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.1

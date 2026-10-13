@@ -544,6 +544,34 @@ async def _fetch_with_reader_fallback(
         raise direct_error from reader_error
 
 
+async def _fetch_with_total_budget(
+    *,
+    original_url: str,
+    current_url: str,
+    timeout_seconds: float,
+    max_redirects: int,
+    max_text_chars: int,
+    user_agent: str,
+) -> dict:
+    """Keep direct fetch + Reader fallback inside one caller-visible deadline."""
+    safety_margin = min(0.35, max(0.10, timeout_seconds * 0.10))
+    budget_seconds = max(0.75, timeout_seconds - safety_margin)
+    try:
+        return await asyncio.wait_for(
+            _fetch_with_reader_fallback(
+                original_url=original_url,
+                current_url=current_url,
+                timeout_seconds=timeout_seconds,
+                max_redirects=max_redirects,
+                max_text_chars=max_text_chars,
+                user_agent=user_agent,
+            ),
+            timeout=budget_seconds,
+        )
+    except asyncio.TimeoutError as exc:
+        raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
+
+
 async def _fetch_page_uncached(
     *,
     original_url: str,
@@ -616,7 +644,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
         return copy.deepcopy(await inflight)
 
     task = asyncio.create_task(
-        _fetch_with_reader_fallback(
+        _fetch_with_total_budget(
             original_url=original_url,
             current_url=current_url,
             timeout_seconds=timeout_seconds,
