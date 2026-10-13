@@ -155,6 +155,11 @@ class WebOrchestrator:
         # collapsing diverse publisher coverage around the user's exact wording.
         # Non-news queries return immediately without a network request.
         news_query = self._recovery_query(query) if _looks_realtime_news(query) else query
+        # Recovery can intentionally remove filler such as "situación actual".
+        # Keep an explicit realtime-news marker so the Google News adapter does
+        # not reject the broadened query before issuing the RSS request.
+        if _looks_realtime_news(query) and not _looks_realtime_news(news_query):
+            news_query = f"{news_query} noticias actualidad".strip()
         return await _google_news_search(news_query, timeout, limit)
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
@@ -241,9 +246,8 @@ class WebOrchestrator:
         )
         if "chile" in lowered and government_site_intent:
             return (
-                "Chile gobierno government public information servicios públicos trámites "
-                "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
-                "Consejo para la Transparencia cplt.cl"
+                "ChileAtiende datos.gob.cl cplt.cl gob.cl Chile "
+                "public information government transparency servicios públicos"
             )
 
         wikipedia_asyncio_intent = (

@@ -146,6 +146,7 @@ class GatewayConfig:
             for provider in providers
             if _provider_url_is_secure(provider.url)
             and _provider_url_is_secure(provider.health_url)
+            and "gemma-4" not in provider.model.casefold()
         )
         return cls(
             providers=secure_providers,

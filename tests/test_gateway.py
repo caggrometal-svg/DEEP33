@@ -553,3 +553,39 @@ def test_stream_ttft_uses_first_visible_text_not_role_metadata() -> None:
     assert b"VISIBLE_FIRST_TOKEN" in output
     assert len(samples) == 1
     assert samples[0] >= 30.0
+
+
+def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
+    import json
+
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv(
+        "AI_GATEWAY_FALLBACKS_JSON",
+        json.dumps([
+            {
+                "name": "forbidden-gemma",
+                "url": "https://fallback.example.com/chat",
+                "health_url": "https://fallback.example.com/models",
+                "api_key": "",
+                "model": "google/gemma-4-26b-a4b-it",
+            },
+            {
+                "name": "allowed-fallback",
+                "url": "https://allowed.example.com/chat",
+                "health_url": "https://allowed.example.com/models",
+                "api_key": "",
+                "model": "allowed/model",
+            },
+        ]),
+    )
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[0].name == "kilo"
+    assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
+    assert all("gemma-4" not in item.model.casefold() for item in config.providers)
+    assert any(item.name == "allowed-fallback" for item in config.providers)
+

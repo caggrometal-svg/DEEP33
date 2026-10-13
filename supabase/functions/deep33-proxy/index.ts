@@ -166,7 +166,10 @@ async function buildNavigatedWebEvidence(
   const attemptedDomains = new Set<string>();
   let attempted = 0;
   const batchSize = 4;
-  const sourceReadTimeoutMs = 2500;
+  // Railway /v1/web/fetch is internally bounded to 2.5s. Give the caller
+  // transport headroom so a graceful timeout/result arrives instead of aborting
+  // at the same instant and producing Railway HTTP 499.
+  const sourceReadTimeoutMs = 4000;
   const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);
 
   for (

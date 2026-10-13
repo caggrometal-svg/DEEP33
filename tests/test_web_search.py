@@ -221,11 +221,37 @@ def test_chile_government_site_recovery_uses_official_portal_terms():
     assert WebOrchestrator._recovery_query(
         "sitio gubernamental Chile información pública"
     ) == (
-        "Chile gobierno government public information servicios públicos trámites "
-        "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
-        "Consejo para la Transparencia cplt.cl"
+        "ChileAtiende datos.gob.cl cplt.cl gob.cl Chile "
+        "public information government transparency servicios públicos"
     )
 
+
+
+
+def test_google_news_recovery_keeps_realtime_marker(monkeypatch):
+    from backend.search.resilient import WebOrchestrator
+    import backend.search.resilient as module
+
+    observed = []
+
+    async def fake_google_news(query, timeout, limit):
+        observed.append(query)
+        return []
+
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+
+    orchestrator = WebOrchestrator(max_results=5)
+    asyncio.run(
+        orchestrator._google_news(
+            "situación actual de la comuna de Las Condes en Chile",
+            1.0,
+            5,
+        )
+    )
+
+    assert observed
+    assert module._looks_realtime_news(observed[0])
+    assert "condes" in observed[0].casefold()
 
 def test_primary_search_reserves_deadline_for_multisource_recovery():
     from backend.search.resilient import WebOrchestrator
