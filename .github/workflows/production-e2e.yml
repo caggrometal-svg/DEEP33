@@ -96,6 +96,83 @@ jobs:
           echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"
           exit 1
 
+      - name: Verify cross-route idempotent replay without 409 or duplicate generation
+        run: |
+          set -euo pipefail
+          session="idempotency-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          key="idempotency-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          payload='{"messages":[{"role":"user","content":"Return only this exact token: DEEP33_IDEMPOTENCY_REPLAY_OK"}],"personality":"NEUTRO"}'
+
+          first_status="$(curl -sS --connect-timeout 8 --max-time 120 \
+            -o /tmp/deep33-idem-first.json -w "%{http_code}" \
+            -X POST "$PRIMARY_URL/v1/ai/generate" \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-DEEP33-Session-Id: $session" \
+            -H "X-Idempotency-Key: $key" \
+            -H "X-Request-ID: $key-first" \
+            --data-binary "$payload" || true)"
+          test "$first_status" = "200" || { echo "IDEMPOTENCY_FIRST_FAIL http=$first_status"; cat /tmp/deep33-idem-first.json || true; exit 1; }
+          first_text="$(jq -r '.result.text // .response.choices[0].message.content // empty' /tmp/deep33-idem-first.json)"
+          test -n "$first_text" || { echo "IDEMPOTENCY_FIRST_EMPTY"; exit 1; }
+
+          second_status="$(curl -sS --connect-timeout 8 --max-time 120 \
+            -o /tmp/deep33-idem-second.json -w "%{http_code}" \
+            -X POST "$PRIMARY_URL/v1/ai/generate" \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-DEEP33-Session-Id: $session" \
+            -H "X-Idempotency-Key: $key" \
+            -H "X-Request-ID: $key-second" \
+            --data-binary "$payload" || true)"
+          test "$second_status" = "200" || { echo "IDEMPOTENCY_REPLAY_FAIL http=$second_status"; cat /tmp/deep33-idem-second.json || true; exit 1; }
+          second_text="$(jq -r '.result.text // .response.choices[0].message.content // empty' /tmp/deep33-idem-second.json)"
+          test "$second_text" = "$first_text" || { echo "IDEMPOTENCY_REPLAY_TEXT_MISMATCH"; exit 1; }
+
+          stream_status="$(curl -sS --connect-timeout 8 --max-time 120 \
+            -o /tmp/deep33-idem-stream.sse -w "%{http_code}" \
+            -X POST "$PRIMARY_URL/v1/chat/stream" \
+            -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-DEEP33-Session-Id: $session" \
+            -H "X-Idempotency-Key: $key" \
+            -H "X-Request-ID: $key-stream" \
+            --data-binary "$payload" || true)"
+          test "$stream_status" = "200" || { echo "IDEMPOTENCY_CROSS_ROUTE_FAIL http=$stream_status"; head -c 1000 /tmp/deep33-idem-stream.sse || true; exit 1; }
+
+          FIRST_TEXT="$first_text" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = Path("/tmp/deep33-idem-stream.sse").read_text(errors="replace")
+          if "event: error" in raw:
+              raise SystemExit("IDEMPOTENCY_CROSS_ROUTE_ERROR_EVENT")
+          chunks = []
+          done = False
+          for block in raw.split("\n\n"):
+              for line in block.splitlines():
+                  if not line.startswith("data:"):
+                      continue
+                  data = line[5:].strip()
+                  if data == "[DONE]":
+                      done = True
+                      continue
+                  try:
+                      event = json.loads(data)
+                  except json.JSONDecodeError:
+                      continue
+                  choices = event.get("choices")
+                  if isinstance(choices, list) and choices:
+                      delta = choices[0].get("delta") or {}
+                      value = delta.get("content", "") if isinstance(delta, dict) else ""
+                      if value:
+                          chunks.append(value)
+          text = "".join(chunks).strip()
+          expected = os.environ["FIRST_TEXT"].strip()
+          if not done or text != expected:
+              raise SystemExit(f"IDEMPOTENCY_CROSS_ROUTE_MISMATCH done={done} expected={expected!r} got={text!r}")
+          print("DEEP33_IDEMPOTENCY_REPLAY_PASS generate=2 stream=1 http409=0 duplicate_generation=0")
+          PY
+
       - name: Verify every production transport node
         run: |
           set -euo pipefail
