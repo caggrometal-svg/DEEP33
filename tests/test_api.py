@@ -338,7 +338,10 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
     patch_memory(monkeypatch)
     monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
 
-    async def fake_prepare_messages(request, session_id, memory_profile_id=None, request_id=None):
+    captured = {}
+
+    async def fake_prepare_messages(request, session_id, memory_profile_id=None, request_id=None, access_token=None):
+        captured["access_token"] = access_token
         return ([{"role": "user", "content": "noticias de hoy"}], "NEUTRO")
 
     monkeypatch.setattr(main, "prepare_messages", fake_prepare_messages)
@@ -362,6 +365,7 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
         "/v1/chat/stream",
         json={"messages": [{"role": "user", "content": "noticias de hoy"}]},
         headers={
+            "Authorization": "Bearer test-user-jwt",
             "X-DEEP33-Session-Id": "test-stream-skip-web",
             "X-DEEP33-Skip-Web-Tools": "true",
             "X-Request-ID": "test-stream-skip-web-request",
@@ -371,4 +375,5 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
     assert response.status_code == 200
     assert "data: [DONE]" in response.text
     assert web_called["value"] is False
+    assert captured["access_token"] == "test-user-jwt"
 
