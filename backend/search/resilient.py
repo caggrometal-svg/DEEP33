@@ -124,7 +124,8 @@ class WebOrchestrator:
         }
 
     async def _bing(self, query: str, timeout: float, limit: int) -> list[dict]:
-        return await _bing_search(query, timeout, limit)
+        # The orchestrator ranks once after merging every provider's candidates.
+        return await _bing_search(query, timeout, limit, preserve_candidates=True)
 
     async def _mojeek(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _mojeek_search(query, timeout, limit)
@@ -133,7 +134,9 @@ class WebOrchestrator:
         return await _cl0q_search(query, timeout, limit)
 
     async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
-        return await _google_search(query, timeout, limit)
+        # Direct adapter callers keep strict legacy behavior; orchestration keeps
+        # candidates so independent results can be ranked against the original query.
+        return await _google_search(query, timeout, limit, preserve_candidates=True)
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
@@ -166,8 +169,10 @@ class WebOrchestrator:
         lowered = cleaned.casefold()
 
         if any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico", "weather", "forecast")):
-            locality = "santiago chile" if "santiago" in lowered else compact
-            return f"{locality} clima weather forecast".strip()
+            locality = "Santiago Chile" if "santiago" in lowered else compact
+            # English phrases are commonly indexed more consistently by public
+            # search pages; rank every candidate against the original user query.
+            return f"{locality} weather forecast temperature".strip()
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()

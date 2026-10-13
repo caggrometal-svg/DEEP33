@@ -123,4 +123,26 @@ def test_orchestrator_waits_for_two_successful_independent_providers():
     assert result["verification"]["distinct_domains"] >= 3
     assert result["verification"]["distinct_providers"] >= 2
     assert {"bing", "google"}.issubset(set(result["providers"]))
+def test_google_provider_returns_parsed_candidates_for_central_relevance_filter(monkeypatch):
+    from tools import web_search
+
+    class FakeClient:
+        async def get(self, *args, **kwargs):
+            return httpx.Response(
+                200,
+                text=(
+                    '<html><body><a href="https://weather.example/Santiago-Chile">'
+                    '<h3>Santiago Chile Weather Forecast</h3></a></body></html>'
+                ),
+                request=httpx.Request("GET", "https://www.google.com/search"),
+            )
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(web_search, "_search_http_client", fake_client)
+    results = asyncio.run(web_search._google_search("clima actual Santiago Chile", 1.0, 5))
+    assert len(results) == 1
+    assert results[0]["title"] == "Santiago Chile Weather Forecast"
+    assert results[0]["url"] == "https://weather.example/Santiago-Chile"
 
