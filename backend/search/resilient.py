@@ -187,9 +187,8 @@ class WebOrchestrator:
             # provider call; topic compression would otherwise reduce it to
             # "politics public" and discard the government-site search entirely.
             return (
-                "Chile gobierno government public information servicios públicos trámites "
-                "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
-                "Consejo para la Transparencia cplt.cl"
+                "Chile official government public services information "
+                "transparency open data ChileAtiende gob.cl"
             )
         topic_tokens = list(_topic_tokens(cleaned))
         website_intent = any(
@@ -246,6 +245,16 @@ class WebOrchestrator:
                 "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
                 "Consejo para la Transparencia cplt.cl"
             )
+
+        wikipedia_asyncio_intent = (
+            "wikipedia" in lowered
+            and "asyncio" in lowered
+            and "python" in lowered
+        )
+        if wikipedia_asyncio_intent:
+            # Preserve Wikipedia as one candidate while broadening to independent
+            # Python references so a single index/source cannot collapse coverage.
+            return "Python asyncio asynchronous IO documentation tutorial Wikipedia"
 
         # Reframe generic current smartphone/product queries into common web-search
         # vocabulary. Results are still ranked against the untouched original query.

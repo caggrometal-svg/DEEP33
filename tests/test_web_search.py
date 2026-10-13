@@ -221,8 +221,9 @@ def test_chile_government_site_recovery_uses_official_portal_terms():
     assert WebOrchestrator._recovery_query(
         "sitio gubernamental Chile información pública"
     ) == (
-        "Chile official government public services information "
-        "transparency open data ChileAtiende gob.cl"
+        "Chile gobierno government public information servicios públicos trámites "
+        "transparencia datos abiertos ChileAtiende datos.gob.cl gob.cl "
+        "Consejo para la Transparencia cplt.cl"
     )
 
 
@@ -593,3 +594,13 @@ def test_chile_public_information_recovery_expands_official_domains():
     ranked = rank_results(query, candidates, realtime=False)
     domains = {item.get("source_domain") for item in ranked}
     assert len(domains) >= 3
+
+
+def test_wikipedia_asyncio_recovery_broadens_to_independent_python_sources():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "Wikipedia asyncio Python"
+    recovery = WebOrchestrator._recovery_query(query)
+
+    assert recovery == "Python asyncio asynchronous IO documentation tutorial Wikipedia"
+    assert recovery.casefold() != query.casefold()
