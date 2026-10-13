@@ -880,3 +880,23 @@ def test_provider_query_expands_economic_news_without_changing_relevance_query()
     # This test confirms provider-side expansion only; search() still ranks
     # against the untouched original request supplied by the user.
 
+
+
+
+def test_realtime_economy_aliases_match_english_source_evidence():
+    from backend.search.engine import _realtime_anchor_tokens
+
+    query = "noticias económicas Chile hoy"
+    assert _realtime_anchor_tokens(query) == {"economia"}
+
+    ranked = rank_results(
+        query,
+        [{
+            "title": "Chile economic outlook and inflation update",
+            "url": "https://www.reuters.com/world/americas/chile-economic-outlook",
+            "snippet": "Chile's economic outlook includes the latest inflation figures.",
+        }],
+        realtime=True,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["url"].startswith("https://www.reuters.com/")
