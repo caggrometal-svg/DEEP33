@@ -39,7 +39,7 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
 
 def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
     source = read("android/app/build.gradle.kts")
-    assert '"https://deep33-backend.onrender.com"' in source
+    assert '"https://iac33-fastapi-edge-production.up.railway.app"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
     assert 'Transport contract is immutable by build environment' in source
@@ -87,7 +87,7 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
 
 def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     expected = {
-        "https://deep33-backend.onrender.com",
+        "https://iac33-fastapi-edge-production.up.railway.app",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
     }
@@ -195,7 +195,7 @@ def test_realtime_news_rejects_results_without_recent_publication_dates() -> Non
     ):
         source = read(path)
         assert "const newsFreshEnough = !currentNews || hasRecentPublication(publishedAt, 7) ||" in source
-        assert "(googleNewsStory && publicationDateUnknown)" in source
+        assert "(publicationDateUnknown && (googleNewsStory || edgeHasRecentNewsEvidence(item, parsedUrl)))" in source
         assert "googleNewsStory || publicationDateUnknown" not in source
 
 
@@ -277,30 +277,24 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
         assert f"DEEP33_{gate}_RESULT" in release
     assert '"success success success success success success success success success"' in release
 
-def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
+def test_secondary_edge_has_authenticated_railway_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
-        "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
+        "\\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
     )[0]
     providers = source.split("function edgeProviders()", 1)[1].split(
-        "\nfunction edgeAIConfigured()", 1
+        "\\nfunction edgeAIConfigured()", 1
     )[0]
-    for name in (
-        "render-backend-fallback",
-        "render-api-fallback",
-        "render-backup-fallback",
-    ):
-        assert f'"{name}"' in internal
-    for base in (
-        "https://deep33-backend.onrender.com",
-        "https://deep33-api.onrender.com",
-        "https://deep33-backup.onrender.com",
-    ):
-        assert f'"{base}"' in source
+    assert '"railway-backend-fallback"' in internal
+    assert '"https://iac33-fastapi-edge-production.up.railway.app"' in source
     assert 'const url = base + "/v1/ai/generate";' in internal
+    assert 'const streamUrl = base + "/v1/chat/stream";' in internal
     assert 'requires_auth: true' in internal
     assert 'addInternalInferenceBackends(providers);' in providers
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
+    for inactive_name in ("render-backend-fallback", "render-api-fallback", "render-backup-fallback"):
+        assert f'"{inactive_name}"' not in internal
+    upstreams = source.split("const EDGE_AI_UPSTREAM_URLS = [", 1)[1].split("] as const", 1)[0]
+    assert "onrender.com" not in upstreams
 
 def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None:
     source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
