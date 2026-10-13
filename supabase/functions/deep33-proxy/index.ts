@@ -1212,7 +1212,11 @@ async function callEdgeAI(
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
       const criticalRenderFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (
+        Date.now() < circuit.openUntil &&
+        !criticalRenderFallback &&
+        !(preferRailwayBackend && isRailwayBackendProvider(provider))
+      ) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
