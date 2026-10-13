@@ -338,7 +338,7 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
     patch_memory(monkeypatch)
     monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
 
-    async def fake_prepare_messages(request, session_id, memory_profile_id=None, request_id=None):
+    async def fake_prepare_messages(request, session_id, memory_profile_id=None, request_id=None, access_token=None):
         return ([{"role": "user", "content": "noticias de hoy"}], "NEUTRO")
 
     monkeypatch.setattr(main, "prepare_messages", fake_prepare_messages)
