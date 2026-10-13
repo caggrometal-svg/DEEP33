@@ -47,6 +47,11 @@ from backend.weather import build_weather_evidence, is_weather_query, resolve_gp
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
+    # Prefer the deployment platform's immutable revision identifier. A manually
+    # configured DEEP33_GIT_SHA can become stale after a subsequent Railway deploy.
+    railway_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
+    if railway_sha:
+        return railway_sha
     runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
     if runtime:
         return runtime
