@@ -1,9 +1,40 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const STORAGE_VECTOR_DIMENSIONS = 1536;
+const MODEL_VECTOR_DIMENSIONS = 384;
+const embeddingSession = new Supabase.ai.Session("gte-small");
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
+
+async function embedText(text: string): Promise<number[]> {
+  const clean = String(text || "").trim();
+  if (!clean) throw new Error("EMBEDDING_TEXT_REQUIRED");
+  const raw = await embeddingSession.run(clean, { mean_pool: true, normalize: true });
+  const compact = Array.from(raw as ArrayLike<number>, (value) => Number(value));
+  if (compact.length !== MODEL_VECTOR_DIMENSIONS || !compact.every(Number.isFinite)) {
+    throw new Error("EMBEDDING_MODEL_OUTPUT_INVALID");
+  }
+  // Zero-padding preserves cosine similarity and retains the existing vector(1536) contract.
+  return compact.concat(Array(STORAGE_VECTOR_DIMENSIONS - MODEL_VECTOR_DIMENSIONS).fill(0));
+}
+
+function suppliedVector(value: unknown): number[] | null {
+  if (value == null || value === "") return null;
+  if (Array.isArray(value)) {
+    vectorLiteral(value);
+    return value.map(Number);
+  }
+  if (typeof value === "string" && value.trim().startsWith("[") && value.trim().endsWith("]")) {
+    const parsed = value.trim().slice(1, -1).split(",").map((entry) => Number(entry.trim()));
+    vectorLiteral(parsed);
+    return parsed;
+  }
+  throw new Error("EMBEDDING_VALUES_INVALID");
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -20,8 +51,8 @@ function json(body: unknown, status = 200) {
 
 function vectorLiteral(values: unknown): string | null {
   if (values == null) return null;
-  if (!Array.isArray(values) || values.length !== 1536) {
-    throw new Error("EMBEDDING_DIMENSIONS_REQUIRED_1536");
+  if (!Array.isArray(values) || values.length !== STORAGE_VECTOR_DIMENSIONS) {
+    throw new Error(`EMBEDDING_DIMENSIONS_REQUIRED_${STORAGE_VECTOR_DIMENSIONS}`);
   }
   if (!values.every((value) => Number.isFinite(Number(value)))) {
     throw new Error("EMBEDDING_VALUES_INVALID");
