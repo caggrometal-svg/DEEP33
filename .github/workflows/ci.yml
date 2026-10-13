@@ -231,6 +231,9 @@ jobs:
           echo "DEEP33_PERFORMANCE_INVARIANTS_PASS"
 
   android_feature_instrumentation:
+    # This job calls the live Supabase Edge URLs. Run it only after a main deploy
+    # (or explicit workflow_dispatch), not against production from an unmerged PR.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     needs: backend_unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
