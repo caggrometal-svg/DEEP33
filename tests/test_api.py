@@ -381,3 +381,43 @@ def test_web_search_result_limit_expands_only_for_realtime_chile_news() -> None:
     assert _web_search_result_limit("sitio gubernamental Chile información pública", 5) == 5
     assert _web_search_result_limit("Python asyncio documentation", 5) == 5
     assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 8
+
+
+def test_generate_claim_failure_preserves_original_error_without_a_lease(monkeypatch) -> None:
+    import asyncio
+    import pytest
+
+    cancelled = asyncio.Event()
+
+    async def failed_claim(*args, **kwargs):
+        await asyncio.sleep(0)
+        raise RuntimeError("original claim failure")
+
+    async def pending_context(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(main, "cache_get", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "local_idempotency_get", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "shared_idempotency_claim", failed_claim)
+    monkeypatch.setattr(main, "prepare_messages", pending_context)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", False)
+    monkeypatch.setattr(main, "memory", FakeMemory())
+
+    request = main.ChatRequest(
+        messages=[main.ChatMessage(role="user", content="hola")]
+    )
+
+    async def exercise():
+        with pytest.raises(RuntimeError, match="original claim failure"):
+            await main.generate(
+                request,
+                "test-session",
+                request_id="idempotency-claim-failure-test",
+                idempotency_key="test-idempotency-key",
+            )
+        await asyncio.wait_for(cancelled.wait(), timeout=0.5)
+
+    asyncio.run(exercise())

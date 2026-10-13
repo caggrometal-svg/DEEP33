@@ -3015,6 +3015,10 @@ async def generate(
         )
         return sanitize_generation_output(local_cached)
 
+    # A claim can fail before returning a lease. Initialize both values so the
+    # exception path never masks the original failure with UnboundLocalError.
+    record: dict[str, Any] = {}
+    lease_token = ""
     claim_task = asyncio.create_task(
         shared_idempotency_claim(
             session_id,
@@ -3222,31 +3226,43 @@ async def generate(
         )
         return output
     except Exception as exc:
+        # Release background work if the claim, context, search, or inference path
+        # fails. Do not attempt to close an idempotency lease that was never issued.
+        pending_tasks = [
+            task for task in (claim_task, context_task, weather_task)
+            if task is not None and not task.done()
+        ]
+        for task in pending_tasks:
+            task.cancel()
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
         status_code, stored = error_record(exc)
-        try:
-            if record.get("_storage") == "local":
-                local_idempotency_fail(
-                    session_id,
-                    idempotency_key,
-                    request_hash,
-                    lease_token,
+        if lease_token:
+            try:
+                if record.get("_storage") == "local":
+                    local_idempotency_fail(
+                        session_id,
+                        idempotency_key,
+                        request_hash,
+                        lease_token,
+                    )
+                elif memory.enabled:
+                    await memory.idempotency_fail(
+                        session_id,
+                        idempotency_key,
+                        request_hash,
+                        lease_token,
+                        status_code,
+                        stored,
+                        access_token=access_token,
+                    )
+            except Exception as store_exc:
+                logger.warning(
+                    "ai_idempotency_failure_record_failed request_id=%s error=%s",
+                    request_id,
+                    type(store_exc).__name__,
                 )
-            elif memory.enabled:
-                await memory.idempotency_fail(
-                    session_id,
-                    idempotency_key,
-                    request_hash,
-                    lease_token,
-                    status_code,
-                    stored,
-                    access_token=access_token,
-                )
-        except Exception as store_exc:
-            logger.warning(
-                "ai_idempotency_failure_record_failed request_id=%s error=%s",
-                request_id,
-                type(store_exc).__name__,
-            )
         raise
 
 
