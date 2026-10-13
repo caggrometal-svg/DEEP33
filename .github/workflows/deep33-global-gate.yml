@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: https://iacgrometal-svg-production.up.railway.app
+      DEEP33_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
       DEEP33_TEST_AUTH_TOKEN: ""
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
@@ -61,7 +61,7 @@ jobs:
 
       - name: Enable canonical live production target
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_BASE_URL == ''
-        run: echo "DEEP33_BASE_URL=https://iacgrometal-svg-production.up.railway.app" >> "$GITHUB_ENV"
+        run: echo "DEEP33_BASE_URL=https://iac33-fastapi-edge-production.up.railway.app" >> "$GITHUB_ENV"
 
       - name: Prepare authenticated live production session
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
