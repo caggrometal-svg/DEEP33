@@ -130,20 +130,68 @@ jobs:
           printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
           echo "RAILWAY_EMBEDDING_RUNTIME_PASS"
 
-      - name: Verify user-scoped memory read
+      - name: Verify user-scoped memory write/read and isolation
         shell: bash
         run: |
           set -euo pipefail
-          response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' \
+          marker="DEEP33_GATE_MEMORY_$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "::add-mask::$marker"
+          echo "DEEP33_GATE_MEMORY_MARKER=$marker" >> "$GITHUB_ENV"
+
+          write_status="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/deep33-memory-write.json -w '%{http_code}' \
+            -X POST "$RAILWAY_BASE_URL/v1/memory/remember" \
+            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+            -H 'content-type: application/json' \
+            -d "{\"kind\":\"explicit\",\"content\":\"$marker\"}" || true)"
+          write_body="$(cat /tmp/deep33-memory-write.json 2>/dev/null || true)"
+          test "$write_status" = "200" || { echo "RAILWAY_MEMORY_WRITE_FAIL http=$write_status"; exit 1; }
+          printf '%s' "$write_body" | jq -e '.remembered == true or .ok == true' >/dev/null || {
+            printf '%s' "$write_body" | jq -c '{ok, remembered, error}'
+            echo "RAILWAY_MEMORY_WRITE_FAIL: persistence not confirmed"
+            exit 1
+          }
+
+          read_status="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/deep33-memory-read.json -w '%{http_code}' \
             -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
             -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
             "$RAILWAY_BASE_URL/v1/memory/context" || true)"
-          status="${response##*STATUS:}"
-          body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_MEMORY_READ_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '(.messages | type == "array") and (.memories | type == "array")' >/dev/null || { echo "RAILWAY_MEMORY_READ_FAIL: context schema invalid"; exit 1; }
-          printf '%s' "$body" | jq -c '{ok, session, message_count: ((.messages // []) | length), memory_count: ((.memories // []) | length)}'
-          echo "RAILWAY_MEMORY_READ_PASS"
+          read_body="$(cat /tmp/deep33-memory-read.json 2>/dev/null || true)"
+          test "$read_status" = "200" || { echo "RAILWAY_MEMORY_READ_FAIL http=$read_status"; exit 1; }
+          printf '%s' "$read_body" | jq --arg marker "$marker" -e '(.messages | type == "array") and (.memories | type == "array") and any(.memories[]; ((.content // "") | contains($marker)))' >/dev/null || {
+            printf '%s' "$read_body" | jq -c '{session, message_count: ((.messages // []) | length), memory_count: ((.memories // []) | length)}'
+            echo "RAILWAY_MEMORY_READ_FAIL: the writing user cannot retrieve its marker"
+            exit 1
+          }
+          echo "RAILWAY_MEMORY_WRITE_READ_PASS"
+
+          profile_b="railway-isolation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          auth_status=0
+          token_b=""
+          for attempt in 1 2 3; do
+            auth_status="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/deep33-memory-auth-b.json -w '%{http_code}' \
+              -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H 'content-type: application/json' \
+              -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_b\"}" || true)"
+            auth_body="$(cat /tmp/deep33-memory-auth-b.json 2>/dev/null || true)"
+            token_b="$(printf '%s' "$auth_body" | jq -r '.access_token // empty')"
+            [ -n "$token_b" ] && break
+            [ "$attempt" -lt 3 ] && sleep 3
+          done
+          test -n "$token_b" || { echo "RAILWAY_MEMORY_ISOLATION_AUTH_FAIL http=$auth_status"; exit 1; }
+          echo "::add-mask::$token_b"
+          isolate_status="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/deep33-memory-isolated.json -w '%{http_code}' \
+            -H "Authorization: Bearer $token_b" \
+            -H "X-DEEP33-Session-Id: $profile_b" \
+            "$RAILWAY_BASE_URL/v1/memory/context" || true)"
+          isolate_body="$(cat /tmp/deep33-memory-isolated.json 2>/dev/null || true)"
+          test "$isolate_status" = "200" || { echo "RAILWAY_MEMORY_ISOLATION_READ_FAIL http=$isolate_status"; exit 1; }
+          if printf '%s' "$isolate_body" | jq --arg marker "$marker" -e 'any((.memories // [])[]; ((.content // "") | contains($marker)))' >/dev/null; then
+            echo "RAILWAY_MEMORY_ISOLATION_FAIL: user B read user A's marker"
+            exit 1
+          fi
+          echo "RAILWAY_MEMORY_ISOLATION_PASS"
 
       - name: Verify hybrid search request reaches Supabase Edge
         shell: bash
