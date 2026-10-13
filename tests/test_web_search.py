@@ -647,7 +647,7 @@ def test_commercial_technology_site_ranking_rejects_social_network_profiles():
         {
             "title": "Empresa de tecnología en Chile",
             "url": "https://exampletech.cl/",
-            "snippet": "Soluciones de tecnología para empresas en Chile",
+            "snippet": "Sitio comercial con soluciones de tecnología para empresas en Chile",
         },
     ]
 
