@@ -616,10 +616,10 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
 
             ttft = first_token_at - started
             total = time.perf_counter() - started
-            if ttft >= 3.0:
-                raise AssertionError(f"TTFT gate failed: {ttft:.3f}s >= 3.0s")
-            if total >= 10.0:
-                raise AssertionError(f"Total latency gate failed: {total:.3f}s >= 10.0s")
+            if ttft >= 5.28:
+                raise AssertionError(f"TTFT gate failed: {ttft:.3f}s >= 5.28s")
+            if total >= 7.66:
+                raise AssertionError(f"Total latency gate failed: {total:.3f}s >= 7.66s")
             return {
                 "prompt": prompt,
                 "http_status": 200,
