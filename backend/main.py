@@ -1598,7 +1598,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     try:
         search_result = await search_web(
             query,
-            timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
+            timeout_seconds=min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=_web_search_result_limit(
                 query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
             ),
@@ -1679,8 +1679,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         len(compact_search_results) >= 2
         and sum(1 for length in snippet_lengths if length >= 120) >= 2
     )
-    explicit_research = bool(deep and not realtime)
-    if candidates and (explicit_research or not snippets_sufficient):
+    # Rich, independently ranked snippets already provide grounded evidence.
+    # Fetch pages when snippets are weak; don't add 2-5 seconds of avoidable TTFT
+    # on questions for which the providers returned sufficient source text.
+    if candidates and not snippets_sufficient:
         # Keep at most two requests in flight. Each blocked/failed URL frees a
         # slot immediately so the next independent publisher can be tried.
         pending_fetches = {}
