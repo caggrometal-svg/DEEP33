@@ -583,10 +583,21 @@ class WebOrchestrator:
             if selected:
                 provider_query = recovery_query
 
-        if not selected and loop.time() < deadline:
-            # Try one independent general-web index only after every normal source
-            # returned no rankable evidence. This avoids spending an extra request
-            # on searches that are already working.
+        minimum_coverage = min(3, self.max_results)
+        selected_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            for item in selected
+            if item.get("url")
+        }
+        insufficient_evidence = (
+            len(selected) < minimum_coverage
+            or len(selected_domains - {""}) < minimum_coverage
+        )
+        if insufficient_evidence and loop.time() < deadline:
+            # One independent general-web fallback is reserved for incomplete search
+            # coverage: no evidence, fewer than three useful results, or fewer than
+            # three unique domains. Avoid extra provider traffic when coverage is
+            # already sufficient.
             remaining = deadline - loop.time()
             try:
                 yahoo_outcome = await asyncio.wait_for(
@@ -607,6 +618,11 @@ class WebOrchestrator:
                 ]
                 ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
+                selected_domains = {
+                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                    for item in selected
+                    if item.get("url")
+                }
                 if selected:
                     provider_query = cleaned
 
