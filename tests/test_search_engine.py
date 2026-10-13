@@ -900,3 +900,38 @@ def test_realtime_economy_aliases_match_english_source_evidence():
     )
     assert len(ranked) == 1
     assert ranked[0]["url"].startswith("https://www.reuters.com/")
+
+
+
+def test_recovery_wave_does_not_retry_a_provider_that_rate_limited():
+    from tools.web_search import WebSearchError
+
+    calls = {"bing": 0, "cl0q": 0}
+
+    async def bing(query, timeout, limit):
+        calls["bing"] += 1
+        return [{
+            "title": "Chile economic outlook and inflation update",
+            "url": "https://www.reuters.com/world/americas/chile-economic-outlook",
+            "snippet": "Chile's economic outlook includes the latest inflation figures.",
+        }]
+
+    async def cl0q(query, timeout, limit):
+        calls["cl0q"] += 1
+        raise WebSearchError("WEB_SEARCH_CL0Q_HTTP_429")
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.2,
+        global_budget_seconds=1.0,
+        fallback_delay_seconds=0,
+    )
+    orchestrator.providers = {"bing": bing, "cl0q": cl0q}
+    result = asyncio.run(
+        orchestrator.search("noticias económicas Chile hoy", fresh=True)
+    )
+
+    assert calls["cl0q"] == 1
+    assert calls["bing"] >= 1
+    assert result["results"]
+    assert any("WEB_SEARCH_CL0Q_HTTP_429" in error for error in result["errors"])
