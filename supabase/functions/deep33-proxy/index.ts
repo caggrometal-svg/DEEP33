@@ -3527,7 +3527,7 @@ async function edgeSearch(
   sessionId = "deep33-edge-search",
   userAuthorization = "",
   railwayOnly = false,
-) {
+): Promise<Record<string, unknown>> {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
   const searchStarted = performance.now();
@@ -3550,7 +3550,7 @@ async function edgeSearch(
 
   // Search public Edge providers first. Recovery mode skips them and queries
   // the already configured Railway search service exactly once.
-  const direct = railwayOnly
+  const direct: Record<string, unknown> = railwayOnly
     ? {
         ok: false,
         error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_RAILWAY_RECOVERY",
