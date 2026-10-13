@@ -444,6 +444,24 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
+        # Current-news searches explicitly scoped to Chile must not fill results
+        # with unrelated publishers from another country's politics section.
+        query_folded = str(query or "").casefold()
+        chile_current_news_intent = (
+            realtime
+            and "chile" in _token_set(query)
+            and any(
+                marker in query_folded
+                for marker in ("noticia", "actualidad", "breaking", "latest news", "news")
+            )
+        )
+        host = (parsed_url.hostname or "").casefold()
+        if chile_current_news_intent:
+            if host == "britannica.com" or host.endswith(".britannica.com"):
+                # Britannica is reference material, not a current-news source.
+                continue
+            if not host.endswith(".cl") and "chile" not in _token_set(anchor_evidence):
+                continue
         # For government/public-information portal intents, country locality is
         # a hard constraint. Keep general locality and realtime searches governed by
         # their existing anchor rules so named-city results on international domains

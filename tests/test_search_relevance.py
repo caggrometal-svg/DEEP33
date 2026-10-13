@@ -282,6 +282,40 @@ def test_realtime_santiago_weather_matches_weather_synonyms_but_not_city_news() 
     }
 
 
+def test_chile_current_politics_news_drops_foreign_articles_without_chile_context() -> None:
+    query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Chile Political News: Latest Government Updates",
+                "url": "https://news.example.org/chile-politics",
+                "snippet": "Latest politics and government headlines in Chile today.",
+            },
+            {
+                "title": "Política chilena hoy: Gobierno y Congreso",
+                "url": "https://noticias.example.cl/politica/chile",
+                "snippet": "Últimas noticias de política en Chile.",
+            },
+            {
+                "title": "Mexico political news today",
+                "url": "https://www.telediario.mx/politica",
+                "snippet": "Latest government and election news in Mexico.",
+            },
+            {
+                "title": "Politics of Chile - Encyclopedia",
+                "url": "https://www.britannica.com/place/Chile/Politics",
+                "snippet": "Historical overview of Chilean political institutions.",
+            },
+        ],
+        realtime=True,
+    )
+    assert {item["url"] for item in ranked} == {
+        "https://news.example.org/chile-politics",
+        "https://noticias.example.cl/politica/chile",
+    }
+
+
 def test_chile_government_portal_query_ranks_local_public_sources_not_foreign_publishers() -> None:
     query = "sitio gubernamental Chile información pública"
     ranked = rank_results(

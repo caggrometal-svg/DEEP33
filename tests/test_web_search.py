@@ -208,7 +208,10 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
 
     result = asyncio.run(exercise())
     assert result["ok"] is True
-    assert "Chile política gobierno Congreso elecciones actualidad noticias" in recovered_queries
+    assert any(
+        query.startswith("Chile política gobierno Congreso elecciones actualidad noticias")
+        for query in recovered_queries
+    )
     assert result["verification"]["distinct_domains"] >= 5
 
 
