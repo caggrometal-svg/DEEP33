@@ -241,6 +241,44 @@ def test_official_health_search_recovers_independent_medical_domains() -> None:
     assert any(any(host in item["url"] for host in ("who.int", "paho.org", "cdc.gov", "medlineplus.gov")) for item in result["results"]), result
 
 
+def test_current_chile_date_search_recovers_with_date_sources() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.15,
+        global_budget_seconds=0.60,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    recovery_results = [
+        {"title": "Current local time in Santiago, Chile",
+         "url": "https://www.timeanddate.com/worldclock/chile/santiago",
+         "snippet": "Current local date and time in Santiago, Chile."},
+        {"title": "Date today in Chile",
+         "url": "https://www.worldtimeserver.com/current_time_in_CL.aspx",
+         "snippet": "Current date and time for Chile."},
+        {"title": "Santiago date and local time",
+         "url": "https://24timezones.com/Santiago/time",
+         "snippet": "Current local date and time in Santiago Chile."},
+    ]
+
+    async def provider(query, _timeout, _limit):
+        if "timeanddate.com" in query.casefold():
+            return recovery_results
+        return []
+
+    for name in ("bing", "google", "cl0q", "mojeek", "duckduckgo"):
+        orchestrator.providers[name] = provider
+
+    result = asyncio.run(
+        orchestrator.search("la fecha actual en Chile", fresh=True)
+    )
+    assert result["ok"] is True, result
+    assert len({item["source_domain"] for item in result["results"]}) >= 3, result
+    assert any("timeanddate.com" in item["url"] for item in result["results"]), result
+
+
 def test_recovery_broadens_provider_query_but_ranks_against_original_question():
     from backend.search.resilient import WebOrchestrator
 
