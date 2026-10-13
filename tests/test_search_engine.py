@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
+from backend.search.resilient import WebOrchestrator
 
 
 def test_search_plan_strips_conversational_web_instructions():
