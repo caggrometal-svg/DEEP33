@@ -363,3 +363,26 @@ def test_generic_chile_named_locality_results_are_not_rejected_by_government_por
         realtime=True,
     )
     assert [item["url"] for item in results] == ["https://weather.example/las-condes-live"]
+
+
+def test_chilean_news_domain_counts_as_country_evidence_without_lowering_topic_filter() -> None:
+    query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Gobierno y Congreso: últimas noticias de política",
+                "url": "https://radio.example.cl/politica/actualidad",
+                "snippet": "Debate político, propuestas del gobierno y actividad parlamentaria.",
+            },
+            {
+                "title": "Gobierno anuncia pronóstico de lluvias",
+                "url": "https://weather.example.cl/lluvia/hoy",
+                "snippet": "Temperatura, viento y lluvias previstas para hoy.",
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["url"] for item in ranked] == [
+        "https://radio.example.cl/politica/actualidad"
+    ]

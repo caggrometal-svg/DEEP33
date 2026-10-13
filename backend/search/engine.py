@@ -464,6 +464,10 @@ def rank_results(
         )
         host = (parsed_url.hostname or "").casefold()
         if chile_current_news_intent:
+            # A Chilean ccTLD is reliable locality metadata even when a result
+            # headline omits the country name. Topic relevance remains mandatory.
+            if host.endswith(".cl"):
+                anchor_evidence = f"{anchor_evidence} Chile"
             if host == "britannica.com" or host.endswith(".britannica.com"):
                 # Britannica is reference material, not a current-news source.
                 continue
