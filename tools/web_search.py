@@ -862,7 +862,9 @@ async def search_web(
 
     max_results = max(1, min(8, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
-    result = await orchestrator.search(cleaned, fresh=fresh)
+    result = await orchestrator.search(
+        cleaned, fresh=fresh, timeout_seconds=timeout_seconds
+    )
     result["fresh_request"] = bool(fresh)
     result["configured_provider"] = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")
