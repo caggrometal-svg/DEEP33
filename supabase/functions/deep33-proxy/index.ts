@@ -1461,13 +1461,36 @@ async function completeViaStreamFallback(
     if (!done) throw new Error(provider.name + "_STREAM_FALLBACK_INCOMPLETE");
     if (!fullText.trim()) throw new Error(provider.name + "_STREAM_FALLBACK_EMPTY_RESPONSE");
 
+    let resolvedModel = provider.model || "";
+    if (!resolvedModel) {
+      const statusUrl = provider.url.replace(/\/v1\/ai\/generate\/?$/, "/v1/ai/status");
+      if (statusUrl !== provider.url) {
+        try {
+          // The internal DEEP33 backend exposes its actual configured model via
+          // /v1/ai/status; read metadata after successful streaming without rerunning inference.
+          const statusResponse = await fetch(statusUrl, {
+            method: "GET",
+            headers: { "Accept": "application/json" },
+            redirect: "error",
+            signal: AbortSignal.timeout(1500),
+          });
+          if (statusResponse.ok) {
+            const gatewayStatus = await readJson(statusResponse);
+            resolvedModel = String(gatewayStatus.model || "").trim();
+          }
+        } catch {
+          // Text delivery has already succeeded; metadata lookup must never discard it.
+        }
+      }
+    }
+
     return {
       body: {
         choices: [{ message: { role: "assistant", content: fullText } }],
-        model: provider.model || "",
+        model: resolvedModel,
       },
       provider: provider.name,
-      model: provider.model || "",
+      model: resolvedModel,
     };
   } finally {
     clearTimeout(timer);
