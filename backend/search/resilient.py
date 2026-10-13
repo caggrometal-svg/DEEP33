@@ -339,6 +339,16 @@ class WebOrchestrator:
             loop.time() + max(0.05, self.global_budget_seconds * 0.55),
         )
         provider_query = self._provider_query(cleaned)
+        normalized_query = cleaned.casefold()
+        news_intent = any(
+            term in normalized_query
+            for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            )
+        )
+        live_news_intent = is_realtime_query(cleaned) and news_intent
+        required_source_count = min(5 if live_news_intent else 3, self.max_results)
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -393,8 +403,8 @@ class WebOrchestrator:
                     outcome.provider for outcome in outcomes if outcome.ok and outcome.results
                 }
                 if (
-                    len(selected_now) >= min(3, self.max_results)
-                    and len(distinct_domains) >= min(3, len(selected_now))
+                    len(selected_now) >= required_source_count
+                    and len(distinct_domains) >= required_source_count
                     and len(distinct_providers) >= min(2, len(self.providers))
                 ):
                     break
@@ -500,8 +510,8 @@ class WebOrchestrator:
                         outcome.provider for outcome in outcomes if outcome.ok and outcome.results
                     }
                     if (
-                        len(selected_now) >= min(3, self.max_results)
-                        and len(distinct_domains_now) >= min(3, len(selected_now))
+                        len(selected_now) >= required_source_count
+                        and len(distinct_domains_now) >= required_source_count
                         and len(distinct_providers_now) >= min(2, len(self.providers))
                     ):
                         break
