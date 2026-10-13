@@ -114,8 +114,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Keep provider fallback URL classification defined in this edge runtime as in the primary gateway.
+// DEEP33 backend fallback order is Railway first, followed by the existing Render services.
+// Public endpoint URLs remain unchanged and Render stays available as failover.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
   "https://deep33-backup.onrender.com",
@@ -403,6 +405,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",
