@@ -80,7 +80,7 @@ jobs:
             -H "Authorization: Bearer $EDGE_TEST_TOKEN" \
             -H "X-DEEP33-Session-Id: $EDGE_TEST_SESSION" \
             -H 'content-type: application/json' \
-            -d '{"query":"DEEP33 Search Engine provider independent web search orchestration","limit":3}' || true)"
+            -d '{"query":"DEEP33 search engine orchestrator providers bounded timeouts","limit":3}' || true)"
           status="${response##*STATUS:}"
           body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and ((.results // []) | length) >= 1' >/dev/null 2>&1; then
