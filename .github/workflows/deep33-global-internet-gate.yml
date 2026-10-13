@@ -36,7 +36,7 @@ concurrency:
 env:
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-  DEEP33_PRODUCTION_GATE_URL: https://deep33-backend.onrender.com
+  DEEP33_PRODUCTION_GATE_URL: https://iac33-fastapi-edge-production.up.railway.app
   DEEP33_REQUIRE_LIVE_GATE: "true"
   PYTHONPATH: .
 
@@ -63,7 +63,7 @@ jobs:
         run: |
           python -m py_compile             backend/main.py             backend/search/engine.py             backend/search/resilience.py             tools/web_search.py             tools/web_fetch.py
 
-  production-render-gate:
+  production-railway-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     needs: chaos-unit-gate
     runs-on: ubuntu-latest
@@ -88,7 +88,7 @@ jobs:
           token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Wait for exact Render revision to become healthy
+      - name: Wait for exact Railway revision to become healthy
         run: |
           set -euo pipefail
           ok=0
@@ -96,7 +96,7 @@ jobs:
             code="$(curl -sS --connect-timeout 8 --max-time 30 -o /tmp/health.json -w "%{http_code}" "$DEEP33_PRODUCTION_GATE_URL/health" || true)"
             live_sha="$(jq -r '.git_sha // empty' /tmp/health.json 2>/dev/null || true)"
             live_status="$(jq -r '.status // empty' /tmp/health.json 2>/dev/null || true)"
-            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status"
+            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status"
             if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
               ok=1
               break

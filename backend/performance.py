@@ -113,6 +113,7 @@ def _series_snapshot(values: deque[float] | list[float]) -> dict[str, float | in
         "count": len(snapshot),
         "p50_ms": _percentile(snapshot, 50),
         "p95_ms": _percentile(snapshot, 95),
+        "p99_ms": _percentile(snapshot, 99),
     }
 
 

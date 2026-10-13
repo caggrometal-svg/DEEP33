@@ -12,7 +12,13 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
-from tools.web_search import _bing_search, _duckduckgo_search, _google_search, _mojeek_search
+from tools.web_search import (
+    _bing_search,
+    _cl0q_search,
+    _duckduckgo_search,
+    _google_search,
+    _mojeek_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,20 +102,23 @@ class WebOrchestrator:
         cache_ttl_seconds: float = CACHE_TTL_SECONDS,
     ) -> None:
         self.max_results = max(1, min(8, int(max_results)))
-        self.provider_total_seconds = max(0.5, min(2.5, float(provider_total_seconds)))
-        self.global_budget_seconds = max(1.0, min(5.0, float(global_budget_seconds)))
+        # Permit short deterministic test budgets while keeping production caps.
+        self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
+        self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
         self.fallback_delay_seconds = max(0.0, min(2.0, float(fallback_delay_seconds)))
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
+            "cl0q": CircuitState(),
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
             "google": self._google,
+            "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
@@ -119,6 +128,9 @@ class WebOrchestrator:
 
     async def _mojeek(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _mojeek_search(query, timeout, limit)
+
+    async def _cl0q(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _cl0q_search(query, timeout, limit)
 
     async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _google_search(query, timeout, limit)
@@ -238,10 +250,31 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
+    async def _bounded_call_provider(self, provider: str, query: str) -> ProviderOutcome:
+        """Enforce the provider deadline even if a provider adapter is replaced or misbehaves."""
+        started = time.perf_counter()
+        timeout = min(
+            self.provider_total_seconds + 0.05,
+            self.global_budget_seconds,
+        )
+        try:
+            return await asyncio.wait_for(
+                self._call_provider(provider, query),
+                timeout=max(0.05, timeout),
+            )
+        except asyncio.TimeoutError:
+            self.circuits[provider].failure(time.monotonic())
+            return ProviderOutcome(
+                provider=provider,
+                ok=False,
+                error_code="PROVIDER_TIMEOUT",
+                latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+
     async def _delayed_provider(self, provider: str, query: str) -> ProviderOutcome:
         if self.fallback_delay_seconds:
             await asyncio.sleep(self.fallback_delay_seconds)
-        return await self._call_provider(provider, query)
+        return await self._bounded_call_provider(provider, query)
 
     async def search(self, query: str, *, fresh: bool = False) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
@@ -266,13 +299,13 @@ class WebOrchestrator:
         deadline = loop.time() + self.global_budget_seconds
         provider_query = self._provider_query(cleaned)
         tasks = {
-            asyncio.create_task(self._call_provider("bing", provider_query), name="search:bing"),
-            asyncio.create_task(self._call_provider("google", provider_query), name="search:google"),
-            asyncio.create_task(self._call_provider("mojeek", provider_query), name="search:mojeek"),
             asyncio.create_task(
-                self._delayed_provider("duckduckgo", provider_query),
-                name="search:duckduckgo",
-            ),
+                self._delayed_provider(provider, provider_query)
+                if provider == "duckduckgo"
+                else self._bounded_call_provider(provider, provider_query),
+                name=f"search:{provider}",
+            )
+            for provider in self.providers
         }
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
@@ -315,7 +348,14 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(3, len(selected_now)):
+                distinct_providers = {
+                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
+                }
+                if (
+                    len(selected_now) >= min(3, self.max_results)
+                    and len(distinct_domains) >= min(3, len(selected_now))
+                    and len(distinct_providers) >= min(2, len(self.providers))
+                ):
                     break
         finally:
             for task in pending:
@@ -352,7 +392,7 @@ class WebOrchestrator:
             # The same end-to-end deadline covers the primary and recovery phases.
             recovery_tasks = {
                 asyncio.create_task(
-                    self._call_provider(provider, recovery_query),
+                    self._bounded_call_provider(provider, recovery_query),
                     name=f"search-recovery:{provider}",
                 )
                 for provider in self.providers
@@ -398,9 +438,13 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
+                    distinct_providers_now = {
+                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
+                    }
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
+                        and len(distinct_providers_now) >= min(2, len(self.providers))
                     ):
                         break
             finally:

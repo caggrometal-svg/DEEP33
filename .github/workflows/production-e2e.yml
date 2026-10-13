@@ -38,6 +38,7 @@ env:
   PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
   SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
   TERTIARY_URL: https://deep33-backend.onrender.com
+  RAILWAY_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
 
 jobs:
   production-e2e:
@@ -77,21 +78,21 @@ jobs:
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Wait for exact main SHA on canonical Render
+      - name: Wait for exact main SHA on Railway
         run: |
           set -euo pipefail
           for attempt in $(seq 1 36); do
-            health="$(curl -fsS --connect-timeout 8 --max-time 20 "$TERTIARY_URL/health" || true)"
+            health="$(curl -fsS --connect-timeout 8 --max-time 20 "$RAILWAY_BASE_URL/health" || true)"
             live_sha="$(printf '%s' "$health" | jq -r '.git_sha // empty' 2>/dev/null || true)"
             status="$(printf '%s' "$health" | jq -r '.status // empty' 2>/dev/null || true)"
-            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status"
+            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status"
             if [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
-              echo "RENDER_EXACT_SHA_PASS=$live_sha"
+              echo "RAILWAY_EXACT_SHA_PASS=$live_sha"
               exit 0
             fi
             sleep 5
           done
-          echo "RENDER_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"
           exit 1
 
       - name: Verify every production transport node

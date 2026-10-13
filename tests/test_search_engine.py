@@ -851,3 +851,20 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
     assert result["ok"] is True
     assert len(queries) == 1
     assert result["queries_executed"] == [queries[0]]
+
+
+def test_rank_results_normalizes_ai_and_technology_synonyms():
+    query = "latest artificial intelligence research and technology news today"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "AI tech research news today",
+                "url": "https://example.org/ai-tech-research",
+                "snippet": "Research and analysis of AI technology.",
+            }
+        ],
+        realtime=True,
+    )
+    assert len(ranked) == 1
+    assert ranked[0]["url"] == "https://example.org/ai-tech-research"

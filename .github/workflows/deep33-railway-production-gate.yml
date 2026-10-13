@@ -8,7 +8,18 @@ on:
       - "tools/**"
       - ".github/workflows/deep33-railway-production-gate.yml"
       - "backend/requirements.txt"
+      - "supabase/functions/deep33-proxy/**"
+      - "supabase/functions/deep33-hybrid-search/**"
   workflow_dispatch:
+    inputs:
+      require_live:
+        description: Require real live production evidence; false skips the gate
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 permissions:
   contents: read
@@ -19,6 +30,7 @@ concurrency:
 
 jobs:
   railway-production-gate:
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
@@ -98,6 +110,26 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "RAILWAY_AUTH_SESSION_PASS"
 
+      - name: Verify real semantic embedding runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl -sS --connect-timeout 5 --max-time 30 -o /tmp/deep33-embedding-ping.json -w '%{http_code}' \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-hybrid-search" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H 'content-type: application/json' \
+            -d '{"action":"ping"}' || true)"
+          body="$(cat /tmp/deep33-embedding-ping.json 2>/dev/null || true)"
+          test "$status" = "200" || { echo "RAILWAY_EMBEDDING_RUNTIME_FAIL http=$status"; exit 1; }
+          printf '%s' "$body" | jq -e '.ok == true and .embedding_model == "Supabase/gte-small" and .embedding_smoke == true and .model_dimensions == 384 and .storage_dimensions == 1536 and .version >= 2' >/dev/null || {
+            printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
+            echo "RAILWAY_EMBEDDING_RUNTIME_FAIL: semantic embedding runtime unavailable"
+            exit 1
+          }
+          printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
+          echo "RAILWAY_EMBEDDING_RUNTIME_PASS"
+
       - name: Verify user-scoped memory read
         shell: bash
         run: |
@@ -126,7 +158,11 @@ jobs:
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and (.results | type == "array")' >/dev/null
+          printf '%s' "$body" | jq -e '.ok == true and .mode == "hybrid" and .embedding_model == "Supabase/gte-small" and (.results | type == "array") and (.results | length) > 0 and any(.results[]; (.vector_rank // 0) > 0) and any(.results[]; (.keyword_rank // 0) > 0)' >/dev/null || {
+            printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
+            echo "RAILWAY_HYBRID_SEARCH_FAIL: semantic embeddings and keyword/vector fusion are not both confirmed"
+            exit 1
+          }
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
           echo "RAILWAY_HYBRID_SEARCH_PASS"
 
@@ -143,7 +179,11 @@ jobs:
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
           printf '%s' "$body" > /tmp/railway-live-search.json
-          printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null
+          printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.verification.distinct_providers // 0) >= 2 and (.providers | unique | length) >= 2 and (.retrieved_at | strings | length) > 10' >/dev/null || {
+            printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
+            echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_FAIL: requires at least two successful independent providers and three domains"
+            exit 1
+          }
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
           echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_PASS"
 

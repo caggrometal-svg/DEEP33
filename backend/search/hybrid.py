@@ -186,6 +186,9 @@ class HybridSearchClient:
             "enabled": self.enabled,
             "configured": bool(self.base_url and self.api_key),
             "dimensions": self.dimensions,
+            "embedding_model": "Supabase/gte-small",
+            "embedding_model_dimensions": 384,
+            "embedding_auto_generated": True,
             "transport": "supabase_edge_function",
             "vector_backend": "pgvector",
             "keyword_backend": "postgresql_tsvector",
@@ -249,7 +252,15 @@ class HybridSearchClient:
         if not 200 <= response.status_code < 300:
             raise HybridSearchUnavailableError(f"hybrid_http_{response.status_code}")
         try:
-            return response.json()
+            data = response.json()
+            search_mode = response.headers.get("x-deep33-search-mode")
+            if action == "search" and isinstance(data, list) and search_mode:
+                return {
+                    "results": data,
+                    "mode": search_mode,
+                    "embedding_model": response.headers.get("x-deep33-embedding-model"),
+                }
+            return data
         except ValueError as exc:
             raise HybridSearchUnavailableError("hybrid_invalid_json") from exc
 
@@ -277,13 +288,30 @@ class HybridSearchClient:
                 "p_rrf_k": 60,
             },
         )
-        rows = raw if isinstance(raw, list) else []
+        remote_mode = raw.get("mode") if isinstance(raw, dict) else None
+        rows = (
+            raw.get("results", [])
+            if isinstance(raw, dict) and isinstance(raw.get("results"), list)
+            else raw if isinstance(raw, list) else []
+        )
         reranked = rerank_results(clean_query, rows)
+        mode = (
+            remote_mode
+            if remote_mode in {"hybrid", "vector", "keyword"}
+            else "hybrid" if embedding is not None and clean_query
+            else "vector" if embedding is not None
+            else "keyword"
+        )
         return {
             "ok": bool(reranked),
             "engine": "DEEP33 Hybrid Search",
             "engine_version": ENGINE_VERSION,
-            "mode": "hybrid" if embedding is not None and clean_query else "vector" if embedding is not None else "keyword",
+            "mode": mode,
+            "embedding_model": (
+                raw.get("embedding_model")
+                if isinstance(raw, dict) and remote_mode
+                else "Supabase/gte-small" if remote_mode == "hybrid" else None
+            ),
             "query": clean_query,
             "results": reranked,
             "sources": [

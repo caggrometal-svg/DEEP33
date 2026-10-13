@@ -116,7 +116,10 @@ class MemoryClient:
             return {}
 
         body = {"action": action, "session_id": session_id, **payload}
-        if memory_profile_id:
+        # When a user JWT is present, the Edge Function derives ownership from
+        # JWT sub. Do not send a separate client profile claim that can disagree
+        # with sub and cause a legitimate memory request to be rejected with 401.
+        if memory_profile_id and not access_token:
             body["memory_profile_id"] = memory_profile_id
         if idempotency_key:
             body["idempotency_key"] = idempotency_key
@@ -242,6 +245,7 @@ class MemoryClient:
             idempotency_key=f"memory:remember:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
             **payload,
         )
 
@@ -265,6 +269,7 @@ class MemoryClient:
             idempotency_key=f"memory:preferences:{request_hash}",
             request_hash=request_hash,
             memory_profile_id=memory_profile_id,
+            access_token=access_token,
             **payload,
         )
 

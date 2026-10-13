@@ -179,3 +179,54 @@ def test_hybrid_client_sends_vector_and_keyword_query():
         else:
             os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = previous
         httpx.AsyncClient = original
+
+def test_hybrid_client_reports_edge_generated_embedding_mode():
+    seen = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={
+                "x-deep33-search-mode": "hybrid",
+                "x-deep33-embedding-model": "Supabase/gte-small",
+            },
+            json=[
+                {
+                    "document_id": "doc-generated",
+                    "chunk_index": 0,
+                    "content": "DEEP33 search uses generated vectors and keyword ranking.",
+                    "metadata": {"title": "DEEP33"},
+                    "keyword_rank": 1,
+                    "vector_rank": 1,
+                    "keyword_score": 0.5,
+                    "vector_score": 0.9,
+                    "rrf_score": 0.02,
+                }
+            ],
+        )
+
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    previous = os.environ.get("DEEP33_HYBRID_SEARCH_ENABLED")
+    os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = "true"
+    try:
+        client = HybridSearchClient(base_url="https://db.test", api_key="key")
+        result = asyncio.run(client.search("DEEP33 vector and keyword search", limit=3))
+        assert result["ok"] is True
+        assert result["mode"] == "hybrid"
+        assert result["embedding_model"] == "Supabase/gte-small"
+        assert seen["payload"]["embedding"] is None
+    finally:
+        if previous is None:
+            os.environ.pop("DEEP33_HYBRID_SEARCH_ENABLED", None)
+        else:
+            os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = previous
+        httpx.AsyncClient = original
+

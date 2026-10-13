@@ -255,9 +255,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Internal DEEP33 fallback: keep the client endpoint unchanged and reuse the existing
-// Render backend only when the direct edge provider cannot produce a safe response.
+// Internal DEEP33 fallback: keep the public API unchanged. Try the canonical
+// Railway deployment first, then preserve the existing Render fallbacks as-is.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
   "https://deep33-backup.onrender.com",
@@ -489,6 +490,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
     "render-backup-fallback",

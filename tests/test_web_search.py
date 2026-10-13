@@ -33,3 +33,94 @@ def test_rss_parser_returns_clean_description_text() -> None:
     assert len(result) == 1
     assert result[0]["snippet"] == "Headline Publisher Name"
     assert "<font" not in result[0]["snippet"]
+
+def test_cl0q_response_normalizer_keeps_external_web_results():
+    from tools.web_search import _cl0q_result_items
+
+    results = _cl0q_result_items(
+        {
+            "results": [
+                {
+                    "url": "https://science.nasa.gov/moon/",
+                    "title": "NASA Artemis lunar exploration",
+                    "description": "Research and missions involving the Moon.",
+                },
+                {
+                    "url": "https://www.esa.int/Science_Exploration/Space_Science",
+                    "title": "ESA space science",
+                    "snippet": "Science missions and current research.",
+                },
+            ]
+        },
+        5,
+    )
+    assert len(results) == 2
+    assert results[0]["url"] == "https://science.nasa.gov/moon/"
+    assert results[0]["snippet"] == "Research and missions involving the Moon."
+    assert results[1]["url"].startswith("https://www.esa.int/")
+
+
+def test_cl0q_response_normalizer_rejects_unknown_payload():
+    import pytest
+    from tools.web_search import WebSearchError, _cl0q_result_items
+
+    with pytest.raises(WebSearchError, match="WEB_SEARCH_CL0Q_INVALID_RESPONSE"):
+        _cl0q_result_items({"message": "not a results payload"}, 5)
+
+def test_orchestrator_waits_for_two_successful_independent_providers():
+    from backend.search.resilient import WebOrchestrator
+
+    async def provider_one(query, timeout, limit):
+        return [
+            {
+                "title": "NASA Artemis mission and lunar exploration",
+                "url": "https://science.nasa.gov/artemis/",
+                "snippet": "NASA Artemis mission lunar exploration update.",
+            },
+            {
+                "title": "ESA Artemis lunar research mission",
+                "url": "https://www.esa.int/Science_Exploration/Artemis",
+                "snippet": "Artemis mission lunar science research.",
+            },
+            {
+                "title": "Space.com Artemis mission guide",
+                "url": "https://www.space.com/artemis-mission",
+                "snippet": "A guide to the NASA Artemis lunar mission.",
+            },
+        ]
+
+    async def provider_two(query, timeout, limit):
+        await asyncio.sleep(0.04)
+        return [
+            {
+                "title": "NASA Artemis mission update from independent index",
+                "url": "https://spacenews.com/artemis-mission-update/",
+                "snippet": "NASA Artemis mission update and lunar exploration.",
+            }
+        ]
+
+    async def no_results(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.2,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            "bing": provider_one,
+            "google": provider_two,
+            "cl0q": no_results,
+            "mojeek": no_results,
+            "duckduckgo": no_results,
+        }
+        return await orchestrator.search("NASA Artemis mission", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True
+    assert result["verification"]["distinct_domains"] >= 3
+    assert result["verification"]["distinct_providers"] >= 2
+    assert {"bing", "google"}.issubset(set(result["providers"]))
+
