@@ -49,7 +49,7 @@ def test_prepare_messages_keeps_current_personality_as_final_system_instruction(
     class FakeMemory:
         enabled = True
 
-        async def context(self, session_id: str, memory_profile_id=None) -> dict:
+        async def context(self, session_id: str, memory_profile_id=None, access_token=None) -> dict:
             return {
                 "session": {"session_id": session_id, "personality": "NEUTRO", "preferences": {}},
                 "messages": [],
