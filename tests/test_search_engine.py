@@ -767,6 +767,9 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
     monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
     monkeypatch.setattr("tools.web_search._duckduckgo_search", fake_ddg)
     monkeypatch.setattr("tools.web_search._google_news_search", fake_google_news)
+    async def fake_mojeek(query, timeout_seconds, max_results):
+        return []
+    monkeypatch.setattr("tools.web_search._mojeek_search", fake_mojeek)
 
     result = asyncio.run(
         SearchEngine(max_results=5, max_queries=3).search(
