@@ -50,12 +50,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          response="$(curl -sS --connect-timeout 5 --max-time 90 -w '\\nSTATUS:%{http_code}\\nELAPSED:%{time_total}' "$RAILWAY_BASE_URL/v1/ai/inference-check" || true)"
+          response="$(curl -sS --connect-timeout 5 --max-time 90 -w '\nSTATUS:%{http_code}\nELAPSED:%{time_total}' "$RAILWAY_BASE_URL/v1/ai/inference-check" || true)"
           status="$(printf '%s' "$response" | sed -n 's/^STATUS://p')"
           elapsed="$(printf '%s' "$response" | sed -n 's/^ELAPSED://p')"
           body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.status == "PASS" and .text_ok == true and ((.model // "") | length) > 0' >/dev/null 2>&1; then
-            printf '%s\\n' "$body" | jq -c '{status, provider, model, text_ok, timestamp}' 2>/dev/null || true
+            printf '%s\n' "$body" | jq -c '{status, provider, model, text_ok, timestamp}' 2>/dev/null || true
             echo "RAILWAY_REAL_INFERENCE_FAIL http=$status elapsed_seconds=$elapsed"
             exit 1
           fi
