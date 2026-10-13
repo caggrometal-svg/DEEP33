@@ -172,7 +172,7 @@ jobs:
             response_file="/tmp/deep33-navigation-search-$query_index.json"
             status="$(curl -sS --connect-timeout 8 --max-time 30 \
               -o "$response_file" -w "%{http_code}" \
-              -G "$TERTIARY_URL/v1/web/search" \
+              -G "$RAILWAY_BASE_URL/v1/web/search" \
               -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
               -H "Cache-Control: no-cache" \
               -H "X-DEEP33-Session-Id: broad-navigation-$GITHUB_RUN_ID-$query_index" \
@@ -225,7 +225,7 @@ jobs:
             fetch_file=/tmp/deep33-navigation-fetch.json
             fetch_status="$(curl -sS --connect-timeout 4 --max-time 10 \
               -o "$fetch_file" -w "%{http_code}" \
-              -G "$TERTIARY_URL/v1/web/fetch" \
+              -G "$RAILWAY_BASE_URL/v1/web/fetch" \
               -H "Authorization: Bearer $DEEP33_E2E_TOKEN" \
               -H "X-DEEP33-Session-Id: broad-navigation-$GITHUB_RUN_ID" \
               -H "X-Request-ID: broad-navigation-$GITHUB_RUN_ID-$candidate_index" \
