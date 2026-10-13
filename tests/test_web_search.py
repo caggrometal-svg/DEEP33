@@ -279,3 +279,13 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
     assert result["verification"]["distinct_providers"] >= 2
     assert result["verification"]["distinct_domains"] >= 3
     assert len(result["results"]) >= 3
+
+
+def test_official_chile_portal_query_is_not_compressed_into_generic_topic_tokens():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "sitio gubernamental Chile información pública"
+    provider_query = WebOrchestrator._provider_query(query)
+    assert "Chile" in provider_query
+    assert "government" in provider_query
+    assert "ChileAtiende" in provider_query
