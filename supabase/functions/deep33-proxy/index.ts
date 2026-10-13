@@ -789,11 +789,11 @@ async function providerRequestHeaders(
   idempotencyKey = "",
   personality = "",
 ): Promise<Record<string, string>> {
-  const renderBackendFallback = isInternalBackendProvider(provider);
-  const fallbackSessionId = renderBackendFallback && !sessionId
+  const internalBackendFallback = isInternalBackendProvider(provider);
+  const fallbackSessionId = internalBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
     : "";
-  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+  const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")
     ? userAuthorization
     : provider.api_key
       ? "Bearer " + provider.api_key
@@ -801,7 +801,7 @@ async function providerRequestHeaders(
   // Render must claim its own child operation while Edge retains the public request
   // lease. This avoids two concurrent claims on the same shared row but keeps the
   // public X-Idempotency-Key unchanged across Edge and direct Render retries.
-  const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
+  const delegatedIdempotencyKey = internalBackendFallback && idempotencyKey
     ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
@@ -811,8 +811,8 @@ async function providerRequestHeaders(
     // The edge gateway already ran web search and appended evidence before entering
     // the provider loop. Prevent the Render fallback from launching a second nested
     // web-tool loop, which can turn a valid researched response into a 502/503.
-    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
-    ...(renderBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
@@ -1182,9 +1182,9 @@ async function callEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -1552,9 +1552,9 @@ async function streamEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
