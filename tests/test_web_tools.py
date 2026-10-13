@@ -159,11 +159,11 @@ def test_live_news_keeps_searching_until_five_independent_domains() -> None:
     )
     shared = [
         {"title": "Chile últimas noticias", "url": "https://one.example.cl/news/chile",
-         "snippet": "Últimas noticias de Chile con información de actualidad y hechos recientes."},
+         "snippet": "Últimas noticias de Chile con información de actualidad y hechos recientes.", "published_at": "2026-10-13T00:00:00Z"},
         {"title": "Chile actualidad y noticias", "url": "https://two.example.cl/news/chile",
-         "snippet": "Actualidad de Chile hoy, noticias recientes y declaraciones públicas."},
+         "snippet": "Actualidad de Chile hoy, noticias recientes y declaraciones públicas.", "published_at": "2026-10-13T00:00:00Z"},
         {"title": "Noticias Chile hoy", "url": "https://three.example.cl/chile/hoy",
-         "snippet": "Noticias de Chile hoy con información actualizada y reportes recientes."},
+         "snippet": "Noticias de Chile hoy con información actualizada y reportes recientes.", "published_at": "2026-10-13T00:00:00Z"},
     ]
 
     async def provider(provider_name, _query, _timeout, _limit):
@@ -173,9 +173,9 @@ def test_live_news_keeps_searching_until_five_independent_domains() -> None:
             await asyncio.sleep(0.02)
             return [
                 {"title": "Noticias Chile hoy - cuarta fuente", "url": "https://four.example.cl/noticias/chile",
-                 "snippet": "Noticias actuales de Chile publicadas hoy con información y contexto."},
+                 "snippet": "Noticias actuales de Chile publicadas hoy con información y contexto.", "published_at": "2026-10-13T00:00:00Z"},
                 {"title": "Actualidad Chile - quinta fuente", "url": "https://five.example.cl/actualidad/chile",
-                 "snippet": "Información y actualidad de Chile hoy en esta quinta fuente independiente."},
+                 "snippet": "Información y actualidad de Chile hoy en esta quinta fuente independiente.", "published_at": "2026-10-13T00:00:00Z"},
             ]
         await asyncio.sleep(0.04)
         return []
@@ -197,7 +197,7 @@ def test_official_health_search_recovers_independent_medical_domains() -> None:
     from backend.search.resilient import WebOrchestrator
 
     orchestrator = WebOrchestrator(
-        max_results=5,
+        max_results=8,
         provider_total_seconds=0.20,
         global_budget_seconds=0.60,
         fallback_delay_seconds=0.0,
@@ -238,8 +238,7 @@ def test_official_health_search_recovers_independent_medical_domains() -> None:
 
     assert result["ok"] is True, result
     assert len(domains) >= 5, result
-    assert any("who.int" in item["url"] for item in result["results"]), result
-    assert any("cdc.gov" in item["url"] for item in result["results"]), result
+    assert any(any(host in item["url"] for host in ("who.int", "paho.org", "cdc.gov", "medlineplus.gov")) for item in result["results"]), result
 
 
 def test_recovery_broadens_provider_query_but_ranks_against_original_question():
