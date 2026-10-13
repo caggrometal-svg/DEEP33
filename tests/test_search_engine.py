@@ -677,7 +677,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 3
     assert len(result["providers"]) >= 2
-    assert result["verification"]["distinct_providers"] >= 2
+    assert result["verification"]["distinct_providers"] == 2
 
 
 def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch):
@@ -819,7 +819,7 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
     assert len(ranked) == 1
 
 
-def test_realtime_search_expands_after_single_provider_results(monkeypatch):
+def test_realtime_search_stops_after_independent_provider_evidence(monkeypatch):
     queries = []
 
     async def fake_run_query(self, providers, planned_query, **kwargs):
@@ -861,8 +861,8 @@ def test_realtime_search_expands_after_single_provider_results(monkeypatch):
         )
     )
     assert result["ok"] is True
-    # One relevant provider is not enough to close a current-news search.
-    assert len(queries) == 2
+    # Two independent providers and three domains satisfy the realtime evidence gate.
+    assert len(queries) == 1
     assert result["queries_executed"] == queries
 
 
