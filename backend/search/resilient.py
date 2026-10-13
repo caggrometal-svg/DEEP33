@@ -277,13 +277,13 @@ class WebOrchestrator:
         deadline = loop.time() + self.global_budget_seconds
         provider_query = self._provider_query(cleaned)
         tasks = {
-            asyncio.create_task(self._call_provider("bing", provider_query), name="search:bing"),
-            asyncio.create_task(self._call_provider("google", provider_query), name="search:google"),
-            asyncio.create_task(self._call_provider("mojeek", provider_query), name="search:mojeek"),
             asyncio.create_task(
-                self._delayed_provider("duckduckgo", provider_query),
-                name="search:duckduckgo",
-            ),
+                self._delayed_provider(provider, provider_query)
+                if provider == "duckduckgo"
+                else self._call_provider(provider, provider_query),
+                name=f"search:{provider}",
+            )
+            for provider in self.providers
         }
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
