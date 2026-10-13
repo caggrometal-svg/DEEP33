@@ -251,3 +251,32 @@ def test_realtime_chile_politics_matches_accentless_and_english_news_terms() -> 
         "https://news.example.org/chile-politica",
         "https://noticias.example.cl/politica/chile",
     }
+
+
+def test_realtime_santiago_weather_matches_weather_synonyms_but_not_city_news() -> None:
+    query = "clima actual Santiago Chile"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Santiago Chile Weather Forecast",
+                "url": "https://weather.example.net/Santiago-Chile",
+                "snippet": "Current temperatures, wind and rainfall in Santiago.",
+            },
+            {
+                "title": "Temperaturas actuales en Santiago",
+                "url": "https://clima.example.cl/temperaturas/Santiago",
+                "snippet": "Pronóstico meteorológico, humedad y condiciones actuales.",
+            },
+            {
+                "title": "Santiago politics and government updates",
+                "url": "https://news.example.org/Santiago-politics",
+                "snippet": "Latest government and Congress news from Santiago.",
+            },
+        ],
+        realtime=True,
+    )
+    assert {item["url"] for item in ranked} == {
+        "https://weather.example.net/Santiago-Chile",
+        "https://clima.example.cl/temperaturas/Santiago",
+    }

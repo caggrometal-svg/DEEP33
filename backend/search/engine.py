@@ -443,13 +443,13 @@ def rank_results(
             flags=re.IGNORECASE,
         )
         normalized_anchor_evidence = re.sub(
-            r"\b(?:temperature|temperatures|temperatura|temperaturas)\b",
-            " temperatura ",
+            r"\b(?:temperature|temperatures|temperatura|temperaturas|climate|climatic|rain|rainfall|precipitation|humidity|humedad|lluvia|viento|wind|meteorological|meteorol[oó]gic[oa]s?|condiciones)\b",
+            " clima ",
             normalized_anchor_evidence,
             flags=re.IGNORECASE,
         )
         normalized_anchor_query = re.sub(
-            r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología)\b",
+            r"\b(?:weather|forecast|forecasting|tiempo|pronostico|pronóstico|meteorologia|meteorología|temperature|temperatures|temperatura|temperaturas|climate|climatic|rain|rainfall|precipitation|humidity|humedad|lluvia|viento|wind|meteorological|meteorol[oó]gic[oa]s?|condiciones)\b",
             " clima ",
             " ".join(anchor_tokens),
             flags=re.IGNORECASE,
