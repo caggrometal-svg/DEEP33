@@ -221,3 +221,58 @@ def test_chile_government_site_recovery_uses_official_portal_terms():
         "Chile official government public services information "
         "transparency open data ChileAtiende gob.cl"
     )
+
+
+def test_primary_search_reserves_deadline_for_multisource_recovery():
+    from backend.search.resilient import WebOrchestrator
+
+    initial_query = "política Chile hoy últimas noticias"
+
+    def item(domain, title):
+        return {
+            "title": title,
+            "url": f"https://{domain}/chile/politica",
+            "snippet": f"Política Chile noticias: {title}",
+        }
+
+    async def provider_for(name):
+        async def provider(query, timeout, limit):
+            if "BioBioChile Cooperativa Emol" not in query:
+                if name == "bing":
+                    return [item("solo.example", "Política Chile última noticia")]
+                await asyncio.sleep(0.6)
+                return []
+            if name == "bing":
+                return [
+                    item("biobiochile.cl", "Política Chile noticias gobierno"),
+                    item("cooperativa.cl", "Política Chile últimas noticias"),
+                    item("emol.com", "Política Chile noticias de hoy"),
+                ]
+            if name == "duckduckgo":
+                return [
+                    item("latercera.com", "Política Chile últimas noticias del gobierno"),
+                    item("24horas.cl", "Noticias política en Chile hoy"),
+                ]
+            return []
+
+        return provider
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.2,
+            global_budget_seconds=0.4,
+            fallback_delay_seconds=0,
+            cache_ttl_seconds=30,
+        )
+        orchestrator.providers = {
+            name: await provider_for(name)
+            for name in ("bing", "google", "cl0q", "mojeek", "duckduckgo")
+        }
+        return await orchestrator.search(initial_query, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True
+    assert result["verification"]["distinct_providers"] >= 2
+    assert result["verification"]["distinct_domains"] >= 3
+    assert len(result["results"]) >= 3

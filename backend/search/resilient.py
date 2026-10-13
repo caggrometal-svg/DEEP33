@@ -211,7 +211,10 @@ class WebOrchestrator:
             # The first phrase is too close to the user's wording and tends to
             # return the same small publisher set. Broaden the provider query;
             # every candidate is still ranked against the original user query.
-            return "Chile política gobierno Congreso elecciones actualidad noticias"
+            return (
+                "Chile política gobierno Congreso elecciones actualidad noticias "
+                "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
+            )
         if news_intent and "chile" in lowered:
             return "Chile últimas noticias hoy"
         if news_intent and compact:
@@ -328,6 +331,13 @@ class WebOrchestrator:
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.global_budget_seconds
+        # Reserve almost half of the end-to-end budget for recovery. Without a
+        # separate primary deadline, slow providers can consume all 5s and prevent
+        # the fallback query from ever running.
+        primary_deadline = min(
+            deadline,
+            loop.time() + max(0.05, self.global_budget_seconds * 0.55),
+        )
         provider_query = self._provider_query(cleaned)
         tasks = {
             asyncio.create_task(
@@ -343,7 +353,7 @@ class WebOrchestrator:
 
         try:
             while pending:
-                remaining = deadline - loop.time()
+                remaining = primary_deadline - loop.time()
                 if remaining <= 0:
                     break
                 done, pending = await asyncio.wait(
@@ -419,10 +429,17 @@ class WebOrchestrator:
             and news_intent
             and len(selected_domains) < min(5, self.max_results)
         )
+        successful_providers = {
+            outcome.provider for outcome in outcomes if outcome.ok and outcome.results
+        }
+        needs_provider_diversity = (
+            len(successful_providers) < min(2, len(self.providers))
+        )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
             or needs_news_source_diversity
+            or needs_provider_diversity
         )
         if (
             needs_recovery
