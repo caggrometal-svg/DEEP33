@@ -9,7 +9,7 @@ import os
 import re
 import time
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 
@@ -343,6 +343,58 @@ class MojeekParser(HTMLParser):
         self._flush()
 
 
+class YahooHeadingSearchParser(HTMLParser):
+    """Extract general-web destinations from Yahoo headings without brittle CSS selectors."""
+
+    def __init__(self, base_url: str):
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.results = []
+        self._anchors: list[str] = []
+        self._heading = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs_map = dict(attrs)
+        if tag == "a":
+            raw_href = (attrs_map.get("href") or "").strip()
+            href = _unwrap_yahoo_url(urljoin(self.base_url, raw_href)) if raw_href else ""
+            if href:
+                self._anchors.append(href)
+                if self._heading is not None and not self._heading.get("url"):
+                    self._heading["url"] = href
+            return
+        if tag in {"h2", "h3"}:
+            self._heading = {
+                "tag": tag,
+                "url": self._anchors[-1] if self._anchors else "",
+                "parts": [],
+            }
+
+    def handle_data(self, data):
+        if self._heading is not None:
+            value = " ".join(str(data or "").split()).strip()
+            if value:
+                self._heading["parts"].append(value)
+
+    def handle_endtag(self, tag):
+        if self._heading is not None and tag == self._heading["tag"]:
+            heading = self._heading
+            self._heading = None
+            title = " ".join(heading["parts"]).strip()
+            url = str(heading.get("url") or "").strip()
+            host = (urlparse(url).hostname or "").lower().rstrip(".")
+            if (
+                title
+                and url
+                and host
+                and host != "yahoo.com"
+                and not host.endswith(".yahoo.com")
+            ):
+                self.results.append({"title": title[:300], "url": url, "snippet": ""})
+        if tag == "a" and self._anchors:
+            self._anchors.pop()
+
+
 def _unwrap_ddg_url(value):
     if not value:
         return ""
@@ -376,6 +428,29 @@ def _unwrap_bing_url(value):
             return ""
         return value
     return ""
+
+
+def _unwrap_yahoo_url(value: str) -> str:
+    """Unwrap Yahoo's click-tracking redirects while preserving direct public URLs."""
+    candidate = html.unescape(str(value or "").strip())
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host == "r.search.yahoo.com" or host.endswith(".search.yahoo.com"):
+        targets = list(parse_qs(parsed.query).get("RU", []))
+        targets.extend(
+            segment[3:]
+            for segment in parsed.path.split("/")
+            if segment.startswith("RU=")
+        )
+        for raw_target in targets:
+            target = raw_target
+            for _ in range(3):
+                target = unquote(target)
+                if target.startswith(("https://", "http://")):
+                    return target
+    return candidate
 
 
 def _bing_market_params(query: str) -> dict[str, str]:
@@ -827,6 +902,43 @@ async def _google_search(query, timeout_seconds, max_results, *, preserve_candid
     if preserve_candidates:
         return normalized[:max_results]
     from backend.search.engine import is_realtime_query, rank_results
+    return rank_results(
+        query,
+        normalized,
+        realtime=is_realtime_query(query),
+    )[:max_results]
+
+
+async def _yahoo_search(
+    query,
+    timeout_seconds,
+    max_results,
+    *,
+    preserve_candidates=False,
+):
+    """Search public general-web pages through Yahoo as an independent fallback."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://search.yahoo.com/search",
+        params={"p": query, "ei": "UTF-8"},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_YAHOO_HTTP_{response.status_code}")
+    if len(response.content) > 3 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_YAHOO_RESPONSE_TOO_LARGE")
+    parser = YahooHeadingSearchParser(str(response.url))
+    parser.feed(response.text)
+    parser.close()
+    normalized = _normalise_results(parser.results, max_results)
+    if preserve_candidates:
+        return normalized[:max_results]
+    from backend.search.engine import is_realtime_query, rank_results
+
     return rank_results(
         query,
         normalized,

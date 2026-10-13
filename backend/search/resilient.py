@@ -19,6 +19,7 @@ from tools.web_search import (
     _google_news_search,
     _google_search,
     _mojeek_search,
+    _yahoo_search,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ class WebOrchestrator:
             "cl0q": CircuitState(),
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
+            "yahoo": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
@@ -125,6 +127,10 @@ class WebOrchestrator:
             "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
+        }
+        # Yahoo is a last-resort general-web fallback, not part of every request fan-out.
+        self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
+            "yahoo": self._yahoo,
         }
 
     async def _bing(self, query: str, timeout: float, limit: int) -> list[dict]:
@@ -149,6 +155,9 @@ class WebOrchestrator:
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
+
+    async def _yahoo(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _yahoo_search(query, timeout, limit, preserve_candidates=True)
 
     def _cache_key(self, query: str) -> str:
         normalized = " ".join(query.split()).strip().casefold()
@@ -266,8 +275,11 @@ class WebOrchestrator:
 
         started = time.perf_counter()
         try:
+            provider_function = self.providers.get(provider) or self.fallback_providers.get(provider)
+            if provider_function is None:
+                raise RuntimeError("SEARCH_PROVIDER_NOT_REGISTERED")
             results = await asyncio.wait_for(
-                self.providers[provider](
+                provider_function(
                     query,
                     self.provider_total_seconds,
                     self.max_results,
@@ -570,6 +582,33 @@ class WebOrchestrator:
             selected = deduplicate(ranked, self.max_results)
             if selected:
                 provider_query = recovery_query
+
+        if not selected and loop.time() < deadline:
+            # Try one independent general-web index only after every normal source
+            # returned no rankable evidence. This avoids spending an extra request
+            # on searches that are already working.
+            remaining = deadline - loop.time()
+            try:
+                yahoo_outcome = await asyncio.wait_for(
+                    self._bounded_call_provider("yahoo", cleaned),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                yahoo_outcome = ProviderOutcome(
+                    provider="yahoo", ok=False, error_code="PROVIDER_TIMEOUT"
+                )
+            outcomes.append(yahoo_outcome)
+            if yahoo_outcome.ok and yahoo_outcome.results:
+                merged = [
+                    {**item, "provider": outcome.provider}
+                    for outcome in outcomes
+                    if outcome.ok
+                    for item in outcome.results
+                ]
+                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                selected = deduplicate(ranked, self.max_results)
+                if selected:
+                    provider_query = cleaned
 
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,

@@ -289,3 +289,96 @@ def test_official_chile_portal_query_is_not_compressed_into_generic_topic_tokens
     assert "Chile" in provider_query
     assert "government" in provider_query
     assert "ChileAtiende" in provider_query
+
+
+def test_yahoo_search_parses_general_web_destinations(monkeypatch):
+    import tools.web_search as module
+
+    page = """
+    <html><body>
+      <div class="algo">
+        <h3><a href="https://en.wikipedia.org/wiki/Asyncio">asyncio - Wikipedia</a></h3>
+        <p>Python asyncio reference and examples.</p>
+      </div>
+      <div class="algo">
+        <a href="https://docs.python.org/3/library/asyncio.html">
+          <h3>asyncio — Asynchronous I/O</h3>
+        </a>
+      </div>
+      <div><h3><a href="https://search.yahoo.com/preferences">Search preferences</a></h3></div>
+    </body></html>
+    """
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url == "https://search.yahoo.com/search"
+            assert kwargs["params"]["p"] == "Wikipedia asyncio Python"
+            return httpx.Response(
+                200,
+                text=page,
+                request=httpx.Request("GET", url),
+            )
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+    results = asyncio.run(
+        module._yahoo_search(
+            "Wikipedia asyncio Python",
+            2.0,
+            5,
+            preserve_candidates=True,
+        )
+    )
+
+    assert len(results) == 2
+    assert results[0]["title"] == "asyncio - Wikipedia"
+    assert results[0]["url"] == "https://en.wikipedia.org/wiki/Asyncio"
+    assert any(item["url"].startswith("https://docs.python.org/") for item in results)
+
+
+def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_are_empty():
+    from backend.search.resilient import WebOrchestrator
+
+    candidates = [
+        {
+            "title": "asyncio - Wikipedia",
+            "url": "https://en.wikipedia.org/wiki/Asyncio",
+            "snippet": "Python asyncio reference and asynchronous input output.",
+        },
+        {
+            "title": "asyncio — Asynchronous I/O",
+            "url": "https://docs.python.org/3/library/asyncio.html",
+            "snippet": "Python asyncio documentation and event loop APIs.",
+        },
+        {
+            "title": "Async IO in Python",
+            "url": "https://realpython.com/async-io-python/",
+            "snippet": "A practical guide to asynchronous programming with Python asyncio.",
+        },
+    ]
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def yahoo_provider(_query, _timeout, _limit):
+        return candidates
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.5,
+            fallback_delay_seconds=0,
+        )
+        for provider in tuple(orchestrator.providers):
+            orchestrator.providers[provider] = empty_provider
+        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        return await orchestrator.search("Wikipedia asyncio Python", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True, result
+    assert "yahoo" in result["providers"]
+    assert any("wikipedia.org" in item["url"] for item in result["results"])
+    assert result["verification"]["distinct_domains"] >= 3

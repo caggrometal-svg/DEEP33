@@ -213,6 +213,7 @@ def test_no_results_logs_redacted_rank_diagnostics(caplog):
     orchestrator.providers["google"] = unrelated
     orchestrator.providers["mojeek"] = unrelated
     orchestrator.providers["duckduckgo"] = unrelated
+    orchestrator.fallback_providers["yahoo"] = unrelated
     result = asyncio.run(orchestrator.search(private_query, fresh=True))
 
     assert result["status"] == "NO_RESULTS"

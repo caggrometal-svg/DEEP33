@@ -408,6 +408,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.providers["google"] = explode
         orchestrator.providers["mojeek"] = explode
         orchestrator.providers["duckduckgo"] = explode
+        orchestrator.fallback_providers["yahoo"] = explode
         result = await orchestrator.search("política Chile hoy", fresh=True)
         self.assertFalse(result["ok"])
         self.assertIn(result["status"], {"NO_RESULTS", "PROVIDER_TIMEOUT"})
