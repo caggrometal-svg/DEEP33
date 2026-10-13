@@ -178,7 +178,7 @@ def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
         assert '"Authorization": userAuthorization' in search
         assert "AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS))" in search
         assert 'fallback_path: "railway"' in search
-        assert 'logSearchStage("success", "railway-fallback", response)' in search
+        assert 'logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response)' in search
         assert "if (!UPSTREAM" not in search
         assert "fetchUpstream(" not in search
 
