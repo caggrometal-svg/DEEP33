@@ -18,7 +18,7 @@ def test_resilient_search_normalisation(monkeypatch):
     import backend.search.resilient as resilient_module
 
     class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
+        async def search(self, query, *, fresh=False, timeout_seconds=None):
             return {
                 "ok": True,
                 "engine": "DEEP33 Search Engine",
@@ -696,7 +696,7 @@ def test_concurrent_fresh_requests_are_bounded_by_orchestrator(monkeypatch):
     calls = {"count": 0}
 
     class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
+        async def search(self, query, *, fresh=False, timeout_seconds=None):
             calls["count"] += 1
             await asyncio.sleep(0.01)
             return {
@@ -811,7 +811,7 @@ def test_long_search_instructions_are_compacted_before_provider_query_limit(monk
     captured = {}
 
     class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
+        async def search(self, query, *, fresh=False, timeout_seconds=None):
             captured["query"] = query
             return {
                 "ok": True,
