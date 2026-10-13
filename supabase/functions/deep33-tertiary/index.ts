@@ -702,11 +702,11 @@ function providerRequestHeaders(
   sessionId = "",
   idempotencyKey = "",
 ): Record<string, string> {
-  const renderBackendFallback = isInternalBackendProvider(provider);
-  const fallbackSessionId = renderBackendFallback && !sessionId
+  const internalBackendFallback = isInternalBackendProvider(provider);
+  const fallbackSessionId = internalBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
     : "";
-  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+  const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")
     ? userAuthorization
     : provider.api_key
       ? "Bearer " + provider.api_key
@@ -715,7 +715,7 @@ function providerRequestHeaders(
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
-    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
@@ -991,9 +991,9 @@ async function callEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -1190,9 +1190,9 @@ async function streamEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
