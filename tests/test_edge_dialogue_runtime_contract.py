@@ -167,4 +167,18 @@ def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "realtimeNewsPlan &&" in search
 
+def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        search = source.split("async function edgeSearch(", 1)[1].split(
+            "async function readinessResponse()", 1
+        )[0]
+        assert 'const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
+        assert "await fetch(railwaySearchUrl" in search
+        assert '"Authorization": userAuthorization' in search
+        assert "AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS))" in search
+        assert 'fallback_path: "railway"' in search
+        assert 'logSearchStage("success", "railway-fallback", response)' in search
+        assert "if (!UPSTREAM" not in search
+        assert "fetchUpstream(" not in search
 
