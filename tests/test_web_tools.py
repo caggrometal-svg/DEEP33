@@ -694,7 +694,7 @@ def test_fetch_coalesces_concurrent_fresh_requests(monkeypatch):
             "url": kwargs["original_url"],
             "final_url": kwargs["current_url"],
             "title": "Example",
-            "text": "contenido",
+            "text": "Contenido real de una página de ejemplo con hechos, contexto y detalles suficientes para validar que el lector devuelve texto utilizable.",
             "content_type": "text/html",
             "bytes": 10,
             "redirects": 0,
