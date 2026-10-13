@@ -599,9 +599,13 @@ class WebOrchestrator:
             # three unique domains. Avoid extra provider traffic when coverage is
             # already sufficient.
             remaining = deadline - loop.time()
+            # Reuse the normalized, broadened query already sent to the primary
+            # providers. The user's raw phrasing can be too narrow or noisy for a
+            # fallback index, especially for official/non-news sources.
+            fallback_query = provider_query or cleaned
             try:
                 yahoo_outcome = await asyncio.wait_for(
-                    self._bounded_call_provider("yahoo", cleaned),
+                    self._bounded_call_provider("yahoo", fallback_query),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
@@ -624,7 +628,7 @@ class WebOrchestrator:
                     if item.get("url")
                 }
                 if selected:
-                    provider_query = cleaned
+                    provider_query = fallback_query
 
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
