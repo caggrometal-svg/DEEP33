@@ -868,3 +868,29 @@ def test_rank_results_normalizes_ai_and_technology_synonyms():
     )
     assert len(ranked) == 1
     assert ranked[0]["url"] == "https://example.org/ai-tech-research"
+
+def test_rank_results_excludes_binary_urls_that_navigation_cannot_extract():
+    results = rank_results(
+        "Python asyncio official documentation",
+        [
+            {
+                "title": "Python asyncio official documentation PDF",
+                "url": "https://docs.python.org/3/library/asyncio.pdf",
+                "snippet": "Python asyncio official documentation.",
+            },
+            {
+                "title": "Python asyncio official documentation DOCX",
+                "url": "https://docs.python.org/3/library/asyncio.docx",
+                "snippet": "Python asyncio official documentation.",
+            },
+            {
+                "title": "Python asyncio official documentation",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+                "snippet": "Python asyncio official documentation and event loop APIs.",
+            },
+        ],
+    )
+
+    assert [item["url"] for item in results] == [
+        "https://docs.python.org/3/library/asyncio.html"
+    ]
