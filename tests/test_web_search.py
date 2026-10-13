@@ -275,6 +275,8 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             return [item("datos.gob.cl", "Datos abiertos Chile", "Información pública y datos abiertos del Gobierno de Chile")]
         if "site:cplt.cl" in query:
             return [item("www.cplt.cl", "Consejo para la Transparencia", "Transparencia e información pública en Chile")]
+        if "site:bcn.cl/leychile" in query:
+            return [item("www.bcn.cl", "Ley de Transparencia", "Ley sobre acceso a la información pública en Chile")]
         return [item("www.gob.cl", "Gobierno de Chile", "Información pública del Gobierno de Chile")]
 
     async def empty_provider(_query, _timeout, _limit):
@@ -310,6 +312,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
     assert any("site:chileatiende.gob.cl" in query for query in calls)
     assert any("site:datos.gob.cl" in query for query in calls)
     assert any("site:cplt.cl" in query for query in calls)
+    assert any("site:bcn.cl/leychile" in query for query in calls)
 
 def test_primary_search_reserves_deadline_for_multisource_recovery():
     from backend.search.resilient import WebOrchestrator

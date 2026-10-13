@@ -465,6 +465,7 @@ class WebOrchestrator:
                 "site:chileatiende.gob.cl Chile servicios trámites información pública",
                 "site:datos.gob.cl Chile datos abiertos información pública",
                 "site:cplt.cl Chile transparencia información pública",
+                "site:bcn.cl/leychile Chile ley transparencia información pública",
             )
             tasks.update({
                 asyncio.create_task(
@@ -580,6 +581,7 @@ class WebOrchestrator:
                 "site:chileatiende.gob.cl Chile servicios trámites información pública",
                 "site:datos.gob.cl Chile datos abiertos información pública",
                 "site:cplt.cl Chile transparencia información pública",
+                "site:bcn.cl/leychile Chile ley transparencia información pública",
             )
             official_tasks = {
                 asyncio.create_task(

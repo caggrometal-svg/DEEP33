@@ -541,6 +541,8 @@ def rank_results(
                 "www.cplt.cl",
                 "portaltransparencia.cl",
                 "www.portaltransparencia.cl",
+                "bcn.cl",
+                "www.bcn.cl",
             }
             if host in official_public_hosts or host.endswith(".gob.cl"):
                 anchor_evidence = (
