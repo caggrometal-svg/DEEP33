@@ -480,7 +480,8 @@ class WebOrchestrator:
             outcome.provider for outcome in outcomes if outcome.ok and outcome.results
         }
         needs_provider_diversity = (
-            len(successful_providers) < min(2, len(self.providers))
+            (is_realtime_query(cleaned) or news_intent)
+            and len(successful_providers) < min(2, len(self.providers))
         )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
