@@ -1,6 +1,17 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+declare const Supabase: {
+  ai: {
+    Session: new (model: string) => {
+      run: (
+        text: string,
+        options?: { mean_pool?: boolean; normalize?: boolean },
+      ) => Promise<ArrayLike<number>>;
+    };
+  };
+};
+
 const STORAGE_VECTOR_DIMENSIONS = 1536;
 const MODEL_VECTOR_DIMENSIONS = 384;
 const embeddingSession = new Supabase.ai.Session("gte-small");
