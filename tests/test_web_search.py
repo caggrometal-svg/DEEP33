@@ -483,3 +483,34 @@ def test_rss_publisher_metadata_preserves_real_domains_behind_google_news_links(
     ranked = rank_results("política Chile hoy últimas noticias", parsed, realtime=True)
     selected = deduplicate(ranked, 5)
     assert len({item["source_domain"] for item in selected}) >= 3
+
+
+def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
+    import backend.search.resilient as module
+    from backend.search.resilient import WebOrchestrator
+
+    query = "política Chile hoy últimas noticias"
+    observed = []
+
+    async def fake_google_news(search_query, timeout, limit):
+        observed.append((search_query, timeout, limit))
+        return []
+
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.2,
+        global_budget_seconds=0.8,
+        fallback_delay_seconds=0,
+    )
+    result = asyncio.run(orchestrator._google_news(query, 0.2, 5))
+
+    assert result == []
+    assert observed == [
+        (
+            "Chile política gobierno Congreso elecciones actualidad noticias "
+            "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile",
+            0.2,
+            5,
+        )
+    ]

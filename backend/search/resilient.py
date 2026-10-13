@@ -18,6 +18,7 @@ from tools.web_search import (
     _duckduckgo_search,
     _google_news_search,
     _google_search,
+    _looks_realtime_news,
     _mojeek_search,
     _yahoo_search,
 )
@@ -150,8 +151,11 @@ class WebOrchestrator:
 
     async def _google_news(self, query: str, timeout: float, limit: int) -> list[dict]:
         # RSS news fallback is independent of general-search anti-bot HTML.
+        # For realtime news, use the engine's broadened equivalent query to avoid
+        # collapsing diverse publisher coverage around the user's exact wording.
         # Non-news queries return immediately without a network request.
-        return await _google_news_search(query, timeout, limit)
+        news_query = self._recovery_query(query) if _looks_realtime_news(query) else query
+        return await _google_news_search(news_query, timeout, limit)
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
