@@ -259,10 +259,19 @@ class WebOrchestrator:
         except Exception as exc:
             state.failure(time.monotonic())
             name = type(exc).__name__.upper()
+            # Preserve bounded adapter error codes (especially HTTP status and
+            # anti-bot/rate-limit failures) without leaking request URLs or payloads.
+            candidate_code = str(exc).strip().split(maxsplit=1)[0]
+            safe_code = (
+                candidate_code[:80]
+                if candidate_code.startswith("WEB_SEARCH_")
+                and candidate_code.replace("_", "").isalnum()
+                else f"PROVIDER_ERROR:{name}"
+            )
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
-                error_code=f"PROVIDER_ERROR:{name}",
+                error_code=safe_code,
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
@@ -399,19 +408,33 @@ class WebOrchestrator:
             len(selected) < min(3, self.max_results)
             or len(selected_domains) < min(3, max(1, len(selected)))
         )
+        failed_transport_providers = {
+            outcome.provider
+            for outcome in outcomes
+            if not outcome.ok
+            and outcome.error_code
+            and outcome.error_code != "NO_RESULTS"
+        }
+        recovery_providers = [
+            provider
+            for provider in self.providers
+            if provider not in failed_transport_providers
+        ]
         if (
             needs_recovery
             and recovery_query.casefold() != provider_query.casefold()
             and deadline > loop.time()
+            and recovery_providers
         ):
-            # Keep every successful recovery result even if another provider hangs.
-            # The same end-to-end deadline covers the primary and recovery phases.
+            # Do not re-hit a provider that just timed out, was blocked, or rate-limited
+            # this request. Providers that cleanly returned NO_RESULTS may try the
+            # semantically equivalent recovery query. The same global deadline applies.
             recovery_tasks = {
                 asyncio.create_task(
                     self._bounded_call_provider(provider, recovery_query),
                     name=f"search-recovery:{provider}",
                 )
-                for provider in self.providers
+                for provider in recovery_providers
             }
             pending_recovery = set(recovery_tasks)
             try:
