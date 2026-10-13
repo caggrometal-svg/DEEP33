@@ -107,7 +107,7 @@ def test_internal_render_failover_uses_circuit_breaker_when_redundant() -> None:
         source = path.read_text(encoding="utf-8")
         assert "const criticalInternalFallback =" in source
         assert "providers.length === 1 && isInternalBackendProvider(provider)" in source
-        assert "Date.now() < circuit.openUntil && !criticalRenderFallback" in source
+        assert "Date.now() < circuit.openUntil && !criticalInternalFallback" in source
 
 
 def test_explicit_inference_probe_uses_the_streaming_chat_path() -> None:
@@ -143,7 +143,7 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         assert "for (const provider of providers)" in source
         assert "addInternalInferenceBackends(providers);" in source
         internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
-            "\\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
+            "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
         )[0]
         assert '"railway-backend-fallback"' in internal
         for inactive_name in ("render-backend-fallback", "render-api-fallback", "render-backup-fallback"):
