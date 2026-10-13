@@ -310,7 +310,13 @@ class WebOrchestrator:
             await asyncio.sleep(self.fallback_delay_seconds)
         return await self._bounded_call_provider(provider, query)
 
-    async def search(self, query: str, *, fresh: bool = False) -> dict:
+    async def search(
+        self,
+        query: str,
+        *,
+        fresh: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return self._empty_payload(
@@ -330,13 +336,17 @@ class WebOrchestrator:
 
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.global_budget_seconds
-        # Reserve almost half of the end-to-end budget for recovery. Without a
-        # separate primary deadline, slow providers can consume all 5s and prevent
-        # the fallback query from ever running.
+        requested_budget = (
+            self.global_budget_seconds
+            if timeout_seconds is None
+            else min(self.global_budget_seconds, max(0.10, float(timeout_seconds)))
+        )
+        deadline = loop.time() + requested_budget
+        # Reserve almost half of the requested end-to-end budget for recovery.
+        # Slow providers cannot consume the budget and suppress failover.
         primary_deadline = min(
             deadline,
-            loop.time() + max(0.05, self.global_budget_seconds * 0.55),
+            loop.time() + max(0.05, requested_budget * 0.55),
         )
         provider_query = self._provider_query(cleaned)
         normalized_query = cleaned.casefold()
