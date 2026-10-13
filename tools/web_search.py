@@ -524,6 +524,58 @@ async def _mojeek_search(query, timeout_seconds, max_results):
     return _normalise_results(parser.results, max_results)
 
 
+def _cl0q_result_items(payload, max_results):
+    """Normalize cl0q's independent public index response into DEEP33 candidates."""
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = payload.get("results")
+        if not isinstance(items, list):
+            items = payload.get("items")
+        if not isinstance(items, list):
+            items = payload.get("data")
+    else:
+        items = None
+    if not isinstance(items, list):
+        raise WebSearchError("WEB_SEARCH_CL0Q_INVALID_RESPONSE")
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        candidate = dict(item)
+        candidate.setdefault("url", item.get("link") or item.get("canonical_url") or "")
+        candidate.setdefault("title", item.get("h1") or item.get("name") or "")
+        candidate.setdefault(
+            "snippet",
+            item.get("description") or item.get("content") or item.get("highlight") or "",
+        )
+        normalized.append(candidate)
+    return _normalise_results(normalized, max_results)
+
+
+async def _cl0q_search(query, timeout_seconds, max_results):
+    """Search cl0q's independent web index; no credential or paid API is required."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://cl0q.com/search",
+        params={"q": query, "limit": max(1, min(8, int(max_results))), "safe": "1"},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/json",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_CL0Q_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_CL0Q_RESPONSE_TOO_LARGE")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WebSearchError("WEB_SEARCH_CL0Q_INVALID_JSON") from exc
+    return _cl0q_result_items(payload, max_results)
+
+
 async def _duckduckgo_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
     realtime_news = _looks_realtime_news(query)
