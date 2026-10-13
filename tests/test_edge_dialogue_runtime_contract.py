@@ -184,6 +184,22 @@ def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
 
 
 
+def test_edge_inference_probe_forwards_session_to_internal_backend() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        stream_start = source.index("async function streamEdgeAI(")
+        stream_end = source.index("function normalizePersonality(", stream_start)
+        stream = source[stream_start:stream_end]
+        probe_start = source.index("async function probeInference(")
+        probe_end = source.index("async function probeMemory(", probe_start)
+        probe = source[probe_start:probe_end]
+
+        assert 'fallbackSessionId = ""' in stream
+        assert 'idempotencyContext?.sessionId || fallbackSessionId || ""' in stream
+        assert "async function probeInference(sessionId: string" in probe
+        assert "null, userAuthorization, sessionId" in probe
+
+
 def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_sources() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
