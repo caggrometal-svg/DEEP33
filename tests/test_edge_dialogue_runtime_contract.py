@@ -200,6 +200,14 @@ def test_edge_inference_probe_forwards_session_to_internal_backend() -> None:
         assert "null, userAuthorization, sessionId" in probe
 
 
+def test_railway_stream_first_token_budget_is_consistent_across_edge_gateways() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "const EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS = 6000;" in source
+        assert "function isRailwayBackendProvider(provider: EdgeAIProvider)" in source
+        assert "const firstChunkTimeoutMs = isRailwayBackendProvider(provider)" in source
+
+
 def test_web_completion_recovery_is_railway_first_and_globally_bounded() -> None:
     source = EDGE_FILES[0].read_text(encoding="utf-8")
     call_start = source.index("async function callEdgeAI(")
