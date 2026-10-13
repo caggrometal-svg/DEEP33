@@ -221,3 +221,33 @@ def test_realtime_smartphone_query_matches_english_specs_evidence_without_weaken
     )
     assert len(ranked) == 1
     assert ranked[0]["url"] == "https://www.techradar.com/phones/best-phones"
+
+
+def test_realtime_chile_politics_matches_accentless_and_english_news_terms() -> None:
+    query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Chile Politics: Latest Government and Congress News",
+                "url": "https://news.example.org/chile-politica",
+                "snippet": "Political updates about Chile's government and Congress.",
+            },
+            {
+                "title": "Política chilena hoy: Gobierno y Congreso",
+                "url": "https://noticias.example.cl/politica/chile",
+                "snippet": "Últimas noticias de política en Chile.",
+            },
+            {
+                "title": "Today's weather forecast in Chile",
+                "url": "https://weather.example.net/chile",
+                "snippet": "Weather and temperature forecast for Chile today.",
+            },
+        ],
+        realtime=True,
+    )
+    assert len(ranked) == 2
+    assert {item["url"] for item in ranked} == {
+        "https://news.example.org/chile-politica",
+        "https://noticias.example.cl/politica/chile",
+    }

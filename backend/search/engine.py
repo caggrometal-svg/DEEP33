@@ -298,6 +298,12 @@ _TOPIC_PHRASE_ALIASES = (
         ),
         "economia",
     ),
+    # Search indexes frequently omit Spanish diacritics or return English synonyms.
+    # Normalize equivalent political terms before applying strict realtime relevance.
+    (
+        re.compile(r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies))\b", re.IGNORECASE),
+        "politics",
+    ),
 )
 
 
