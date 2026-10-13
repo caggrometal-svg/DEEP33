@@ -141,7 +141,7 @@ jobs:
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
           test "$status" = "200" || { echo "RAILWAY_MEMORY_READ_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e 'type == "object"' >/dev/null
+          printf '%s' "$body" | jq -e '(.messages | type == "array") and (.memories | type == "array")' >/dev/null || { echo "RAILWAY_MEMORY_READ_FAIL: context schema invalid"; exit 1; }
           printf '%s' "$body" | jq -c '{ok, session, message_count: ((.messages // []) | length), memory_count: ((.memories // []) | length)}'
           echo "RAILWAY_MEMORY_READ_PASS"
 
