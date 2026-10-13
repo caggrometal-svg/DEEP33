@@ -70,6 +70,45 @@ jobs:
           printf '%s' "$body" | jq -c '{status, request_id, provider: .result.provider, model: .result.model, text_chars: (.result.text | length), memory_persisted}'
           echo "EDGE_RAILWAY_AUTHENTICATED_INFERENCE_PASS"
 
+      - name: Verify Railway hybrid knowledge search on indexed DEEP33 documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\\nSTATUS:%{http_code}' \\
+            -X POST "https://iac33-fastapi-edge-production.up.railway.app/v1/search/hybrid" \\
+            -H "Authorization: Bearer $EDGE_TEST_TOKEN" \\
+            -H "X-DEEP33-Session-Id: $EDGE_TEST_SESSION" \\
+            -H 'content-type: application/json' \\
+            -d '{"query":"DEEP33 Search Engine provider independent web search orchestration","limit":3}' || true)"
+          status="${response##*STATUS:}"
+          body="${response%        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -sS --connect-timeout 5 --max-time 30 -w '\nSTATUS:%{http_code}' \
+            --get "$PRIMARY_URL/v1/search" \
+            -H "Authorization: Bearer $EDGE_TEST_TOKEN" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "X-DEEP33-Session-Id: $EDGE_TEST_SESSION" \
+            -H "Cache-Control: no-cache" \
+            --data-urlencode 'q=NASA Artemis mission latest update today official' || true)"
+          status="${response##*STATUS:}"
+          body="${response%$'\n'STATUS:*}"
+          if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null 2>&1; then
+            printf '%s' "$body" | jq -c '{ok, error, engine_version, providers, result_count: ((.results // []) | length), verification, retrieved_at}' 2>/dev/null || true
+            echo "EDGE_RAILWAY_BROAD_SEARCH_FAIL http=$status"
+            exit 1
+          fi
+          printf '%s' "$body" | jq -c '{ok, engine_version, providers, result_count: (.results | length), verification, retrieved_at}'
+          echo "EDGE_RAILWAY_BROAD_SEARCH_PASS"
+\\n'STATUS:*}"
+          if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and ((.results // []) | length) >= 1' >/dev/null 2>&1; then
+            printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, error, results: ((.results // []) | length)}' 2>/dev/null || true
+            echo "RAILWAY_HYBRID_KNOWLEDGE_FAIL http=$status"
+            exit 1
+          fi
+          printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, results: ((.results // []) | map({document_id, chunk_index, score: (.rerank_score // .score)}))}'
+          echo "RAILWAY_HYBRID_KNOWLEDGE_PASS"
+
       - name: Verify live broad-web search on the same authenticated Edge
         shell: bash
         run: |
