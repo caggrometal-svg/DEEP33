@@ -54,10 +54,11 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: v2.9.6
-      - name: Type-check primary and secondary Edge functions
+      - name: Type-check primary, secondary, and hybrid-search Edge functions
         run: |
           deno check supabase/functions/deep33-proxy/index.ts
           deno check supabase/functions/deep33-tertiary/index.ts
+          deno check supabase/functions/deep33-hybrid-search/index.ts
 
   production_realtime_search:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
