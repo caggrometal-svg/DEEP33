@@ -852,7 +852,7 @@ class SearchEngine:
             successful_providers = {
                 name for name, batch in successful if relevant(batch)
             }
-            if fast_mode:
+            if fast_mode and plan_depth != "realtime":
                 return bool(ranked)
             if plan_depth == "realtime":
                 # Current answers require independent providers and domains when available.
@@ -1022,7 +1022,7 @@ class SearchEngine:
         errors: list[str] = []
         providers_attempted: list[str] = []
 
-        planned_queries = plan.queries[:1] if fast_mode else plan.queries
+        planned_queries = plan.queries[:1] if fast_mode and plan.depth != "realtime" else plan.queries
 
         search_deadline = asyncio.get_running_loop().time() + TOTAL_SEARCH_TIMEOUT_SECONDS
 
@@ -1052,7 +1052,7 @@ class SearchEngine:
                 return planned_query, ([], ["search:deadline"], [])
 
         if (
-            not fast_mode
+            (not fast_mode or plan.depth == "realtime")
             and plan.depth in {"deep", "realtime"}
             and len(planned_queries) > 1
         ):
