@@ -382,3 +382,56 @@ def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_ar
     assert "yahoo" in result["providers"]
     assert any("wikipedia.org" in item["url"] for item in result["results"])
     assert result["verification"]["distinct_domains"] >= 3
+
+
+def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
+    from backend.search.resilient import WebOrchestrator
+
+    partial_results = [
+        {
+            "title": "Chile government public data portal",
+            "url": "https://datos.gob.cl/",
+            "snippet": "Government public information and open data services in Chile.",
+        },
+        {
+            "title": "Chile government transparency and public information",
+            "url": "https://www.gobiernotransparentechile.cl/",
+            "snippet": "Public government transparency resources for Chile.",
+        },
+    ]
+    yahoo_results = [
+        {
+            "title": "ChileAtiende government public services",
+            "url": "https://www.chileatiende.gob.cl/",
+            "snippet": "Official Chilean government portal with public services and information.",
+        }
+    ]
+    yahoo_calls = {"count": 0}
+
+    async def two_domains(_query, _timeout, _limit):
+        return partial_results
+
+    async def yahoo_provider(_query, _timeout, _limit):
+        yahoo_calls["count"] += 1
+        return yahoo_results
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.5,
+            fallback_delay_seconds=0,
+        )
+        for provider in tuple(orchestrator.providers):
+            orchestrator.providers[provider] = two_domains
+        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        return await orchestrator.search(
+            "sitio gubernamental Chile información pública",
+            fresh=True,
+        )
+
+    result = asyncio.run(exercise())
+    assert yahoo_calls["count"] == 1
+    assert result["ok"] is True, result
+    assert "yahoo" in result["providers"]
+    assert result["verification"]["distinct_domains"] >= 3
