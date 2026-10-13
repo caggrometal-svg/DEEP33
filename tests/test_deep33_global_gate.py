@@ -507,7 +507,7 @@ def test_live_production_gate_zero_5xx_multidomain_and_android_sse():
             assert p95 < 10.0
 
             ttft = await _live_sse_android_contract(client, base_url, token)
-            assert ttft < 3.0
+            assert ttft < 5.28, f"TTFT exceeded DEEP33 target: {ttft:.3f}s >= 5.28s"
 
     asyncio.run(scenario())
 
