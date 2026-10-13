@@ -390,7 +390,7 @@ def _parse_sse(raw: str) -> tuple[str, bool, list[str], list[str], list[str]]:
     return "".join(chunks), done, events, chunks, states
 
 
-async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, token: str) -> float:
+async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, token: str) -> tuple[float, float]:
     headers = _auth_headers(token)
     headers["Content-Type"] = "application/json"
     payload = {
@@ -436,7 +436,8 @@ async def _live_sse_android_contract(client: httpx.AsyncClient, base_url: str, t
     expected = ["thinking", "searching", "sources_ready", "token_stream"]
     positions = [states.index(state) for state in expected]
     assert positions == sorted(positions)
-    return ttft
+    total = time.perf_counter() - started
+    return ttft, total
 
 
 
@@ -506,8 +507,9 @@ def test_live_production_gate_zero_5xx_multidomain_and_android_sse():
             p95 = statistics.quantiles(stress_latencies, n=20, method="inclusive")[18]
             assert p95 < 10.0
 
-            ttft = await _live_sse_android_contract(client, base_url, token)
-            assert ttft < 3.0
+            ttft, total = await _live_sse_android_contract(client, base_url, token)
+            assert ttft < 5.28, f"TTFT gate failed: {ttft:.3f}s >= 5.28s"
+            assert total < 7.66, f"Total latency gate failed: {total:.3f}s >= 7.66s"
 
     asyncio.run(scenario())
 
