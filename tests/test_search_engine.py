@@ -491,7 +491,7 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     calls = {"count": 0}
 
     class FakeOrchestrator:
-        async def search(self, query, *, fresh=False):
+        async def search(self, query, *, fresh=False, timeout_seconds=None):
             assert fresh is True
             calls["count"] += 1
             return {
