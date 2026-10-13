@@ -764,15 +764,9 @@ async def _bing_search(query, timeout_seconds, max_results):
         rss_results = await _parse_bing_rss(rss, max_results)
     except Exception as rss_error:
         if html_results:
-            # RSS can fail after HTML returned an unrelated result page. Never
-            # let the transport failure bypass topic relevance filtering.
-            from backend.search.engine import is_realtime_query, rank_results
-
-            return rank_results(
-                query,
-                html_results,
-                realtime=is_realtime_query(query),
-            )[:max_results]
+            # Return bounded candidates to the orchestrator. Relevance is decided
+            # centrally against the original query, with all provider evidence.
+            return html_results[:max_results]
         if html_error is not None:
             raise WebSearchError(f"{html_error};{rss_error}") from rss_error
         raise
@@ -789,19 +783,9 @@ async def _bing_search(query, timeout_seconds, max_results):
         normalized = _normalise_results(combined, max_results)
         from backend.search.engine import is_realtime_query, rank_results
 
-        return rank_results(
-            query,
-            normalized,
-            realtime=is_realtime_query(query),
-        )[:max_results]
+        return normalized[:max_results]
     if html_results:
-        from backend.search.engine import is_realtime_query, rank_results
-
-        return rank_results(
-            query,
-            html_results,
-            realtime=is_realtime_query(query),
-        )[:max_results]
+        return html_results[:max_results]
     if html_error is not None:
         raise WebSearchError(str(html_error)) from html_error
     return []
@@ -833,13 +817,9 @@ async def _google_search(query, timeout_seconds, max_results):
     parser.feed(response.text)
     parser.close()
     normalized = _normalise_results(parser.results, max_results)
-    from backend.search.engine import is_realtime_query, rank_results
-
-    return rank_results(
-        query,
-        normalized,
-        realtime=is_realtime_query(query),
-    )[:max_results]
+    # Keep source titles/URLs intact; the orchestrator performs the single strict
+    # relevance pass using title, snippet, URL, language aliases and locality.
+    return normalized[:max_results]
 
 
 async def search_web(
