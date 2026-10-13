@@ -37,7 +37,7 @@ jobs:
             -H 'content-type: application/json' \
             -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
           status="${response##*STATUS:}"
-          body="${response%$'$'\n'STATUS:*}"
+          body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           token=""
           if [ "$status" = "200" ]; then token="$(printf '%s' "$body" | jq -r '.access_token // empty')"; fi
           test -n "$token" || { echo "EDGE_AUTH_SESSION_FAIL http=$status"; exit 1; }
@@ -62,7 +62,7 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"messages":[{"role":"user","content":"Reply with a short confirmation that DEEP33 inference is connected."}],"personality":"Neutro"}' || true)"
           status="${response##*STATUS:}"
-          body="${response%$'$'\n'STATUS:*}"
+          body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.status == "PASS" and ((.result.text // "") | strings | length) > 0 and ((.result.provider // "") | strings | length) > 0 and ((.result.model // "") | strings | length) > 0' >/dev/null 2>&1; then
             printf '%s' "$body" | jq -c '{status, error, request_id, provider: .result.provider, model: .result.model, text_chars: ((.result.text // "") | length)}' 2>/dev/null || true
             echo "EDGE_RAILWAY_INFERENCE_FAIL http=$status"
@@ -82,7 +82,7 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"query":"DEEP33 Search Engine provider independent web search orchestration","limit":3}' || true)"
           status="${response##*STATUS:}"
-          body="${response%$'$'\n'STATUS:*}"
+          body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and ((.results // []) | length) >= 1' >/dev/null 2>&1; then
             printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, error, results: ((.results // []) | length)}' 2>/dev/null || true
             echo "RAILWAY_HYBRID_KNOWLEDGE_FAIL http=$status"
@@ -103,7 +103,7 @@ jobs:
             -H "Cache-Control: no-cache" \
             --data-urlencode 'q=NASA Artemis mission latest update today official' || true)"
           status="${response##*STATUS:}"
-          body="${response%$'$'\n'STATUS:*}"
+          body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null 2>&1; then
             printf '%s' "$body" | jq -c '{ok, error, engine_version, providers, result_count: ((.results // []) | length), verification, retrieved_at}' 2>/dev/null || true
             echo "EDGE_RAILWAY_BROAD_SEARCH_FAIL http=$status"
