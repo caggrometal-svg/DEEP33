@@ -1282,7 +1282,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "render-backend-fallback" &&
+              isInternalBackendProvider(provider) &&
               response.status >= 500 &&
               provider.stream_url
             ) {
