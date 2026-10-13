@@ -188,12 +188,10 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         nav_start = source.index("async function buildNavigatedWebEvidence(")
-        nav_end_candidates = [
-            index
-            for marker in ("\\nasync function readJson(", "\\nconst EDGE_AI_REQUIRES_AUTH")
-            if (index := source.find(marker.replace("\\\\n", "\\n"), nav_start + 1)) >= 0
-        ]
-        nav_end = min(nav_end_candidates)
+        nav_end = source.find("\nasync function readJson(", nav_start + 1)
+        if nav_end < 0:
+            nav_end = source.find("\nconst EDGE_AI_REQUIRES_AUTH", nav_start + 1)
+        assert nav_end > nav_start
         navigation = source[nav_start:nav_end]
         assert "excludedUrls: Set<string> = new Set<string>()" in navigation
         assert "excludedDomains: Set<string> = new Set<string>()" in navigation
