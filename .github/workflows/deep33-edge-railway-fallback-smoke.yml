@@ -48,6 +48,18 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "EDGE_AUTH_SESSION_PASS"
 
+      - name: Capture Railway readiness diagnostics without masking failures
+        shell: bash
+        run: |
+          set +e
+          ready_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/railway-ready.json -w '%{http_code}' "$RAILWAY_URL/ready" 2>/dev/null)"
+          echo "RAILWAY_READY_HTTP=${ready_code:-000}"
+          jq -c '{status,ready,network:{internet_available,dns_ok,https_ok,latency_ms,error},gateway:{gateway,provider,model,latency_ms,last_error,fallback_used},memory_configured,memory_ready}' /tmp/railway-ready.json 2>/dev/null || echo "RAILWAY_READY_BODY_NOT_JSON"
+          ai_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/railway-ai-status.json -w '%{http_code}' "$RAILWAY_URL/v1/ai/status" 2>/dev/null)"
+          echo "RAILWAY_AI_STATUS_HTTP=${ai_code:-000}"
+          jq -c '{gateway,provider,model,latency_ms,last_error,fallback_used,circuit_open}' /tmp/railway-ai-status.json 2>/dev/null || echo "RAILWAY_AI_STATUS_BODY_NOT_JSON"
+          exit 0
+
       - name: Verify real inference through the primary Edge with Railway fallback
         shell: bash
         run: |
