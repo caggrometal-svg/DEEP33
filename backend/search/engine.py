@@ -301,7 +301,15 @@ _TOPIC_PHRASE_ALIASES = (
     # Search indexes frequently omit Spanish diacritics or return English synonyms.
     # Normalize equivalent political terms before applying strict realtime relevance.
     (
-        re.compile(r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies))\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:pol[ií]tic[oa]s?|politics?|political|polic(?:y|ies)|"
+            r"gobierno|gobiernos|gubernamental(?:es)?|government(?:al)?|governments?|"
+            r"president(?:e|es)?|presidencia|presidential|congreso|congress|"
+            r"parlament(?:o|ario|aria|arios|arias)?|parliament(?:ary)?|"
+            r"elecci[oó]n(?:es)?|election(?:s)?|ministro(?:s)?|minister(?:s)?|"
+            r"senado|senate|candidatura(?:s)?|campaign(?:s)?|campa[nñ]a(?:s)?)\b",
+            re.IGNORECASE,
+        ),
         "politics",
     ),
     (

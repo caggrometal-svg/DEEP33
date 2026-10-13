@@ -418,3 +418,36 @@ def test_current_chile_news_can_return_three_independent_local_publishers() -> N
     )
     assert len({item["source_domain"] for item in results}) >= 3
     assert all("pronostico" not in item["url"] for item in results)
+
+
+def test_current_chile_politics_matches_government_and_election_vocabulary() -> None:
+    query = "política Chile hoy últimas noticias"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Presidente anuncia nueva reforma hoy",
+                "url": "https://radio.example.cl/politica/presidencia",
+                "snippet": "El ministro presentó la reforma y el Congreso la discutirá.",
+            },
+            {
+                "title": "Elecciones parlamentarias: últimas novedades",
+                "url": "https://diario.example.cl/elecciones",
+                "snippet": "Partidos y candidaturas preparan la campaña electoral.",
+            },
+            {
+                "title": "Senado despacha ley tras debate de hoy",
+                "url": "https://noticias.example.cl/congreso/ley",
+                "snippet": "La ley y su tramitación en el Senado concentran la actualidad.",
+            },
+            {
+                "title": "Lluvia, viento y temperaturas de hoy",
+                "url": "https://tiempo.example.cl/pronostico",
+                "snippet": "Pronóstico meteorológico actual para la región.",
+            },
+        ],
+        realtime=True,
+    )
+    domains = {item["source_domain"] for item in ranked}
+    assert len(domains) >= 3
+    assert not any("tiempo.example.cl" in item["url"] for item in ranked)
