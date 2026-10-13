@@ -1599,7 +1599,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         search_result = await search_web(
             query,
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
-            max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
+            max_results=_web_search_result_limit(
+                query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+            ),
             fast=not search_depth,
             fresh=True,
         )
@@ -1647,13 +1649,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     candidates = []
     seen_domains = set()
+    candidate_limit = _web_search_result_limit(
+        query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+    )
     for source in sources.values():
         host = (urlparse(str(source.get("url") or "")).hostname or "").casefold()
         if not host or host in seen_domains:
             continue
         seen_domains.add(host)
         candidates.append(source)
-        if len(candidates) >= 5:
+        if len(candidates) >= candidate_limit:
             break
     fetched_pages = []
     compact_search_results = [
@@ -1680,6 +1685,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # slot immediately so the next independent publisher can be tried.
         pending_fetches = {}
         next_candidate = 0
+        fetch_deadline = asyncio.get_running_loop().time() + 5.0
         try:
             while (
                 len(fetched_pages) < 2
@@ -1696,10 +1702,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
                 if not pending_fetches:
                     break
+                fetch_remaining = fetch_deadline - asyncio.get_running_loop().time()
+                if fetch_remaining <= 0:
+                    break
                 done, _ = await asyncio.wait(
                     tuple(pending_fetches),
+                    timeout=fetch_remaining,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                if not done:
+                    break
                 for task in done:
                     source = pending_fetches.pop(task)
                     try:
@@ -2512,6 +2524,20 @@ async def web_status() -> dict:
     }
     return status
 
+def _web_search_result_limit(query: str, configured_limit: int) -> int:
+    limit = max(1, min(8, int(configured_limit)))
+    folded = str(query or "").casefold()
+    # Current news needs a wider candidate pool because readable pages can block
+    # automation. Search up to eight independent candidates, without changing the
+    # five-source default for ordinary queries or the endpoint contract.
+    chile_current_news = (
+        is_realtime_query(query)
+        and "chile" in folded
+        and any(term in folded for term in ("noticia", "actualidad", "breaking", "latest news", "news"))
+    )
+    return max(limit, 8) if chile_current_news else limit
+
+
 @app.get("/v1/web/search")
 async def web_search_endpoint(request: Request, q: str) -> dict:
     session_id = session_id_from_request(request)
@@ -2531,7 +2557,9 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         result = await search_web(
             q,
             timeout_seconds=min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5"))),
-            max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5")),
+            max_results=_web_search_result_limit(
+                q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+            ),
             fresh=True,
         )
         logger.info(

@@ -372,3 +372,12 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
     assert "data: [DONE]" in response.text
     assert web_called["value"] is False
 
+
+
+def test_web_search_result_limit_expands_only_for_realtime_chile_news() -> None:
+    from backend.main import _web_search_result_limit
+
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 5) == 8
+    assert _web_search_result_limit("sitio gubernamental Chile información pública", 5) == 5
+    assert _web_search_result_limit("Python asyncio documentation", 5) == 5
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 8

@@ -454,6 +454,13 @@ def rank_results(
                 marker in query_folded
                 for marker in ("noticia", "actualidad", "breaking", "latest news", "news")
             )
+            and any(
+                marker in query_folded
+                for marker in (
+                    "política", "politica", "politics", "political", "gobierno",
+                    "government", "elecciones", "elections", "congreso", "congress",
+                )
+            )
         )
         host = (parsed_url.hostname or "").casefold()
         if chile_current_news_intent:
