@@ -11,7 +11,7 @@ class FakeMemory:
     async def ping(self) -> dict:
         return {"ok": True}
 
-    async def context(self, session_id: str, memory_profile_id=None) -> dict:
+    async def context(self, session_id: str, memory_profile_id=None, access_token=None) -> dict:
         return {"session": {"session_id": session_id}, "messages": [], "memories": []}
 
     async def sync(self, *args, **kwargs) -> dict:
