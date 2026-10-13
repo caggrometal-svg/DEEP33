@@ -3447,7 +3447,7 @@ async function publicWebSearchUncached(
       query,
       data: await runPublicWebSearchQuery(
         query,
-        true,
+        false,
         Math.min(2400, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
       ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>,
     })));
