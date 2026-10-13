@@ -166,8 +166,10 @@ class WebOrchestrator:
         lowered = cleaned.casefold()
 
         if any(term in lowered for term in ("clima", "tiempo", "temperatura", "pronóstico", "pronostico", "weather", "forecast")):
-            locality = "santiago chile" if "santiago" in lowered else compact
-            return f"{locality} clima weather forecast".strip()
+            locality = "Santiago Chile" if "santiago" in lowered else compact
+            # English phrases are commonly indexed more consistently by public
+            # search pages; rank every candidate against the original user query.
+            return f"{locality} weather forecast temperature".strip()
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
             locality = "chile" if "chile" in lowered else ""
             return f"{locality} economia economy markets".strip()
