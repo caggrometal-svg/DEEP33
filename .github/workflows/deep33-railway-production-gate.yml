@@ -1,0 +1,158 @@
+name: DEEP33 Railway Production Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "tools/**"
+      - ".github/workflows/deep33-railway-production-gate.yml"
+      - "backend/requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep33-railway-production-gate
+  cancel-in-progress: false
+
+jobs:
+  railway-production-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      RAILWAY_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
+      SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
+    steps:
+      - name: Wait for healthy Railway deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 12); do
+            response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' "$RAILWAY_BASE_URL/ready" || true)"
+            status="${response##*STATUS:}"
+            body="${response%$'\n'STATUS:*}"
+            if [ "$status" = "200" ]; then
+              printf '%s' "$body" | jq -c '{status, git_sha, build_id, timestamp}'
+              ready=1
+              break
+            fi
+            echo "RAILWAY_READY_WAIT attempt=$attempt http=$status"
+            [ "$attempt" -lt 12 ] && sleep 5
+          done
+          test "$ready" = "1" || { echo "RAILWAY_READY_FAIL"; exit 1; }
+          echo "RAILWAY_READY_PASS"
+
+      - name: Verify web tools and hybrid search configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          web_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$RAILWAY_BASE_URL/v1/web/status")"
+          printf '%s' "$web_status" | jq -e '.tool_loop_enabled == true and .realtime_policy_enabled == true' >/dev/null
+          printf '%s' "$web_status" | jq -c '{engine, engine_version, tool_loop_enabled, realtime_policy_enabled, fetch_limits}'
+          hybrid_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$RAILWAY_BASE_URL/v1/search/hybrid/status")"
+          printf '%s' "$hybrid_status" | jq -e '.enabled == true and .configured == true' >/dev/null
+          printf '%s' "$hybrid_status" | jq -c '{engine, engine_version, enabled, configured, transport, vector_backend, keyword_backend}'
+          echo "RAILWAY_SEARCH_CONFIGURATION_PASS"
+
+      - name: Create isolated authenticated test session
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_id="railway-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+          response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
+            -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H 'content-type: application/json' \
+            -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+          status="${response##*STATUS:}"
+          body="${response%$'\n'STATUS:*}"
+          token=""
+          if [ "$status" = "200" ]; then
+            token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
+          fi
+          test -n "$token" || { echo "RAILWAY_AUTH_SESSION_FAIL http=$status"; exit 1; }
+          echo "::add-mask::$token"
+          {
+            echo "DEEP33_RAILWAY_GATE_TOKEN=$token"
+            echo "DEEP33_RAILWAY_GATE_SESSION_ID=$profile_id"
+          } >> "$GITHUB_ENV"
+          echo "RAILWAY_AUTH_SESSION_PASS"
+
+      - name: Verify user-scoped memory read
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' \
+            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+            "$RAILWAY_BASE_URL/v1/memory/context" || true)"
+          status="${response##*STATUS:}"
+          body="${response%$'\n'STATUS:*}"
+          test "$status" = "200" || { echo "RAILWAY_MEMORY_READ_FAIL http=$status body=${body:0:500}"; exit 1; }
+          printf '%s' "$body" | jq -e 'type == "object"' >/dev/null
+          printf '%s' "$body" | jq -c '{ok, session, message_count: ((.messages // []) | length), memory_count: ((.memories // []) | length)}'
+          echo "RAILWAY_MEMORY_READ_PASS"
+
+      - name: Verify hybrid search request reaches Supabase Edge
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' \
+            -X POST "$RAILWAY_BASE_URL/v1/search/hybrid" \
+            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+            -H 'content-type: application/json' \
+            -d '{"query":"DEEP33 Railway readiness integration test","limit":3}' || true)"
+          status="${response##*STATUS:}"
+          body="${response%$'\n'STATUS:*}"
+          test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
+          printf '%s' "$body" | jq -e '.engine == "DEEP33 Hybrid Search" and (.results | type == "array")' >/dev/null
+          printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
+          echo "RAILWAY_HYBRID_SEARCH_PASS"
+
+      - name: Verify live multi-domain web search
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="latest artificial intelligence research and technology news today"
+          response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
+            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+            --get "$RAILWAY_BASE_URL/v1/web/search" --data-urlencode "q=$query" || true)"
+          status="${response##*STATUS:}"
+          body="${response%$'\n'STATUS:*}"
+          test "$status" = "200" || { echo "RAILWAY_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
+          printf '%s' "$body" > /tmp/railway-live-search.json
+          printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null
+          printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
+          echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_PASS"
+
+      - name: Verify source-page fetch from web-search result
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t urls < <(jq -r '.results[0:2][]?.url // empty' /tmp/railway-live-search.json)
+          fetched=0
+          index=0
+          for url in "${urls[@]}"; do
+            index=$((index + 1))
+            [ -n "$url" ] || continue
+            response="$(curl -sS --connect-timeout 5 --max-time 8 -w '\nSTATUS:%{http_code}' \
+              -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+              --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
+            status="${response##*STATUS:}"
+            body="${response%$'\n'STATUS:*}"
+            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ok == true and ((.text // "") | length) > 80' >/dev/null 2>&1; then
+              printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
+              fetched=1
+              break
+            fi
+            echo "RAILWAY_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
+          done
+          test "$fetched" = "1" || { echo "RAILWAY_WEB_FETCH_FAIL"; exit 1; }
+          echo "RAILWAY_WEB_FETCH_PASS"
