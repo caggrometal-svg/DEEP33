@@ -3361,18 +3361,21 @@ async function publicWebSearchUncached(
     edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
-  // Fresh news from a single provider is usable, but not yet independently corroborated.
-  // Give public secondary providers one short bounded window before returning.
+  // A second provider alone is insufficient when its results collapse onto one or two domains.
+  // Run the independent public indexes whenever provider or domain diversity is below target.
+  const uniqueResultDomainCount = () => new Set(finalResults.flatMap((item) => {
+    try { return [new URL(String(item.url || "")).hostname.toLowerCase()]; } catch { return []; }
+  })).size;
   if (
     realtimeNewsPlan &&
     finalResults.length > 0 &&
-    edgeProvidersForResults(finalResults).length < 2
+    (edgeProvidersForResults(finalResults).length < 2 || uniqueResultDomainCount() < 3)
   ) {
     const corroborationQuery = plan.queries[0] || plan.original;
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
