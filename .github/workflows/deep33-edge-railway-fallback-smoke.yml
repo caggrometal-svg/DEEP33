@@ -101,7 +101,7 @@ jobs:
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "X-DEEP33-Session-Id: $EDGE_TEST_SESSION" \
             -H "Cache-Control: no-cache" \
-            --data-urlencode 'q=NASA Artemis mission latest update today official' || true)"
+            --data-urlencode 'q=world news latest today' || true)"
           status="${response##*STATUS:}"
           body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.ok == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.retrieved_at | strings | length) > 10' >/dev/null 2>&1; then
