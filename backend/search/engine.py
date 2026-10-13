@@ -487,6 +487,13 @@ def rank_results(
         # unrelated result eligible.
         penalties = 0.0
         host = _host(url)
+        query_requests_pdf = bool(re.search(r"\b(?:pdf|download|descargar|full[-\s]?text|full[-\s]?paper)\b", query, re.IGNORECASE))
+        result_is_pdf = parsed_url.path.casefold().endswith(".pdf") or bool(
+            re.search(r"(?:^|[&?])(?:format|type|download)=pdf(?:&|$)", parsed_url.query, re.IGNORECASE)
+        )
+        # The fetcher reads HTML/text. Prefer readable result pages unless PDF is requested.
+        if result_is_pdf and not query_requests_pdf:
+            penalties += 0.24
         if host in {"news.google.com", "www.google.com", "google.com"}:
             penalties += 0.10
         if not str(item.get("title") or "").strip():

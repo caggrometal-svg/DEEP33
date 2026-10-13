@@ -309,6 +309,9 @@ const EDGE_AI_TIMEOUT_MS = Math.max(10000, Math.min(60000, Number(Deno.env.get("
 // Keep the source and deployed runtime on one deterministic first-chunk budget.
 // Provider-specific overrides here previously caused GitHub/production drift.
 const EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800;
+// Internal DEEP33 backends can need several seconds to produce their first token.
+// A 1.8s abort made the Railway fallback unusable despite measured ~5s responses.
+const EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS = 6500;
 const EDGE_SEARCH_PROVIDER_TIMEOUT_MS = Math.max(1500, Math.min(5000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_PROVIDER_TIMEOUT_MS") || "4500")));
 const EDGE_SEARCH_CACHE_TTL_MS = Math.max(0, Math.min(120000, Number(Deno.env.get("DEEP33_EDGE_SEARCH_CACHE_TTL_MS") || "45000")));
 const edgeSearchCache = new Map<string, { expiresAt: number; data: Record<string, unknown> }>();
@@ -1576,7 +1579,9 @@ async function streamEdgeAI(
         const overallTimer = setTimeout(() => controller.abort(), EDGE_AI_TIMEOUT_MS);
         const firstChunkTimeoutMs = isFreeInferenceProvider(provider)
           ? Math.min(EDGE_AI_FIRST_CHUNK_TIMEOUT_MS, FREE_INFERENCE_FIRST_CHUNK_TIMEOUT_MS)
-          : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
+          : isInternalBackendProvider(provider)
+            ? EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS
+            : EDGE_AI_FIRST_CHUNK_TIMEOUT_MS;
         let firstChunkTimer: ReturnType<typeof setTimeout> | null = setTimeout(
           () => controller.abort(),
           firstChunkTimeoutMs,

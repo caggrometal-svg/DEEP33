@@ -175,3 +175,24 @@ def test_edge_search_filters_irrelevant_non_realtime_results_in_both_routes() ->
         ).read_text(encoding="utf-8")
         assert "function edgeFilterNonRealtimeResults(" in source
         assert "if (!realtime) return edgeFilterNonRealtimeResults(query, items);" in source
+
+
+def test_search_prefers_readable_html_over_pdf_unless_pdf_is_requested() -> None:
+    results = [
+        {
+            "title": "Artificial intelligence research PDF paper",
+            "url": "https://research.example.edu/files/ai-research.pdf",
+            "snippet": "Artificial intelligence research PDF paper and findings.",
+        },
+        {
+            "title": "Artificial intelligence research program",
+            "url": "https://research.example.org/artificial-intelligence-research",
+            "snippet": "Artificial intelligence research program and findings.",
+        },
+    ]
+
+    readable_first = rank_results("artificial intelligence research", results)
+    assert readable_first[0]["url"] == "https://research.example.org/artificial-intelligence-research"
+
+    pdf_requested = rank_results("artificial intelligence research PDF", results)
+    assert pdf_requested[0]["url"] == "https://research.example.edu/files/ai-research.pdf"
