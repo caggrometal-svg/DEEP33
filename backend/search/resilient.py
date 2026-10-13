@@ -12,7 +12,13 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
-from tools.web_search import _bing_search, _duckduckgo_search, _google_search, _mojeek_search
+from tools.web_search import (
+    _bing_search,
+    _cl0q_search,
+    _duckduckgo_search,
+    _google_search,
+    _mojeek_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +110,14 @@ class WebOrchestrator:
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
+            "cl0q": CircuitState(),
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
             "google": self._google,
+            "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
@@ -119,6 +127,9 @@ class WebOrchestrator:
 
     async def _mojeek(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _mojeek_search(query, timeout, limit)
+
+    async def _cl0q(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _cl0q_search(query, timeout, limit)
 
     async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _google_search(query, timeout, limit)
@@ -315,7 +326,14 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                if len(selected_now) >= min(3, self.max_results) and len(distinct_domains) >= min(3, len(selected_now)):
+                distinct_providers = {
+                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
+                }
+                if (
+                    len(selected_now) >= min(3, self.max_results)
+                    and len(distinct_domains) >= min(3, len(selected_now))
+                    and len(distinct_providers) >= min(2, len(self.providers))
+                ):
                     break
         finally:
             for task in pending:
@@ -398,9 +416,13 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
+                    distinct_providers_now = {
+                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
+                    }
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
+                        and len(distinct_providers_now) >= min(2, len(self.providers))
                     ):
                         break
             finally:
