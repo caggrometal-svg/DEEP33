@@ -372,10 +372,14 @@ Deno.serve(async (req) => {
         messageOffset += page.length;
       }
 
+      // Profile memories belong to the authenticated user UUID, while chat
+      // history belongs to the scoped session UUID. Read both namespaces only
+      // within this verified JWT subject so explicit memories work across sessions.
+      const memorySessionIds = Array.from(new Set([sessionId, ownerUserId]));
       const { data: memories, error: memoryError } = await supabase
         .from("deep33_memories")
         .select("id, kind, content, created_at, updated_at, session_id")
-        .in("session_id", messageSessionIds)
+        .in("session_id", memorySessionIds)
         .order("updated_at", { ascending: false })
         .order("id", { ascending: false })
         .limit(40);
