@@ -282,6 +282,8 @@ _TOPIC_FILLERS = {
     "medicina", "medical", "medicine", "general", "salud", "health",
 }
 _TOPIC_PHRASE_ALIASES = (
+    # Treat government and institutional reporting as political evidence for current-politics queries.
+    (re.compile(r"\b(?:pol[ií]tica|political|politics|government|governmental|gobierno|presidenta?|presidential|elecciones?|elections?|congreso|congress|senado|senate|diputad[oa]s?|senador[ae]s?|ministr[oa]s?|ministerio|minister|gabinete|cabinet|autoridades|authority|authorities|subsecretari[oa]s?|parlamento|parliament|legislativo|legislative|policy|policies|mop|senapred)\b", re.IGNORECASE), "politica"),
     # Normalize common industry abbreviations before strict topic filtering.
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
@@ -1063,7 +1065,15 @@ class SearchEngine:
                 successful.append((planned_query, provider_used, items))
 
         executed_queries = [query for query, _batch in planned_batches]
-        if not successful:
+        has_usable_evidence = any(
+            rank_results(
+                plan.original_query,
+                items,
+                realtime=plan.depth == "realtime",
+            )
+            for _planned_query, _provider_name, items in successful
+        )
+        if not has_usable_evidence:
             locality = _extract_realtime_locality(plan.original_query)
             local_date = datetime.now(timezone.utc).date().isoformat()
             lowered_original = plan.original_query.lower()

@@ -65,7 +65,7 @@ android {
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
-    // Render backend as final transport fallback.
+    // Railway backend as final transport fallback.
     // Transport contract is immutable by build environment. The three URLs below are
     // the only DEEP33 application routes; CI may repeat them for verification, but may
     // never replace them silently.
@@ -73,7 +73,7 @@ android {
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
     val canonicalSecondaryUrl =
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
-    val canonicalTertiaryUrl = "https://deep33-backend.onrender.com"
+    val canonicalTertiaryUrl = "https://iac33-fastapi-edge-production.up.railway.app"
 
     val suppliedEndpoints = listOf(
         "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
