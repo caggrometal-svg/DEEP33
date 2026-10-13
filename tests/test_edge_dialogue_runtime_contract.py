@@ -213,6 +213,7 @@ def test_web_completion_recovery_is_railway_first_and_globally_bounded() -> None
     assert "Math.min(configuredProviderTimeoutMs, Math.floor(remainingProviderBudgetMs))" in call
     assert "providers.sort(" in call
     assert "Number(isRailwayBackendProvider(b)) - Number(isRailwayBackendProvider(a))" in call
+    assert "!(preferRailwayBackend && isRailwayBackendProvider(provider))" in call
 
     recovery_start = source.index("const recovered = await callEdgeAI(")
     recovery_end = source.index("const recoveredText =", recovery_start)
