@@ -863,6 +863,58 @@ async def search_web(
     max_results = max(1, min(8, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
     result = await orchestrator.search(cleaned, fresh=fresh)
+    if not result.get("ok"):
+        from backend.weather import fetch_named_location_weather, is_weather_query
+        if is_weather_query(cleaned):
+            weather = await fetch_named_location_weather(
+                cleaned,
+                timeout_seconds=min(2.5, float(timeout_seconds)),
+            )
+            if weather is not None:
+                location = ", ".join(
+                    part for part in (
+                        str(weather.get("location_name") or "").strip(),
+                        str(weather.get("country") or "").strip(),
+                    ) if part
+                )
+                snippet = (
+                    f"Condiciones actuales en {location or cleaned}: "
+                    f"{weather.get('temperature_c')} °C, "
+                    f"{weather.get('condition')}, humedad "
+                    f"{weather.get('relative_humidity_pct')}%, viento "
+                    f"{weather.get('wind_speed_kmh')} km/h. "
+                    f"Observación: {weather.get('time')} ({weather.get('timezone')})."
+                )
+                item = {
+                    "title": f"Clima actual en {location or cleaned} — Open-Meteo",
+                    "url": str(weather.get("source_url") or DEFAULT_TAVILY_URL),
+                    "snippet": snippet,
+                    "provider": "open_meteo",
+                    "source_domain": "api.open-meteo.com",
+                    "published_at": str(weather.get("time") or ""),
+                }
+                result = copy.deepcopy(result)
+                result.update({
+                    "ok": True,
+                    "status": "OK",
+                    "diagnostic_code": None,
+                    "results": [item],
+                    "sources": [item],
+                    "provider": "open_meteo",
+                    "winner_provider": "open_meteo",
+                })
+                result["providers"] = list(dict.fromkeys([
+                    *(result.get("providers") or []), "open_meteo"
+                ]))
+                result["providers_attempted"] = list(dict.fromkeys([
+                    *(result.get("providers_attempted") or []), "open_meteo"
+                ]))
+                result["verification"] = {
+                    "level": "single-source",
+                    "distinct_domains": 1,
+                    "distinct_providers": 1,
+                    "corroborated_results": 0,
+                }
     result["fresh_request"] = bool(fresh)
     result["configured_provider"] = (
         provider or os.getenv("WEB_SEARCH_PROVIDER", "auto")

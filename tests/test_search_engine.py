@@ -868,3 +868,88 @@ def test_rank_results_normalizes_ai_and_technology_synonyms():
     )
     assert len(ranked) == 1
     assert ranked[0]["url"] == "https://example.org/ai-tech-research"
+
+
+def test_named_weather_fallback_recovers_after_search_providers_return_empty(monkeypatch):
+    from tools.web_search import search_web
+    from backend.search.resilient import WebOrchestrator
+
+    async def empty_search(self, query: str, *, fresh: bool = False):
+        return {
+            "ok": False,
+            "status": "NO_RESULTS",
+            "diagnostic_code": "NO_RESULTS",
+            "retrieved_at": "2026-10-13T00:00:00+00:00",
+            "results": [],
+            "sources": [],
+            "providers": [],
+            "providers_attempted": ["bing", "duckduckgo"],
+            "verification": {"level": "none", "distinct_domains": 0, "distinct_providers": 0, "corroborated_results": 0},
+            "errors": ["bing:NO_RESULTS", "duckduckgo:NO_RESULTS"],
+        }
+
+    async def weather(query: str, *, timeout_seconds: float):
+        assert "Santiago" in query
+        return {
+            "location_name": "Santiago",
+            "country": "Chile",
+            "temperature_c": 21.4,
+            "condition": "despejado",
+            "relative_humidity_pct": 40,
+            "wind_speed_kmh": 9.0,
+            "time": "2026-10-13T01:00",
+            "timezone": "America/Santiago",
+            "source_url": "https://api.open-meteo.com/v1/forecast?latitude=-33.45&longitude=-70.66&current=temperature_2m",
+        }
+
+    monkeypatch.setattr(WebOrchestrator, "search", empty_search)
+    monkeypatch.setattr("backend.weather.fetch_named_location_weather", weather)
+    result = asyncio.run(search_web("Clima actual en Santiago de Chile", fresh=True))
+
+    assert result["ok"] is True
+    assert result["provider"] == "open_meteo"
+    assert "open_meteo" in result["providers_attempted"]
+    assert len(result["results"]) == 1
+    assert "Santiago, Chile" in result["results"][0]["title"]
+    assert result["retrieved_at"]
+
+
+def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_three_domains():
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=1.5,
+            global_budget_seconds=2.0,
+            fallback_delay_seconds=0.0,
+        )
+        cancelled = {"count": 0}
+
+        async def fast(query: str, timeout: float, limit: int):
+            return [
+                {"title": "Python asyncio A", "url": "https://a.example/python-asyncio", "snippet": "Python asyncio documentation"},
+                {"title": "Python asyncio B", "url": "https://b.example/python-asyncio", "snippet": "Python asyncio documentation"},
+                {"title": "Python asyncio C", "url": "https://c.example/python-asyncio", "snippet": "Python asyncio documentation"},
+            ]
+
+        async def slow(query: str, timeout: float, limit: int):
+            try:
+                await asyncio.sleep(1.5)
+                return []
+            except asyncio.CancelledError:
+                cancelled["count"] += 1
+                raise
+
+        orchestrator.providers = {"bing": fast, "google": slow, "duckduckgo": slow}
+        orchestrator.circuits = {name: orchestrator.circuits[name] for name in orchestrator.providers}
+        started = asyncio.get_running_loop().time()
+        result = await orchestrator.search("Python asyncio official documentation", fresh=True)
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert result["ok"] is True
+        assert len({item["source_domain"] for item in result["results"]}) >= 3
+        assert elapsed < 0.8
+        assert cancelled["count"] >= 1
+
+    asyncio.run(scenario())

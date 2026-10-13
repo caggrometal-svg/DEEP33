@@ -293,3 +293,21 @@ def test_short_direct_text_is_not_accepted_when_reader_cannot_extract_article(mo
 
     with pytest.raises(web_fetch.WebFetchError, match="WEB_FETCH_SHORT_TEXT"):
         asyncio.run(web_fetch.fetch_page(url, fresh=True))
+
+
+def test_extracts_json_api_evidence_as_readable_text() -> None:
+    payload = {
+        "current": {
+            "time": "2026-10-13T01:00",
+            "temperature_2m": 21.4,
+            "relative_humidity_2m": 40,
+        }
+    }
+    title, text = _extract_text(
+        json.dumps(payload).encode("utf-8"),
+        "application/json; charset=utf-8",
+        5000,
+    )
+    assert title == ""
+    assert '"temperature_2m": 21.4' in text
+    assert "2026-10-13T01:00" in text

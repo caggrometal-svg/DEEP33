@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 DEFAULT_WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
+DEFAULT_GEOCODING_API_URL = "https://geocoding-api.open-meteo.com/v1/search"
 DEFAULT_TIMEOUT_SECONDS = 4.0
 
 _WEATHER_HTTP_CLIENT: httpx.AsyncClient | None = None
@@ -152,7 +153,7 @@ async def fetch_current_weather(
 
     return {
         "provider": "Open-Meteo",
-        "source_url": url,
+        "source_url": str(response.request.url),
         "timezone": data.get("timezone") or "auto",
         "latitude": float(data.get("latitude", latitude)),
         "longitude": float(data.get("longitude", longitude)),
@@ -166,6 +167,85 @@ async def fetch_current_weather(
         "condition": _weather_description(current.get("weather_code")),
         "wind_speed_kmh": current.get("wind_speed_10m"),
     }
+
+
+def _named_weather_location(query: str) -> str:
+    cleaned = " ".join(str(query or "").split()).strip()
+    cleaned = re.sub(
+        r"\b(?:clima|tiempo|temperatura|pron[oó]stico|pronostico|weather|forecast|"
+        r"actual|actualmente|ahora|hoy|condiciones|meteorolog[ií]a)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\b(?:en|de|del|para|por)\b", " ", cleaned, flags=re.IGNORECASE)
+    return " ".join(cleaned.split()).strip(" ,;:-")
+
+
+async def fetch_named_location_weather(
+    query: str,
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any] | None:
+    """Resolve a named place and return current weather when search providers miss."""
+    if not is_weather_query(query):
+        return None
+    location = _named_weather_location(query)
+    if len(location) < 2:
+        return None
+
+    timeout = max(1.0, min(4.0, float(timeout_seconds)))
+    client = await _weather_http_client()
+    geocode_url = (
+        os.getenv("DEEP33_WEATHER_GEOCODING_URL", DEFAULT_GEOCODING_API_URL).strip()
+        or DEFAULT_GEOCODING_API_URL
+    )
+    try:
+        response = await client.get(
+            geocode_url,
+            params={"name": location, "count": "5", "language": "es", "format": "json"},
+            timeout=httpx.Timeout(
+                connect=min(1.2, timeout),
+                read=timeout,
+                write=min(1.0, timeout),
+                pool=min(0.5, timeout),
+            ),
+        )
+        response.raise_for_status()
+        candidates = response.json().get("results") or []
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return None
+    if not isinstance(candidates, list) or not candidates:
+        return None
+
+    lowered = str(query or "").casefold()
+    country_hint = "CL" if "chile" in lowered else ""
+    selected = next(
+        (
+            item for item in candidates
+            if isinstance(item, dict)
+            and (not country_hint or str(item.get("country_code") or "").upper() == country_hint)
+        ),
+        next((item for item in candidates if isinstance(item, dict)), None),
+    )
+    if not selected:
+        return None
+    try:
+        latitude = float(selected["latitude"])
+        longitude = float(selected["longitude"])
+        weather = await fetch_current_weather(
+            latitude,
+            longitude,
+            timeout_seconds=timeout,
+        )
+    except (KeyError, TypeError, ValueError, httpx.HTTPError, RuntimeError):
+        return None
+
+    weather["location_name"] = str(selected.get("name") or location)
+    weather["country"] = str(selected.get("country") or "")
+    weather["country_code"] = str(selected.get("country_code") or "")
+    weather["admin1"] = str(selected.get("admin1") or "")
+    return weather
 
 
 def build_weather_evidence(messages: list[dict[str, Any]], weather: dict[str, Any]) -> str:

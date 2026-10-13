@@ -67,7 +67,7 @@ async def close_fetch_http_client() -> None:
 
 BLOCKED_HOSTNAMES={"localhost","localhost.localdomain","ip6-localhost","ip6-loopback","metadata","metadata.google.internal","instance-data","instance-data.ec2.internal","169.254.169.254","100.100.100.200"}
 REDIRECT_STATUSES={301,302,303,307,308}
-ALLOWED_CONTENT_TYPES={"text/html","application/xhtml+xml","text/plain"}
+ALLOWED_CONTENT_TYPES={"text/html","application/xhtml+xml","text/plain","application/json"}
 BLOCKED_HTML_TAGS={"script","style","noscript","svg","canvas","template"}
 
 class WebFetchError(RuntimeError): pass
@@ -349,6 +349,13 @@ def _extract_text(content, content_type, max_text_chars):
     mime = content_type.split(";", 1)[0].strip().lower()
     if mime == "text/plain":
         plain = "\n".join(line.strip() for line in decoded.splitlines() if line.strip())
+        return "", plain[:max_text_chars]
+    if mime == "application/json":
+        try:
+            parsed = json.loads(decoded)
+            plain = json.dumps(parsed, ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            plain = decoded
         return "", plain[:max_text_chars]
 
     parser = HTMLTextExtractor()

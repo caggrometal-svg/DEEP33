@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
 FALLBACK_DELAY_SECONDS = 0.35
+STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN_SECONDS = 60.0
 CACHE_TTL_SECONDS = 60.0
@@ -375,10 +376,16 @@ class WebOrchestrator:
         }
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
+        standard_ready_deadline: float | None = None
 
         try:
             while pending:
-                remaining = primary_deadline - loop.time()
+                active_deadline = (
+                    min(primary_deadline, standard_ready_deadline)
+                    if standard_ready_deadline is not None
+                    else primary_deadline
+                )
+                remaining = active_deadline - loop.time()
                 if remaining <= 0:
                     break
                 done, pending = await asyncio.wait(
@@ -417,12 +424,27 @@ class WebOrchestrator:
                 distinct_providers = {
                     outcome.provider for outcome in outcomes if outcome.ok and outcome.results
                 }
-                if (
+                enough_sources = (
                     len(selected_now) >= min(3, self.max_results)
                     and len(distinct_domains) >= min(3, len(selected_now))
+                )
+                if (
+                    enough_sources
                     and len(distinct_providers) >= min(2, len(self.providers))
                 ):
                     break
+                if (
+                    enough_sources
+                    and not is_realtime_query(cleaned)
+                    and standard_ready_deadline is None
+                ):
+                    # Standard lookups already have several independent domains.
+                    # Give other providers a short corroboration opportunity rather
+                    # than serialising user-visible TTFT behind anti-bot/timeouts.
+                    standard_ready_deadline = min(
+                        primary_deadline,
+                        loop.time() + STANDARD_CORROBORATION_WINDOW_SECONDS,
+                    )
         finally:
             for task in pending:
                 if not task.done():

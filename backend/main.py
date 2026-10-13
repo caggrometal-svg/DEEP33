@@ -3078,6 +3078,9 @@ async def generate(
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
+            if prefetch_search_task is not None and not prefetch_search_task.done():
+                prefetch_search_task.cancel()
+                await asyncio.gather(prefetch_search_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
@@ -3749,7 +3752,22 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         and is_weather_query(latest_user_query(raw_messages))
         else None
     )
+    raw_query = latest_user_query(raw_messages)
     prefetch_search_task: asyncio.Task | None = None
+    if (
+        DEEP33_WEB_TOOLS_ENABLED
+        and not skip_web_tools
+        and not is_connectivity_question(raw_query)
+        and not is_weather_query(raw_query)
+        and (should_force_web(raw_messages) or should_deep_web(raw_messages, personality))
+    ):
+        prefetch_deep = should_deep_web(raw_messages, personality) or is_realtime_query(raw_query)
+        # Search, idempotency and memory are independent preparation stages.
+        # Start all three immediately so live-search latency is not serialised
+        # before the first model token.
+        prefetch_search_task = asyncio.create_task(
+            prepare_web_evidence(raw_messages, request_id=request_id, deep=prefetch_deep)
+        )
     try:
         state, record = await claim_task
         if state in {"COMPLETED", "FAILED"}:
@@ -3758,6 +3776,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
+            if prefetch_search_task is not None and not prefetch_search_task.done():
+                prefetch_search_task.cancel()
+                await asyncio.gather(prefetch_search_task, return_exceptions=True)
             cached = normalize_shared_generation_output(
                 replay_idempotent(state, record),
                 request,
@@ -3781,21 +3802,6 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
-
-        raw_query = latest_user_query(raw_messages)
-        if (
-            DEEP33_WEB_TOOLS_ENABLED
-            and not skip_web_tools
-            and not is_connectivity_question(raw_query)
-            and not is_weather_query(raw_query)
-            and (should_force_web(raw_messages) or should_deep_web(raw_messages, personality))
-        ):
-            prefetch_deep = should_deep_web(raw_messages, personality) or is_realtime_query(raw_query)
-            # Search and memory are independent preparation stages: overlap them to
-            # reduce the time before the first visible token.
-            prefetch_search_task = asyncio.create_task(
-                prepare_web_evidence(raw_messages, request_id=request_id, deep=prefetch_deep)
-            )
 
         messages, personality = await context_task
     except Exception:
