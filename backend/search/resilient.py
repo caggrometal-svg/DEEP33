@@ -249,10 +249,31 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
+    async def _bounded_call_provider(self, provider: str, query: str) -> ProviderOutcome:
+        """Enforce the provider deadline even if a provider adapter is replaced or misbehaves."""
+        started = time.perf_counter()
+        timeout = min(
+            self.provider_total_seconds + 0.05,
+            self.global_budget_seconds,
+        )
+        try:
+            return await asyncio.wait_for(
+                self._call_provider(provider, query),
+                timeout=max(0.05, timeout),
+            )
+        except asyncio.TimeoutError:
+            self.circuits[provider].failure(time.monotonic())
+            return ProviderOutcome(
+                provider=provider,
+                ok=False,
+                error_code="PROVIDER_TIMEOUT",
+                latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            )
+
     async def _delayed_provider(self, provider: str, query: str) -> ProviderOutcome:
         if self.fallback_delay_seconds:
             await asyncio.sleep(self.fallback_delay_seconds)
-        return await self._call_provider(provider, query)
+        return await self._bounded_call_provider(provider, query)
 
     async def search(self, query: str, *, fresh: bool = False) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
@@ -280,7 +301,7 @@ class WebOrchestrator:
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
                 if provider == "duckduckgo"
-                else self._call_provider(provider, provider_query),
+                else self._bounded_call_provider(provider, provider_query),
                 name=f"search:{provider}",
             )
             for provider in self.providers
@@ -370,7 +391,7 @@ class WebOrchestrator:
             # The same end-to-end deadline covers the primary and recovery phases.
             recovery_tasks = {
                 asyncio.create_task(
-                    self._call_provider(provider, recovery_query),
+                    self._bounded_call_provider(provider, recovery_query),
                     name=f"search-recovery:{provider}",
                 )
                 for provider in self.providers
