@@ -3383,6 +3383,26 @@ async function publicWebSearchUncached(
     finalResults = filteredResults();
   }
 
+  // If RSS plus the first independent-index pass still return fewer than three
+  // real domains, use the existing date-bearing query variants once, in parallel.
+  // This is conditional fan-out: no extra provider calls on already-diverse results.
+  if (realtimeNewsPlan && finalResults.length > 0 && uniqueResultDomainCount() < 3) {
+    const diversityQueries = plan.queries.slice(1, 3);
+    const diversityBatches = await Promise.all(diversityQueries.map(async (query) => ({
+      query,
+      data: await runPublicWebSearchQuery(
+        query,
+        true,
+        Math.min(2400, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>,
+    })));
+    for (const batch of diversityBatches) {
+      batches.push(batch);
+      mergeBatch(batch);
+    }
+    finalResults = filteredResults();
+  }
+
   // Empty or irrelevant RSS is a provider failure: switch to independent sources.
   if (realtimeNewsPlan && finalResults.length < 1) {
     const retryQuery = plan.queries[0] || plan.original;
