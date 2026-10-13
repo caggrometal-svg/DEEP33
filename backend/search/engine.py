@@ -282,6 +282,10 @@ _TOPIC_FILLERS = {
     "medicina", "medical", "medicine", "general", "salud", "health",
 }
 _TOPIC_PHRASE_ALIASES = (
+    # Normalize common industry abbreviations before strict topic filtering.
+    # This preserves relevance gates while allowing equivalent terms across providers.
+    (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
+    (re.compile(r"\b(?:tech|technology|technologies|technological)\b", re.IGNORECASE), "technology"),
     (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
     (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
     (
