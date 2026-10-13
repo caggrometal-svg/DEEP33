@@ -83,6 +83,53 @@ class Deep33ConnectivityTest {
     }
 
     @Test
+    fun repeatedCurrentWebQuestionsUseSearchSourcesAndMemory() {
+        if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
+
+        val prompts = listOf(
+            "Busca en internet las últimas noticias de Chile hoy y responde brevemente con fuentes reales.",
+            "Busca en internet el clima actual de Santiago de Chile y responde brevemente con fuentes reales.",
+            "Busca en internet información actual de tecnología en Chile hoy y responde brevemente con fuentes reales."
+        )
+
+        prompts.forEachIndexed { index, prompt ->
+            val payload = JSONArray().put(
+                JSONObject().put("role", "user").put("content", prompt)
+            )
+            val body = Deep33Api.generate(payload, sessionId)
+            assertGenerationEnvelope(body, "current-web-round-${index + 1}")
+            assertTrue(
+                "web navigation was not used in round ${index + 1}: $body",
+                body.optBoolean("web_navigation", false)
+            )
+            val sources = body.optJSONArray("sources") ?: JSONArray()
+            assertTrue(
+                "insufficient web sources in round ${index + 1}: $body",
+                sources.length() >= 2
+            )
+
+            var persisted = false
+            repeat(6) {
+                val context = Deep33Api.memoryContext(sessionId)
+                val messages = context.optJSONArray("messages") ?: JSONArray()
+                for (messageIndex in 0 until messages.length()) {
+                    if (messages.optJSONObject(messageIndex)?.optString("content").orEmpty().contains(prompt)) {
+                        persisted = true
+                        break
+                    }
+                }
+                if (persisted) return@repeat
+                Thread.sleep(500)
+            }
+            assertTrue(
+                "current web round ${index + 1} was not persisted in memory",
+                persisted
+            )
+            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()}")
+        }
+    }
+
+    @Test
     fun streamEndpointReturnsData() {
         val payload = JSONArray().put(
             JSONObject().put("role", "user")
