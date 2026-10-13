@@ -182,3 +182,33 @@ def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
         assert "if (!UPSTREAM" not in search
         assert "fetchUpstream(" not in search
 
+
+
+def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_sources() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        nav_start = source.index("async function buildNavigatedWebEvidence(")
+        nav_end_candidates = [
+            index
+            for marker in ("\\nasync function readJson(", "\\nconst EDGE_AI_REQUIRES_AUTH")
+            if (index := source.find(marker.replace("\\\\n", "\\n"), nav_start + 1)) >= 0
+        ]
+        nav_end = min(nav_end_candidates)
+        navigation = source[nav_start:nav_end]
+        assert "excludedUrls: Set<string> = new Set<string>()" in navigation
+        assert "excludedDomains: Set<string> = new Set<string>()" in navigation
+        assert "attempted_urls: [...attemptedUrls]" in navigation
+        assert "attempted_domains: [...attemptedDomains]" in navigation
+        assert "scheduledDomains.has(hostname)" in navigation
+        assert "excludedDomains.has(hostname)" in navigation
+
+        chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
+        chat_end = source.index("if (!edgeAIConfigured())", chat_start)
+        chat = source[chat_start:chat_end]
+        assert 'search.fallback_path !== "railway"' in chat
+        assert "buildWebSearchQuery(query)," in chat
+        assert "userAuthorization," in chat
+        assert "recoverySearch," in chat
+        assert "!excludedDomains.has(hostname)" in chat
+        assert "const sources = readableSources;" in chat
+        assert "if (sources.length < MIN_READABLE_WEB_SOURCES)" in chat
