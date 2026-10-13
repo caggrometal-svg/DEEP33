@@ -106,9 +106,17 @@ Deno.serve(async (req) => {
       if (!documentId) return json({ error: "DOCUMENT_ID_REQUIRED" }, 400);
       if (!chunks.length) return json({ error: "DOCUMENT_CONTENT_REQUIRED" }, 400);
 
+      const embeddedChunks = await Promise.all(chunks.map(async (item: Record<string, unknown>) => {
+        const content = String(item.content || "").trim();
+        if (!content) return item;
+        const supplied = suppliedVector(item.embedding);
+        const embedding = supplied || await embedText(content);
+        return { ...item, embedding };
+      }));
+
       const { data, error } = await supabase.rpc("index_deep33_chunks", {
         p_document_id: documentId.slice(0, 200),
-        p_chunks: chunks,
+        p_chunks: embeddedChunks,
       });
       if (error) {
         console.error("index_deep33_chunks", error);
