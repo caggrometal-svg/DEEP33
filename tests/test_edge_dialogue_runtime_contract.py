@@ -221,6 +221,8 @@ def test_web_completion_recovery_is_railway_first_and_globally_bounded() -> None
     assert "EDGE_AI_WEB_RECOVERY_TIMEOUT_MS" in recovery
     assert "true," in recovery
     assert "const EDGE_AI_WEB_RECOVERY_TIMEOUT_MS = 12000;" in source
+    assert "const EDGE_AI_RAILWAY_FIRST_CHUNK_TIMEOUT_MS = 6000;" in source
+    assert "const firstChunkTimeoutMs = isRailwayBackendProvider(provider)" in source
 
 
 def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_sources() -> None:
