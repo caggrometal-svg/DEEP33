@@ -36,7 +36,41 @@ function suppliedVector(value: unknown): number[] | null {
   throw new Error("EMBEDDING_VALUES_INVALID");
 }
 
-function json(body: unknown, status = 200) {
+async function embedMissingChunks(limit = 8): Promise<number> {
+  const { data, error } = await supabase
+    .from("deep33_knowledge_chunks")
+    .select("id, content")
+    .is("embedding", null)
+    .order("updated_at", { ascending: false })
+    .limit(Math.max(1, Math.min(8, limit)));
+  if (error) {
+    console.warn("hybrid_embedding_backfill_select_failed", error.code || "DB_ERROR");
+    return 0;
+  }
+  let embedded = 0;
+  for (const row of data || []) {
+    try {
+      const vector = await embedText(String(row.content || ""));
+      const { error: updateError } = await supabase
+        .from("deep33_knowledge_chunks")
+        .update({ embedding: vector })
+        .eq("id", row.id)
+        .is("embedding", null);
+      if (!updateError) embedded += 1;
+      else console.warn("hybrid_embedding_backfill_update_failed", updateError.code || "DB_ERROR");
+    } catch (error) {
+      console.warn("hybrid_embedding_backfill_item_failed",
+        error instanceof Error ? error.message : "EMBEDDING_FAILED");
+    }
+  }
+  return embedded;
+}
+
+function json(
+  body: unknown,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -45,6 +79,7 @@ function json(body: unknown, status = 200) {
         "authorization, x-client-info, apikey, content-type",
       "access-control-allow-methods": "POST, OPTIONS",
       "content-type": "application/json; charset=utf-8",
+      ...extraHeaders,
     },
   });
 }
@@ -83,6 +118,8 @@ Deno.serve(async (req) => {
         return json({ error: "HYBRID_QUERY_REQUIRED" }, 400);
       }
 
+      // Backfill a bounded batch of legacy chunks before vector search.
+      if (embeddingValues && query) await embedMissingChunks(8);
       const { data, error } = await supabase.rpc("search_deep33_chunks", {
         p_query: query,
         p_embedding: embedding,
