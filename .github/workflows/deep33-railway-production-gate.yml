@@ -122,7 +122,7 @@ jobs:
             -d '{"action":"ping"}' || true)"
           body="$(cat /tmp/deep33-embedding-ping.json 2>/dev/null || true)"
           test "$status" = "200" || { echo "RAILWAY_EMBEDDING_RUNTIME_FAIL http=$status"; exit 1; }
-          printf '%s' "$body" | jq -e '.ok == true and .embedding_model == "Supabase/gte-small" and .storage_dimensions == 1536 and .version >= 2' >/dev/null || {
+          printf '%s' "$body" | jq -e '.ok == true and .embedding_model == "Supabase/gte-small" and .embedding_smoke == true and .model_dimensions == 384 and .storage_dimensions == 1536 and .version >= 2' >/dev/null || {
             printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
             echo "RAILWAY_EMBEDDING_RUNTIME_FAIL: semantic embedding runtime unavailable"
             exit 1
