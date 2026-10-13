@@ -281,10 +281,10 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
 def test_secondary_edge_has_authenticated_railway_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
-        "\\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
+        "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
     )[0]
     providers = source.split("function edgeProviders()", 1)[1].split(
-        "\\nfunction edgeAIConfigured()", 1
+        "\nfunction edgeAIConfigured()", 1
     )[0]
     assert '"railway-backend-fallback"' in internal
     assert '"https://iac33-fastapi-edge-production.up.railway.app"' in source
