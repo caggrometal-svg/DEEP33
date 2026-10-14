@@ -86,6 +86,7 @@ _REALTIME_QUERY_FILLERS = {
     "municipalidades", "región", "region", "regiones", "mundial", "mundiales",
     "internacional", "internacionales", "global", "globales", "mundo", "world",
     "worldwide", "news", "breaking", "latest", "las", "los", "del", "de", "la", "al",
+    "producto", "productos", "product", "products",
 }
 
 def _realtime_anchor_tokens(query: str) -> set[str]:
@@ -297,7 +298,7 @@ _TOPIC_PHRASE_ALIASES = (
     # This preserves relevance gates while allowing equivalent terms across providers.
     (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
     (re.compile(r"\b(?:tech|technology|technologies|technological|tecnolog[ií]a|tecnol[oó]gic[oa]s?)\b", re.IGNORECASE), "technology"),
-    (re.compile(r"\b(?:smart\s?phones?|mobile\s+phones?|cell\s+phones?|tel[eé]fonos?\s+m[oó]viles?|celulares?)\b", re.IGNORECASE), "smartphone"),
+    (re.compile(r"\b(?:smart\s?phones?|mobile\s+phones?|cell\s+phones?|phones?|tel[eé]fonos?(?:\s+m[oó]viles?)?|celulares?)\b", re.IGNORECASE), "smartphone"),
     (re.compile(r"\b(?:especificaci[oó]n(?:es)?|caracter[ií]sticas|technical\s+specifications?|specs?)\b", re.IGNORECASE), "specifications"),
     (re.compile(r"\bworld\s+health\s+organization\b", re.IGNORECASE), "who"),
     (re.compile(r"\bnational\s+aeronautics\s+and\s+space\s+administration\b", re.IGNORECASE), "nasa"),
@@ -611,9 +612,22 @@ def rank_results(
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             topic_evidence = pattern.sub(replacement, topic_evidence)
         topic_evidence_tokens = _token_set(topic_evidence)
-        topic_hits = len(set(topic_tokens) & topic_evidence_tokens)
-        required_topic_hits = min(2, len(topic_tokens))
-        if not realtime and topic_tokens and topic_hits < required_topic_hits:
+        relevance_topic_tokens = list(topic_tokens)
+        source_reference_tokens = set()
+        query_folded_for_source = str(query or "").casefold()
+        if "world health organization" in query_folded_for_source or re.search(r"\bwho\b", query_folded_for_source):
+            source_reference_tokens.add("who")
+        if re.search(r"\bnasa\b", query_folded_for_source) or "national aeronautics and space administration" in query_folded_for_source:
+            source_reference_tokens.add("nasa")
+        independent_topics = [
+            token for token in relevance_topic_tokens
+            if token not in source_reference_tokens
+        ]
+        if independent_topics:
+            relevance_topic_tokens = independent_topics
+        topic_hits = len(set(relevance_topic_tokens) & topic_evidence_tokens)
+        required_topic_hits = min(2, len(relevance_topic_tokens))
+        if not realtime and relevance_topic_tokens and topic_hits < required_topic_hits:
             # Domain reputation and corroboration must never make unrelated results relevant.
             continue
         scoring_tokens = topic_tokens or query_tokens

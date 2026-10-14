@@ -829,3 +829,67 @@ def test_commercial_chile_site_intent_treats_commercial_as_shape_not_topic():
     domains = {item.get("source_domain") for item in ranked}
     assert "tecnologia-ejemplo.cl" in domains
     assert "foreign-example.com" not in domains
+
+
+def test_named_health_organization_allows_independent_topic_corroboration():
+    from backend.search.engine import rank_results
+    from backend.search.resilient import WebOrchestrator
+
+    query = "World Health Organization dengue fact sheet"
+    recovery = WebOrchestrator._recovery_query(query)
+    assert "dengue" in recovery.casefold()
+    assert "who" in recovery.casefold()
+    assert "cdc" in recovery.casefold()
+    assert "paho" in recovery.casefold()
+
+    candidates = [
+        {
+            "title": "Dengue and severe dengue",
+            "url": "https://www.who.int/news-room/fact-sheets/detail/dengue-and-severe-dengue",
+            "snippet": "World Health Organization fact sheet on dengue.",
+        },
+        {
+            "title": "About Dengue",
+            "url": "https://www.cdc.gov/dengue/about/index.html",
+            "snippet": "Public health information about dengue infection and prevention.",
+        },
+        {
+            "title": "Dengue",
+            "url": "https://www.paho.org/en/topics/dengue",
+            "snippet": "Regional public health information about dengue.",
+        },
+    ]
+    ranked = rank_results(query, candidates, realtime=False)
+    domains = {item.get("source_domain") for item in ranked}
+    assert {"www.who.int", "www.cdc.gov", "www.paho.org"}.issubset(domains)
+
+
+def test_realtime_smartphone_provider_query_is_broad_and_rankable():
+    from backend.search.engine import rank_results
+    from backend.search.resilient import WebOrchestrator
+
+    query = "producto tecnológico smartphone actual especificaciones"
+    provider_query = WebOrchestrator._provider_query(query)
+    assert "smartphone" in provider_query.casefold()
+    assert "specifications" in provider_query.casefold()
+    assert provider_query.casefold() != query.casefold()
+
+    candidates = [
+        {
+            "title": "Phone specifications and comparison",
+            "url": "https://www.gsmarena.com/compare.php3",
+            "snippet": "Compare smartphone specifications, models and features.",
+        },
+        {
+            "title": "Smartphone comparison",
+            "url": "https://www.phonearena.com/phones/compare",
+            "snippet": "Compare current phone specifications and models.",
+        },
+        {
+            "title": "Phone reviews and specifications",
+            "url": "https://www.notebookcheck.net/Smartphone-Reviews.127.0.html",
+            "snippet": "Current smartphone reviews, specifications and comparisons.",
+        },
+    ]
+    ranked = rank_results(query, candidates, realtime=True)
+    assert len({item.get("source_domain") for item in ranked}) >= 3

@@ -176,9 +176,17 @@ class WebOrchestrator:
     def _provider_query(query: str) -> str:
         """Reduce provider-side noise without changing the user's ranking query."""
         cleaned = " ".join(str(query or "").split()).strip()
-        if not cleaned or is_realtime_query(cleaned):
+        if not cleaned:
             return cleaned
         lowered = cleaned.casefold()
+        smartphone_intent = any(term in lowered for term in (
+            "smartphone", "smart phone", "mobile phone", "cell phone",
+            "teléfono móvil", "telefono movil", "celular",
+        ))
+        if smartphone_intent:
+            return "smartphone phone specifications comparison reviews current models"
+        if is_realtime_query(cleaned):
+            return cleaned
         government_site_intent = any(
             term in lowered
             for term in (
@@ -258,6 +266,21 @@ class WebOrchestrator:
         )
         if commercial_technology_site_intent:
             return "Chile technology companies software ecommerce official websites"
+
+        health_org_reference_intent = (
+            "world health organization" in lowered
+            or re.search(r"\bwho\b", lowered) is not None
+        )
+        if health_org_reference_intent:
+            health_topics = [
+                token for token in topics
+                if token not in {"who"}
+            ]
+            if health_topics:
+                return (
+                    " ".join(dict.fromkeys(health_topics[:3]))
+                    + " WHO CDC PAHO public health fact sheet"
+                )
 
         wikipedia_asyncio_intent = (
             "wikipedia" in lowered

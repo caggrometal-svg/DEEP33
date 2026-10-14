@@ -935,5 +935,8 @@ def test_edge_web_navigation_requires_multiple_independent_sources() -> None:
         assert "const MIN_READABLE_WEB_SOURCES = 2;" in source
         assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
         assert "const fetchedDomains = new Set<string>();" in source
-        assert "navigation.succeeded < MIN_READABLE_WEB_SOURCES" in source
+        assert "const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)" in source
+        assert "readableSources.length < requiredReadableSources" in source
+        assert "sources.length < requiredReadableSources" in source
+        assert 'fallback_path: "railway-recovery"' in source
         assert "async function buildNavigatedWebEvidence(" in source
