@@ -922,6 +922,41 @@ class WebOrchestrator:
                     provider_query = fallback_query
 
         if not selected and merged:
+            # Last-resort semantic rescue: providers returned real candidates, but
+            # strict ranking rejected all of them. Re-rank against the already
+            # normalized recovery query and keep only candidates that still share
+            # at least one original topic token. This prevents false empty results
+            # without allowing unrelated provider noise into the response.
+            original_topics = set(_topic_tokens(cleaned))
+            rescue_query = recovery_query or provider_query or cleaned
+            rescue_ranked = rank_results(
+                rescue_query,
+                merged,
+                realtime=is_realtime_query(cleaned),
+            )
+            if original_topics:
+                rescue_ranked = [
+                    item
+                    for item in rescue_ranked
+                    if original_topics
+                    & set(
+                        _tokens(
+                            f"{item.get('title', '')} {item.get('snippet', '')} "
+                            f"{item.get('source_domain', '')} {item.get('url', '')}"
+                        )
+                    )
+                ]
+            rescue_selected = deduplicate(rescue_ranked, self.max_results)
+            if rescue_selected:
+                selected = rescue_selected
+                provider_query = rescue_query
+                logger.info(
+                    "web_search_semantic_rescue candidate_count=%d selected_count=%d",
+                    len(merged),
+                    len(selected),
+                )
+
+        if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
             # snippets, or full URLs. This lets production logs distinguish
             # provider-empty responses from candidates excluded by ranking.
