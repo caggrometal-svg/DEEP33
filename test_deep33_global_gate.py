@@ -497,8 +497,19 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                     domains.append(host)
                     urls.append(url)
             if len(domains) < 3:
+                diagnostics = [
+                    {
+                        "domain": (urlparse(str(item.get("url") or "")).hostname or "").casefold(),
+                        "provider": item.get("provider"),
+                        "title": str(item.get("title") or "")[:180],
+                        "score": item.get("score"),
+                        "score_components": item.get("score_components"),
+                    }
+                    for item in results[:10]
+                ]
                 raise AssertionError(
-                    f"Multidomain gate failed for {query!r}: expected >=3 domains, got {domains}"
+                    f"Multidomain gate failed for {query!r}: expected >=3 domains, "
+                    f"got {domains}; accepted_candidates={json.dumps(diagnostics, ensure_ascii=False)}"
                 )
 
             fetch_ok = 0
