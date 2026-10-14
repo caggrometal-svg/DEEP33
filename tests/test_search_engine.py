@@ -382,10 +382,13 @@ def test_two_concept_search_requires_real_topic_overlap_without_overfiltering():
         realtime=False,
     )
 
-    # The query explicitly names WHO. A generic dengue page that doesn't
-    # identify that organization cannot satisfy the second topic anchor.
-    assert len(ranked) == 1
-    assert ranked[0]["url"].startswith("https://www.who.int/")
+    # WHO is a preferred source, while independent dengue evidence remains
+    # eligible for corroboration. Unrelated material must still be rejected.
+    assert len(ranked) == 2
+    urls = {item["url"] for item in ranked}
+    assert any(url.startswith("https://www.who.int/") for url in urls)
+    assert "https://public-health.example/dengue" in urls
+    assert all("astronomy" not in url for url in urls)
 
 
 def test_generic_medical_terms_do_not_overfilter_distinct_influenza_topic():
