@@ -950,8 +950,14 @@ class SearchEngine:
                 if str(item.get("url") or "").strip()
             }
             domains = {_host(url) for url in urls if _host(url)}
-            if fast_mode or plan_depth == "realtime":
+            if fast_mode:
                 return bool(ranked)
+            if plan_depth == "realtime":
+                # Realtime/news answers need independent evidence before we stop
+                # racing providers. Returning after the first relevant hit cancels
+                # healthy peers and creates fragile one/two-domain results.
+                required_domains = min(3, self.max_results)
+                return len(domains) >= required_domains
             if plan_depth == "deep" and len(providers) > 1:
                 return len({name for name, _batch in successful}) >= 2 and len(urls) >= min(3, self.max_results)
             return len(urls) >= required_coverage and len(domains) >= min(required_coverage, 2)
@@ -1153,10 +1159,16 @@ class SearchEngine:
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
             if plan.depth == "realtime":
-                # _run_query already races providers and gives them a short
-                # corroboration window. Any relevant result can answer a broad
-                # current-news request without launching another query variant.
-                sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
+                # A realtime response is only complete when it has enough
+                # independent URL domains. Otherwise execute the planned recovery
+                # query instead of treating one provider/result as sufficient.
+                first_domains = {
+                    _host(str(item.get("url") or ""))
+                    for _name, items in first_relevant_by_provider
+                    for item in items
+                    if _host(str(item.get("url") or ""))
+                }
+                sufficiently_verified = len(first_domains) >= min(3, self.max_results)
             else:
                 min_provider_successes = 1 if len(providers) == 1 else 2
                 sufficiently_verified = (
