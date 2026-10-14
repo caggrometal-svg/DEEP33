@@ -524,7 +524,7 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
 
     result = asyncio.run(exercise())
     assert yahoo_calls["count"] == 1
-    assert "ChileAtiende" in yahoo_queries[0]
+    assert "site:datos.gob.cl" in yahoo_queries[0]
     assert "gob.cl" in yahoo_queries[0]
     assert result["ok"] is True, result
     assert "yahoo" in result["providers"]
