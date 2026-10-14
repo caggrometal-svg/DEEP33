@@ -267,20 +267,23 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             "source_domain": domain,
         }
 
-    async def bing_provider(query, _timeout, _limit):
-        calls.append(query)
-        if "site:chileatiende.gob.cl" in query:
-            return [item("www.chileatiende.gob.cl", "ChileAtiende", "Servicios públicos y trámites en Chile")]
-        if "site:datos.gob.cl" in query:
-            return [item("datos.gob.cl", "Datos abiertos Chile", "Información pública y datos abiertos del Gobierno de Chile")]
-        if "site:cplt.cl" in query:
-            return [item("www.cplt.cl", "Consejo para la Transparencia", "Transparencia e información pública en Chile")]
-        if "site:bcn.cl/leychile" in query:
-            return [item("www.bcn.cl", "Ley de Transparencia", "Ley sobre acceso a la información pública en Chile")]
-        return [item("www.gob.cl", "Gobierno de Chile", "Información pública del Gobierno de Chile")]
+    targets = {
+        "site:chileatiende.gob.cl": item("www.chileatiende.gob.cl", "ChileAtiende", "Servicios públicos y trámites en Chile"),
+        "site:datos.gob.cl": item("datos.gob.cl", "Datos abiertos Chile", "Información pública y datos abiertos del Gobierno de Chile"),
+        "site:cplt.cl": item("www.cplt.cl", "Consejo para la Transparencia", "Transparencia e información pública en Chile"),
+        "site:bcn.cl/leychile": item("www.bcn.cl", "Ley de Transparencia", "Ley sobre acceso a la información pública en Chile"),
+    }
 
-    async def empty_provider(_query, _timeout, _limit):
-        return []
+    def provider_for(provider_name):
+        async def provider(query, _timeout, _limit):
+            calls.append((provider_name, query))
+            for marker, result in targets.items():
+                if marker in query:
+                    return [result]
+            if provider_name == "bing":
+                return [item("www.gob.cl", "Gobierno de Chile", "Información pública del Gobierno de Chile")]
+            return []
+        return provider
 
     async def exercise():
         orchestrator = WebOrchestrator(
@@ -290,12 +293,10 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             fallback_delay_seconds=0,
         )
         orchestrator.providers = {
-            "bing": bing_provider,
-            "google": empty_provider,
-            "cl0q": empty_provider,
-            "mojeek": empty_provider,
-            "duckduckgo": empty_provider,
+            name: provider_for(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
+        orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
@@ -309,10 +310,11 @@ def test_chile_public_information_fans_out_distinct_official_domains():
 
     assert result["ok"] is True, result
     assert result["verification"]["distinct_domains"] >= 3
-    assert any("site:chileatiende.gob.cl" in query for query in calls)
-    assert any("site:datos.gob.cl" in query for query in calls)
-    assert any("site:cplt.cl" in query for query in calls)
-    assert any("site:bcn.cl/leychile" in query for query in calls)
+    assert any(provider == "bing" and "site:chileatiende.gob.cl" in query for provider, query in calls)
+    assert any(provider == "google" and "site:datos.gob.cl" in query for provider, query in calls)
+    assert any(provider == "duckduckgo" and "site:cplt.cl" in query for provider, query in calls)
+    assert any(provider == "cl0q" and "site:bcn.cl/leychile" in query for provider, query in calls)
+
 
 def test_primary_search_reserves_deadline_for_multisource_recovery():
     from backend.search.resilient import WebOrchestrator
@@ -863,6 +865,66 @@ def test_named_health_organization_allows_independent_topic_corroboration():
     domains = {item.get("source_domain") for item in ranked}
     assert {"www.who.int", "www.cdc.gov", "www.paho.org"}.issubset(domains)
 
+
+
+def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
+    from backend.search.resilient import WebOrchestrator
+
+    calls = []
+    who = {
+        "title": "Dengue and severe dengue",
+        "url": "https://www.who.int/news-room/fact-sheets/detail/dengue-and-severe-dengue",
+        "snippet": "World Health Organization fact sheet on dengue.",
+        "source_domain": "www.who.int",
+    }
+    cdc = {
+        "title": "About Dengue",
+        "url": "https://www.cdc.gov/dengue/about/index.html",
+        "snippet": "Public health information about dengue infection and prevention.",
+        "source_domain": "www.cdc.gov",
+    }
+    paho = {
+        "title": "Dengue",
+        "url": "https://www.paho.org/en/topics/dengue",
+        "snippet": "Regional public health information about dengue.",
+        "source_domain": "www.paho.org",
+    }
+
+    def provider_for(name):
+        async def provider(query, _timeout, _limit):
+            calls.append((name, query))
+            if "site:who.int/news-room/fact-sheets/detail" in query:
+                return [who]
+            if "dengue" in query.casefold():
+                return [cdc, paho]
+            return []
+        return provider
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            name: provider_for(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
+        }
+        orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        orchestrator.circuits = {
+            name: orchestrator.circuits[name]
+            for name in orchestrator.providers
+        } | {"yahoo": orchestrator.circuits["yahoo"]}
+        return await orchestrator.search("World Health Organization dengue fact sheet", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True, result
+    assert any("site:who.int/news-room/fact-sheets/detail" in query for _provider, query in calls)
+    assert any(
+        "who.int" in str(item.get("url", "")).casefold() and "dengue" in str(item.get("url", "")).casefold()
+        for item in result["results"]
+    ), result["results"]
 
 def test_realtime_smartphone_provider_query_is_broad_and_rankable():
     from backend.search.engine import rank_results

@@ -69,6 +69,21 @@ class ProviderOutcome:
     latency_ms: float = 0.0
 
 
+def _is_who_dengue_item(item: dict) -> bool:
+    """True only for readable dengue evidence published on WHO's own domain."""
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    host = str(item.get("source_domain") or parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+    evidence = f"{item.get('title', '')} {item.get('snippet', '')} {url}"
+    return (host == "who.int" or host.endswith(".who.int")) and re.search(
+        r"\bdengue\b", evidence, re.IGNORECASE
+    ) is not None
+
+
+def _has_who_dengue_item(items: list[dict]) -> bool:
+    return any(_is_who_dengue_item(item) for item in items)
+
+
 class TTLRUCache:
     def __init__(self, max_entries: int = CACHE_MAX_ENTRIES) -> None:
         self.max_entries = max(8, int(max_entries))
@@ -479,6 +494,11 @@ class WebOrchestrator:
                 "portal gubernamental", "datos abiertos", "transparencia",
             ))
         )
+        who_dengue_source_intent = (
+            ("world health organization" in lowered_cleaned or re.search(r"\bwho\b", lowered_cleaned) is not None)
+            and "dengue" in lowered_cleaned
+            and any(term in lowered_cleaned for term in ("fact sheet", "fact-sheet", "ficha informativa", "ficha técnica", "ficha tecnica"))
+        )
         python_asyncio_official_intent = (
             "python" in lowered_cleaned
             and "asyncio" in lowered_cleaned
@@ -542,21 +562,33 @@ class WebOrchestrator:
             )
 
         if chile_public_info_intent:
-            # Start independent official-domain discovery in the primary wave so
-            # anti-bot delays from general indexes cannot consume the recovery
-            # budget before these live searches are even attempted.
+            # Probe independent search engines against distinct official Chilean
+            # domains in the primary wave. One Bing SERP has repeatedly collapsed
+            # the answer to gob.cl even when other public portals are available.
             official_queries = (
-                "site:chileatiende.gob.cl Chile servicios trámites información pública",
-                "site:datos.gob.cl Chile datos abiertos información pública",
-                "site:cplt.cl Chile transparencia información pública",
-                "site:bcn.cl/leychile Chile ley transparencia información pública",
+                ("bing", "site:chileatiende.gob.cl Chile servicios trámites información pública"),
+                ("google", "site:datos.gob.cl Chile datos abiertos información pública"),
+                ("duckduckgo", "site:cplt.cl Chile transparencia información pública"),
+                ("cl0q", "site:bcn.cl/leychile Chile ley transparencia información pública"),
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider("bing", official_query),
-                    name=f"search:bing-official-{index}",
+                    self._bounded_call_provider(provider, official_query),
+                    name=f"search:official-primary:{provider}:{index}",
                 )
-                for index, official_query in enumerate(official_queries)
+                for index, (provider, official_query) in enumerate(official_queries)
+            })
+        if who_dengue_source_intent:
+            # The source is part of the request, not an optional citation. Search
+            # WHO's primary fact-sheet domain through independent general-web indexes
+            # so CDC/PAHO dengue pages cannot silently replace the requested source.
+            who_query = "site:who.int/news-room/fact-sheets/detail dengue and severe dengue"
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, who_query),
+                    name=f"search:who-dengue:{provider}",
+                )
+                for provider in ("bing", "google", "duckduckgo", "cl0q")
             })
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
@@ -611,6 +643,10 @@ class WebOrchestrator:
                 enough_sources = (
                     len(selected_now) >= min(3, self.max_results)
                     and len(distinct_domains) >= min(3, len(selected_now))
+                    and (
+                        not who_dengue_source_intent
+                        or _has_who_dengue_item(selected_now)
+                    )
                 )
                 if (
                     enough_sources
@@ -663,17 +699,17 @@ class WebOrchestrator:
             and loop.time() < deadline
         ):
             official_queries = (
-                "site:chileatiende.gob.cl Chile servicios trámites información pública",
-                "site:datos.gob.cl Chile datos abiertos información pública",
-                "site:cplt.cl Chile transparencia información pública",
-                "site:bcn.cl/leychile Chile ley transparencia información pública",
+                ("mojeek", "site:chileatiende.gob.cl Chile servicios trámites información pública"),
+                ("yahoo", "site:datos.gob.cl Chile datos abiertos información pública"),
+                ("google", "site:cplt.cl Chile transparencia información pública"),
+                ("duckduckgo", "site:bcn.cl/leychile Chile ley transparencia información pública"),
             )
             official_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider("bing", official_query),
-                    name=f"search-official:{index}",
+                    self._bounded_call_provider(provider, official_query),
+                    name=f"search-official:{provider}:{index}",
                 )
-                for index, official_query in enumerate(official_queries)
+                for index, (provider, official_query) in enumerate(official_queries)
             }
             pending_official = set(official_tasks)
             try:
@@ -762,6 +798,7 @@ class WebOrchestrator:
             or len(selected_domains) < min(3, max(1, len(selected)))
             or needs_news_source_diversity
             or needs_provider_diversity
+            or (who_dengue_source_intent and not _has_who_dengue_item(selected))
         )
         if (
             needs_recovery
@@ -825,6 +862,10 @@ class WebOrchestrator:
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
                         and len(distinct_providers_now) >= min(2, len(self.providers))
+                        and (
+                            not who_dengue_source_intent
+                            or _has_who_dengue_item(selected_now)
+                        )
                     ):
                         break
             finally:
@@ -941,6 +982,16 @@ class WebOrchestrator:
                     len(merged),
                     len(selected),
                 )
+
+        if who_dengue_source_intent and merged and not _has_who_dengue_item(selected):
+            # If a valid WHO fact sheet was found, preserve it in the final set even
+            # when higher-volume CDC/PAHO results otherwise occupy every slot.
+            who_candidates = [
+                item for item in rank_results(cleaned, merged, realtime=False)
+                if _is_who_dengue_item(item)
+            ]
+            if who_candidates:
+                selected = deduplicate([*who_candidates, *selected], self.max_results)
 
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
