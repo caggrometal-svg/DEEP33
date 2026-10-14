@@ -543,6 +543,18 @@ class WebOrchestrator:
                 "noticia", "noticias", "hoy", "actualidad", "latest", "news",
             ))
         )
+        chile_political_news_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "política", "politica", "presidente", "elecciones", "elección",
+                "eleccion", "gobierno", "congreso", "senado", "ministro",
+            ))
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            ))
+        )
         broad_ai_news_intent = (
             any(term in lowered_cleaned for term in (
                 "artificial intelligence", "inteligencia artificial", " ai ",
@@ -941,6 +953,118 @@ class WebOrchestrator:
             selected = deduplicate(ranked, self.max_results)
             if selected:
                 provider_query = recovery_query
+
+        # Chile-focused live political news gets one last bounded source-diversity
+        # recovery only if general search plus broad recovery still leave fewer than
+        # three distinct domains. These are real site-scoped provider queries; final
+        # relevance ranking remains anchored to the user's original question.
+        selected_domains_before_politics_recovery = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            for item in selected
+            if item.get("url")
+        }
+        if (
+            chile_political_news_intent
+            and len(selected_domains_before_politics_recovery - {""}) < min(3, self.max_results)
+            and loop.time() < deadline
+        ):
+            political_source_queries = (
+                ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("duckduckgo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
+            )
+            political_tasks = {
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-political-diversity:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(political_source_queries)
+            }
+            pending_political = set(political_tasks)
+            try:
+                while pending_political:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    done, pending_political = await asyncio.wait(
+                        pending_political,
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        break
+                    for task in done:
+                        try:
+                            outcome = task.result()
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception as exc:
+                            outcome = ProviderOutcome(
+                                provider=task.get_name().split(":")[-2],
+                                ok=False,
+                                error_code=f"UNEXPECTED:{type(exc).__name__.upper()}",
+                            )
+                        outcomes.append(outcome)
+
+                    merged_now = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked_now = rank_results(
+                        cleaned, merged_now, realtime=is_realtime_query(cleaned)
+                    )
+                    selected_now = deduplicate(ranked_now, self.max_results)
+                    domains_now = {
+                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                        for item in selected_now
+                        if item.get("url")
+                    } - {""}
+                    providers_now = {
+                        outcome.provider
+                        for outcome in outcomes
+                        if outcome.ok and outcome.results
+                    }
+                    if (
+                        len(selected_now) >= min(3, self.max_results)
+                        and len(domains_now) >= min(3, self.max_results)
+                        and len(providers_now) >= min(2, len(self.providers))
+                    ):
+                        break
+            finally:
+                for task in pending_political:
+                    if not task.done():
+                        task.cancel()
+                if pending_political:
+                    await asyncio.gather(*pending_political, return_exceptions=True)
+
+            merged = [
+                {**item, "provider": outcome.provider}
+                for outcome in outcomes
+                if outcome.ok
+                for item in outcome.results
+            ]
+            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            selected = deduplicate(ranked, self.max_results)
+            recovered_domains = {
+                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                for item in selected
+                if item.get("url")
+            } - {""}
+            recovered_providers = sorted({
+                outcome.provider
+                for outcome in outcomes
+                if outcome.ok and outcome.results
+            })
+            logger.info(
+                "web_search_chile_political_diversity_recovery result_count=%d "
+                "distinct_domains=%d providers=%s",
+                len(selected),
+                len(recovered_domains),
+                recovered_providers,
+            )
 
         minimum_coverage = min(3, self.max_results)
         selected_domains = {

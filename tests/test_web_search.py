@@ -1084,3 +1084,87 @@ def test_chile_economic_recovery_uses_real_source_oriented_terms():
     assert "diario financiero" in recovery
     assert "pulso" in recovery
     assert "banco central" in recovery
+
+
+def test_chile_current_political_news_recovers_independent_domains() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    base_results = [
+        {
+            "title": "Política de Chile: el gobierno presenta medidas hoy",
+            "url": "https://elpais.com/chile/politica/medidas.html",
+            "snippet": "Noticias actuales de política y gobierno de Chile.",
+        },
+        {
+            "title": "Gobierno de Chile informa cambios políticos hoy",
+            "url": "https://www.gob.cl/noticias/cambios",
+            "snippet": "Política pública, Congreso y gobierno de Chile hoy.",
+        },
+    ]
+    source_results = {
+        "biobiochile.cl": {
+            "title": "Política Chile: gobierno y Congreso anuncia medidas",
+            "url": "https://www.biobiochile.cl/noticias/nacional/chile/politica.shtml",
+            "snippet": "Actualidad política del gobierno de Chile y el Congreso hoy.",
+        },
+        "emol.com": {
+            "title": "Política en Chile: últimas noticias del gobierno",
+            "url": "https://www.emol.com/noticias/Nacional/Politica.html",
+            "snippet": "Noticias de política chilena, gobierno y Congreso de hoy.",
+        },
+        "cooperativa.cl": {
+            "title": "Gobierno y política de Chile: cobertura actual",
+            "url": "https://cooperativa.cl/noticias/pais/politica/",
+            "snippet": "Actualidad política y noticias del gobierno de Chile.",
+        },
+        "latercera.com": {
+            "title": "Chile hoy: noticias de política y gobierno",
+            "url": "https://www.latercera.com/politica/",
+            "snippet": "Noticias políticas actuales de Chile, gobierno y Congreso.",
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def provider_for(name: str):
+        async def provider(query, _timeout, _limit):
+            calls.append((name, query))
+            lowered_query = query.casefold()
+            for host, result in source_results.items():
+                if f"site:{host}" in lowered_query:
+                    return [result]
+            return base_results
+        return provider
+
+    async def no_yahoo(_query, _timeout, _limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            name: provider_for(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
+        }
+        orchestrator.fallback_providers["yahoo"] = no_yahoo
+        return await orchestrator.search(
+            "política Chile hoy últimas noticias",
+            fresh=True,
+        )
+
+    result = asyncio.run(exercise())
+    result_domains = {
+        str(item.get("source_domain") or urlparse(str(item.get("url") or "")).hostname or "").casefold()
+        for item in result["results"]
+    }
+    assert result["ok"] is True, result
+    assert len(result_domains - {""}) >= 3, result["results"]
+    assert result["verification"]["distinct_domains"] >= 3
+    assert any("site:" in query for _provider, query in calls)
+    assert all(
+        any(host in item.get("url", "") for host in ("elpais.com", "gob.cl", "biobiochile.cl", "emol.com", "cooperativa.cl", "latercera.com"))
+        for item in result["results"]
+    )
