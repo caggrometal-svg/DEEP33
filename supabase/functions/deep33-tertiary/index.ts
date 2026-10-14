@@ -376,6 +376,7 @@ function buildWebSearchQuery(query: string): string {
   const normalized = query
     .replace(/\b(busca|buscar|búscame|investiga|investigar|consulta|consultar|comprueba|comprobar|verifica|verificar)\b/giu, " ")
     .replace(/\b(en internet|por internet|en la web|por la web|online|on-line)\b/giu, " ")
+    .replace(/\s+(?:y\s+)?(?:dime|di|indica|indícame|menciona|mencióname|incluye|proporciona|resume|explica|señala|cita|enumera|lista|entrega|describe|cuéntame|cuentame)\b[\s\S]*$/iu, " ")
     .replace(/\b(responde solo|responde únicamente|responde exactamente|contesta solo|devuelve solo)\b[\s\S]*$/iu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -2996,6 +2997,9 @@ function normalizeEdgeSearchQuery(query: string): string {
 }
 
 const EDGE_REALTIME_FILLERS = new Set([
+  "qué","que","cuál","cual","cuáles","cuales","han","ha","he","hemos","había","habia","hora",
+  "ocurrido","ocurridos","ocurrió","ocurrio","ocurrieron","durante","importante","importantes",
+  "dime","fuente","fuentes","obtuviste","información","informacion","sido","fue","fueron",
   "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
   "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
   "noticia","noticias","actualidad","reciente","recientes","información","informacion",
@@ -3395,70 +3399,46 @@ async function publicWebSearchUncached(
     finalResults = filteredResults();
   }
 
-  // Empty or irrelevant RSS is a provider failure: switch to independent sources.
-  if (realtimeNewsPlan && finalResults.length < 1) {
-    const retryQuery = plan.queries[0] || plan.original;
-    const data = await runPublicWebSearchQuery(
-      retryQuery,
-      true,
-      Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
-    ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-    const batch = { query: retryQuery, data };
-    batches.push(batch);
-    mergeBatch(batch);
-    finalResults = filteredResults();
-  }
-
-  // If every public provider returned no current result, try date-bearing query
-  // variants one at a time. This avoids normal-request fan-out and unbounded retries.
-  if (realtimeNewsPlan && finalResults.length < 1) {
-    for (const retryQuery of plan.queries.slice(1, 3)) {
-      const data = await runPublicWebSearchQuery(
-        retryQuery,
-        false,
-        Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
-      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-      const batch = { query: retryQuery, data };
-      batches.push(batch);
-      mergeBatch(batch);
-      finalResults = filteredResults();
-      if (finalResults.length > 0) break;
-    }
-  }
-  // One final alternate-topic query prevents transient empty RSS responses from
-  // turning into a user-facing 503. It only runs after bounded provider retries fail.
+  // Empty or irrelevant initial news results trigger one bounded, parallel recovery.
+  // Do not serialize several full provider timeout windows: this used to leave the
+  // Android client waiting 9-16s before returning a false empty result.
   if (realtimeNewsPlan && finalResults.length < 1) {
     const locality = edgeExtractLocality(plan.original);
     const rescueQuery = edgeBroadWorldNewsQuery(plan.original)
       ? "noticias internacionales de hoy"
       : locality
-        ? `${locality} noticias de hoy`
+        ? locality + " noticias de hoy"
         : /\b(?:chile|chileno|chilena)\b/i.test(plan.original)
           ? "Chile noticias hoy"
-          : `${normalizeEdgeSearchQuery(plan.original)} actualidad de hoy`;
-    const data = await runPublicWebSearchQuery(
-      rescueQuery,
-      true,
-      Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
-    ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-    const batch = { query: rescueQuery, data };
-    batches.push(batch);
-    mergeBatch(batch);
-    finalResults = filteredResults();
-
-    // Try the alternate-news provider pair after the full provider set is empty.
-    // This restores Bing + Google News as a separate last-resort route.
-    if (finalResults.length < 1) {
-      const fastRescue = await runPublicWebSearchQuery(
-        rescueQuery,
-        false,
-        Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
-      ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-      const fastBatch = { query: rescueQuery, data: fastRescue };
-      batches.push(fastBatch);
-      mergeBatch(fastBatch);
-      finalResults = filteredResults();
+          : normalizeEdgeSearchQuery(plan.original) + " actualidad de hoy";
+    const recoveryPlan = [
+      { query: plan.queries[0] || plan.original, forceFullSearch: true },
+      { query: rescueQuery, forceFullSearch: false },
+    ].filter((item, index, all) =>
+      Boolean(item.query.trim()) &&
+      all.findIndex((candidate) => candidate.query.trim().toLowerCase() === item.query.trim().toLowerCase()) === index
+    );
+    const recoveryStarted = performance.now();
+    const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({
+      query: candidate.query,
+      data: await runPublicWebSearchQuery(
+        candidate.query,
+        candidate.forceFullSearch,
+        Math.min(1800, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      ).catch(() => ({ ok: false, results: [], providers: [], errors: ["parallel_recovery_failed"] })) as Record<string, unknown>,
+    })));
+    for (const batch of recoveryBatches) {
+      batches.push(batch);
+      mergeBatch(batch);
     }
+    finalResults = filteredResults();
+    console.log(JSON.stringify({
+      event: "edge_web_search_recovery_complete",
+      elapsed_ms: Math.round(performance.now() - recoveryStarted),
+      queries_attempted: recoveryBatches.length,
+      result_count: finalResults.length,
+      providers: edgeProvidersForResults(finalResults),
+    }));
   }
   if (!finalResults.length && edgeCurrentDateTimeQuery(plan.original)) {
     const clockResults = await runCurrentDateTimeSourceFallback(plan.original);
