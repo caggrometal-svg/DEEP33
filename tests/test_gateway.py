@@ -589,3 +589,30 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
     assert any(item.name == "allowed-fallback" for item in config.providers)
 
+
+
+def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models() -> None:
+    dots = provider(
+        "kilo-dots-fallback",
+        "https://api.kilo.ai/api/gateway/chat/completions",
+        "https://api.kilo.ai/api/gateway/models",
+        "dots-studio/dots-3-note-preview:free",
+    )
+    laguna = provider(
+        "kilo",
+        "https://api.kilo.ai/api/gateway/chat/completions",
+        "https://api.kilo.ai/api/gateway/models",
+        "poolside/laguna-s-2.1:free",
+    )
+
+    dots_payload = AIGateway._provider_payload(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        dots,
+    )
+    laguna_payload = AIGateway._provider_payload(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        laguna,
+    )
+
+    assert dots_payload["reasoning_effort"] == "low"
+    assert "reasoning_effort" not in laguna_payload

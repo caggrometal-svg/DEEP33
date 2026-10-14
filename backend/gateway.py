@@ -335,6 +335,13 @@ class AIGateway:
             result["model"] = provider.model
         elif not result.get("model"):
             result.pop("model", None)
+
+        # Dots3 is a reasoning model. On failover it can emit transport/reasoning
+        # frames several seconds before the first assistant text. Keep reasoning
+        # enabled, but bound it to the provider-supported low effort so fallback
+        # remains useful for interactive chat instead of becoming the TTFT bottleneck.
+        if "dots-studio/dots-3-note-preview" in provider.model.casefold():
+            result["reasoning_effort"] = "low"
         return result
 
     @staticmethod
