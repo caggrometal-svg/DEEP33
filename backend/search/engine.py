@@ -562,12 +562,21 @@ def rank_results(
         if chile_current_news_intent:
             # A Chilean ccTLD is reliable locality metadata even when a result
             # headline omits the country name. Topic relevance remains mandatory.
-            if host.endswith(".cl"):
+            known_chile_publishers = (
+                "emol.com",
+                "latercera.com",
+                "cnnchile.com",
+            )
+            is_chile_news_publisher = host.endswith(".cl") or any(
+                host == publisher or host.endswith("." + publisher)
+                for publisher in known_chile_publishers
+            )
+            if is_chile_news_publisher:
                 anchor_evidence = f"{anchor_evidence} Chile"
             if host == "britannica.com" or host.endswith(".britannica.com"):
                 # Britannica is reference material, not a current-news source.
                 continue
-            if not host.endswith(".cl") and "chile" not in _token_set(anchor_evidence):
+            if not is_chile_news_publisher and "chile" not in _token_set(anchor_evidence):
                 continue
 
             # Live political news must be an article-like result, not a generic
