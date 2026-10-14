@@ -181,7 +181,15 @@ class WebOrchestrator:
         # For realtime news, use the engine's broadened equivalent query to avoid
         # collapsing diverse publisher coverage around the user's exact wording.
         # Non-news queries return immediately without a network request.
-        news_query = self._recovery_query(query) if _looks_realtime_news(query) else query
+        # Keep an explicit site restriction for publisher-focused recovery.
+        # General realtime questions still use the broadened equivalent query.
+        has_site_scope = re.search(r"\\bsite:[^\\s]+", str(query or ""), re.IGNORECASE) is not None
+        news_query = (
+            query
+            if has_site_scope
+            else self._recovery_query(query) if _looks_realtime_news(query)
+            else query
+        )
         # Recovery can intentionally remove filler such as "situación actual".
         # Keep an explicit realtime-news marker so the Google News adapter does
         # not reject the broadened query before issuing the RSS request.
@@ -970,7 +978,7 @@ class WebOrchestrator:
         ):
             political_source_queries = (
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
             )

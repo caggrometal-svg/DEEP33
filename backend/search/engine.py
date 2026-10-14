@@ -569,6 +569,37 @@ def rank_results(
                 continue
             if not host.endswith(".cl") and "chile" not in _token_set(anchor_evidence):
                 continue
+
+            # Live political news must be an article-like result, not a generic
+            # government homepage or section landing page. Require substantive
+            # title/snippet text plus a detail path (or explicit publication date).
+            # This prevents .cl locality alone from making a homepage count as news.
+            story_title = str(item.get("title") or "").strip()
+            story_snippet = str(item.get("snippet") or "").strip()
+            path_segments = [part for part in parsed_url.path.split("/") if part.strip()]
+            published_marker = str(
+                item.get("published_at") or item.get("published") or item.get("date") or ""
+            ).strip()
+            story_text = f"{story_title} {story_snippet}"
+            political_story_signal = re.search(
+                r"\\b(?:pol[ií]tic\\w*|gobiern\\w*|president\\w*|elecci\\w*|"
+                r"congreso|congress|senad\\w*|ministro\\w*|parlament\\w*|"
+                r"diputad\\w*|legislador\\w*|oposici[oó]n|oficialismo|"
+                r"candidat\\w*|campa[nñ]a\\w*|partido(?:s)?|bancada(?:s)?|"
+                r"votaci[oó]n(?:es)?|plebiscito(?:s)?|reforma(?:s)?|"
+                r"proyecto de ley|gabinete|subsecretar\\w*|"
+                r"primarias|gobernador\\w*|constituci[oó]n|decreto(?:s)?|"
+                r"comisi[oó]n(?:es)?)\\b",
+                story_text,
+                re.IGNORECASE,
+            )
+            if (
+                len(story_title.split()) < 5
+                or len(story_snippet.split()) < 5
+                or (len(path_segments) < 2 and not published_marker)
+                or not political_story_signal
+            ):
+                continue
         # For government/public-information portal intents, country locality is
         # a hard constraint. Keep general locality and realtime searches governed by
         # their existing anchor rules so named-city results on international domains
@@ -663,6 +694,8 @@ def rank_results(
         topic_evidence = anchor_evidence
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             topic_evidence = pattern.sub(replacement, topic_evidence)
+        if chile_current_news_intent:
+            topic_evidence = political_context.sub(" politics ", topic_evidence)
         topic_evidence_tokens = _token_set(topic_evidence)
         relevance_topic_tokens = list(topic_tokens)
         source_reference_tokens = set()
@@ -679,6 +712,9 @@ def rank_results(
             relevance_topic_tokens = independent_topics
         topic_hits = len(set(relevance_topic_tokens) & topic_evidence_tokens)
         required_topic_hits = min(2, len(relevance_topic_tokens))
+        if chile_current_news_intent and relevance_topic_tokens and topic_hits < 1:
+            # A current-news result must have at least one actual political topic hit.
+            continue
         if not realtime and relevance_topic_tokens and topic_hits < required_topic_hits:
             # Domain reputation and corroboration must never make unrelated results relevant.
             continue

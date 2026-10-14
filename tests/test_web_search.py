@@ -1168,3 +1168,86 @@ def test_chile_current_political_news_recovers_independent_domains() -> None:
         any(host in item.get("url", "") for host in ("elpais.com", "gob.cl", "biobiochile.cl", "emol.com", "cooperativa.cl", "latercera.com"))
         for item in result["results"]
     )
+
+
+def test_chile_current_political_news_rejects_generic_landing_pages() -> None:
+    from backend.search.engine import deduplicate, rank_results
+
+    query = "política Chile hoy últimas noticias"
+    candidates = [
+        {
+            "title": "Gobierno de Chile - Gob.cl",
+            "url": "https://www.gob.cl/",
+            "snippet": "",
+            "provider": "bing",
+        },
+        {
+            "title": "Gobierno Regional De Aysén - Gobierno Regional De Aysén",
+            "url": "https://www.goreaysen.cl/",
+            "snippet": "",
+            "provider": "bing",
+        },
+        {
+            "title": "Diputados presentan reforma política en Chile",
+            "url": "https://www.biobiochile.cl/noticias/nacional/chile/politica/diputados-reforma.shtml",
+            "snippet": "La Cámara discutirá el proyecto del gobierno durante la sesión de hoy en el Congreso nacional.",
+            "provider": "bing",
+        },
+        {
+            "title": "Oposición cuestiona nueva propuesta política del gobierno chileno",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/14/oposicion-gobierno.shtml",
+            "snippet": "La oposición criticó la medida presentada hoy y pidió explicaciones a los ministros del gobierno.",
+            "provider": "google_news",
+            "published_at": "2026-10-14T16:00:00Z",
+        },
+        {
+            "title": "Senadores debaten nueva ley política en Chile",
+            "url": "https://cooperativa.cl/noticias/pais/politica/senadores-debaten-ley/2026-10-14/120000.html",
+            "snippet": "La comisión debatió la iniciativa y los parlamentarios esperan una votación durante esta jornada.",
+            "provider": "duckduckgo",
+        },
+    ]
+
+    ranked = rank_results(query, candidates, realtime=True)
+    selected = deduplicate(ranked, 5)
+    domains = {
+        str(item.get("source_domain") or "")
+        for item in selected
+    }
+
+    assert len(domains) >= 3, selected
+    assert all(item.get("url") not in {
+        "https://www.gob.cl/",
+        "https://www.goreaysen.cl/",
+    } for item in selected)
+    assert any("biobiochile.cl" in item.get("url", "") for item in selected)
+    assert any("emol.com" in item.get("url", "") for item in selected)
+    assert any("cooperativa.cl" in item.get("url", "") for item in selected)
+
+
+def test_google_news_keeps_explicit_publisher_site_scope(monkeypatch) -> None:
+    import backend.search.resilient as module
+    from backend.search.resilient import WebOrchestrator
+
+    seen: list[str] = []
+
+    async def fake_google_news_search(query, _timeout, _limit):
+        seen.append(query)
+        return []
+
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news_search)
+    orchestrator = WebOrchestrator(
+        provider_total_seconds=0.1,
+        global_budget_seconds=0.3,
+        fallback_delay_seconds=0,
+    )
+
+    asyncio.run(
+        orchestrator._google_news(
+            "site:emol.com Chile política gobierno Congreso noticias hoy",
+            0.1,
+            5,
+        )
+    )
+
+    assert seen == ["site:emol.com Chile política gobierno Congreso noticias hoy"]
