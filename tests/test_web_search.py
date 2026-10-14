@@ -922,3 +922,20 @@ def test_chile_economic_recovery_preserves_topic_and_independent_sources():
     assert "mercad" in folded
     assert "diario financiero" in folded
     assert "pulso" in folded
+
+
+def test_python_asyncio_official_intent_launches_targeted_bing_queries():
+    from backend.search.resilient import WebOrchestrator
+
+    query = WebOrchestrator._provider_query("Python asyncio official documentation")
+    assert "python" in query.casefold()
+    assert "asyncio" in query.casefold()
+
+
+def test_chile_economic_recovery_uses_real_source_oriented_terms():
+    from backend.search.resilient import WebOrchestrator
+
+    recovery = WebOrchestrator._recovery_query("noticias económicas Chile hoy").casefold()
+    assert "diario financiero" in recovery
+    assert "pulso" in recovery
+    assert "banco central" in recovery

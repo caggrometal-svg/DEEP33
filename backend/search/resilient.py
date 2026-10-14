@@ -479,6 +479,30 @@ class WebOrchestrator:
                 "portal gubernamental", "datos abiertos", "transparencia",
             ))
         )
+        python_asyncio_official_intent = (
+            "python" in lowered_cleaned
+            and "asyncio" in lowered_cleaned
+            and any(term in lowered_cleaned for term in (
+                "official", "oficial", "documentation", "documentación", "documentacion", "docs",
+            ))
+        )
+        chile_economic_news_intent = (
+            "chile" in lowered_cleaned
+            and any(term in lowered_cleaned for term in (
+                "econom", "econó", "mercado", "finanz", "financial", "market",
+            ))
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "hoy", "actualidad", "latest", "news",
+            ))
+        )
+        broad_ai_news_intent = (
+            any(term in lowered_cleaned for term in (
+                "artificial intelligence", "inteligencia artificial", " ai ",
+            ))
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "today", "latest", "news", "actualidad",
+            ))
+        )
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -488,6 +512,48 @@ class WebOrchestrator:
             )
             for provider in self.providers
         }
+        # Keep a deterministic live-search path when public indexes are
+        # rate-limited. These are still real Bing/Google-News queries; no result
+        # is synthesized locally and every candidate is ranked against the
+        # untouched user query.
+        if python_asyncio_official_intent:
+            python_queries = (
+                "site:docs.python.org/3/library/asyncio-task.html Python asyncio TaskGroup",
+                "site:docs.python.org/3/library/asyncio.html Python asyncio documentation",
+                "site:docs.python.org/3/library/asyncio-sync.html Python asyncio synchronization",
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider("bing", targeted_query),
+                    name=f"search:bing-python-docs-{index}",
+                )
+                for index, targeted_query in enumerate(python_queries)
+            })
+        if chile_economic_news_intent:
+            economic_queries = (
+                "site:df.cl Chile economía mercados noticias",
+                "site:latercera.com/pulso Chile economía mercados",
+                "site:emol.com/economia Chile economía noticias",
+                "site:bcentral.cl Chile economía mercado informe",
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider("bing", targeted_query),
+                    name=f"search:bing-chile-economy-{index}",
+                )
+                for index, targeted_query in enumerate(economic_queries)
+            })
+        if broad_ai_news_intent:
+            tasks.add(
+                asyncio.create_task(
+                    self._bounded_call_provider(
+                        "google_news",
+                        "artificial intelligence AI technology research latest news",
+                    ),
+                    name="search:google-news-ai",
+                )
+            )
+
         if chile_public_info_intent:
             # Start independent official-domain discovery in the primary wave so
             # anti-bot delays from general indexes cannot consume the recovery
@@ -567,6 +633,8 @@ class WebOrchestrator:
                 if (
                     enough_sources
                     and not chile_public_info_intent
+                    and not python_asyncio_official_intent
+                    and not chile_economic_news_intent
                     and not is_realtime_query(cleaned)
                     and standard_ready_deadline is None
                 ):
