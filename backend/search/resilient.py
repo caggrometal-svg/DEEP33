@@ -318,8 +318,15 @@ class WebOrchestrator:
             # search pages; rank every candidate against the original user query.
             return f"{locality} weather forecast temperature".strip()
         if any(term in lowered for term in ("econom", "econó", "mercado", "finanz", "financial", "market")):
-            locality = "chile" if "chile" in lowered else ""
-            return f"{locality} economia economy markets".strip()
+            if "chile" in lowered:
+                # Public indexes can pollute a generic "economy/markets" query.
+                # Use Chilean economic vocabulary plus independent publishers;
+                # final ranking still evaluates candidates against the original query.
+                return (
+                    "Chile economía mercados finanzas Banco Central Diario Financiero "
+                    "Pulso Emol economía actualidad"
+                )
+            return "economia economy markets financial news"
         news_intent = any(
             term in lowered
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")

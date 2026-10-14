@@ -909,3 +909,16 @@ def test_realtime_smartphone_anchor_ignores_product_shape_words():
     assert "samsung" in branded
     assert "galaxy" in branded
     assert "specifications" not in branded
+
+
+def test_chile_economic_recovery_preserves_topic_and_independent_sources():
+    from backend.search.resilient import WebOrchestrator
+
+    recovery = WebOrchestrator._recovery_query("noticias económicas Chile hoy")
+    folded = recovery.casefold()
+
+    assert "chile" in folded
+    assert "econom" in folded
+    assert "mercad" in folded
+    assert "diario financiero" in folded
+    assert "pulso" in folded

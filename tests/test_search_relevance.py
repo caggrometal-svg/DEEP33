@@ -510,3 +510,28 @@ def test_current_chile_politics_synonyms_are_scoped_to_ranking_not_other_queries
     assert [item["url"] for item in ranked] == [
         "https://politica.example.cl/noticias/reforma"
     ]
+
+
+def test_realtime_ranking_rejects_social_video_destinations():
+    from backend.search.engine import rank_results
+
+    ranked = rank_results(
+        "latest artificial intelligence research and technology news today",
+        [
+            {
+                "title": "AI research update",
+                "url": "https://www.youtube.com/watch?v=example",
+                "snippet": "Latest artificial intelligence technology research news today.",
+            },
+            {
+                "title": "AI research update from university lab",
+                "url": "https://research.example.edu/ai-update",
+                "snippet": "Latest artificial intelligence technology research news today.",
+            },
+        ],
+        realtime=True,
+    )
+
+    assert [item["url"] for item in ranked] == [
+        "https://research.example.edu/ai-update"
+    ]
