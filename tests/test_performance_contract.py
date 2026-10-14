@@ -305,10 +305,12 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert 'provider.name !== "wikipedia_public"' in source
         assert 'provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "const recoveryPlan = [" in source
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
+        assert 'event: "edge_web_search_recovery_complete"' in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
-        assert "runPublicWebSearchQuery(\n      rescueQuery" in source
-        assert "const fastRescue = await runPublicWebSearchQuery(" in source
+        assert "query: rescueQuery" in source
+        assert '"parallel_recovery_failed"' in source
         assert "2500" in source and "3000" in source
         assert "socialPublisherSuffix" in source
         assert "const pathYear = parsedUrl.pathname.match" in source
@@ -334,7 +336,9 @@ def test_edge_realtime_news_limits_initial_fanout_and_runs_variants_after_empty_
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "const batches: Array<{ query: string; data: Record<string, unknown> }>" in source
         assert "const [batches, broadFallback] = await Promise.all([" not in source
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "const recoveryPlan = [" in source
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
+        assert 'event: "edge_web_search_recovery_complete"' in source
         assert "if (realtimeNewsPlan && finalResults.length < 1)" in source or "if (realtimeNewsPlan && results.length < 1)" in source
 
 def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
@@ -344,7 +348,9 @@ def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
         ).read_text(encoding="utf-8")
         assert "forceFullSearch && currentNewsRequest" in source
         assert "const broadFallbackPromise = realtimeNewsPlan" not in source
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in source
+        assert "const recoveryPlan = [" in source
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
+        assert 'event: "edge_web_search_recovery_complete"' in source
         assert "Math.min(2500, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      2500," in source
         assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source or "      3000," in source
 

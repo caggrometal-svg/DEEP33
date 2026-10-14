@@ -162,7 +162,9 @@ def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
         search = source[start:end]
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in search
         assert "initialQueries.map(async (q) => ({" in search
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
+        assert "const recoveryPlan = [" in search
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
+        assert 'event: "edge_web_search_recovery_complete"' in search
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "realtimeNewsPlan &&" in search
 

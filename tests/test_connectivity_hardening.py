@@ -465,10 +465,12 @@ def test_realtime_edge_search_uses_lazy_fallback_and_bounded_rss_retries() -> No
             )[0]
         )
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in search
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
+        assert "const recoveryPlan = [" in search
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
+        assert 'event: "edge_web_search_recovery_complete"' in search
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in search
-        assert "runPublicWebSearchQuery(\n      rescueQuery" in search
-        assert "const fastRescue = await runPublicWebSearchQuery(" in search
+        assert "query: rescueQuery" in search
+        assert '"parallel_recovery_failed"' in search
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "providerTimeoutMs?: number" in source
         assert "providerTimeoutMs ??" in source
@@ -505,4 +507,6 @@ def test_initial_realtime_provider_network_errors_enter_bounded_fallback() -> No
             )[0]
         )
         assert "if (realtimeNewsPlan &&" in search
-        assert "for (const retryQuery of plan.queries.slice(1, 3))" in search
+        assert "const recoveryPlan = [" in search
+        assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
+        assert 'event: "edge_web_search_recovery_complete"' in search
