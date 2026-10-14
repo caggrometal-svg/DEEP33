@@ -107,6 +107,21 @@ jobs:
               ok=1
               break
             fi
+            # Railway only deploys runtime paths. A newer main SHA is compatible
+            # when every intervening file is outside the exact runtime watch set.
+            if [ "$live_status" = "PASS" ] && [ -n "$live_sha" ] && [ "$live_sha" != "$GITHUB_SHA" ]; then
+              if ! git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
+                git fetch --no-tags --depth=1 origin "$live_sha" || true
+              fi
+              if git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
+                changed_files="$(git diff --name-only "$live_sha" "$GITHUB_SHA" || true)"
+                if [ -n "$changed_files" ] && ! printf '%s\n' "$changed_files" | grep -Eq '^(Dockerfile$|\.dockerignore$|\.python-version$|backend/|tools/|supabase/|api/)'; then
+                  echo "RAILWAY_RUNTIME_SHA_COMPATIBLE live=$live_sha head=$GITHUB_SHA"
+                  ok=1
+                  break
+                fi
+              fi
+            fi
             sleep 5
           done
           test "$ok" = "1"

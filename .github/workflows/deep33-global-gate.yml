@@ -121,6 +121,20 @@ jobs:
               echo "RAILWAY_EXACT_SHA_PASS=$live_sha"
               exit 0
             fi
+            # Railway only deploys runtime paths. A newer main SHA is compatible
+            # when every intervening file is outside the exact runtime watch set.
+            if [ "$status" = "PASS" ] && [ -n "$live_sha" ] && [ "$live_sha" != "$GITHUB_SHA" ]; then
+              if ! git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
+                git fetch --no-tags --depth=1 origin "$live_sha" || true
+              fi
+              if git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
+                changed_files="$(git diff --name-only "$live_sha" "$GITHUB_SHA" || true)"
+                if [ -n "$changed_files" ] && ! printf '%s\n' "$changed_files" | grep -Eq '^(Dockerfile$|\.dockerignore$|\.python-version$|backend/|tools/|supabase/|api/)'; then
+                  echo "RAILWAY_RUNTIME_SHA_COMPATIBLE live=$live_sha head=$GITHUB_SHA"
+                  exit 0
+                fi
+              fi
+            fi
             sleep 5
           done
           echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"
