@@ -327,12 +327,6 @@ class WebOrchestrator:
                     "Pulso Emol economía actualidad"
                 )
             return "economia economy markets financial news"
-        if (
-            "python" in lowered
-            and "asyncio" in lowered
-            and "official documentation" in lowered
-        ):
-            return "site:docs.python.org Python asyncio documentation"
         news_intent = any(
             term in lowered
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
