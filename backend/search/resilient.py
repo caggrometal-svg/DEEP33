@@ -183,7 +183,7 @@ class WebOrchestrator:
         # Non-news queries return immediately without a network request.
         # Keep an explicit site restriction for publisher-focused recovery.
         # General realtime questions still use the broadened equivalent query.
-        has_site_scope = re.search(r"\\bsite:[^\\s]+", str(query or ""), re.IGNORECASE) is not None
+        has_site_scope = re.search(r"\bsite:[^\s]+", str(query or ""), re.IGNORECASE) is not None
         news_query = (
             query
             if has_site_scope

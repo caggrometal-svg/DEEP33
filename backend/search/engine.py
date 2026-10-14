@@ -582,14 +582,14 @@ def rank_results(
             ).strip()
             story_text = f"{story_title} {story_snippet}"
             political_story_signal = re.search(
-                r"\\b(?:pol[ií]tic\\w*|gobiern\\w*|president\\w*|elecci\\w*|"
-                r"congreso|congress|senad\\w*|ministro\\w*|parlament\\w*|"
-                r"diputad\\w*|legislador\\w*|oposici[oó]n|oficialismo|"
-                r"candidat\\w*|campa[nñ]a\\w*|partido(?:s)?|bancada(?:s)?|"
+                r"\b(?:pol[ií]tic\w*|gobiern\w*|president\w*|elecci\w*|"
+                r"congreso|congress|senad\w*|ministro\w*|parlament\w*|"
+                r"diputad\w*|legislador\w*|oposici[oó]n|oficialismo|"
+                r"candidat\w*|campa[nñ]a\w*|partido(?:s)?|bancada(?:s)?|"
                 r"votaci[oó]n(?:es)?|plebiscito(?:s)?|reforma(?:s)?|"
-                r"proyecto de ley|gabinete|subsecretar\\w*|"
-                r"primarias|gobernador\\w*|constituci[oó]n|decreto(?:s)?|"
-                r"comisi[oó]n(?:es)?)\\b",
+                r"proyecto de ley|gabinete|subsecretar\w*|"
+                r"primarias|gobernador\w*|constituci[oó]n|decreto(?:s)?|"
+                r"comisi[oó]n(?:es)?)\b",
                 story_text,
                 re.IGNORECASE,
             )

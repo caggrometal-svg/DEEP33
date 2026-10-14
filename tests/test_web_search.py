@@ -4,6 +4,8 @@ import asyncio
 
 import httpx
 
+from urllib.parse import urlparse
+
 from tools.web_search import _parse_bing_rss, _plain_rss_snippet
 
 
