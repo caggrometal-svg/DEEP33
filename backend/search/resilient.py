@@ -229,7 +229,6 @@ class WebOrchestrator:
         )
         if academic_ai_research_intent:
             return "university artificial intelligence research paper academic study arXiv"
-        if is_realtime_query(cleaned):
         if smartphone_intent:
             return "smartphone phone specifications comparison reviews current models"
         if is_realtime_query(cleaned):
@@ -314,7 +313,7 @@ class WebOrchestrator:
         if academic_ai_research_intent:
             return "university artificial intelligence research papers academic study arXiv"
 
-        government_site_intent = any(        government_site_intent = any(
+        government_site_intent = any(
             term in lowered
             for term in (
                 "sitio gubernamental", "sitio oficial", "información pública",
