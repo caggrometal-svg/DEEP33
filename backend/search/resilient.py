@@ -238,7 +238,7 @@ class WebOrchestrator:
         )
         if commercial_technology_site_intent:
             return (
-                "Chile technology companies official websites software telecom digital services "
+                "Chile commercial technology companies official websites software telecom digital services "
                 "SONDA Entel WOM Movistar"
             )
         topic_tokens = list(_topic_tokens(cleaned))
