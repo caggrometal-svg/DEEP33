@@ -327,6 +327,12 @@ class WebOrchestrator:
                     "Pulso Emol economía actualidad"
                 )
             return "economia economy markets financial news"
+        if (
+            "python" in lowered
+            and "asyncio" in lowered
+            and "official documentation" in lowered
+        ):
+            return "site:docs.python.org Python asyncio documentation"
         news_intent = any(
             term in lowered
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
@@ -516,19 +522,6 @@ class WebOrchestrator:
         # rate-limited. These are still real Bing/Google-News queries; no result
         # is synthesized locally and every candidate is ranked against the
         # untouched user query.
-        if python_asyncio_official_intent:
-            python_queries = (
-                "site:docs.python.org/3/library/asyncio-task.html Python asyncio TaskGroup",
-                "site:docs.python.org/3/library/asyncio.html Python asyncio documentation",
-                "site:docs.python.org/3/library/asyncio-sync.html Python asyncio synchronization",
-            )
-            tasks.update({
-                asyncio.create_task(
-                    self._bounded_call_provider("bing", targeted_query),
-                    name=f"search:bing-python-docs-{index}",
-                )
-                for index, targeted_query in enumerate(python_queries)
-            })
         if chile_economic_news_intent:
             economic_queries = (
                 "site:df.cl Chile economía mercados noticias",
@@ -633,7 +626,6 @@ class WebOrchestrator:
                 if (
                     enough_sources
                     and not chile_public_info_intent
-                    and not python_asyncio_official_intent
                     and not chile_economic_news_intent
                     and not is_realtime_query(cleaned)
                     and standard_ready_deadline is None
