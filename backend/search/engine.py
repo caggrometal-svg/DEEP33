@@ -289,6 +289,7 @@ _TOPIC_FILLERS = {
     "guía", "guia", "resumen", "sobre", "cuándo", "cuando", "dónde",
     "donde", "porqué", "porque", "cómo", "como", "mejor", "mejores",
     "medicina", "medical", "medicine", "general", "salud", "health",
+    "comercial", "commercial", "comercio", "commerce", "empresa", "company",
 }
 _TOPIC_PHRASE_ALIASES = (
     # Normalize common industry abbreviations before strict topic filtering.
@@ -477,6 +478,15 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
+        if commercial_site_intent and "chile" in _token_set(query):
+            # "commercial/site" describes the requested result shape; it is not a
+            # lexical topic that every legitimate company page must repeat.
+            # Keep Chile as a hard locality constraint and let technology remain
+            # the topical relevance anchor.
+            if source_host.endswith(".cl"):
+                anchor_evidence = f"{anchor_evidence} Chile"
+            elif "chile" not in _token_set(anchor_evidence):
+                continue
         # Current-news searches explicitly scoped to Chile must not fill results
         # with unrelated publishers from another country's politics section.
         query_folded = str(query or "").casefold()

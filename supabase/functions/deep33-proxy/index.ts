@@ -4362,19 +4362,106 @@ Deno.serve(async (req) => {
           .join(" ")
           .slice(0, 4000);
 
-        const search = await edgeSearch(
+        const userAuthorization = req.headers.get("authorization") || "";
+        let search = await edgeSearch(
           buildWebSearchQuery(searchQuery),
           sessionId,
-          req.headers.get("authorization") || "",
+          userAuthorization,
         );
-        const navigation = await buildNavigatedWebEvidence(
+        let navigation = await buildNavigatedWebEvidence(
           search,
           sessionId,
-          req.headers.get("authorization") || "",
+          userAuthorization,
         );
-        const sources = navigation.sources;
+        const isReadableSource = (source: NavigatedWebSource) =>
+          typeof source.page_text === "string" &&
+          source.page_text.trim().length >= 40 &&
+          typeof source.final_url === "string" &&
+          source.final_url.length > 10;
+        let readableSources = navigation.sources.filter(isReadableSource);
+        const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)
+          ? 1
+          : MIN_READABLE_WEB_SOURCES;
 
-        if (!search.ok || sources.length === 0 || navigation.succeeded < MIN_READABLE_WEB_SOURCES) {
+        // Keep JSON generation on the same resilient web path as streaming:
+        // if Edge candidates cannot be read, ask the independent Railway index
+        // once and never refetch a URL/domain already attempted.
+        if (
+          readableSources.length < requiredReadableSources &&
+          search.fallback_path !== "railway" &&
+          userAuthorization.startsWith("Bearer ")
+        ) {
+          const recoverySearch = await edgeSearch(
+            buildWebSearchQuery(searchQuery),
+            sessionId,
+            userAuthorization,
+            true,
+          );
+          const excludedUrls = new Set<string>(navigation.attempted_urls);
+          const excludedDomains = new Set<string>([
+            ...navigation.attempted_domains,
+            ...navigation.readable_domains,
+          ]);
+          const fallbackResults = Array.isArray(recoverySearch.results)
+            ? recoverySearch.results.filter((item) => {
+                try {
+                  const value = item as Record<string, unknown>;
+                  const parsed = new URL(String(value.url || ""));
+                  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+                  return (
+                    (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+                    !excludedUrls.has(parsed.href) &&
+                    !excludedDomains.has(hostname)
+                  );
+                } catch {
+                  return false;
+                }
+              })
+            : [];
+          if (recoverySearch.ok === true && fallbackResults.length > 0) {
+            const recoveryNavigation = await buildNavigatedWebEvidence(
+              { ...recoverySearch, results: fallbackResults },
+              sessionId,
+              userAuthorization,
+              excludedUrls,
+              excludedDomains,
+            );
+            const merged = new Map<string, NavigatedWebSource>();
+            const mergedDomains = new Set<string>();
+            for (const source of [...readableSources, ...recoveryNavigation.sources.filter(isReadableSource)]) {
+              try {
+                const parsed = new URL(String(source.final_url || source.url));
+                const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+                if (!hostname || mergedDomains.has(hostname) || merged.has(parsed.href)) continue;
+                mergedDomains.add(hostname);
+                merged.set(parsed.href, source);
+                if (merged.size >= TARGET_READABLE_WEB_SOURCES) break;
+              } catch {
+                // Ignore malformed source metadata.
+              }
+            }
+            readableSources = [...merged.values()];
+            navigation = {
+              sources: readableSources,
+              attempted: navigation.attempted + recoveryNavigation.attempted,
+              succeeded: readableSources.length,
+              attempted_urls: [...new Set([...navigation.attempted_urls, ...recoveryNavigation.attempted_urls])],
+              attempted_domains: [...new Set([...navigation.attempted_domains, ...recoveryNavigation.attempted_domains])],
+              readable_domains: [...mergedDomains],
+            };
+            search = {
+              ...search,
+              providers: [...new Set([
+                ...(Array.isArray(search.providers) ? search.providers : []),
+                ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
+              ])],
+              fallback_path: "railway-recovery",
+            };
+          }
+        }
+
+        const sources = readableSources;
+        if (!search.ok || sources.length < requiredReadableSources) {
           return json({
             status: "FAIL",
             error: "WEB_SEARCH_NO_RESULTS",

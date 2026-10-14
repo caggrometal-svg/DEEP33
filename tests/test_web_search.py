@@ -806,3 +806,26 @@ def test_wikipedia_asyncio_ranking_accepts_independent_async_io_sources():
     assert len(domains) >= 3
     assert "docs.python.org" in domains
     assert "realpython.com" in domains
+
+
+def test_commercial_chile_site_intent_treats_commercial_as_shape_not_topic():
+    from backend.search.engine import rank_results
+
+    query = "sitio comercial tecnología Chile"
+    candidates = [
+        {
+            "title": "Soluciones de tecnología para empresas",
+            "url": "https://tecnologia-ejemplo.cl/",
+            "snippet": "Software, nube y servicios tecnológicos para organizaciones.",
+        },
+        {
+            "title": "Technology solutions",
+            "url": "https://foreign-example.com/",
+            "snippet": "Enterprise software and cloud services.",
+        },
+    ]
+
+    ranked = rank_results(query, candidates, realtime=False)
+    domains = {item.get("source_domain") for item in ranked}
+    assert "tecnologia-ejemplo.cl" in domains
+    assert "foreign-example.com" not in domains

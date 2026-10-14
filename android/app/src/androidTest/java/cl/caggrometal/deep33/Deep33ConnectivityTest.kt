@@ -12,6 +12,8 @@ import java.net.InetAddress
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @RunWith(AndroidJUnit4::class)
 class Deep33ConnectivityTest {
@@ -35,8 +37,29 @@ class Deep33ConnectivityTest {
         )
         urls.filter { it.isNotBlank() }.forEach { endpoint ->
             val host = URL(endpoint).host
-            val addresses = InetAddress.getAllByName(host)
-            assertTrue("DNS resolution failed for " + host, addresses.isNotEmpty())
+            var resolved = false
+            var dnsError: Throwable? = null
+            repeat(3) { attempt ->
+                if (resolved) return@repeat
+                val executor = Executors.newSingleThreadExecutor()
+                try {
+                    val future = executor.submit<Array<InetAddress>> {
+                        InetAddress.getAllByName(host)
+                    }
+                    val addresses = future.get(8, TimeUnit.SECONDS)
+                    resolved = addresses.isNotEmpty()
+                } catch (error: Throwable) {
+                    dnsError = error
+                    if (attempt < 2) Thread.sleep(500)
+                } finally {
+                    executor.shutdownNow()
+                }
+            }
+            assertTrue(
+                "DNS resolution failed for " + host + " after bounded retries: " +
+                    (dnsError?.message ?: "unknown"),
+                resolved
+            )
         }
     }
 

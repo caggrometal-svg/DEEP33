@@ -225,3 +225,16 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "!excludedDomains.has(hostname)" in chat
         assert "const sources = readableSources;" in chat
         assert "if (sources.length < MIN_READABLE_WEB_SOURCES)" in chat
+
+
+def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritative_source():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
+        end = source.index('if (path === "/v1/web/status"', start)
+        generate = source[start:end]
+        assert 'const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)' in generate
+        assert '? 1' in generate
+        assert 'const recoverySearch = await edgeSearch(' in generate
+        assert '!excludedDomains.has(hostname)' in generate
+        assert 'fallback_path: "railway-recovery"' in generate

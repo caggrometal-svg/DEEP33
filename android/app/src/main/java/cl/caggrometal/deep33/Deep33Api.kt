@@ -163,6 +163,23 @@ object Deep33Api {
             connectTimeoutMs = FAST_HEALTH_CONNECT_TIMEOUT_MS.toLong()
         )
 
+    private fun requiresVerifiedWebEvidence(messages: JSONArray): Boolean {
+        val text = buildString {
+            for (index in 0 until messages.length()) {
+                val item = messages.optJSONObject(index) ?: continue
+                if (item.optString("role") != "user") continue
+                append(' ')
+                append(item.optString("content"))
+            }
+        }.lowercase()
+        return listOf(
+            "internet", " web ", "noticia", "actual", "hoy", "ayer", "mañana",
+            "clima", "temperatura", "pronóstico", "pronostico", "precio",
+            "cotización", "cotizacion", "fuente", "verifica", "comprueba",
+            "fecha", "hora", "presidente", "elecciones"
+        ).any { text.contains(it) }
+    }
+
     fun generate(
         messages: JSONArray,
         sessionId: String,
@@ -171,16 +188,28 @@ object Deep33Api {
         idempotencyKey: String = requestId,
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null
-    ): JSONObject =
-        request(
+    ): JSONObject {
+        val requireWebEvidence = requiresVerifiedWebEvidence(messages)
+        val semanticAcceptance = acceptResponse ?: if (requireWebEvidence) {
+            { payload: JSONObject ->
+                payload.optBoolean("web_navigation", false) &&
+                    (payload.optJSONArray("sources")?.length() ?: 0) >= 2
+            }
+        } else {
+            null
+        }
+        return request(
             "POST",
             "/v1/ai/generate",
             JSONObject().put("messages", messages).put("personality", personality),
             sessionId,
             requestId,
             idempotencyKey,
-            endpointOverride
+            endpointOverride,
+            acceptResponse = semanticAcceptance,
+            returnLastRejectedResponse = requireWebEvidence
         )
+    }
 
     fun memoryContext(sessionId: String, memoryProfileId: String? = null): JSONObject =
         request(
@@ -507,12 +536,14 @@ object Deep33Api {
         idempotencyKey: String = requestId,
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null,
+        returnLastRejectedResponse: Boolean = false,
         memoryProfileId: String? = null,
         timeoutMs: Long = GLOBAL_TIMEOUT_MS.toLong(),
         connectTimeoutMs: Long = CONNECT_TIMEOUT_MS.toLong()
     ): JSONObject {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
+        var lastRejectedResponse: JSONObject? = null
 
         for (endpoint in normalizedEndpoints(endpointOverride)) {
             var attempt = 0
@@ -577,6 +608,7 @@ object Deep33Api {
                     // as unusable so the next failover endpoint can serve the
                     // current remote memory store.
                     if (acceptResponse != null && !acceptResponse(json)) {
+                        lastRejectedResponse = json
                         lastError = Deep33ApiException(
                             Deep33ApiException.Kind.BAD_RESPONSE,
                             code
@@ -627,6 +659,9 @@ object Deep33Api {
             }
         }
 
+        if (returnLastRejectedResponse && lastRejectedResponse != null) {
+            return lastRejectedResponse
+        }
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
 }
