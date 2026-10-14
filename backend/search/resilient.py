@@ -218,6 +218,18 @@ class WebOrchestrator:
             "smartphone", "smart phone", "mobile phone", "cell phone",
             "teléfono móvil", "telefono movil", "celular",
         ))
+        academic_ai_research_intent = (
+            any(term in lowered for term in ("universidad", "university", "universities"))
+            and any(term in lowered for term in ("investigación", "investigacion", "research", "paper"))
+            and (
+                "inteligencia artificial" in lowered
+                or "artificial intelligence" in lowered
+                or re.search(r"\bai\b", lowered) is not None
+            )
+        )
+        if academic_ai_research_intent:
+            return "university artificial intelligence research paper academic study arXiv"
+        if is_realtime_query(cleaned):
         if smartphone_intent:
             return "smartphone phone specifications comparison reviews current models"
         if is_realtime_query(cleaned):
@@ -290,7 +302,19 @@ class WebOrchestrator:
         compact = " ".join(dict.fromkeys(topics))
         lowered = cleaned.casefold()
 
-        government_site_intent = any(
+        academic_ai_research_intent = (
+            any(term in lowered for term in ("universidad", "university", "universities"))
+            and any(term in lowered for term in ("investigación", "investigacion", "research", "paper"))
+            and (
+                "inteligencia artificial" in lowered
+                or "artificial intelligence" in lowered
+                or re.search(r"\bai\b", lowered) is not None
+            )
+        )
+        if academic_ai_research_intent:
+            return "university artificial intelligence research papers academic study arXiv"
+
+        government_site_intent = any(        government_site_intent = any(
             term in lowered
             for term in (
                 "sitio gubernamental", "sitio oficial", "información pública",

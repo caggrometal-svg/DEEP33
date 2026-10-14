@@ -329,7 +329,9 @@ _TOPIC_PHRASE_ALIASES = (
     # Normalize common industry abbreviations before strict topic filtering.
     (re.compile(r"\basync[\s-]+io\b", re.IGNORECASE), "asyncio"),
     # This preserves relevance gates while allowing equivalent terms across providers.
-    (re.compile(r"\b(?:AI|artificial\s+intelligence)\b", re.IGNORECASE), "artificial intelligence"),
+    (re.compile(r"\b(?:AI|artificial\s+intelligence|inteligencia\s+artificial)\b", re.IGNORECASE), "artificial intelligence"),
+    (re.compile(r"\b(?:universidad(?:es)?|universitari[oa]s?|university|universities|college|colleges)\b", re.IGNORECASE), "university"),
+    (re.compile(r"\b(?:investigaci[oó]n(?:es)?|researchers?|research|paper(?:s)?|estudio(?:s)?|stud(?:y|ies))\b", re.IGNORECASE), "research"),
     (re.compile(r"\b(?:tech|technology|technologies|technological|tecnolog[ií]a|tecnol[oó]gic[oa]s?)\b", re.IGNORECASE), "technology"),
     (re.compile(r"\b(?:smart\s?phones?|mobile\s+phones?|cell\s+phones?|phones?|tel[eé]fonos?(?:\s+m[oó]viles?)?|celulares?)\b", re.IGNORECASE), "smartphone"),
     (re.compile(r"\b(?:especificaci[oó]n(?:es)?|caracter[ií]sticas|technical\s+specifications?|specs?)\b", re.IGNORECASE), "specifications"),
@@ -478,6 +480,10 @@ def rank_results(
 ) -> list[dict]:
     query_tokens = _tokens(query)
     topic_tokens = _topic_tokens(query)
+    topic_token_set = set(topic_tokens)
+    academic_ai_research_intent = {
+        "university", "research", "artificial", "intelligence"
+    }.issubset(topic_token_set)
     anchor_tokens = _realtime_anchor_tokens(query) if realtime else set()
     support = _corroboration_counts(results)
     ranked = []
@@ -702,6 +708,11 @@ def rank_results(
         if chile_current_news_intent:
             topic_evidence = political_context.sub(" politics ", topic_evidence)
         topic_evidence_tokens = _token_set(topic_evidence)
+        if academic_ai_research_intent and not {
+            "artificial", "intelligence"
+        }.issubset(topic_evidence_tokens):
+            # Academic relevance alone is insufficient when the query explicitly asks for AI research.
+            continue
         relevance_topic_tokens = list(topic_tokens)
         source_reference_tokens = set()
         query_folded_for_source = str(query or "").casefold()

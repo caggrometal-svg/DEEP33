@@ -535,3 +535,35 @@ def test_realtime_ranking_rejects_social_video_destinations():
     assert [item["url"] for item in ranked] == [
         "https://research.example.edu/ai-update"
     ]
+
+def test_spanish_academic_ai_search_matches_english_indexed_research() -> None:
+    query = "universidad investigación inteligencia artificial paper"
+    candidates = [
+        {
+            "title": "University research paper on artificial intelligence",
+            "url": "https://arxiv.org/abs/2601.01234",
+            "snippet": "Researchers present a study of artificial intelligence methods at a university.",
+        },
+        {
+            "title": "Artificial intelligence research at Stanford University",
+            "url": "https://ai.stanford.edu/research/",
+            "snippet": "University researchers publish papers about artificial intelligence systems.",
+        },
+        {
+            "title": "University researchers publish an AI research paper",
+            "url": "https://news.mit.edu/2026/university-ai-research-paper",
+            "snippet": "A research team describes new artificial intelligence work and its academic applications.",
+        },
+        {
+            "title": "University chemistry research paper archive",
+            "url": "https://chemistry.example.edu/research/papers",
+            "snippet": "University research covers chemical reactions, compounds, and laboratory methods.",
+        },
+    ]
+
+    ranked = rank_results(query, candidates, realtime=False)
+    domains = {item["source_domain"] for item in ranked}
+
+    assert len(domains) >= 3, ranked
+    assert not any("chemistry.example.edu" in item["url"] for item in ranked)
+
