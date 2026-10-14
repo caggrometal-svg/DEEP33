@@ -922,7 +922,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_edge_web_navigation_requires_multiple_independent_sources() -> None:
+def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -937,6 +937,6 @@ def test_edge_web_navigation_requires_multiple_independent_sources() -> None:
         assert "const fetchedDomains = new Set<string>();" in source
         assert "const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
-        assert "sources.length < requiredReadableSources" in source
+        assert "if (!search.ok || sources.length < 1)" in source
         assert 'fallback_path: "railway-recovery"' in source
         assert "async function buildNavigatedWebEvidence(" in source
