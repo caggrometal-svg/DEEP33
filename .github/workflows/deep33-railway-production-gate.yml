@@ -193,7 +193,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t urls < <(jq -r '.results[0:2][]?.url // empty' /tmp/railway-live-search.json)
+          mapfile -t urls < <(jq -r '.results[0:5][]?.url // empty' /tmp/railway-live-search.json)
           fetched=0
           index=0
           for url in "${urls[@]}"; do
