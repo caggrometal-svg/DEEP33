@@ -867,6 +867,89 @@ def test_named_health_organization_allows_independent_topic_corroboration():
 
 
 
+def test_chile_commercial_technology_search_uses_real_company_websites():
+    from backend.search.resilient import WebOrchestrator
+
+    calls = []
+    company_results = {
+        "site:sonda.com/es": {
+            "title": "SONDA soluciones TI y tecnología digital",
+            "url": "https://www.sonda.com/es",
+            "snippet": "Servicios de tecnología, cloud, ciberseguridad y soluciones digitales para empresas.",
+            "source_domain": "www.sonda.com",
+        },
+        "site:entel.cl/corporaciones": {
+            "title": "Soluciones tecnológicas para empresas Entel",
+            "url": "https://www.entel.cl/corporaciones/sdwan",
+            "snippet": "Solución tecnológica para empresas, conectividad segura y servicios digitales en Chile.",
+            "source_domain": "www.entel.cl",
+        },
+        "site:wom.cl": {
+            "title": "WOM canales digitales e internet",
+            "url": "https://www.wom.cl/",
+            "snippet": "Servicios móviles, internet y canales digitales para clientes en Chile.",
+            "source_domain": "www.wom.cl",
+        },
+        "site:ww2.movistar.cl/empresas": {
+            "title": "Movistar Empresas soluciones digitales y tecnología",
+            "url": "https://ww2.movistar.cl/empresas/comunidad/soluciones-digitales-para-tu-negocio/",
+            "snippet": "Soluciones tecnológicas, servicios digitales, cloud y conectividad para negocios en Chile.",
+            "source_domain": "ww2.movistar.cl",
+        },
+    }
+    press_results = [
+        {
+            "title": "Technology energy announcement in Chile",
+            "url": "https://energy.einnews.com/article/technology-chile",
+            "snippet": "Technology development and energy announcement in Chile.",
+            "source_domain": "energy.einnews.com",
+        },
+        {
+            "title": "Technology press release Chile",
+            "url": "https://www.prnewswire.com/news-releases/technology-chile.html",
+            "snippet": "Commercial technology announcement for Chile.",
+            "source_domain": "www.prnewswire.com",
+        },
+    ]
+
+    def make_provider(name):
+        async def provider(query, _timeout, _limit):
+            calls.append((name, query))
+            for marker, item in company_results.items():
+                if marker in query:
+                    return [item]
+            return press_results
+        return provider
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=1.0,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            name: make_provider(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
+        }
+        orchestrator.fallback_providers["yahoo"] = make_provider("yahoo")
+        orchestrator.circuits = {
+            name: orchestrator.circuits[name]
+            for name in orchestrator.providers
+        } | {"yahoo": orchestrator.circuits["yahoo"]}
+        return await orchestrator.search("sitio comercial tecnología Chile", fresh=True)
+
+    result = asyncio.run(exercise())
+    domains = {str(item.get("url", "")).split("/")[2].removeprefix("www.") for item in result["results"]}
+    assert result["ok"] is True, result
+    assert len(domains) >= 3, result["results"]
+    assert not any("prnewswire.com" in item.get("url", "") or "einnews.com" in item.get("url", "") for item in result["results"])
+    assert any("site:sonda.com/es" in query for _provider, query in calls)
+    assert any("site:entel.cl/corporaciones" in query for _provider, query in calls)
+    assert any("site:wom.cl" in query for _provider, query in calls)
+    assert any("site:ww2.movistar.cl/empresas" in query for _provider, query in calls)
+
+
 def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
     from backend.search.resilient import WebOrchestrator
 

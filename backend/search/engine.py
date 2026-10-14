@@ -357,6 +357,10 @@ _TOPIC_PHRASE_ALIASES = (
         "government",
     ),
     (
+        re.compile(r"\b(?:digital(?:es|izaci[oó]n|izaci[oó]n|izado|izada)?|transformaci[oó]n\s+digital|digital\s+transformation)\b", re.IGNORECASE),
+        "technology",
+    ),
+    (
         re.compile(r"\b(?:p[uú]blic[oa]s?|publicly|public|transparencia|transparency|open\s+data|datos\s+abiertos)\b", re.IGNORECASE),
         "public",
     ),
@@ -505,10 +509,17 @@ def rank_results(
             any(term in query_folded_for_site for term in ("sitio comercial", "commercial site", "company website"))
             and any(term in query_folded_for_site for term in ("tecnología", "tecnologia", "technology", "tech"))
         )
-        if commercial_site_intent and _source_host(item).removeprefix("www.") in {
-            "facebook.com", "instagram.com", "tiktok.com", "youtube.com", "linkedin.com"
-        }:
-            continue
+        if commercial_site_intent:
+            candidate_host = _source_host(item).removeprefix("www.")
+            if candidate_host in {
+                "facebook.com", "instagram.com", "tiktok.com", "youtube.com", "linkedin.com",
+                "prnewswire.com", "einnews.com", "globenewswire.com", "businesswire.com",
+                "accesswire.com", "newswire.ca", "prweb.com", "newsfilecorp.com",
+            } or any(candidate_host.endswith("." + domain) for domain in (
+                "prnewswire.com", "einnews.com", "globenewswire.com", "businesswire.com",
+                "accesswire.com", "newswire.ca", "prweb.com", "newsfilecorp.com",
+            )):
+                continue
         parsed_url = urlparse(url)
         source_host = _source_host(item)
         anchor_evidence = (

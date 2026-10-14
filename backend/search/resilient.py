@@ -84,6 +84,17 @@ def _has_who_dengue_item(items: list[dict]) -> bool:
     return any(_is_who_dengue_item(item) for item in items)
 
 
+_CHILE_TECH_COMPANY_HOSTS = ("sonda.com", "entel.cl", "wom.cl", "movistar.cl")
+
+
+def _is_chile_commercial_technology_item(item: dict) -> bool:
+    """Identify results from independently recognized Chilean commercial tech providers."""
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    host = str(item.get("source_domain") or parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+    return any(host == domain or host.endswith("." + domain) for domain in _CHILE_TECH_COMPANY_HOSTS)
+
+
 class TTLRUCache:
     def __init__(self, max_entries: int = CACHE_MAX_ENTRIES) -> None:
         self.max_entries = max(8, int(max_entries))
@@ -218,6 +229,17 @@ class WebOrchestrator:
             return (
                 "Chile official government public services information "
                 "transparency open data ChileAtiende gob.cl"
+            )
+        commercial_technology_site_intent = (
+            "chile" in lowered
+            and any(term in lowered for term in ("comercial", "commercial", "empresa", "company"))
+            and any(term in lowered for term in ("tecnología", "tecnologia", "technology", "tech"))
+            and any(term in lowered for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
+        )
+        if commercial_technology_site_intent:
+            return (
+                "Chile technology companies official websites software telecom digital services "
+                "SONDA Entel WOM Movistar"
             )
         topic_tokens = list(_topic_tokens(cleaned))
         website_intent = any(
@@ -499,6 +521,12 @@ class WebOrchestrator:
             and "dengue" in lowered_cleaned
             and any(term in lowered_cleaned for term in ("fact sheet", "fact-sheet", "ficha informativa", "ficha técnica", "ficha tecnica"))
         )
+        commercial_technology_site_intent = (
+            "chile" in lowered_cleaned
+            and any(term in lowered_cleaned for term in ("comercial", "commercial", "empresa", "company"))
+            and any(term in lowered_cleaned for term in ("tecnología", "tecnologia", "technology", "tech"))
+            and any(term in lowered_cleaned for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
+        )
         python_asyncio_official_intent = (
             "python" in lowered_cleaned
             and "asyncio" in lowered_cleaned
@@ -590,6 +618,24 @@ class WebOrchestrator:
                 )
                 for provider in ("bing", "google", "duckduckgo", "cl0q")
             })
+        if commercial_technology_site_intent:
+            # General SERPs repeatedly prefer press releases over actual company
+            # websites. Search official commercial domains through independent
+            # providers in the first bounded wave; ranking still uses the original
+            # user query and a host whitelist only prevents false early completion.
+            company_queries = (
+                ("bing", "site:sonda.com/es Chile tecnología servicios TI soluciones digitales"),
+                ("google", "site:entel.cl/corporaciones Chile tecnología empresas servicios digitales"),
+                ("duckduckgo", "site:wom.cl Chile tecnología servicios digitales internet"),
+                ("cl0q", "site:ww2.movistar.cl/empresas Chile tecnología servicios digitales"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, company_query),
+                    name=f"search:commercial-tech:{provider}:{index}",
+                )
+                for index, (provider, company_query) in enumerate(company_queries)
+            })
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
         standard_ready_deadline: float | None = None
@@ -646,6 +692,11 @@ class WebOrchestrator:
                     and (
                         not who_dengue_source_intent
                         or _has_who_dengue_item(selected_now)
+                    )
+                    and (
+                        not commercial_technology_site_intent
+                        or sum(_is_chile_commercial_technology_item(item) for item in selected_now)
+                        >= min(3, self.max_results)
                     )
                 )
                 if (
@@ -799,6 +850,11 @@ class WebOrchestrator:
             or needs_news_source_diversity
             or needs_provider_diversity
             or (who_dengue_source_intent and not _has_who_dengue_item(selected))
+            or (
+                commercial_technology_site_intent
+                and sum(_is_chile_commercial_technology_item(item) for item in selected)
+                < min(3, self.max_results)
+            )
         )
         if (
             needs_recovery
