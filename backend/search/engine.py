@@ -579,16 +579,12 @@ def rank_results(
             if not is_chile_news_publisher and "chile" not in _token_set(anchor_evidence):
                 continue
 
-            # Live political news must be an article-like result, not a generic
-            # government homepage or section landing page. Require substantive
-            # title/snippet text plus a detail path (or explicit publication date).
-            # This prevents .cl locality alone from making a homepage count as news.
+            # Live political evidence needs a real result path and descriptive
+            # title/snippet text. Keep valid short headlines and one-segment article
+            # URLs, but never count a bare homepage just because its host is Chilean.
             story_title = str(item.get("title") or "").strip()
             story_snippet = str(item.get("snippet") or "").strip()
             path_segments = [part for part in parsed_url.path.split("/") if part.strip()]
-            published_marker = str(
-                item.get("published_at") or item.get("published") or item.get("date") or ""
-            ).strip()
             story_text = f"{story_title} {story_snippet}"
             political_story_signal = re.search(
                 r"\b(?:pol[ií]tic\w*|gobiern\w*|president\w*|elecci\w*|"
@@ -603,9 +599,9 @@ def rank_results(
                 re.IGNORECASE,
             )
             if (
-                len(story_title.split()) < 5
+                not path_segments
+                or len(story_title.split()) < 4
                 or len(story_snippet.split()) < 5
-                or (len(path_segments) < 2 and not published_marker)
                 or not political_story_signal
             ):
                 continue
