@@ -193,7 +193,7 @@ object Deep33Api {
         val semanticAcceptance = acceptResponse ?: if (requireWebEvidence) {
             { payload: JSONObject ->
                 payload.optBoolean("web_navigation", false) &&
-                    (payload.optJSONArray("sources")?.length() ?: 0) >= 2
+                    (payload.optJSONArray("sources")?.length() ?: 0) >= 1
             }
         } else {
             null

@@ -226,7 +226,7 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "recoverySearch," in chat
         assert "!excludedDomains.has(hostname)" in chat
         assert "const sources = readableSources;" in chat
-        assert "if (sources.length < MIN_READABLE_WEB_SOURCES)" in chat
+        assert "if (sources.length < 1)" in chat
 
 
 def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritative_source():
@@ -240,3 +240,23 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         assert 'const recoverySearch = await edgeSearch(' in generate
         assert '!excludedDomains.has(hostname)' in generate
         assert 'fallback_path: "railway-recovery"' in generate
+
+def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
+        chat_end = source.index("if (!edgeAIConfigured())", chat_start)
+        chat = source[chat_start:chat_end]
+        generate_start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
+        generate_end = source.index('if (path === "/v1/web/status"', generate_start)
+        generate = source[generate_start:generate_end]
+        assert "if (sources.length < 1)" in chat
+        assert "if (!search.ok || sources.length < 1)" in generate
+        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in chat
+        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in generate
+        assert "ok: true," in chat
+        assert "ok: true," in generate
+
+    android_api = (REPO_ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt").read_text(encoding="utf-8")
+    assert '(payload.optJSONArray("sources")?.length() ?: 0) >= 1' in android_api
+
