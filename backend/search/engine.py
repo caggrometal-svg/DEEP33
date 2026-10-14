@@ -104,13 +104,28 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
         lookup_query,
         flags=re.IGNORECASE,
     )
-    tokens = _tokens(lookup_query)
+    normalized_lookup_query = lookup_query
+    for pattern, replacement in _TOPIC_PHRASE_ALIASES:
+        normalized_lookup_query = pattern.sub(replacement, normalized_lookup_query)
+    tokens = _tokens(normalized_lookup_query)
     anchors = {
         token for token in tokens
         if token not in _REALTIME_QUERY_FILLERS
         and len(token) >= 3
         and not token.isdigit()
     }
+    # For product/specification requests, product/technology/specification are
+    # query-shape terms. The actual entity (smartphone plus any brand/model)
+    # is the relevance anchor. This avoids rejecting legitimate comparison and
+    # specification pages merely because they omit generic category wording.
+    if "smartphone" in anchors:
+        product_shape_tokens = {
+            "technology", "specifications", "comparison", "review", "reviews",
+            "model", "models",
+        }
+        product_anchors = anchors - product_shape_tokens
+        if product_anchors:
+            anchors = product_anchors
     if anchors:
         return anchors
     # For a broad country-level current-news request, keep country as a fallback

@@ -893,3 +893,19 @@ def test_realtime_smartphone_provider_query_is_broad_and_rankable():
     ]
     ranked = rank_results(query, candidates, realtime=True)
     assert len({item.get("source_domain") for item in ranked}) >= 3
+
+
+def test_realtime_smartphone_anchor_ignores_product_shape_words():
+    from backend.search.engine import _realtime_anchor_tokens
+
+    assert _realtime_anchor_tokens(
+        "producto tecnológico smartphone actual especificaciones"
+    ) == {"smartphone"}
+
+    branded = _realtime_anchor_tokens(
+        "Samsung Galaxy smartphone actual especificaciones"
+    )
+    assert "smartphone" in branded
+    assert "samsung" in branded
+    assert "galaxy" in branded
+    assert "specifications" not in branded
