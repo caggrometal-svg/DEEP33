@@ -149,8 +149,9 @@ def classify_query(query: str) -> Decision:
             Decision.FINANCE, 0.99,
             "financial_quote_is_time_sensitive", cleaned, 20.0,
         )
-    if _FINANCE_RE.search(cleaned) and re.search(
-        r"\b(?:d[oó]lar|dolar|tipo de cambio|cotizaci[oó]n|uf|utm)\b", lowered
+    if _FINANCE_RE.search(cleaned) and (
+        re.search(r"\b(?:d[oó]lar|dolar|tipo de cambio|cotizaci[oó]n|uf|utm)\b", lowered)
+        or _PRICE_RE.search(cleaned)
     ):
         return Decision(
             Decision.FINANCE, 0.95,
@@ -479,3 +480,4 @@ class UniversalDecisionRouter:
 
 
 universal_router = UniversalDecisionRouter()
+_PRICE_RE = re.compile(r"\\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\\b", re.I)
