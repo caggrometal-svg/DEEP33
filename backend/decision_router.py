@@ -374,7 +374,7 @@ async def validate_evidence(evidence: Evidence) -> Evidence:
             evidence.error = "SEISMIC_VALIDATION_FAILED"
     elif evidence.route == DecisionRoute.FINANCE:
         data = evidence.data
-        if not isinstance(data.get("value"), (int, float)) or not data.get("date"):
+        if not isinstance(data.get("value"), (int, float)) or not (data.get("date") or data.get("market_timestamp")):
             evidence.ok = False
             evidence.error = "FINANCE_VALIDATION_FAILED"
     elif evidence.route == DecisionRoute.WEATHER:
