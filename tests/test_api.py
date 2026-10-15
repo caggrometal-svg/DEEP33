@@ -178,7 +178,7 @@ def test_chat_contract(monkeypatch) -> None:
 def test_stream_contract_hides_sources(monkeypatch) -> None:
     patch_memory(monkeypatch)
 
-    async def fake_prepare_web_evidence(messages, request_id=None):
+    async def fake_prepare_web_evidence(messages, request_id=None, deep=False):
         return (
             [
                 {"role": "system", "content": "Server-side web evidence"},
