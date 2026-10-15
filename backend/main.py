@@ -43,6 +43,7 @@ from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableErr
 from backend.search.engine import is_realtime_query
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
+from backend.decision_router import DecisionRoute, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -3500,7 +3501,26 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if is_connectivity_question(latest_user_query(messages)):
+        raw_query = latest_user_query(messages)
+        prefetched_weather = None
+        if weather_task is not None:
+            prefetched_weather = await weather_task
+        decision, evidence = await universal_router.resolve(
+            raw_query,
+            messages=messages,
+            weather=prefetched_weather,
+            weather_resolver=resolve_gps_weather,
+        )
+        evidence = await validate_evidence(evidence) if evidence is not None else None
+        logger.info(
+            "universal_router_decision request_id=%s route=%s confidence=%.2f evidence_ok=%s reason=%s",
+            request_id,
+            decision.route,
+            decision.confidence,
+            bool(evidence and evidence.ok),
+            decision.reason,
+        )
+        if is_connectivity_question(raw_query):
             logger.info("backend_connectivity_question request_id=%s session_id=%s", request_id, session_id)
             data = {
                 "model": payload["model"],
@@ -3514,15 +3534,62 @@ async def generate(
                 }],
             }
             sources = []
+        elif decision.route == DecisionRoute.CLOCK:
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": _runtime_clock_answer(),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = []
+        elif evidence is not None and evidence.ok and decision.route in {
+            DecisionRoute.WEATHER,
+            DecisionRoute.SEISMIC,
+            DecisionRoute.FINANCE,
+        }:
+            working = [dict(message) for message in messages]
+            working.append({"role": "system", "content": evidence.system_context()})
+            working.append({
+                "role": "system",
+                "content": (
+                    "VALIDACIÓN DEL ENRUTADOR: usa únicamente los datos estructurados "
+                    "suministrados para los hechos actuales de esta consulta. Si un dato "
+                    "no está presente, no lo inventes. Si la pregunta pide una precisión "
+                    "que la fuente no entrega, dilo explícitamente."
+                ),
+            })
+            performance.mark(request_id, "T6_INFERENCE_STARTED")
+            data = await call_gateway(
+                _completion_payload(
+                    working,
+                    payload["model"],
+                    max_tokens=min(payload.get("max_tokens") or 384, 256),
+                    temperature=request.temperature,
+                ),
+                request_id=request_id,
+                idempotency_key=f"{idempotency_key}:router:{decision.route}",
+                deadline=deadline,
+            )
+            sources = [{
+                "title": evidence.provider or decision.route,
+                "url": evidence.source_url,
+                "snippet": str(evidence.data)[:1000],
+            }]
         elif DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
-            should_force_web(messages) or should_deep_web(messages, personality)
+            decision.route == DecisionRoute.WEB
+            or should_force_web(messages)
+            or should_deep_web(messages, personality)
+            or (
+                decision.route in {DecisionRoute.WEATHER, DecisionRoute.SEISMIC, DecisionRoute.FINANCE}
+                and (evidence is None or not evidence.ok)
+            )
         ):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            prefetched_weather = (
-                await weather_task
-                if weather_task is not None
-                else None
-            )
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
