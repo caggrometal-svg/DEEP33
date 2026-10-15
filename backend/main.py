@@ -2799,7 +2799,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # are not considered useful until an original URL yields extracted text.
         fetch_candidates = list(normalized_sources.values())[:2]
         fetch_timeout = max(
-            2.0,
+            6.0,
             min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
         )
         fetch_results = await asyncio.gather(
