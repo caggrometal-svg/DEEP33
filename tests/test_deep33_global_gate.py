@@ -322,6 +322,189 @@ def test_web_search_partial_failures_are_http_200(monkeypatch, failure, expected
     assert body["code"] == expected_code
 
 
+def test_prepare_web_evidence_requires_original_pages_and_injects_text(monkeypatch):
+    import backend.main as main
+
+    first_text = "ORIGINAL_PAGE_TEXT_ALPHA " + ("El editor publica datos concretos y una explicación verificable. " * 12)
+    second_text = "ORIGINAL_PAGE_TEXT_BETA " + ("La segunda fuente incluye contexto independiente y detalles contrastables. " * 12)
+
+    async def fake_search(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "provider": "test-search",
+            "providers_attempted": ["test-search"],
+            "results": [
+                {
+                    "title": "Fuente A",
+                    "url": "https://alpha.example/article",
+                    "snippet": "Snippet de búsqueda suficientemente largo. " * 5,
+                    "provider": "test-search",
+                },
+                {
+                    "title": "Fuente B",
+                    "url": "https://beta.example/report",
+                    "snippet": "Otro snippet de búsqueda suficientemente largo. " * 5,
+                    "provider": "test-search",
+                },
+            ],
+            "verification": {"distinct_domains": 2},
+            "retrieved_at": "2026-10-15T00:00:00+00:00",
+            "fresh_request": True,
+        }
+
+    async def fake_fetch(url: str, **_kwargs):
+        text = first_text if "alpha.example" in url else second_text
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Original page",
+            "text": text,
+            "retrieved_at": "2026-10-15T00:00:01+00:00",
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    messages = [{
+        "role": "user",
+        "content": "Investiga y contrasta las fuentes originales sobre este tema.",
+    }]
+
+    working, sources, evidence_fragments, compact = asyncio.run(
+        main.prepare_web_evidence(messages, request_id="fetch-context-test", deep=True)
+    )
+
+    assert working is not None
+    injected_context = str(working[-1]["content"])
+    assert "ORIGINAL_PAGE_TEXT_ALPHA" in injected_context
+    assert "ORIGINAL_PAGE_TEXT_BETA" in injected_context
+    assert compact["domains_used"] == 2
+    assert compact["extracted_text_chars"] >= 160
+    assert len(compact["fetched_pages"]) == 2
+    assert any("ORIGINAL_PAGE_TEXT_ALPHA" in value for value in evidence_fragments)
+
+
+def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplog):
+    import backend.main as main
+    from fastapi.testclient import TestClient
+
+    async def allow(_request, _session_id):
+        return None
+
+    async def fake_search(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "provider": "test-search",
+            "providers_attempted": ["test-search"],
+            "results": [
+                {
+                    "title": "Fuente original",
+                    "url": "https://publisher.example/article",
+                    "snippet": "Snippet solamente; no cuenta como extracción real.",
+                    "provider": "test-search",
+                },
+            ],
+            "verification": {"distinct_domains": 1},
+        }
+
+    async def fake_fetch(url: str, **_kwargs):
+        text = "REAL_EXTRACTED_PAGE_TEXT " + ("Contenido real de la página original. " * 12)
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Página extraída",
+            "text": text,
+            "retrieved_at": "2026-10-15T00:00:01+00:00",
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    response = TestClient(main.app).get(
+        "/v1/web/search",
+        params={"q": "Busca en internet el documento original"},
+        headers={
+            "X-DEEP33-Session-Id": "search-extraction-success",
+            "X-Request-ID": "search-extraction-success",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "success"
+    assert payload["domains_used"] >= 1
+    assert payload["extracted_text_chars"] >= 80
+    assert payload["fetched_pages"]
+    assert len(payload["fetched_pages"][0]["text"]) >= 80
+    assert "REAL_EXTRACTED_PAGE_TEXT" in payload["fetched_pages"][0]["text"]
+
+
+def test_web_search_fails_closed_when_search_or_extraction_is_not_valid(monkeypatch, caplog):
+    import backend.main as main
+    from fastapi.testclient import TestClient
+
+    async def allow(_request, _session_id):
+        return None
+
+    async def fake_search(_query: str, **_kwargs):
+        if _query == "no-domain":
+            return {"ok": True, "results": [], "sources": [], "verification": {"distinct_domains": 0}}
+        source = {
+            "title": "Resultado",
+            "url": f"https://publisher.example/{_query}",
+            "snippet": "Snippet largo que no debe confundirse con texto extraído. " * 4,
+            "provider": "test-provider",
+        }
+        return {
+            "ok": _query != "search-not-ok",
+            "provider": "test-provider",
+            "results": [source],
+            "sources": [source],
+            "verification": {"distinct_domains": 1},
+        }
+
+    async def fake_fetch(url: str, **_kwargs):
+        if "short-text" in url:
+            return {"ok": True, "url": url, "final_url": url, "title": "Short", "text": "solo snippet"}
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Original",
+            "text": "REAL_SOURCE_TEXT " + ("Texto extraído desde la página original. " * 12),
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    client = TestClient(main.app)
+    for query in ("search-not-ok", "no-domain", "short-text"):
+        response = client.get(
+            "/v1/web/search",
+            params={"q": query},
+            headers={
+                "X-DEEP33-Session-Id": f"search-fail-closed-{query}",
+                "X-Request-ID": f"search-fail-closed-{query}",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["ok"] is False
+        assert payload["status"] == "failed"
+        assert payload["status"] != "success"
+
+    assert "reason=PARSER_FAIL" in caplog.text
+    assert "request_id=search-fail-closed-short-text" in caplog.text
+    assert "url=https://publisher.example/short-text" in caplog.text
+    assert "provider=test-provider" in caplog.text
+
+
 def _auth_headers(token: str) -> dict[str, str]:
     headers = {
         "Cache-Control": "no-cache",
