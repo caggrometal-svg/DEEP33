@@ -4361,7 +4361,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     latest_user_query(messages),
                     messages=messages,
                     weather=prefetched_weather,
-                    weather_resolver=resolve_gps_weather,
+                    weather_resolver=resolve_universal_weather,
                 )
                 router_evidence = await validate_evidence(router_evidence)
                 if router_evidence is not None and router_evidence.ok:
