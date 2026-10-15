@@ -482,10 +482,16 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                 )
             payload = response.json()
             diagnostic = payload.get("diagnostic_code") or payload.get("code")
-            if "ok" not in payload or (not payload.get("ok") and not diagnostic):
-                raise AssertionError(f"Invalid Android-safe web payload: {payload}")
-            if not payload.get("ok"):
-                raise AssertionError(f"Live multidomain query returned no usable web evidence: {query}: {payload}")
+            if payload.get("ok") is not True:
+                raise AssertionError(f"Live multidomain query returned no verified web evidence: {query}: {payload}")
+            if int(payload.get("extracted_text_chars") or 0) < 80:
+                raise AssertionError(f"Search reported success without useful extracted text: {query}: {payload}")
+            extracted_pages = payload.get("fetched_pages")
+            if not isinstance(extracted_pages, list) or not any(
+                isinstance(page, dict) and len(str(page.get("text") or "").strip()) >= 80
+                for page in extracted_pages
+            ):
+                raise AssertionError(f"Search payload did not contain source text: {query}: {payload}")
 
             results = payload.get("results") or payload.get("sources") or []
             domains: list[str] = []
@@ -540,7 +546,11 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
                 except (ValueError, json.JSONDecodeError):
                     fetch_fail += 1
                     continue
-                if isinstance(body, dict) and body.get("ok"):
+                if (
+                    isinstance(body, dict)
+                    and body.get("ok") is True
+                    and len(str(body.get("text") or "").strip()) >= 80
+                ):
                     fetch_ok += 1
                     if fetch_ok >= 2:
                         break
