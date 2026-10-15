@@ -42,7 +42,7 @@ from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
-from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
+from backend.weather import build_weather_evidence, fetch_named_location_weather, is_weather_query, resolve_gps_weather
 from backend.decision_router import DecisionRoute, classify_query, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
@@ -277,6 +277,21 @@ class IdempotencyConflictError(RuntimeError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def resolve_universal_weather(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Prefer device GPS, then resolve an explicitly named location."""
+    weather = await resolve_gps_weather(
+        messages,
+        timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+    )
+    if weather is not None:
+        return weather
+    query = latest_user_query(messages)
+    return await fetch_named_location_weather(
+        query,
+        timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+    )
 
 
 DEEP33_RUNTIME_TIMEZONE = os.getenv("DEEP33_TIMEZONE", "America/Santiago").strip() or "America/Santiago"
@@ -3509,7 +3524,7 @@ async def generate(
             raw_query,
             messages=messages,
             weather=prefetched_weather,
-            weather_resolver=resolve_gps_weather,
+            weather_resolver=resolve_universal_weather,
         )
         evidence = await validate_evidence(evidence) if evidence is not None else None
         logger.info(
