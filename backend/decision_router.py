@@ -125,7 +125,7 @@ _RESEARCH_RE = re.compile(
     r"comprueba|contrasta|evidencia|fuentes|fact[- ]?check)\b",
     re.I,
 )
-_PRICE_RE = re.compile(r"\\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\\b", re.I)
+_PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
 
 
 def classify_query(query: str) -> Decision:
