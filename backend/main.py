@@ -1801,11 +1801,18 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         if len(candidates) >= candidate_limit:
             break
 
+    if must_fetch and not candidates:
+        logger.warning(
+            "web_evidence_no_source_urls request_id=%s provider=%s reason=PARSER_FAIL",
+            request_id or "unknown",
+            search_result.get("winner_provider") or search_result.get("provider") or "unknown",
+        )
+
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
     if must_fetch or not snippets_sufficient:
         fetch_timeout = max(
-            2.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
         )
         fetch_budget = max(
             6.0, min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
@@ -1878,12 +1885,27 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                         continue
                     fetched_domains.add(domain)
                     fetched_pages.append(page)
-                    if len(fetched_pages) >= required_pages:
-                        break
         finally:
-            remaining_tasks = list(pending_fetches)
-            for task in remaining_tasks:
-                if not task.done():
+            # Drain any already-completed task before returning so an exception
+            # from a parallel fetch cannot disappear after another URL succeeded.
+            remaining_items = list(pending_fetches.items())
+            remaining_tasks = [task for task, _source in remaining_items]
+            for task, source in remaining_items:
+                if task.done():
+                    if task.cancelled():
+                        continue
+                    try:
+                        task.result()
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception as exc:
+                        _log_web_fetch_failure(
+                            request_id=str(request_id or "unknown"),
+                            url=str(source.get("url") or ""),
+                            provider=str(source.get("provider") or "unknown"),
+                            error=exc,
+                        )
+                else:
                     task.cancel()
             if remaining_tasks:
                 await asyncio.gather(*remaining_tasks, return_exceptions=True)
@@ -2840,6 +2862,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
+        if not search_ok:
+            errors.append("SEARCH_RESULT_NOT_OK")
         errors.extend(
             f"{item['reason']}:{item['url']}"
             for item in fetch_failures
