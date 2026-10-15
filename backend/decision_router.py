@@ -11,9 +11,10 @@ import asyncio
 import hashlib
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -85,14 +86,18 @@ class DecisionCache:
             if item.expires_at <= time.monotonic():
                 self._items.pop(key, None)
                 return None
-            return item.value
+            value = item.value
+            return replace(value, data=dict(value.data))
 
     async def put(self, key: str, value: Evidence, ttl: float) -> None:
         async with self._lock:
-            if len(self._items) >= self.max_items:
+            if key not in self._items and len(self._items) >= self.max_items:
                 oldest = min(self._items, key=lambda k: self._items[k].expires_at)
                 self._items.pop(oldest, None)
-            self._items[key] = _CacheItem(time.monotonic() + max(1.0, ttl), value)
+            self._items[key] = _CacheItem(
+                time.monotonic() + max(1.0, ttl),
+                replace(value, data=dict(value.data)),
+            )
 
 
 _CLOCK_RE = re.compile(
@@ -207,8 +212,12 @@ async def fetch_seismic(
         "limit": "2000",
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=1.0)) as client:
-            response = await client.get(url, params=params, headers={"User-Agent": "DEEP33/UniversalRouter"})
+        bounded_timeout = max(0.4, min(1.8, float(timeout_seconds)))
+        async with httpx.AsyncClient(timeout=httpx.Timeout(bounded_timeout, connect=min(0.8, bounded_timeout))) as client:
+            response = await asyncio.wait_for(
+                client.get(url, params=params, headers={"User-Agent": "DEEP33/UniversalRouter"}),
+                timeout=bounded_timeout,
+            )
             response.raise_for_status()
             payload = response.json()
         features = payload.get("features")
@@ -276,11 +285,15 @@ async def fetch_finance(
 
     yahoo_url = "https://query1.finance.yahoo.com/v8/finance/chart/CLP=X"
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=1.0)) as client:
-            response = await client.get(
-                yahoo_url,
-                params={"interval": "1m", "range": "1d"},
-                headers={"User-Agent": "DEEP33/UniversalRouter"},
+        primary_timeout = max(0.4, min(1.3, float(timeout_seconds)))
+        async with httpx.AsyncClient(timeout=httpx.Timeout(primary_timeout, connect=min(0.7, primary_timeout))) as client:
+            response = await asyncio.wait_for(
+                client.get(
+                    yahoo_url,
+                    params={"interval": "1m", "range": "1d"},
+                    headers={"User-Agent": "DEEP33/UniversalRouter"},
+                ),
+                timeout=primary_timeout,
             )
             response.raise_for_status()
             payload = response.json()
@@ -309,10 +322,14 @@ async def fetch_finance(
         logger_error = f"{type(yahoo_exc).__name__}"
         try:
             fallback_url = "https://mindicador.cl/api/dolar"
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=1.0)) as client:
-                response = await client.get(
-                    fallback_url,
-                    headers={"User-Agent": "DEEP33/UniversalRouter"},
+            fallback_timeout = max(0.4, min(1.5, float(timeout_seconds)))
+            async with httpx.AsyncClient(timeout=httpx.Timeout(fallback_timeout, connect=min(0.7, fallback_timeout))) as client:
+                response = await asyncio.wait_for(
+                    client.get(
+                        fallback_url,
+                        headers={"User-Agent": "DEEP33/UniversalRouter"},
+                    ),
+                    timeout=fallback_timeout,
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -351,38 +368,122 @@ async def fetch_finance(
     return evidence
 
 async def validate_evidence(evidence: Evidence) -> Evidence:
-    """Reject incomplete/stale structured data before it reaches the model."""
+    """Fail closed on malformed, missing, future-dated or stale evidence."""
     if not evidence.ok:
         return evidence
     if not evidence.provider or not evidence.source_url or not evidence.retrieved_at:
         evidence.ok = False
         evidence.error = "EVIDENCE_METADATA_MISSING"
         return evidence
+
+    parsed_url = urlparse(evidence.source_url)
+    if parsed_url.scheme != "https" or not parsed_url.hostname:
+        evidence.ok = False
+        evidence.error = "EVIDENCE_SOURCE_URL_INVALID"
+        return evidence
+
     try:
         retrieved = datetime.fromisoformat(evidence.retrieved_at.replace("Z", "+00:00"))
+        if retrieved.tzinfo is None:
+            raise ValueError("timestamp has no timezone")
         age = (datetime.now(timezone.utc) - retrieved.astimezone(timezone.utc)).total_seconds()
         if age < -5 or age > 120:
             evidence.ok = False
-            evidence.error = "EVIDENCE_STALE"
+            evidence.error = "EVIDENCE_RETRIEVAL_TIMESTAMP_INVALID_OR_STALE"
             return evidence
-    except ValueError:
+    except (ValueError, TypeError):
         evidence.ok = False
         evidence.error = "EVIDENCE_TIMESTAMP_INVALID"
         return evidence
+
+    data = evidence.data
+    if not isinstance(data, dict) or not data:
+        evidence.ok = False
+        evidence.error = "EVIDENCE_DATA_MISSING"
+        return evidence
+
     if evidence.route == DecisionRoute.SEISMIC:
-        data = evidence.data
-        if not isinstance(data.get("count"), int) or not isinstance(data.get("events"), list):
+        events = data.get("events")
+        count = data.get("count")
+        start_raw = data.get("start")
+        end_raw = data.get("end")
+        if not isinstance(events, list) or not isinstance(count, int) or count != len(events):
             evidence.ok = False
             evidence.error = "SEISMIC_VALIDATION_FAILED"
+            return evidence
+        try:
+            window_start = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+            window_end = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+            if window_start.tzinfo is None or window_end.tzinfo is None:
+                raise ValueError("seismic window must be timezone-aware")
+            now = datetime.now(timezone.utc)
+            from datetime import timedelta
+            if window_end > now + timedelta(seconds=5) or window_start > window_end:
+                raise ValueError("invalid seismic window")
+            for event in events:
+                if not isinstance(event, dict) or not isinstance(event.get("time_ms"), (int, float)):
+                    raise ValueError("invalid seismic event")
+                event_time = datetime.fromtimestamp(event["time_ms"] / 1000.0, timezone.utc)
+                if event_time < window_start.astimezone(timezone.utc) or event_time > window_end.astimezone(timezone.utc) + timedelta(seconds=5):
+                    raise ValueError("event outside requested time window")
+        except (ValueError, TypeError, OverflowError, OSError):
+            evidence.ok = False
+            evidence.error = "SEISMIC_EVENT_TIME_VALIDATION_FAILED"
+            return evidence
+
     elif evidence.route == DecisionRoute.FINANCE:
-        data = evidence.data
-        if not isinstance(data.get("value"), (int, float)) or not (data.get("date") or data.get("market_timestamp")):
+        value = data.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not (data.get("date") or data.get("market_timestamp")):
             evidence.ok = False
             evidence.error = "FINANCE_VALIDATION_FAILED"
+            return evidence
+        if value <= 0 or value > 1_000_000:
+            evidence.ok = False
+            evidence.error = "FINANCE_VALUE_OUT_OF_RANGE"
+            return evidence
+        quote_raw = data.get("market_timestamp")
+        if quote_raw:
+            try:
+                quote_time = datetime.fromisoformat(str(quote_raw).replace("Z", "+00:00"))
+                if quote_time.tzinfo is None:
+                    raise ValueError("market timestamp has no timezone")
+                quote_age = (datetime.now(timezone.utc) - quote_time.astimezone(timezone.utc)).total_seconds()
+                if quote_age < -300 or quote_age > 36 * 3600:
+                    evidence.ok = False
+                    evidence.error = "FINANCE_MARKET_QUOTE_STALE"
+                    return evidence
+            except (ValueError, TypeError):
+                evidence.ok = False
+                evidence.error = "FINANCE_MARKET_TIMESTAMP_INVALID"
+                return evidence
+        else:
+            try:
+                daily_date = datetime.fromisoformat(str(data.get("date")).replace("Z", "+00:00"))
+                if daily_date.tzinfo is None:
+                    daily_date = daily_date.replace(tzinfo=timezone.utc)
+                daily_age = (datetime.now(timezone.utc) - daily_date.astimezone(timezone.utc)).total_seconds()
+                # Daily observed dollar: allow weekends/holidays, reject older than 72 hours.
+                if daily_age < -300 or daily_age > 72 * 3600:
+                    evidence.ok = False
+                    evidence.error = "FINANCE_DAILY_INDICATOR_STALE"
+                    return evidence
+            except (ValueError, TypeError):
+                evidence.ok = False
+                evidence.error = "FINANCE_DATE_INVALID"
+                return evidence
+
     elif evidence.route == DecisionRoute.WEATHER:
-        if not evidence.data:
+        required = ("time", "temperature_c", "weather_code")
+        if any(key not in data or data.get(key) is None for key in required):
             evidence.ok = False
             evidence.error = "WEATHER_VALIDATION_FAILED"
+            return evidence
+        temperature = data.get("temperature_c")
+        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not -100 <= temperature <= 70:
+            evidence.ok = False
+            evidence.error = "WEATHER_TEMPERATURE_OUT_OF_RANGE"
+            return evidence
+
     return evidence
 
 
@@ -401,7 +502,7 @@ class UniversalDecisionRouter:
                 task = asyncio.create_task(operation())
                 self._inflight[key] = task
         try:
-            return await task
+            return await asyncio.shield(task)
         finally:
             if task.done():
                 async with self._lock:
