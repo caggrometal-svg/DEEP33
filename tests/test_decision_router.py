@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from backend.decision_router import (
     DecisionRoute,
     Evidence,
@@ -41,7 +43,7 @@ def test_validation_rejects_incomplete_finance_data():
         route=DecisionRoute.FINANCE,
         provider="test",
         source_url="https://example.test",
-        retrieved_at="2026-10-15T22:00:00+00:00",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
         data={"value": "900"},
     )
     validated = __import__("asyncio").run(validate_evidence(evidence))
