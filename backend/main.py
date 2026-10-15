@@ -3595,6 +3595,28 @@ async def generate(
                 "url": evidence.source_url,
                 "snippet": str(evidence.data)[:1000],
             }]
+        elif (
+            decision.route in {DecisionRoute.WEATHER, DecisionRoute.SEISMIC, DecisionRoute.FINANCE}
+            and (evidence is None or not evidence.ok)
+            and (skip_web_tools or not DEEP33_WEB_TOOLS_ENABLED)
+        ):
+            # Fail closed: never ask the model to guess realtime facts without evidence.
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": (
+                            "No pude verificar ese dato en tiempo real porque el proveedor "
+                            "de datos y la búsqueda web no están disponibles para esta consulta. "
+                            "No voy a inventar una cifra ni presentarla como actual."
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = []
         elif DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
             decision.route == DecisionRoute.WEB
             or should_force_web(messages)
@@ -4390,6 +4412,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                         not skip_web_tools
                         and DEEP33_WEB_TOOLS_ENABLED
                     )
+                    if not web_required:
+                        stream_answer_override = (
+                            "No pude verificar ese dato en tiempo real porque el proveedor "
+                            "de datos y la búsqueda web no están disponibles para esta consulta. "
+                            "No voy a inventar una cifra ni presentarla como actual."
+                        )
             if is_connectivity_question(latest_user_query(messages)):
                 logger.info(
                     "backend_connectivity_stream request_id=%s session_id=%s",
