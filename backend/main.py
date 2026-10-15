@@ -1431,7 +1431,7 @@ def _source_from_result(result):
         return [{"title":result["title"],"url":result["final_url"],"snippet":str(result.get("text",""))[:600]}]
     return []
 
-async def execute_web_tool(name,arguments):
+async def execute_web_tool(name, arguments, *, request_id: str = "unknown", provider: str = "tool_call"):
     if name=="web_search":
         query=str(arguments.get("query","")).strip()
         if not query: return {"ok":False,"error":"WEB_SEARCH_QUERY_REQUIRED"}
@@ -1444,7 +1444,7 @@ async def execute_web_tool(name,arguments):
                 fresh=True,
             )
         except Exception as exc:
-            logger.warning("web_search_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
+            logger.warning("web_search_tool_failed request_id=%s query=%s error=%s detail=%s",request_id or "unknown",query,type(exc).__name__,str(exc)[:300])
             return {"ok":False,"error":"WEB_SEARCH_FAILED"}
 
     if name=="web_fetch":
@@ -1453,13 +1453,13 @@ async def execute_web_tool(name,arguments):
         try:
             return await fetch_page(
                 url,
-                timeout_seconds=max(2.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
+                timeout_seconds=max(6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
                 max_redirects=min(3,int(os.getenv("WEB_FETCH_MAX_REDIRECTS","3"))),
                 max_text_chars=min(50_000,int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS","50000"))),
                 fresh=True,
             )
         except Exception as exc:
-            logger.warning("web_fetch_tool_failed error=%s detail=%s",type(exc).__name__,str(exc)[:300])
+            logger.warning("web_fetch_tool_failed request_id=%s url=%s provider=%s reason=%s error=%s detail=%s",request_id or "unknown",url,provider,_web_fetch_failure_reason(exc),type(exc).__name__,str(exc)[:300])
             return {"ok":False,"error":str(exc)}
 
     return {"ok":False,"error":"WEB_TOOL_NOT_FOUND"}
@@ -2117,7 +2117,7 @@ async def run_web_tool_loop(
             name=str(function.get("name") or "").strip()
             try:
                 args=_tool_arguments(call)
-                result=await execute_web_tool(name,args)
+                result=await execute_web_tool(name,args,request_id=request_id,provider="llm_tool_call")
             except Exception:
                 result={"ok":False,"error":"WEB_TOOL_ARGUMENTS_INVALID"}
             return call_id,name,result
@@ -2954,7 +2954,7 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=max(2.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
+            timeout_seconds=max(6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
@@ -3019,13 +3019,24 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
             if "dns" in lowered or "name or service" in lowered
             else DiagnosticCode.FETCH_FAILED
         )
+        reason = _web_fetch_failure_reason(exc)
+        _log_web_fetch_failure(
+            request_id=request_id,
+            url=url,
+            provider="direct_fetch",
+            error=exc,
+            reason=reason,
+        )
         logger.warning(
             structured_observation(
                 "web_fetch_degraded",
                 request_id=request_id,
+                url=url,
+                provider="direct_fetch",
                 fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
                 status="degraded",
                 code=code,
+                reason=reason,
                 error=type(exc).__name__,
             )
         )
