@@ -258,57 +258,95 @@ async def fetch_finance(
     timeout_seconds: float = 3.0,
     cache: DecisionCache | None = None,
 ) -> Evidence:
-    """Fetch Chilean dollar/financial indicators from the public MiIndicador API."""
-    key = DecisionCache.key(DecisionRoute.FINANCE, query, "mindicador")
+    """Fetch a current USD/CLP quote, with an official Chilean fallback."""
+    key = DecisionCache.key(DecisionRoute.FINANCE, query, "usdclp")
     if cache:
         cached = await cache.get(key)
         if cached:
             return cached
 
     lowered = query.casefold()
-    indicator = "dolar" if re.search(r"\b(?:d[oó]lar|dolar|usd|tipo de cambio)\b", lowered) else None
-    if indicator is None:
+    if not re.search(r"\b(?:d[oó]lar|dolar|usd|tipo de cambio)\b", lowered):
         return Evidence(
             ok=False, route=DecisionRoute.FINANCE,
             error="FINANCE_INDICATOR_NOT_SUPPORTED",
         )
-    url = "https://mindicador.cl/api/dolar"
+
+    yahoo_url = "https://query1.finance.yahoo.com/v8/finance/chart/CLP=X"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=1.0)) as client:
-            response = await client.get(url, headers={"User-Agent": "DEEP33/UniversalRouter"})
+            response = await client.get(
+                yahoo_url,
+                params={"interval": "1m", "range": "1d"},
+                headers={"User-Agent": "DEEP33/UniversalRouter"},
+            )
             response.raise_for_status()
             payload = response.json()
-        serie = payload.get("serie")
-        if not isinstance(serie, list) or not serie:
-            raise ValueError("FINANCE_EMPTY_SERIES")
-        latest = serie[0]
-        value = latest.get("valor")
-        date = latest.get("fecha")
-        if not isinstance(value, (int, float)) or not date:
-            raise ValueError("FINANCE_INVALID_LATEST_VALUE")
+        meta = ((payload.get("chart") or {}).get("result") or [{}])[0].get("meta") or {}
+        value = meta.get("regularMarketPrice")
+        quote_time = meta.get("regularMarketTime")
+        if not isinstance(value, (int, float)) or not quote_time:
+            raise ValueError("FINANCE_YAHOO_INVALID_QUOTE")
+        quote_dt = datetime.fromtimestamp(float(quote_time), timezone.utc)
         evidence = Evidence(
             ok=True,
             route=DecisionRoute.FINANCE,
-            provider="MiIndicador.cl",
-            source_url=url,
+            provider="Yahoo Finance (USD/CLP)",
+            source_url=yahoo_url,
             retrieved_at=_iso_now(),
             data={
-                "indicator": "dólar observado",
+                "indicator": "USD/CLP",
                 "currency": "CLP por USD",
                 "value": float(value),
-                "date": str(date),
+                "market_timestamp": quote_dt.isoformat(),
                 "unit": "CLP/USD",
+                "quote_status": "delayed_or_market_feed",
             },
         )
-    except Exception as exc:
-        evidence = Evidence(
-            ok=False, route=DecisionRoute.FINANCE,
-            error=f"FINANCE_PROVIDER_FAILED:{type(exc).__name__}",
-        )
+    except Exception as yahoo_exc:
+        logger_error = f"{type(yahoo_exc).__name__}"
+        try:
+            fallback_url = "https://mindicador.cl/api/dolar"
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=1.0)) as client:
+                response = await client.get(
+                    fallback_url,
+                    headers={"User-Agent": "DEEP33/UniversalRouter"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            serie = payload.get("serie")
+            latest = serie[0] if isinstance(serie, list) and serie else None
+            value = latest.get("valor") if isinstance(latest, dict) else None
+            date = latest.get("fecha") if isinstance(latest, dict) else None
+            if not isinstance(value, (int, float)) or not date:
+                raise ValueError("FINANCE_MINDICADOR_INVALID_QUOTE")
+            evidence = Evidence(
+                ok=True,
+                route=DecisionRoute.FINANCE,
+                provider="MiIndicador.cl (official fallback)",
+                source_url=fallback_url,
+                retrieved_at=_iso_now(),
+                data={
+                    "indicator": "dólar observado",
+                    "currency": "CLP por USD",
+                    "value": float(value),
+                    "date": str(date),
+                    "unit": "CLP/USD",
+                    "quote_status": "official_daily_indicator",
+                },
+            )
+        except Exception as fallback_exc:
+            evidence = Evidence(
+                ok=False,
+                route=DecisionRoute.FINANCE,
+                error=(
+                    "FINANCE_PROVIDERS_FAILED:"
+                    f"yahoo={logger_error}:fallback={type(fallback_exc).__name__}"
+                ),
+            )
     if cache and evidence.ok:
         await cache.put(key, evidence, 20.0)
     return evidence
-
 
 async def validate_evidence(evidence: Evidence) -> Evidence:
     """Reject incomplete/stale structured data before it reaches the model."""
