@@ -1803,8 +1803,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     if must_fetch and not candidates:
         logger.warning(
-            "web_evidence_no_source_urls request_id=%s provider=%s reason=PARSER_FAIL",
+            "web_evidence_no_source_urls request_id=%s url=%s provider=%s reason=PARSER_FAIL",
             request_id or "unknown",
+            "none",
             search_result.get("winner_provider") or search_result.get("provider") or "unknown",
         )
 
@@ -2870,6 +2871,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         )
         if not normalized_sources:
             errors.append("NO_SOURCE_DOMAINS")
+            logger.warning(
+                "web_evidence_no_source_urls request_id=%s url=%s provider=%s reason=PARSER_FAIL",
+                request_id,
+                "none",
+                result.get("winner_provider") or result.get("provider") or "unknown",
+            )
         elif not has_extracted_content:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
 
