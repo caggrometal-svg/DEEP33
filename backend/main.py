@@ -2727,7 +2727,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     request_id = request_id_from_request(request)
     started = time.perf_counter()
     if not DEEP33_WEB_TOOLS_ENABLED:
-        return graceful_payload(
+        payload = graceful_payload(
             ok=False,
             code=DiagnosticCode.PROVIDER_BLOCKED,
             request_id=request_id,
@@ -2735,29 +2735,162 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             query=q,
             realtime=is_realtime_query(q),
         )
+        payload["status"] = "failed"
+        payload["domains_used"] = 0
+        payload["extracted_text_chars"] = 0
+        payload["fetched_pages"] = []
+        return payload
+
     try:
         result = await search_web(
             q,
-            timeout_seconds=min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5"))),
+            timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=_web_search_result_limit(
                 q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
             ),
             fresh=True,
         )
+        if not isinstance(result, dict):
+            result = {"ok": False, "results": [], "sources": [], "errors": ["INVALID_SEARCH_RESULT"]}
+
+        search_ok = result.get("ok") is True
+        raw_sources = _source_from_result(result)
+        normalized_sources: dict[str, dict[str, Any]] = {}
+        for source in raw_sources:
+            url = str(source.get("url") or "").strip()
+            host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+            if not url or not host or url in normalized_sources:
+                continue
+            normalized_sources[url] = {
+                "title": str(source.get("title") or url)[:300],
+                "url": url[:2000],
+                "snippet": str(source.get("snippet") or "")[:1000],
+                "provider": str(
+                    source.get("provider")
+                    or result.get("winner_provider")
+                    or result.get("provider")
+                    or "unknown"
+                ),
+            }
+
+        # /v1/web/search is an end-to-end search-and-read contract: result links
+        # are not considered useful until an original URL yields extracted text.
+        fetch_candidates = list(normalized_sources.values())[:2]
+        fetch_timeout = max(
+            2.0,
+            min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+        )
+        fetch_results = await asyncio.gather(
+            *(
+                _fetch_web_source(
+                    source,
+                    request_id=request_id,
+                    timeout_seconds=fetch_timeout,
+                )
+                for source in fetch_candidates
+            ),
+            return_exceptions=True,
+        )
+        fetched_pages: list[dict[str, Any]] = []
+        fetch_failures: list[dict[str, str]] = []
+        for source, fetched in zip(fetch_candidates, fetch_results):
+            if isinstance(fetched, BaseException):
+                if isinstance(fetched, asyncio.CancelledError):
+                    raise fetched
+                reason = _web_fetch_failure_reason(fetched)
+                _log_web_fetch_failure(
+                    request_id=request_id,
+                    url=str(source.get("url") or ""),
+                    provider=str(source.get("provider") or "unknown"),
+                    error=fetched,
+                    reason=reason,
+                )
+                fetch_failures.append({
+                    "url": str(source.get("url") or ""),
+                    "provider": str(source.get("provider") or "unknown"),
+                    "reason": reason,
+                })
+                continue
+            if fetched is None:
+                fetch_failures.append({
+                    "url": str(source.get("url") or ""),
+                    "provider": str(source.get("provider") or "unknown"),
+                    "reason": "FETCH_OR_EXTRACTION_FAILED",
+                })
+                continue
+            fetched_pages.append(fetched)
+
+        fetched_domains = {
+            str(page.get("domain") or "")
+            for page in fetched_pages
+            if str(page.get("domain") or "")
+        }
+        domains_used = len(fetched_domains)
+        extracted_text_chars = sum(
+            len(str(page.get("text") or ""))
+            for page in fetched_pages
+        )
+        has_extracted_content = extracted_text_chars >= 80 and domains_used > 0
+        final_ok = search_ok and has_extracted_content
+        if not search_ok or not has_extracted_content:
+            status = "failed"
+        elif fetch_failures:
+            status = "degraded"
+        else:
+            status = "success"
+
+        errors = list(result.get("errors") or [])
+        errors.extend(
+            f"{item['reason']}:{item['url']}"
+            for item in fetch_failures
+        )
+        if not normalized_sources:
+            errors.append("NO_SOURCE_DOMAINS")
+        elif not has_extracted_content:
+            errors.append("NO_USEFUL_EXTRACTED_CONTENT")
+
+        response_payload = dict(result)
+        response_payload.update({
+            "ok": final_ok,
+            "status": status,
+            "degraded": status != "success",
+            "request_id": request_id,
+            "query": q,
+            "realtime": is_realtime_query(q),
+            "domains_used": domains_used,
+            "extracted_text_chars": extracted_text_chars,
+            "fetched_pages": [
+                {
+                    "title": page.get("title"),
+                    "url": page.get("url"),
+                    "provider": page.get("provider"),
+                    "text_chars": page.get("text_chars"),
+                    "text": str(page.get("text") or "")[:2200],
+                    "retrieved_at": page.get("retrieved_at"),
+                }
+                for page in fetched_pages
+            ],
+            "fetch_failures": fetch_failures,
+            "errors": list(dict.fromkeys(str(item) for item in errors)),
+        })
         logger.info(
             structured_observation(
                 "web_search_complete",
                 request_id=request_id,
                 search_ms=round((time.perf_counter() - started) * 1000, 2),
-                winner_provider=result.get("provider"),
-                providers=result.get("providers", []),
-                domains_used=(result.get("verification") or {}).get("distinct_domains", 0),
-                status="success",
+                winner_provider=result.get("provider") or result.get("winner_provider"),
+                providers=result.get("providers_attempted") or result.get("providers") or [],
+                domains_used=domains_used,
+                extracted_text_chars=extracted_text_chars,
+                search_ok=search_ok,
+                status=status,
+                fetched_pages=len(fetched_pages),
+                fetch_failures=len(fetch_failures),
             )
         )
-        return result
+        return response_payload
     except Exception as exc:
-        detail = str(exc).replace("\\n", " ")[:400]
+        detail = str(exc).replace("\n", " ")[:400]
         code = (
             DiagnosticCode.PROVIDER_TIMEOUT
             if "timeout" in detail.lower() or "deadline" in detail.lower()
@@ -2770,12 +2903,15 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 "web_search_degraded",
                 request_id=request_id,
                 search_ms=round((time.perf_counter() - started) * 1000, 2),
-                status="degraded",
+                status="failed",
                 code=code,
                 error=type(exc).__name__,
+                detail=detail,
+                domains_used=0,
+                extracted_text_chars=0,
             )
         )
-        return graceful_payload(
+        payload = graceful_payload(
             ok=False,
             code=code,
             request_id=request_id,
@@ -2790,7 +2926,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 "distinct_providers": 0,
                 "corroborated_results": 0,
             },
+            domains_used=0,
+            extracted_text_chars=0,
+            fetched_pages=[],
+            fetch_failures=[],
         )
+        payload["status"] = "failed"
+        return payload
 
 
 @app.get("/v1/web/fetch")
@@ -2812,21 +2954,58 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=max(1.0, min(3.4, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "3.4")))),
+            timeout_seconds=max(2.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
         )
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            error = result if isinstance(result, dict) else "INVALID_FETCH_RESULT"
+            _log_web_fetch_failure(
+                request_id=request_id, url=url, provider="direct_fetch", error=error,
+            )
+            return graceful_payload(
+                ok=False,
+                code=DiagnosticCode.FETCH_FAILED,
+                request_id=request_id,
+                errors=[_web_fetch_failure_reason(error)],
+                final_url=result.get("final_url") if isinstance(result, dict) else None,
+                title=result.get("title", "") if isinstance(result, dict) else "",
+                text="",
+                text_chars=0,
+                status="failed",
+            )
+        extracted_text = str(result.get("text") or "").strip()
+        if len(extracted_text) < 80:
+            _log_web_fetch_failure(
+                request_id=request_id, url=str(result.get("final_url") or url),
+                provider="direct_fetch", error=f"EXTRACTED_TEXT_TOO_SHORT:{len(extracted_text)}",
+                reason="PARSER_FAIL",
+            )
+            return graceful_payload(
+                ok=False,
+                code=DiagnosticCode.FETCH_FAILED,
+                request_id=request_id,
+                errors=["PARSER_FAIL"],
+                final_url=result.get("final_url"),
+                title=result.get("title", ""),
+                text="",
+                text_chars=len(extracted_text),
+                status="failed",
+            )
         logger.info(
             structured_observation(
                 "web_fetch_complete",
                 request_id=request_id,
                 fetch_ms=round((time.perf_counter() - fetch_started) * 1000, 2),
                 status="success",
-                text_chars=len(result.get("text") or ""),
+                text_chars=len(extracted_text),
                 redirects=result.get("redirects"),
             )
         )
+        result["text"] = extracted_text
+        result["text_chars"] = len(extracted_text)
+        result["status"] = "success"
         return result
     except Exception as exc:
         detail = str(exc).replace("\n", " ")[:160]
