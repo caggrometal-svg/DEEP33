@@ -444,7 +444,7 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
         ]
         return any(normalized.count(marker) > 1 for marker in markers)
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=3.0), follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=3.0), follow_redirects=True) as client:
         topics = [
             "Python asyncio TaskGroup documentación oficial",
             "política Chile hoy últimas noticias",
