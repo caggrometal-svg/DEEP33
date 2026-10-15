@@ -610,9 +610,15 @@ async def _fetch_page_uncached(
                 # the extraction cap while their useful article text is at the
                 # start; _read_limited enforces the same hard byte ceiling.
                 content=await _read_limited(response,_max_response_bytes())
-            title, text = _extract_text(content, content_type, max_text_chars)
+            try:
+                title, text = _extract_text(content, content_type, max_text_chars)
+            except Exception as exc:
+                # Surface parser/charset failures with a stable diagnosis so the
+                # evidence pipeline can log the request ID, original URL and provider.
+                raise WebFetchError("WEB_FETCH_PARSER_FAIL") from exc
             text = text.strip()
-            if len(text) < 20: raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
+            if len(text) < 20:
+                raise WebFetchError("WEB_FETCH_EMPTY_TEXT")
             return {
                 "ok":True,
                 "url":original_url,
