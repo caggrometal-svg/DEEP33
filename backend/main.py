@@ -43,7 +43,7 @@ from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableErr
 from backend.search.engine import is_realtime_query
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
-from backend.decision_router import DecisionRoute, universal_router, validate_evidence
+from backend.decision_router import DecisionRoute, classify_query, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -4226,12 +4226,13 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         else None
     )
     raw_query = latest_user_query(raw_messages)
+    router_decision = classify_query(raw_query)
     prefetch_search_task: asyncio.Task | None = None
     if (
         DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and not is_connectivity_question(raw_query)
-        and not is_weather_query(raw_query)
+        and router_decision.route == DecisionRoute.WEB
         and (should_force_web(raw_messages) or should_deep_web(raw_messages, personality))
     ):
         prefetch_deep = should_deep_web(raw_messages, personality) or is_realtime_query(raw_query)
@@ -4316,7 +4317,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             not skip_web_tools
             and DEEP33_WEB_TOOLS_ENABLED
             and (
-                should_force_web(messages)
+                router_decision.route == DecisionRoute.WEB
+                or should_force_web(messages)
                 or should_deep_web(messages, resolved_personality)
             )
         )
@@ -4324,6 +4326,55 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             yield _sse_status("thinking", request_id)
 
             stream_answer_override: str | None = None
+            router_evidence = None
+            if is_connectivity_question(latest_user_query(messages)):
+                router_evidence = None
+            elif router_decision.route == DecisionRoute.CLOCK:
+                stream_answer_override = _runtime_clock_answer()
+                web_required = False
+            elif router_decision.route in {
+                DecisionRoute.WEATHER,
+                DecisionRoute.SEISMIC,
+                DecisionRoute.FINANCE,
+            }:
+                prefetched_weather = (
+                    await weather_task
+                    if weather_task is not None
+                    else None
+                )
+                _decision, router_evidence = await universal_router.resolve(
+                    latest_user_query(messages),
+                    messages=messages,
+                    weather=prefetched_weather,
+                    weather_resolver=resolve_gps_weather,
+                )
+                router_evidence = await validate_evidence(router_evidence)
+                if router_evidence is not None and router_evidence.ok:
+                    web_required = False
+                    working = [dict(message) for message in messages]
+                    working.append({"role": "system", "content": router_evidence.system_context()})
+                    working.append({
+                        "role": "system",
+                        "content": (
+                            "VALIDACIÓN DEL ENRUTADOR: usa únicamente los datos estructurados "
+                            "suministrados para los hechos actuales. Si un dato no está presente, "
+                            "no lo inventes."
+                        ),
+                    })
+                    working.append(_web_personality_lock(resolved_personality))
+                    payload = _completion_payload(
+                        working,
+                        payload["model"],
+                        max_tokens=min(payload.get("max_tokens") or 384, 256),
+                        temperature=request.temperature,
+                    )
+                    sources_count = 1
+                    yield _sse_status("sources_ready", request_id, sources=sources_count)
+                else:
+                    web_required = (
+                        not skip_web_tools
+                        and DEEP33_WEB_TOOLS_ENABLED
+                    )
             if is_connectivity_question(latest_user_query(messages)):
                 logger.info(
                     "backend_connectivity_stream request_id=%s session_id=%s",
