@@ -1608,6 +1608,8 @@ def _web_fetch_failure_reason(error: Any) -> str:
         return "PARSER_FAIL"
     if "TIMEOUT" in upper or "DEADLINE" in upper:
         return "FETCH_TIMEOUT"
+    if "DNS" in upper or "NAME OR SERVICE" in upper:
+        return "DNS_FAILED"
     if "HTTP_" in upper or "HTTP " in upper:
         return "HTTP_ERROR"
     return "FETCH_ERROR"
@@ -1735,7 +1737,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             (time.perf_counter() - search_started) * 1000, str(exc)[:300],
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], {}
+        return None, [], [], []
 
     if not isinstance(search_result, dict) or search_result.get("ok") is not True:
         errors = search_result.get("errors") if isinstance(search_result, dict) else None
@@ -1746,7 +1748,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], {}
+        return None, [], [], []
 
     raw_sources = _source_from_result(search_result)
     sources: dict[str, dict[str, Any]] = {}
@@ -1821,13 +1823,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         fetch_deadline = asyncio.get_running_loop().time() + fetch_budget
         pending_fetches: dict[asyncio.Task, dict[str, Any]] = {}
         next_candidate = 0
+        fetch_concurrency = 2 if required_pages > 1 else 1
         fetched_domains: set[str] = set()
         try:
             while (
                 len(fetched_pages) < required_pages
                 and (next_candidate < len(candidates) or pending_fetches)
             ):
-                while next_candidate < len(candidates) and len(pending_fetches) < 2:
+                while next_candidate < len(candidates) and len(pending_fetches) < fetch_concurrency:
                     source = candidates[next_candidate]
                     next_candidate += 1
                     task = asyncio.create_task(
@@ -1917,7 +1920,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], {}
+        return None, [], [], []
 
     compact_fetched_pages = [
         {
