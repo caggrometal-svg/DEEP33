@@ -581,10 +581,13 @@ async def _fetch_page_uncached(
     max_text_chars: int,
     user_agent: str,
 ) -> dict:
+    # Keep connection establishment bounded, but do not cap every body read at 1s.
+    # The total direct-fetch + Reader fallback deadline remains enforced by
+    # _fetch_with_total_budget, so this widens the useful extraction window safely.
     timeout=httpx.Timeout(
         connect=min(timeout_seconds, 1.0),
-        read=min(timeout_seconds, 1.0),
-        write=min(timeout_seconds, 1.0),
+        read=min(timeout_seconds, max(2.5, timeout_seconds * 0.75)),
+        write=min(timeout_seconds, 2.0),
         pool=min(timeout_seconds, 0.5),
     )
     client=await _fetch_http_client()
