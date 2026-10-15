@@ -132,22 +132,22 @@ def classify_query(query: str) -> Decision:
     cleaned = " ".join(str(query or "").split()).strip()
     lowered = cleaned.casefold()
     if not cleaned:
-        return Decision(Decision.INTERNAL, 1.0, "empty_query", cleaned, 0.0)
+        return Decision(DecisionRoute.INTERNAL, 1.0, "empty_query", cleaned, 0.0)
     if _CLOCK_RE.search(cleaned):
-        return Decision(Decision.CLOCK, 1.0, "runtime_clock_is_authoritative", cleaned, 1.0)
+        return Decision(DecisionRoute.CLOCK, 1.0, "runtime_clock_is_authoritative", cleaned, 1.0)
     if _WEATHER_RE.search(cleaned):
         return Decision(
-            Decision.WEATHER, 0.98,
+            DecisionRoute.WEATHER, 0.98,
             "weather_requires_current_provider_data", cleaned, 45.0,
         )
     if _SEISMIC_RE.search(cleaned):
         return Decision(
-            Decision.SEISMIC, 0.99,
+            DecisionRoute.SEISMIC, 0.99,
             "seismic_data_is_time_sensitive", cleaned, 15.0,
         )
     if _FINANCE_RE.search(cleaned) and _REALTIME_RE.search(cleaned):
         return Decision(
-            Decision.FINANCE, 0.99,
+            DecisionRoute.FINANCE, 0.99,
             "financial_quote_is_time_sensitive", cleaned, 20.0,
         )
     if _FINANCE_RE.search(cleaned) and (
@@ -155,16 +155,16 @@ def classify_query(query: str) -> Decision:
         or _PRICE_RE.search(cleaned)
     ):
         return Decision(
-            Decision.FINANCE, 0.95,
+            DecisionRoute.FINANCE, 0.95,
             "financial_indicator_should_use_live_data", cleaned, 20.0,
         )
     if _RESEARCH_RE.search(cleaned) or _REALTIME_RE.search(cleaned):
         return Decision(
-            Decision.WEB, 0.92,
+            DecisionRoute.WEB, 0.92,
             "explicit_current_or_web_request", cleaned, 20.0,
         )
     return Decision(
-        Decision.INTERNAL, 0.86,
+        DecisionRoute.INTERNAL, 0.86,
         "stable_general_knowledge_can_use_model", cleaned, 0.0,
     )
 
