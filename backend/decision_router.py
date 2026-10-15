@@ -531,25 +531,42 @@ class UniversalDecisionRouter:
                 data={"timestamp": _iso_now()},
             )
         if decision.route == DecisionRoute.WEATHER:
+            key = DecisionCache.key(
+                DecisionRoute.WEATHER,
+                query,
+                str(messages[-1] if messages else ""),
+            )
+            cached = await self.cache.get(key)
+            if cached is not None:
+                validated = await validate_evidence(cached)
+                if validated.ok:
+                    return decision, validated
+
             data = weather
             if data is None and weather_resolver and messages is not None:
-                key = DecisionCache.key(DecisionRoute.WEATHER, query, str(messages[-1] if messages else ""))
-                cached = await self.cache.get(key)
-                if cached:
-                    return decision, cached
-                data = await self._singleflight(
+                evidence = await self._singleflight(
                     key,
                     lambda: self._weather_operation(messages, weather_resolver, weather_builder),
                 )
-                return decision, await validate_evidence(data)
+                evidence = await validate_evidence(evidence)
+                if evidence.ok:
+                    await self.cache.put(key, evidence, decision.cache_ttl_seconds)
+                return decision, evidence
             if data is None:
                 return decision, Evidence(False, DecisionRoute.WEATHER, error="WEATHER_DATA_UNAVAILABLE")
+
             evidence = Evidence(
-                ok=True, route=DecisionRoute.WEATHER, provider="Open-Meteo",
+                ok=True,
+                route=DecisionRoute.WEATHER,
+                provider=str(data.get("provider") or "Open-Meteo"),
                 source_url=str(data.get("source_url") or "https://api.open-meteo.com/v1/forecast"),
-                retrieved_at=_iso_now(), data=data,
+                retrieved_at=_iso_now(),
+                data=data,
             )
-            return decision, await validate_evidence(evidence)
+            evidence = await validate_evidence(evidence)
+            if evidence.ok:
+                await self.cache.put(key, evidence, decision.cache_ttl_seconds)
+            return decision, evidence
         if decision.route == DecisionRoute.SEISMIC:
             key = DecisionCache.key(DecisionRoute.SEISMIC, query, "usgs")
             return decision, await self._singleflight(
