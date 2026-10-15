@@ -98,34 +98,48 @@ def test_model_router_respects_complexity_profiles():
     assert main.model_for_profile("explicit-model", "DEEP") == "explicit-model"
 
 
-def test_web_fetch_is_optional_when_snippets_are_sufficient(monkeypatch):
+def test_web_fetch_is_mandatory_for_explicit_current_queries_even_with_snippets(monkeypatch):
     async def fake_search(query, **kwargs):
         return {
             "ok": True,
+            "provider": "test-search",
             "results": [
                 {"title": "A", "url": "https://a.example/", "snippet": "A" * 140},
                 {"title": "B", "url": "https://b.example/", "snippet": "B" * 140},
             ],
         }
 
-    async def forbidden_fetch(*_args, **_kwargs):
-        raise AssertionError("fetch should not run when snippets are sufficient")
+    attempted = []
+
+    async def fake_fetch(url, **kwargs):
+        attempted.append(url)
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Original article",
+            "text": "REAL_ORIGINAL_SOURCE_TEXT " + ("Useful extracted article content. " * 5),
+        }
 
     monkeypatch.setattr(main, "search_web", fake_search)
-    monkeypatch.setattr(main, "fetch_page", forbidden_fetch)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
 
     import asyncio
-    working, sources, evidence, results = asyncio.run(
+    working, sources, evidence, compact = asyncio.run(
         main.prepare_web_evidence(
             [{"role": "user", "content": "¿Cuál es la situación actual?"}],
-            request_id="fetch-optional",
+            request_id="fetch-mandatory",
             deep=False,
         )
     )
+    assert working is not None
     assert len(sources) == 2
-    assert len(results) == 2
-    assert evidence
-    assert any("Server-side web evidence" in str(item.get("content")) for item in working)
+    assert len(compact["search_results"]) == 2
+    assert compact["fetched_pages"]
+    assert len(attempted) == 1
+    assert "REAL_ORIGINAL_SOURCE_TEXT" in str(working[-1]["content"])
+    assert any("REAL_ORIGINAL_SOURCE_TEXT" in fragment for fragment in evidence)
+
 
 def test_full_end_to_end_trace_contract_has_all_markers():
     expected = (

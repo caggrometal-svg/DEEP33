@@ -889,12 +889,12 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
 
     attempted = []
 
-    async def fake_execute(name, arguments):
-        assert name == "web_fetch"
-        url = arguments["url"]
+    attempted = []
+
+    async def fake_fetch(url, **_kwargs):
         attempted.append(url)
         if url in urls[:2]:
-            return {"ok": False, "error": "FETCH_BLOCKED"}
+            raise RuntimeError("WEB_FETCH_HTTP_403")
         label = "READABLE-THREE" if "working-three" in url else "READABLE-FOUR"
         return {
             "ok": True,
@@ -905,7 +905,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
         }
 
     monkeypatch.setattr(main, "search_web", fake_search)
-    monkeypatch.setattr(main, "execute_web_tool", fake_execute)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
 
     working, sources, evidence_fragments, _ = asyncio.run(
         main.prepare_web_evidence(

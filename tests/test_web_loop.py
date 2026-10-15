@@ -63,7 +63,7 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
             "url": url,
             "final_url": url,
             "title": "Example",
-            "text": "Example content",
+            "text": "REAL_ORIGINAL_PAGE_CONTENT " + ("Example article details, facts, and context. " * 4),
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
@@ -259,7 +259,7 @@ def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: p
             "url": url,
             "final_url": url,
             "title": "Example",
-            "text": "Long source paragraph that must remain evidence only.",
+            "text": "Long source paragraph that must remain evidence only. " * 4,
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
