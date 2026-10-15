@@ -585,7 +585,14 @@ class UniversalDecisionRouter:
         resolver: Callable[[list[dict[str, Any]]], Awaitable[dict[str, Any] | None]],
         builder: Callable[[list[dict[str, Any]], dict[str, Any]], str] | None,
     ) -> Evidence:
-        data = await resolver(messages)
+        try:
+            data = await asyncio.wait_for(resolver(messages), timeout=2.5)
+        except Exception as exc:
+            return Evidence(
+                False,
+                DecisionRoute.WEATHER,
+                error=f"WEATHER_PROVIDER_FAILED:{type(exc).__name__}",
+            )
         if data is None:
             return Evidence(False, DecisionRoute.WEATHER, error="WEATHER_PROVIDER_UNAVAILABLE")
         return Evidence(
