@@ -376,11 +376,17 @@ async def validate_evidence(evidence: Evidence) -> Evidence:
         evidence.error = "EVIDENCE_METADATA_MISSING"
         return evidence
 
-    parsed_url = urlparse(evidence.source_url)
-    if parsed_url.scheme != "https" or not parsed_url.hostname:
-        evidence.ok = False
-        evidence.error = "EVIDENCE_SOURCE_URL_INVALID"
-        return evidence
+    if evidence.route == DecisionRoute.CLOCK:
+        if evidence.source_url != "runtime://clock":
+            evidence.ok = False
+            evidence.error = "EVIDENCE_SOURCE_URL_INVALID"
+            return evidence
+    else:
+        parsed_url = urlparse(evidence.source_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            evidence.ok = False
+            evidence.error = "EVIDENCE_SOURCE_URL_INVALID"
+            return evidence
 
     try:
         retrieved = datetime.fromisoformat(evidence.retrieved_at.replace("Z", "+00:00"))
