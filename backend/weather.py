@@ -172,8 +172,10 @@ async def fetch_current_weather(
 def _named_weather_location(query: str) -> str:
     cleaned = " ".join(str(query or "").split()).strip()
     cleaned = re.sub(
-        r"\b(?:clima|tiempo|temperatura|pron[oó]stico|pronostico|weather|forecast|"
-        r"actual|actualmente|ahora|hoy|condiciones|meteorolog[ií]a)\b",
+        r"\b(?:clima|tiempo|temperatura|pron[oó]stico|pronostico|previsi[oó]n|prevision|"
+        r"weather|forecast|actual|actualmente|ahora|hoy|mañana|manana|pasado|tomorrow|today|"
+        r"condiciones|meteorolog[ií]a|va\s+a\s+hacer|har[aá]|hacer|fr[ií]o|calor|llover|lluvia|"
+        r"fin\s+de\s+semana|pr[oó]ximos?\s+d[ií]as)\b",
         " ",
         cleaned,
         flags=re.IGNORECASE,
