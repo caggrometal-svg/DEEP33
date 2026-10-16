@@ -1683,33 +1683,54 @@ async def _fetch_web_source(
             # Site-qualified exact-title searches are fragile across free engines.
             # Search the publisher name plus the article title, then strictly accept
             # only a direct HTTPS URL whose hostname belongs to that publisher.
-            rescued = await search_web(
+            title_terms = [
+                token
+                for token in re.findall(r"[A-Za-zÀ-ÿ0-9]{4,}", raw_title)
+                if token.casefold() not in {"noticias", "chile", "today", "hoy"}
+            ][:10]
+            rescue_queries = [
                 f'"{raw_title}" {publisher_host}',
-                timeout_seconds=min(1.8, timeout_seconds),
-                max_results=5,
-                fast=True,
-                fresh=True,
-            )
-            rescued_results = rescued.get("results") if isinstance(rescued, dict) else []
-            for candidate in rescued_results if isinstance(rescued_results, list) else []:
-                candidate_url = str(candidate.get("url") or "").strip() if isinstance(candidate, dict) else ""
-                candidate_host = (urlparse(candidate_url).hostname or "").casefold().removeprefix("www.")
-                if (
-                    candidate_url.startswith("https://")
-                    and candidate_host
-                    and (candidate_host == publisher_host or candidate_host.endswith("." + publisher_host))
-                    and candidate_host != "news.google.com"
-                ):
-                    url = candidate_url
-                    provider = str(candidate.get("provider") or provider)
-                    source = {**source, "url": url, "title": str(candidate.get("title") or source.get("title") or url)}
-                    logger.info(
-                        "web_evidence_google_news_unwrapped request_id=%s publisher=%s provider=%s",
-                        request_id or "unknown",
-                        publisher_host,
-                        provider,
-                    )
+                f"site:{publisher_host} {' '.join(title_terms)}",
+                f"{publisher_host} {' '.join(title_terms)}",
+            ]
+            resolved_candidate = None
+            for rescue_query in rescue_queries:
+                rescued = await search_web(
+                    rescue_query,
+                    timeout_seconds=min(1.35, timeout_seconds),
+                    max_results=6,
+                    fast=True,
+                    fresh=True,
+                )
+                rescued_results = rescued.get("results") if isinstance(rescued, dict) else []
+                for candidate in rescued_results if isinstance(rescued_results, list) else []:
+                    candidate_url = str(candidate.get("url") or "").strip() if isinstance(candidate, dict) else ""
+                    candidate_host = (urlparse(candidate_url).hostname or "").casefold().removeprefix("www.")
+                    if (
+                        candidate_url.startswith("https://")
+                        and candidate_host
+                        and (candidate_host == publisher_host or candidate_host.endswith("." + publisher_host))
+                        and candidate_host != "news.google.com"
+                    ):
+                        resolved_candidate = candidate
+                        break
+                if resolved_candidate is not None:
                     break
+            if resolved_candidate is not None:
+                candidate_url = str(resolved_candidate.get("url") or "").strip()
+                url = candidate_url
+                provider = str(resolved_candidate.get("provider") or provider)
+                source = {
+                    **source,
+                    "url": url,
+                    "title": str(resolved_candidate.get("title") or source.get("title") or url),
+                }
+                logger.info(
+                    "web_evidence_google_news_unwrapped request_id=%s publisher=%s provider=%s",
+                    request_id or "unknown",
+                    publisher_host,
+                    provider,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:

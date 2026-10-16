@@ -96,6 +96,7 @@ class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
     timeout_seconds: float
     provider_timeout_seconds: float = 10.0
+    first_visible_timeout_seconds: float = 2.2
     max_retries: int = 0
     backoff_seconds: float = 0.6
     circuit_failure_threshold: int = 3
@@ -153,6 +154,12 @@ class GatewayConfig:
             timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
             provider_timeout_seconds=max(
                 3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))
+            ),
+            first_visible_timeout_seconds=max(
+                0.8, min(
+                    3.0,
+                    float(os.getenv("AI_FIRST_VISIBLE_TIMEOUT_SECONDS", "2.2")),
+                )
             ),
             max_retries=max(0, min(2, int(os.getenv("AI_PROVIDER_MAX_RETRIES", "0")))),
             backoff_seconds=max(
@@ -794,6 +801,7 @@ class AIGateway:
                 pending_bytes = bytearray()
                 first_chunk_at: float | None = None
                 first_visible_at: float | None = None
+                first_visible_timeout = False
                 stream_completion_tokens: float | None = None
                 try:
                     started_request = time.perf_counter()
@@ -844,7 +852,30 @@ class AIGateway:
                                 if 500 <= status <= 599:
                                     raise GatewayHTTPError
                             else:
-                                async for chunk in response.aiter_bytes():
+                                stream_iterator = response.aiter_bytes().__aiter__()
+                                while True:
+                                    try:
+                                        if not visible_content:
+                                            first_visible_remaining = (
+                                                self.config.first_visible_timeout_seconds
+                                                - (time.perf_counter() - started_request)
+                                            )
+                                            if first_visible_remaining <= 0:
+                                                first_visible_timeout = True
+                                                break
+                                            chunk = await asyncio.wait_for(
+                                                stream_iterator.__anext__(),
+                                                timeout=first_visible_remaining,
+                                            )
+                                        else:
+                                            chunk = await stream_iterator.__anext__()
+                                    except StopAsyncIteration:
+                                        break
+                                    except asyncio.TimeoutError:
+                                        if not visible_content:
+                                            first_visible_timeout = True
+                                            break
+                                        raise
                                     if chunk:
                                         if first_chunk_at is None:
                                             # Preserve transport-start timing for diagnostics, but
@@ -892,6 +923,24 @@ class AIGateway:
                                         else:
                                             started_output = True
                                             yield chunk
+                                if first_visible_timeout:
+                                    saw_timeout = True
+                                    circuit.failure(
+                                        self.config.circuit_failure_threshold,
+                                        self.config.circuit_cooldown_seconds,
+                                    )
+                                    logger.warning(
+                                        "ai_stream_provider_first_visible_timeout request_id=%s provider=%s first_chunk_ms=%.2f budget_ms=%.2f next_provider=%s",
+                                        request_id,
+                                        provider.name,
+                                        (first_chunk_at - started_request) * 1000 if first_chunk_at else -1.0,
+                                        self.config.first_visible_timeout_seconds * 1000,
+                                        ordered_providers[provider_index + 1].name
+                                        if provider_index + 1 < len(ordered_providers)
+                                        else "none",
+                                    )
+                                    break
+
                                 if not visible_content and not provider_policy_block:
                                     # A complete reply can legitimately be only a short
                                     # prefix such as "To". Do not reject that solely

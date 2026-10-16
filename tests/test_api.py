@@ -473,6 +473,58 @@ def test_google_news_wrapper_resolves_to_readable_publisher_article(monkeypatch)
     assert fetched == [publisher_url]
 
 
+
+
+def test_google_news_wrapper_retries_with_site_keywords_when_exact_title_misses(monkeypatch):
+    import asyncio
+    from backend import main
+
+    original = "https://news.google.com/rss/articles/opaque-token-2"
+    publisher_url = "https://www.pauta.cl/actualidad/2026/10/16/dolar-chile.html"
+    queries = []
+
+    async def fake_search(query, **_kwargs):
+        queries.append(query)
+        if query.startswith("site:pauta.cl"):
+            return {
+                "ok": True,
+                "results": [{
+                    "title": "Dólar en Chile precio y valor de la divisa",
+                    "url": publisher_url,
+                    "provider": "bing",
+                }],
+            }
+        return {"ok": True, "results": []}
+
+    async def fake_fetch(url, **_kwargs):
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Dólar en Chile",
+            "text": "Texto verificable del artículo original de Pauta. " * 12,
+            "retrieved_at": "2026-10-16T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    result = asyncio.run(main._fetch_web_source(
+        {
+            "title": "Dólar en Chile: precio y valor de la divisa hoy jueves",
+            "url": original,
+            "source_domain": "pauta.cl",
+            "provider": "google_news",
+        },
+        request_id="google-news-keyword-rescue-test",
+        timeout_seconds=2.5,
+    ))
+
+    assert result is not None
+    assert result["url"] == publisher_url
+    assert len(queries) == 2
+    assert queries[1].startswith("site:pauta.cl ")
+
+
 def test_inference_check_does_not_pass_on_unrelated_nonempty_model_text(monkeypatch):
     import asyncio
     from backend import main
