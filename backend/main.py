@@ -1679,10 +1679,14 @@ async def _fetch_web_source(
         and not publisher_host.endswith(".google.com")
     ):
         try:
+            raw_title = str(source.get("title") or "").strip()
+            # Site-qualified exact-title searches are fragile across free engines.
+            # Search the publisher name plus the article title, then strictly accept
+            # only a direct HTTPS URL whose hostname belongs to that publisher.
             rescued = await search_web(
-                f'site:{publisher_host} "{str(source.get("title") or "").strip()}"',
-                timeout_seconds=min(1.2, timeout_seconds),
-                max_results=3,
+                f'"{raw_title}" {publisher_host}',
+                timeout_seconds=min(1.8, timeout_seconds),
+                max_results=5,
                 fast=True,
                 fresh=True,
             )
