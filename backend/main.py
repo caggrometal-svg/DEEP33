@@ -42,8 +42,8 @@ from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
-from backend.weather import build_weather_evidence, fetch_named_location_weather, is_weather_query, resolve_gps_weather
-from backend.decision_router import DecisionRoute, classify_query, universal_router, validate_evidence
+from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
+from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -280,18 +280,16 @@ def utc_now() -> str:
 
 
 async def resolve_universal_weather(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Prefer device GPS, then resolve an explicitly named location."""
-    weather = await resolve_gps_weather(
-        messages,
-        timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
-    )
+    """Select forecast/current weather from the appropriate Open-Meteo endpoint."""
+    query = latest_user_query(messages)
+    timeout = min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5")))
+    if is_forecast_weather_query(query):
+        return await fetch_weather_forecast(messages, query, timeout_seconds=timeout)
+
+    weather = await resolve_gps_weather(messages, timeout_seconds=min(1.5, timeout))
     if weather is not None:
         return weather
-    query = latest_user_query(messages)
-    return await fetch_named_location_weather(
-        query,
-        timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
-    )
+    return await fetch_named_location_weather(query, timeout_seconds=min(1.5, timeout))
 
 
 DEEP33_RUNTIME_TIMEZONE = os.getenv("DEEP33_TIMEZONE", "America/Santiago").strip() or "America/Santiago"
@@ -2037,11 +2035,11 @@ async def run_web_tool_loop(
     if force_web:
         # GPS-aware weather goes through a dedicated current-weather provider first.
         # Generic web search remains the fallback and the transport layer is untouched.
-        if weather is None:
+        if weather is None and not is_forecast_weather_query(latest_user_query(messages)):
             try:
                 weather = await resolve_gps_weather(
                     messages,
-                    timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+                    timeout_seconds=min(1.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "1.5"))),
                 )
             except Exception as exc:
                 logger.warning(
@@ -3474,6 +3472,7 @@ async def generate(
         if DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and is_weather_query(latest_user_query(raw_messages))
+        and not is_forecast_weather_query(latest_user_query(raw_messages))
         else None
     )
     try:
@@ -3567,29 +3566,19 @@ async def generate(
             DecisionRoute.SEISMIC,
             DecisionRoute.FINANCE,
         }:
-            working = [dict(message) for message in messages]
-            working.append({"role": "system", "content": evidence.system_context()})
-            working.append({
-                "role": "system",
-                "content": (
-                    "VALIDACIÓN DEL ENRUTADOR: usa únicamente los datos estructurados "
-                    "suministrados para los hechos actuales de esta consulta. Si un dato "
-                    "no está presente, no lo inventes. Si la pregunta pide una precisión "
-                    "que la fuente no entrega, dilo explícitamente."
-                ),
-            })
-            performance.mark(request_id, "T6_INFERENCE_STARTED")
-            data = await call_gateway(
-                _completion_payload(
-                    working,
-                    payload["model"],
-                    max_tokens=min(payload.get("max_tokens") or 384, 256),
-                    temperature=request.temperature,
-                ),
-                request_id=request_id,
-                idempotency_key=f"{idempotency_key}:router:{decision.route}",
-                deadline=deadline,
-            )
+            # Critical current numbers come directly from validated source data.
+            # Avoid a second LLM rewriting a USD/CLP quote or a seismic count.
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": format_structured_answer(raw_query, evidence),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
             sources = [{
                 "title": evidence.provider or decision.route,
                 "url": evidence.source_url,
@@ -4260,6 +4249,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         if DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and is_weather_query(latest_user_query(raw_messages))
+        and not is_forecast_weather_query(latest_user_query(raw_messages))
         else None
     )
     raw_query = latest_user_query(raw_messages)
@@ -4388,22 +4378,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 router_evidence = await validate_evidence(router_evidence)
                 if router_evidence is not None and router_evidence.ok:
                     web_required = False
-                    working = [dict(message) for message in messages]
-                    working.append({"role": "system", "content": router_evidence.system_context()})
-                    working.append({
-                        "role": "system",
-                        "content": (
-                            "VALIDACIÓN DEL ENRUTADOR: usa únicamente los datos estructurados "
-                            "suministrados para los hechos actuales. Si un dato no está presente, "
-                            "no lo inventes."
-                        ),
-                    })
-                    working.append(_web_personality_lock(resolved_personality))
-                    payload = _completion_payload(
-                        working,
-                        payload["model"],
-                        max_tokens=min(payload.get("max_tokens") or 384, 256),
-                        temperature=request.temperature,
+                    stream_answer_override = format_structured_answer(
+                        latest_user_query(messages),
+                        router_evidence,
                     )
                     sources_count = 1
                     yield _sse_status("sources_ready", request_id, sources=sources_count)
