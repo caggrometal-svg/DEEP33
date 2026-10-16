@@ -132,6 +132,18 @@ def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
     )
 
 
+def _academic_ai_research_queries() -> tuple[tuple[str, str], ...]:
+    """Fan out academic AI discovery across independent real research domains."""
+    return (
+        ("bing", "site:arxiv.org artificial intelligence research paper machine learning"),
+        ("google", "site:ai.stanford.edu artificial intelligence research publications"),
+        ("duckduckgo", "site:csail.mit.edu artificial intelligence research paper"),
+        ("cl0q", "site:berkeley.edu artificial intelligence research machine learning paper"),
+        ("mojeek", "site:cmu.edu artificial intelligence research publications"),
+        ("yahoo", "university artificial intelligence research papers academic labs"),
+    )
+
+
 class WebOrchestrator:
     """Strict-budget parallel search with circuit breaking and graceful fallback."""
 
@@ -639,6 +651,15 @@ class WebOrchestrator:
             and any(term in lowered_cleaned for term in ("tecnología", "tecnologia", "technology", "tech"))
             and any(term in lowered_cleaned for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
         )
+        academic_ai_research_intent = (
+            any(term in lowered_cleaned for term in ("universidad", "university", "universities"))
+            and any(term in lowered_cleaned for term in ("investigación", "investigacion", "research", "paper"))
+            and (
+                "inteligencia artificial" in lowered_cleaned
+                or "artificial intelligence" in lowered_cleaned
+                or re.search(r"\bai\b", lowered_cleaned) is not None
+            )
+        )
         python_asyncio_official_intent = (
             "python" in lowered_cleaned
             and "asyncio" in lowered_cleaned
@@ -755,6 +776,18 @@ class WebOrchestrator:
                 )
                 for index, (provider, company_query) in enumerate(company_queries)
             })
+        if academic_ai_research_intent:
+            # Broad academic wording can collapse to one university in public SERPs.
+            # Query independent real research domains in parallel, then rank every
+            # returned candidate against the untouched user query.
+            academic_queries = _academic_ai_research_queries()
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, academic_query),
+                    name=f"search:academic-ai:{provider}:{index}",
+                )
+                for index, (provider, academic_query) in enumerate(academic_queries)
+            })
         outcomes: list[ProviderOutcome] = []
         pending = set(tasks)
         standard_ready_deadline: float | None = None
@@ -816,6 +849,10 @@ class WebOrchestrator:
                         not commercial_technology_site_intent
                         or sum(_is_chile_commercial_technology_item(item) for item in selected_now)
                         >= min(3, self.max_results)
+                    )
+                    and (
+                        not academic_ai_research_intent
+                        or len(distinct_domains) >= min(3, self.max_results)
                     )
                 )
                 if (

@@ -1039,3 +1039,91 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
     assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
 
+
+
+def test_academic_ai_research_intent_fans_out_to_independent_domains():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.15,
+        global_budget_seconds=1.0,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+
+    async def provider(query, _timeout, _limit):
+        lowered = query.casefold()
+        if "site:arxiv.org" in lowered:
+            return [{
+                "title": "Universidad investigación inteligencia artificial paper — arXiv",
+                "url": "https://arxiv.org/abs/2601.00001",
+                "snippet": "Academic artificial intelligence research paper from university researchers.",
+            }]
+        if "site:ai.stanford.edu" in lowered:
+            return [{
+                "title": "Stanford universidad investigación inteligencia artificial paper",
+                "url": "https://ai.stanford.edu/research/",
+                "snippet": "University artificial intelligence research publications and papers.",
+            }]
+        if "site:csail.mit.edu" in lowered:
+            return [{
+                "title": "MIT universidad investigación inteligencia artificial paper",
+                "url": "https://www.csail.mit.edu/research/artificial-intelligence",
+                "snippet": "Academic AI research papers from a university laboratory.",
+            }]
+        return [{
+            "title": "UCLA universidad investigación inteligencia artificial",
+            "url": "https://www.ucla.edu/research/artificial-intelligence",
+            "snippet": "University artificial intelligence research.",
+        }]
+
+    for name in list(orchestrator.providers):
+        orchestrator.providers[name] = provider
+    for name in list(orchestrator.fallback_providers):
+        orchestrator.fallback_providers[name] = provider
+
+    result = asyncio.run(
+        orchestrator.search(
+            "universidad investigación inteligencia artificial paper",
+            fresh=True,
+        )
+    )
+
+    domains = {item["source_domain"] for item in result["results"]}
+    assert result["ok"] is True, result
+    assert len(domains) >= 3, result
+    assert {"arxiv.org", "ai.stanford.edu", "csail.mit.edu"} & domains
+
+
+def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monkeypatch):
+    import backend.main as main
+
+    async def fake_stream(payload, **kwargs):
+        yield b"data: [DONE]\n\n"
+
+    monkeypatch.setattr(main.gateway, "stream", fake_stream)
+
+    async def exercise():
+        completion_state = {}
+        generator = main.stream_gateway(
+            {"messages": [{"role": "user", "content": "busca en internet"}], "model": "test"},
+            "session",
+            "NEUTRO",
+            request_id="empty-visible-fallback",
+            idempotency_key="empty-visible-fallback",
+            request_hash="empty-visible-fallback",
+            lease_token="lease",
+            completion_state=completion_state,
+        )
+        output = bytearray()
+        async for part in generator:
+            output.extend(part)
+        raw = output.decode("utf-8")
+        assert "AI_GATEWAY_INVALID_RESPONSE" not in raw
+        assert '"content":' in raw
+        assert "No pude completar la síntesis" in raw
+        assert raw.endswith("data: [DONE]\n\n")
+        assert completion_state["assistant_text"].startswith("No pude completar la síntesis")
+
+    asyncio.run(exercise())
