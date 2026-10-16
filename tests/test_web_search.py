@@ -1310,3 +1310,18 @@ def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
     domains = {item["source_domain"] for item in results}
     assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
     assert len(domains) >= 3
+
+
+def test_chile_public_information_authoritative_navigation_has_three_official_domains() -> None:
+    from tools.web_search import _authoritative_navigation_results
+
+    results = _authoritative_navigation_results(
+        "sitio gubernamental Chile información pública"
+    )
+    domains = {item["source_domain"] for item in results}
+    assert {
+        "chileatiende.gob.cl",
+        "bcn.cl",
+        "consejotransparencia.cl",
+    }.issubset(domains)
+    assert len(domains) >= 3
