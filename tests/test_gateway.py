@@ -689,3 +689,39 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
 
     assert dots_payload["reasoning_effort"] == "low"
     assert "reasoning_effort" not in laguna_payload
+
+
+def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
+    primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
+    fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(primary, fallback),
+            timeout_seconds=10,
+            provider_timeout_seconds=10,
+            first_visible_timeout_seconds=2.2,
+            max_retries=0,
+        )
+    )
+
+    first = gateway._stream_visible_budget(0, 2)
+    second = gateway._stream_visible_budget(1, 2)
+    assert first == pytest.approx(0.35)
+    assert second == pytest.approx(2.50)
+    assert first + second < 3.0
+
+
+def test_stream_small_test_budget_remains_exact() -> None:
+    primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
+    fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(primary, fallback),
+            timeout_seconds=2,
+            provider_timeout_seconds=2,
+            first_visible_timeout_seconds=0.08,
+            max_retries=0,
+        )
+    )
+    assert gateway._stream_visible_budget(0, 2) == pytest.approx(0.08)
+    assert gateway._stream_visible_budget(1, 2) == pytest.approx(0.08)
