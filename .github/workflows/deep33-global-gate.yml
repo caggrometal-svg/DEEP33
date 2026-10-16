@@ -30,8 +30,10 @@ permissions:
   contents: read
 
 jobs:
+  # Always produce a real gate result. On main this job requires authenticated live
+  # Railway/Android verification; on PRs it runs the deterministic Global Gate suite
+  # without pretending that an undeployed branch is the live production SHA.
   production_gate:
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -139,6 +141,10 @@ jobs:
           done
           echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"
           exit 1
+
+      - name: Record branch-safe gate mode
+        if: env.DEEP33_REQUIRE_LIVE_GATE != 'true'
+        run: echo "GLOBAL_GATE_MODE=UNIT_ONLY; live production verification is mandatory on main"
 
       - name: DEEP33-TEST-GLOBAL-101026
         run: python test_deep33_global_gate.py
