@@ -812,9 +812,19 @@ class AIGateway:
                 stream_completion_tokens: float | None = None
                 try:
                     started_request = time.perf_counter()
-                    timeout = self._remaining(
-                        deadline, self.config.provider_timeout_seconds
+                    visible_budget = self._stream_visible_budget(
+                        provider_index,
+                        len(ordered_providers),
                     )
+                    request_budget = self.config.provider_timeout_seconds
+                    if provider_index < len(ordered_providers) - 1 and visible_budget < 1.0:
+                        # Bound connection+headers for the hedge provider too;
+                        # otherwise a slow HTTP handshake could consume the whole
+                        # TTFT budget before the first SSE byte is read.
+                        request_budget = min(request_budget, max(0.50, visible_budget + 0.15))
+                    elif provider_index == len(ordered_providers) - 1 and visible_budget >= 1.0:
+                        request_budget = min(request_budget, visible_budget)
+                    timeout = self._remaining(deadline, request_budget)
                     body = {**self._provider_payload(payload, provider), "stream": True}
                     async with self._client().stream(
                         "POST",
@@ -864,7 +874,7 @@ class AIGateway:
                                     try:
                                         if not visible_content:
                                             first_visible_remaining = (
-                                                self.config.first_visible_timeout_seconds
+                                                visible_budget
                                                 - (time.perf_counter() - started_request)
                                             )
                                             if first_visible_remaining <= 0:
@@ -941,7 +951,7 @@ class AIGateway:
                                         request_id,
                                         provider.name,
                                         (first_chunk_at - started_request) * 1000 if first_chunk_at else -1.0,
-                                        self.config.first_visible_timeout_seconds * 1000,
+                                        visible_budget * 1000,
                                         ordered_providers[provider_index + 1].name
                                         if provider_index + 1 < len(ordered_providers)
                                         else "none",
