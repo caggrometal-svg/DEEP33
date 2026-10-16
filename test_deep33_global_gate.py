@@ -369,13 +369,21 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         deferred_start = route.index("async def deferred_stream")
         deferred = route[deferred_start:]
 
-        ordered = [
-            'yield _sse_status("thinking"',
-            'yield _sse_status("searching"',
-            '"sources_ready"',
-            'yield _sse_status("token_stream"',
+        thinking_offset = deferred.index('yield _sse_status("thinking"')
+        searching_offset = deferred.index('yield _sse_status("searching"', thinking_offset)
+        # Dedicated structured-data routes may emit their own earlier sources_ready
+        # event without entering the generic web-search branch. Check the web branch's
+        # matching sources_ready instead of the first occurrence in the whole function.
+        sources_ready_offset = deferred.index('"sources_ready"', searching_offset)
+        token_stream_offset = deferred.index(
+            'yield _sse_status("token_stream"', sources_ready_offset
+        )
+        offsets = [
+            thinking_offset,
+            searching_offset,
+            sources_ready_offset,
+            token_stream_offset,
         ]
-        offsets = [deferred.index(marker) for marker in ordered]
         self.assertEqual(offsets, sorted(offsets))
         self.assertIn("await asyncio.gather(*pending_tasks, return_exceptions=True)", deferred)
         self.assertEqual(main._sse_text_chunks(""), [])
