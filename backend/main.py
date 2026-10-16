@@ -1828,16 +1828,32 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
     if must_fetch or not snippets_sufficient:
-        fetch_timeout = max(
-            6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
-        )
-        fetch_budget = max(
-            6.0, min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
-        )
+        if required_pages == 1 and not contrast_required:
+            # A single-source answer should not spend the deep-research budget
+            # waiting on one dead publisher. Race two independent candidates and
+            # stop when the first page with sufficient extracted text is ready.
+            fetch_timeout = max(
+                1.0,
+                min(3.0, float(os.getenv("WEB_FETCH_FAST_TIMEOUT_SECONDS", "2.5"))),
+            )
+            fetch_budget = max(
+                1.0,
+                min(3.2, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "2.8"))),
+            )
+            fetch_concurrency = 2
+        else:
+            fetch_timeout = max(
+                3.0,
+                min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            )
+            fetch_budget = max(
+                4.0,
+                min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
+            )
+            fetch_concurrency = 2
         fetch_deadline = asyncio.get_running_loop().time() + fetch_budget
         pending_fetches: dict[asyncio.Task, dict[str, Any]] = {}
         next_candidate = 0
-        fetch_concurrency = 2 if required_pages > 1 else 1
         fetched_domains: set[str] = set()
         try:
             while (
@@ -1880,6 +1896,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
                 for task in done:
                     source = pending_fetches.pop(task)
+                    if len(fetched_pages) >= required_pages:
+                        continue
                     try:
                         page = task.result()
                     except asyncio.CancelledError:
