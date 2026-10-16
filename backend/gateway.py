@@ -770,7 +770,7 @@ class AIGateway:
                     },
                     {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
                 ],
-                "max_tokens": 32,
+                "max_tokens": 128,
                 "temperature": 0.0,
             },
             request_id=request_id,
