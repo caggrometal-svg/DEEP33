@@ -895,14 +895,19 @@ async def _google_search(query, timeout_seconds, max_results, *, preserve_candid
     """Search general public web pages with Google, not a news-only feed."""
     client = await _search_http_client()
     market = _bing_market_params(query)
+    google_params = {
+        "q": query,
+        "hl": market["setlang"],
+        "gl": market["cc"].upper(),
+        "num": str(min(10, max(3, int(max_results) * 2))),
+    }
+    if _looks_realtime_news(query):
+        # Provider-side freshness filter: keep current-news retrieval inside the
+        # last day instead of relying only on post-ranking freshness heuristics.
+        google_params["tbs"] = "qdr:d"
     response = await client.get(
         "https://www.google.com/search",
-        params={
-            "q": query,
-            "hl": market["setlang"],
-            "gl": market["cc"].upper(),
-            "num": str(min(10, max(3, int(max_results) * 2))),
-        },
+        params=google_params,
         headers={
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
