@@ -1665,10 +1665,61 @@ async def _fetch_web_source(
         )
         return None
     started = time.perf_counter()
+
+    # Google News RSS often gives a wrapper URL while also identifying the
+    # original publisher domain. Resolve that source-domain/title pair through
+    # the normal multi-provider search path before fetching; otherwise several
+    # independent publishers collapse to news.google.com and yield no article text.
+    publisher_host = str(source.get("source_domain") or "").strip().casefold().removeprefix("www.")
+    original_host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+    if (
+        original_host == "news.google.com"
+        and publisher_host
+        and publisher_host != "google.com"
+        and not publisher_host.endswith(".google.com")
+    ):
+        try:
+            rescued = await search_web(
+                f'site:{publisher_host} "{str(source.get("title") or "").strip()}"',
+                timeout_seconds=min(1.2, timeout_seconds),
+                max_results=3,
+                fast=True,
+                fresh=True,
+            )
+            rescued_results = rescued.get("results") if isinstance(rescued, dict) else []
+            for candidate in rescued_results if isinstance(rescued_results, list) else []:
+                candidate_url = str(candidate.get("url") or "").strip() if isinstance(candidate, dict) else ""
+                candidate_host = (urlparse(candidate_url).hostname or "").casefold().removeprefix("www.")
+                if (
+                    candidate_url.startswith("https://")
+                    and candidate_host
+                    and (candidate_host == publisher_host or candidate_host.endswith("." + publisher_host))
+                    and candidate_host != "news.google.com"
+                ):
+                    url = candidate_url
+                    provider = str(candidate.get("provider") or provider)
+                    source = {**source, "url": url, "title": str(candidate.get("title") or source.get("title") or url)}
+                    logger.info(
+                        "web_evidence_google_news_unwrapped request_id=%s publisher=%s provider=%s",
+                        request_id or "unknown",
+                        publisher_host,
+                        provider,
+                    )
+                    break
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "web_evidence_google_news_unwrap_failed request_id=%s publisher=%s error=%s",
+                request_id or "unknown",
+                publisher_host,
+                type(exc).__name__,
+            )
+
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=min(2.2, timeout_seconds) if original_host == "news.google.com" and urlparse(url).hostname != "news.google.com" else timeout_seconds,
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
@@ -1780,6 +1831,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 or search_result.get("provider")
                 or "unknown"
             ),
+            "source_domain": str(
+                source.get("source_domain")
+                or (urlparse(url).hostname or "")
+            ).casefold().removeprefix("www.")[:255],
             "published_at": source.get("published_at"),
         }
 
@@ -1809,7 +1864,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     candidates: list[dict[str, Any]] = []
     seen_candidate_domains: set[str] = set()
     for source in sources.values():
-        host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
+        if not host:
+            host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
         if not host or host in seen_candidate_domains:
             continue
         seen_candidate_domains.add(host)
@@ -3143,7 +3200,23 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 timeout=remaining,
             )
             result = normalized_generation(data, DEFAULT_PERSONALITY)
-            return "PASS", data, result["text"]
+            text_value = str(result.get("text") or "").strip()
+            if "DEEP33_DIAGNOSTIC_OK" in text_value:
+                return "PASS", data, text_value
+
+            provider_meta = data.get("_deep33_gateway") or {}
+            logger.warning(
+                "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
+                request_id,
+                diagnostic_id,
+                provider_meta.get("provider", "unknown"),
+                provider_meta.get("model", "unknown"),
+                len(text_value),
+            )
+            if attempt == 0 and time.monotonic() + 0.15 < deadline:
+                await asyncio.sleep(0.15)
+                continue
+            return "FAIL", data, text_value
         except GatewayTimeoutError:
             last_timeout = True
             logger.warning(
@@ -3156,7 +3229,18 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 await asyncio.sleep(1.0)
                 continue
             break
-        except (GatewayHTTPError, GatewayInvalidResponseError, HTTPException):
+        except GatewayInvalidResponseError:
+            logger.warning(
+                "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
+                request_id,
+                diagnostic_id,
+                attempt + 1,
+            )
+            if attempt == 0 and time.monotonic() + 0.25 < deadline:
+                await asyncio.sleep(0.25)
+                continue
+            return "FAIL", None, None
+        except (GatewayHTTPError, HTTPException):
             return "FAIL", None, None
         except Exception as exc:
             logger.warning(
@@ -3179,7 +3263,7 @@ async def inference_check(request: Request) -> dict:
         "request_id": request_id,
         "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
         "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
-        "text_ok": text == "DEEP33_DIAGNOSTIC_OK",
+        "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
         "timestamp": utc_now(),
     }
 

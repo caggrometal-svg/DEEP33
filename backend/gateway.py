@@ -516,12 +516,13 @@ class AIGateway:
         request_id: str | None = None,
         idempotency_key: str | None = None,
         deadline: float | None = None,
+        prefer_ttft: bool = False,
     ) -> dict:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
 
-        for provider in self._ordered_providers():
+        for provider in self._ordered_providers(prefer_ttft=prefer_ttft):
             circuit = self._circuit(provider)
             now = time.monotonic()
             if not circuit.available(now):
@@ -604,11 +605,29 @@ class AIGateway:
                         break
 
                     provider_text = ""
+                    has_tool_calls = False
                     choices = data.get("choices")
                     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
                         message = choices[0].get("message")
                         if isinstance(message, dict):
                             provider_text = str(message.get("content") or "")
+                            has_tool_calls = bool(
+                                message.get("tool_calls") or message.get("function_call")
+                            )
+                    if not provider_text.strip() and not has_tool_calls:
+                        # A 200 with no assistant content is not a successful
+                        # inference. Fail over instead of exposing an empty reply
+                        # or recording a false-positive production health check.
+                        saw_invalid_response = True
+                        provider_failed_transiently = True
+                        logger.warning(
+                            "ai_provider_empty_response request_id=%s provider=%s model=%s attempt=%s",
+                            request_id,
+                            provider.name,
+                            provider.model,
+                            attempt + 1,
+                        )
+                        break
                     if self._is_provider_policy_block(provider_text):
                         logger.warning(
                             "ai_provider_policy_block request_id=%s provider=%s",
@@ -724,14 +743,20 @@ class AIGateway:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "Return the requested diagnostic token exactly.",
+                        "content": (
+                            "Reply with exactly this token and no other text: "
+                            "DEEP33_DIAGNOSTIC_OK"
+                        ),
                     },
                     {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
                 ],
+                "max_tokens": 16,
+                "temperature": 0.0,
             },
             request_id=request_id,
             idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
             deadline=deadline,
+            prefer_ttft=True,
         )
 
     async def stream(
