@@ -497,6 +497,79 @@ def test_stream_fails_over_after_empty_200_without_forwarding_empty_chunks() -> 
     assert output.count(b"data: [DONE]") == 1
 
 
+
+
+def test_stream_fails_over_when_provider_emits_metadata_but_no_visible_text_before_budget() -> None:
+    calls: list[str] = []
+
+    class SlowMetadataStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+            await asyncio.sleep(0.25)
+            yield b'data: {"choices":[{"delta":{"content":"TOO_LATE"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        async def aclose(self) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(
+                200,
+                request=request,
+                headers={"content-type": "text/event-stream"},
+                stream=SlowMetadataStream(),
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"FAST_FALLBACK"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        provider_timeout_seconds=2,
+        first_visible_timeout_seconds=0.08,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> bytes:
+        output = bytearray()
+        async for part in gateway.stream({"messages": [{"role": "user", "content": "hi"}]}):
+            output.extend(part)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        started = __import__("time").perf_counter()
+        output = asyncio.run(run_stream())
+        elapsed = __import__("time").perf_counter() - started
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == ["https://primary.test/chat", "https://fallback.test/chat"]
+    assert b"FAST_FALLBACK" in output
+    assert b"TOO_LATE" not in output
+    assert elapsed < 0.2
+
+
 def test_stream_ttft_uses_first_visible_text_not_role_metadata() -> None:
     calls: list[str] = []
 
