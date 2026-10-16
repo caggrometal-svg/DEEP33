@@ -61,6 +61,30 @@ function requireClientBody(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+const AUTH_RPC_RETRIES = 3;
+const AUTH_RPC_BACKOFF_MS = 150;
+
+async function retryTransient<T>(
+  operation: () => Promise<T>,
+  label: string,
+  shouldRetry: (value: T) => boolean,
+): Promise<T> {
+  let last: T | undefined;
+  for (let attempt = 0; attempt < AUTH_RPC_RETRIES; attempt++) {
+    last = await operation();
+    if (!shouldRetry(last) || attempt === AUTH_RPC_RETRIES - 1) return last;
+    const delay = AUTH_RPC_BACKOFF_MS * (2 ** attempt) + Math.floor(Math.random() * 75);
+    console.warn(JSON.stringify({
+      event: "deep33_auth_retry",
+      operation: label,
+      attempt: attempt + 1,
+      delay_ms: delay,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  return last as T;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
@@ -91,12 +115,23 @@ Deno.serve(async (req) => {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: existingMapping, error: lookupError } = await admin.rpc(
-        "deep33_auth_profile_lookup",
-        { p_memory_profile_id: localProfileId },
+      const lookup = await retryTransient(
+        () => admin.rpc(
+          "deep33_auth_profile_lookup",
+          { p_memory_profile_id: localProfileId },
+        ),
+        "profile_lookup",
+        (result) => Boolean(result.error),
       );
+      const existingMapping = lookup.data;
+      const lookupError = lookup.error;
 
       if (lookupError) {
+        console.error(JSON.stringify({
+          event: "deep33_auth_profile_lookup_failed",
+          code: "AUTH_PROFILE_LOOKUP_FAILED",
+          message: lookupError.message,
+        }));
         return json({ error: "AUTH_PROFILE_LOOKUP_FAILED" }, 503);
       }
       // Supabase returns scalar SQL functions as the scalar value itself.
@@ -163,13 +198,19 @@ Deno.serve(async (req) => {
         userId = signedIn.data.user.id;
       }
 
-      const { data: bound, error: mapError } = await admin.rpc(
-        "deep33_auth_profile_bind",
-        {
-          p_user_id: userId,
-          p_memory_profile_id: localProfileId,
-        },
+      const bind = await retryTransient(
+        () => admin.rpc(
+          "deep33_auth_profile_bind",
+          {
+            p_user_id: userId,
+            p_memory_profile_id: localProfileId,
+          },
+        ),
+        "profile_bind",
+        (result) => Boolean(result.error) || result.data !== true,
       );
+      const bound = bind.data;
+      const mapError = bind.error;
 
       if (mapError || bound !== true) {
         const cleanupUserId = createdFallbackUserId ?? createdAnonymousUserId;
