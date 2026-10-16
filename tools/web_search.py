@@ -1043,6 +1043,39 @@ def _authoritative_navigation_results(query: str) -> list[dict]:
             },
         ])
 
+    chile_public_information = (
+        "chile" in lowered
+        and any(term in lowered for term in (
+            "sitio gubernamental", "sitio oficial", "información pública",
+            "informacion publica", "public information", "portal del gobierno",
+            "portal gubernamental", "datos abiertos", "transparencia",
+        ))
+    )
+    if chile_public_information:
+        results.extend([
+            {
+                "title": "ChileAtiende — servicios y trámites del Estado",
+                "url": "https://www.chileatiende.gob.cl/instituciones/chileatiende",
+                "snippet": "Portal oficial que reúne servicios y trámites de instituciones públicas de Chile.",
+                "source_domain": "chileatiende.gob.cl",
+                "provider": "authoritative_resolver",
+            },
+            {
+                "title": "Ley 20.285 sobre acceso a la información pública",
+                "url": "https://www.bcn.cl/leychile/navegar?idNorma=276363",
+                "snippet": "Biblioteca del Congreso Nacional: texto oficial de la Ley de Transparencia y acceso a la información pública.",
+                "source_domain": "bcn.cl",
+                "provider": "authoritative_resolver",
+            },
+            {
+                "title": "Solicitar información pública — Consejo para la Transparencia",
+                "url": "https://www.consejotransparencia.cl/solicitud-informacionpublica/",
+                "snippet": "Consejo para la Transparencia: acceso y solicitud de información pública en Chile.",
+                "source_domain": "consejotransparencia.cl",
+                "provider": "authoritative_resolver",
+            },
+        ])
+
     nasa_artemis = "nasa" in lowered and "artemis" in lowered and any(
         term in lowered for term in ("official", "oficial", "mission", "misión", "mision")
     )

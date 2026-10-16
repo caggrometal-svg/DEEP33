@@ -4314,14 +4314,42 @@ async def stream_gateway(
             assistant_parts.append(safe_tail)
             yield _sse_delta(safe_tail)
         performance.mark(request_id, "T8_STREAM_FINISHED")
-    except GatewayTimeoutError:
-        yield _sse_error("AI_GATEWAY_TIMEOUT")
-        return
-    except GatewayHTTPError:
-        yield _sse_error("AI_GATEWAY_HTTP_ERROR")
-        return
-    except GatewayInvalidResponseError:
-        yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
+    except (GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+        # Provider failover may still terminate before the first usable token.
+        # Keep the SSE contract visible and non-speculative instead of returning
+        # an error-only stream that Android renders as an empty assistant turn.
+        reason = (
+            "timeout" if isinstance(exc, GatewayTimeoutError)
+            else "http_error" if isinstance(exc, GatewayHTTPError)
+            else "invalid_response"
+        )
+        assistant_text = (
+            "No pude completar la respuesta en este intento porque el proveedor "
+            "de inferencia falló antes de entregar texto utilizable. No voy a "
+            "inventar una respuesta; puedes reintentar la consulta."
+        )
+        logger.warning(
+            "stream_provider_visible_fallback request_id=%s reason=%s stream_bytes=%s",
+            request_id,
+            reason,
+            len(collected),
+        )
+        if first_output_at is None:
+            first_output_at = time.perf_counter()
+            performance.mark(request_id, "T7_FIRST_TOKEN")
+            ttft_ms = (first_output_at - stream_started) * 1000
+            _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+            logger.info(
+                "stream_ttft request_id=%s ttft_ms=%.2f path=provider-visible-fallback",
+                request_id,
+                ttft_ms,
+            )
+        performance.mark(request_id, "T8_STREAM_FINISHED")
+        for piece in _sse_text_chunks(assistant_text):
+            yield _sse_delta(piece)
+        if completion_state is not None:
+            completion_state["assistant_text"] = assistant_text
+        yield b"data: [DONE]\n\n"
         return
 
     if tool_markup_filter.suppressed:
