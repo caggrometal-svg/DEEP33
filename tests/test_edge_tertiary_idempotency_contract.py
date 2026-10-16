@@ -31,4 +31,6 @@ def test_edge_realtime_news_keeps_publisher_provenance_and_ignores_time_fillers(
     assert 'publisherUrlMatch = itemXml.match(/<source\\b' in proxy
     assert 'source_domain: String(item.source_domain ?? "").slice(0, 255)' in proxy
     assert 'publisherHost.endsWith(".cl")' in proxy
+    assert 'source_domain: String(result.source_domain || "").slice(0, 255)' in proxy
+    assert 'const publisherDomain = String(item.source_domain || "")' in proxy
 
