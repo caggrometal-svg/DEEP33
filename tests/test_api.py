@@ -421,3 +421,110 @@ def test_generate_claim_failure_preserves_original_error_without_a_lease(monkeyp
         await asyncio.wait_for(cancelled.wait(), timeout=0.5)
 
     asyncio.run(exercise())
+
+
+
+def test_google_news_wrapper_resolves_to_readable_publisher_article(monkeypatch):
+    import asyncio
+    from backend import main
+
+    original = "https://news.google.com/rss/articles/opaque-token"
+    publisher_url = "https://www.emol.com/noticias/chile/article.html"
+    fetched = []
+
+    async def fake_search(query, **_kwargs):
+        assert "site:emol.com" in query
+        return {
+            "ok": True,
+            "results": [{
+                "title": "Noticia de Chile",
+                "url": publisher_url,
+                "provider": "bing",
+            }],
+        }
+
+    async def fake_fetch(url, **_kwargs):
+        fetched.append(url)
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Noticia de Chile",
+            "text": "Texto extraído del artículo de Emol. " * 12,
+            "retrieved_at": "2026-10-16T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    result = asyncio.run(main._fetch_web_source(
+        {
+            "title": "Noticia de Chile",
+            "url": original,
+            "source_domain": "www.emol.com",
+            "provider": "google_news",
+        },
+        request_id="google-news-rescue-test",
+        timeout_seconds=2.5,
+    ))
+
+    assert result is not None
+    assert result["url"] == publisher_url
+    assert fetched == [publisher_url]
+
+
+def test_inference_check_does_not_pass_on_unrelated_nonempty_model_text(monkeypatch):
+    import asyncio
+    from backend import main
+
+    calls = 0
+
+    async def fake_diagnostic_inference(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "model": "test-model",
+            "_deep33_gateway": {"provider": "test-provider", "model": "test-model"},
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "unrelated but non-empty response"},
+                "finish_reason": "stop",
+            }],
+        }
+
+    monkeypatch.setattr(main.gateway, "diagnostic_inference", fake_diagnostic_inference)
+    status, _data, text_value = asyncio.run(main.run_inference_check("test-inference-check"))
+
+    assert status == "FAIL"
+    assert text_value == "unrelated but non-empty response"
+    assert calls == 2
+
+
+def test_diagnostic_inference_uses_a_short_deterministic_completion(monkeypatch):
+    import asyncio
+    from backend.gateway import AIGateway
+
+    gateway = AIGateway()
+    seen = {}
+
+    async def fake_complete(payload, **kwargs):
+        seen["payload"] = payload
+        seen["kwargs"] = kwargs
+        return {
+            "model": "test-model",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "DEEP33_DIAGNOSTIC_OK"},
+                "finish_reason": "stop",
+            }],
+        }
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    result = asyncio.run(gateway.diagnostic_inference(
+        request_id="short-diagnostic-test",
+        deadline=__import__("time").monotonic() + 2.0,
+    ))
+
+    assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
+    assert seen["payload"]["max_tokens"] == 16
+    assert seen["payload"]["temperature"] == 0.0
+    assert seen["kwargs"]["prefer_ttft"] is True
