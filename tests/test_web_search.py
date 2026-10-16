@@ -1253,3 +1253,15 @@ def test_google_news_keeps_explicit_publisher_site_scope(monkeypatch) -> None:
     )
 
     assert seen == ["site:emol.com Chile política gobierno Congreso noticias hoy"]
+
+
+def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
+    from backend.search.resilient import _commercial_technology_queries
+
+    queries = _commercial_technology_queries()
+    assert len(queries) >= 4
+    assert all(not query.casefold().lstrip().startswith("site:") for _, query in queries)
+    corpus = " ".join(query.casefold() for _, query in queries)
+    assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
+    assert len({provider for provider, _ in queries}) == len(queries)
+
