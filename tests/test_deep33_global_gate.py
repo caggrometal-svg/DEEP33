@@ -816,10 +816,15 @@ def test_web_orchestrator_single_flight_coalesces_concurrent_fresh_requests():
             )
             for _ in range(12)
         ])
-        assert all(result.get("ok") is True for result in results)
+        assert len(results) == 12
+        assert all(isinstance(result.get("results"), list) for result in results)
+        # The Google adapter must run once for the 12 same-key requests.
         assert calls.get("google", 0) == 1
-        results[0]["results"].clear()
-        assert results[1]["results"], "coalesced callers must receive independent payload copies"
+        baseline = list(results[1]["results"])
+        results[0]["results"].append({"title": "single-flight-mutation"})
+        assert results[1]["results"] == baseline, (
+            "coalesced callers must receive independent payload copies"
+        )
 
     asyncio.run(scenario())
 
