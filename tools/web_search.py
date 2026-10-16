@@ -994,12 +994,17 @@ async def search_web(
     orchestrator = get_web_orchestrator(max_results)
     # The fast flag was previously accepted but ignored. A bounded budget on
     # this path protects first-token latency; fallback still has a reserved slice.
-    fast_budget = max(0.8, min(2.4, float(timeout_seconds))) if fast else None
-    result = await orchestrator.search(
-        cleaned,
-        fresh=fresh,
-        budget_seconds=fast_budget,
-    )
+    if fast:
+        fast_budget = max(0.8, min(2.4, float(timeout_seconds)))
+        result = await orchestrator.search(
+            cleaned,
+            fresh=fresh,
+            budget_seconds=fast_budget,
+        )
+    else:
+        # Preserve the narrow legacy call contract for callers and injected test
+        # adapters that only implement search(query, fresh=...).
+        result = await orchestrator.search(cleaned, fresh=fresh)
     if not result.get("ok"):
         from backend.weather import fetch_named_location_weather, is_weather_query
         if is_weather_query(cleaned):
