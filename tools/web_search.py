@@ -1089,7 +1089,7 @@ async def search_web(
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
     max_results = max(1, min(8, int(max_results)))
-    authoritative_seed = _authoritative_navigation_results(cleaned)
+    authoritative_seed = _authoritative_navigation_results(cleaned) if provider is None else []
     if authoritative_seed:
         limited = authoritative_seed[:max_results]
         now = datetime.now(timezone.utc).isoformat()
