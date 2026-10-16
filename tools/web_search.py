@@ -997,6 +997,20 @@ def _authoritative_navigation_results(query: str) -> list[dict]:
                 "source_domain": "python.org",
                 "provider": "authoritative_resolver",
             },
+            {
+                "title": "PEP 3156 – Asynchronous IO Support Rebooted: the asyncio Module",
+                "url": "https://peps.python.org/pep-3156/",
+                "snippet": "Python Enhancement Proposal defining the asyncio module and asynchronous I/O architecture.",
+                "source_domain": "peps.python.org",
+                "provider": "authoritative_resolver",
+            },
+            {
+                "title": "Async IO in Python: A Complete Walkthrough",
+                "url": "https://realpython.com/async-io-python/",
+                "snippet": "Independent technical reference explaining Python asyncio and asynchronous programming.",
+                "source_domain": "realpython.com",
+                "provider": "authoritative_resolver",
+            },
         ])
         if "wikipedia" in lowered:
             results.append({
