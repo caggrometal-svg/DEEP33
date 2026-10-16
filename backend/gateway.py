@@ -328,6 +328,15 @@ class AIGateway:
             raise GatewayTimeoutError
         return max(0.5, min(default, remaining))
 
+    def _stream_visible_budget(self, provider_index: int, provider_count: int) -> float:
+        """Reserve a sub-3s first-visible envelope across provider failover."""
+        configured = self.config.first_visible_timeout_seconds
+        if provider_count <= 1 or configured < 1.0:
+            return configured
+        if provider_index < provider_count - 1:
+            return min(configured, 0.35)
+        return max(configured, 2.40)
+
     @staticmethod
     def _provider_url_is_secure(value: str) -> bool:
         try:
