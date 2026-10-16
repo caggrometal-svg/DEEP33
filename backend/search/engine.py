@@ -418,11 +418,17 @@ def _evidence_text(item: dict) -> str:
 
 
 def _source_host(item: dict) -> str:
-    """Use a feed-provided publisher host when it is valid, otherwise the result URL host."""
-    domain = str(item.get("source_domain") or "").strip().casefold().rstrip(".")
+    """Use a normalized editorial publisher host before falling back to the result URL."""
+    domain = (
+        str(item.get("source_domain") or "")
+        .strip()
+        .casefold()
+        .rstrip(".")
+        .removeprefix("www.")
+    )
     if domain and re.fullmatch(r"[a-z0-9.-]{1,253}", domain) and "." in domain:
         return domain
-    return _host(str(item.get("url") or ""))
+    return _host(str(item.get("url") or "")).removeprefix("www.")
 
 
 def _similarity(left: dict, right: dict) -> float:
