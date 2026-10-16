@@ -2900,8 +2900,21 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             }
 
         # /v1/web/search is an end-to-end search-and-read contract: result links
-        # are not considered useful until an original URL yields extracted text.
-        fetch_candidates = list(normalized_sources.values())[:2]
+        # are not considered useful until an original publisher URL yields extracted
+        # text. Probe several *editorially distinct* candidates so one blocked RSS
+        # wrapper cannot crowd out all readable sources.
+        fetch_candidates: list[dict[str, Any]] = []
+        seen_fetch_domains: set[str] = set()
+        for source in normalized_sources.values():
+            editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
+            if not editorial_host:
+                editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            if not editorial_host or editorial_host in seen_fetch_domains:
+                continue
+            seen_fetch_domains.add(editorial_host)
+            fetch_candidates.append(source)
+            if len(fetch_candidates) >= 4:
+                break
         fetch_timeout = max(
             6.0,
             min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
@@ -2919,6 +2932,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         )
         fetched_pages: list[dict[str, Any]] = []
         fetch_failures: list[dict[str, str]] = []
+        resolved_urls: dict[str, str] = {}
         for source, fetched in zip(fetch_candidates, fetch_results):
             if isinstance(fetched, BaseException):
                 if isinstance(fetched, asyncio.CancelledError):
@@ -2945,6 +2959,24 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 })
                 continue
             fetched_pages.append(fetched)
+            original_source_url = str(source.get("url") or "").strip()
+            resolved_source_url = str(fetched.get("url") or "").strip()
+            if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
+                resolved_urls[original_source_url] = resolved_source_url
+
+        # Surface verified direct publisher URLs to callers. Keep the wrapper in
+        # original_url for diagnostics, but never make clients navigate a Google
+        # News opaque URL after the backend already resolved and fetched its source.
+        resolved_results: list[dict[str, Any]] = []
+        for item in list(result.get("results") or []):
+            if not isinstance(item, dict):
+                continue
+            original_url = str(item.get("url") or "").strip()
+            direct_url = resolved_urls.get(original_url)
+            if direct_url and direct_url != original_url:
+                resolved_results.append({**item, "original_url": original_url, "url": direct_url})
+            else:
+                resolved_results.append(dict(item))
 
         fetched_domains = {
             str(page.get("domain") or "")
@@ -2984,6 +3016,9 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
 
         response_payload = dict(result)
+        if resolved_results:
+            response_payload["results"] = resolved_results
+            response_payload["sources"] = resolved_results
         response_payload.update({
             "ok": final_ok,
             "status": status,
