@@ -4273,6 +4273,50 @@ async def _finalize_stream(
             )
 
 
+
+def _grounded_web_stream_fallback(
+    query: str,
+    compact_evidence: dict[str, Any] | None,
+) -> str | None:
+    """Truthful last-resort SSE text when live evidence exists but model text does not.
+
+    This path never invents a synthesis from model memory. It reports only what
+    the retrieval pipeline itself can prove: pages were fetched, their titles,
+    and that generative synthesis missed the interactive deadline.
+    """
+    evidence = compact_evidence if isinstance(compact_evidence, dict) else {}
+    pages = [
+        item for item in (evidence.get("fetched_pages") or [])
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+    if not pages:
+        return None
+
+    titles: list[str] = []
+    for item in pages:
+        title = sanitize_assistant_text(str(item.get("title") or "").strip())
+        if title and title not in titles:
+            titles.append(title[:180])
+        if len(titles) >= 3:
+            break
+
+    subject = " ".join(str(query or "").split()).strip()
+    if len(subject) > 180:
+        subject = subject[:177].rstrip() + "..."
+    evidence_note = (
+        " Se recuperaron páginas con contenido legible"
+        + (": " + "; ".join(f"«{title}»" for title in titles) if titles else "")
+        + "."
+    )
+    return (
+        (f"Para la consulta «{subject}», " if subject else "")
+        + "la búsqueda web en vivo recuperó evidencia verificable."
+        + evidence_note
+        + " La inferencia generativa no produjo texto visible dentro del límite interactivo; "
+        + "para no inventar ni completar datos desde memoria, detengo aquí la síntesis."
+    )
+
+
 async def stream_gateway(
     payload: dict,
     session_id: str,
@@ -4284,6 +4328,7 @@ async def stream_gateway(
     lease_token: str,
     completion_state: dict[str, str] | None = None,
     request_started_at: float | None = None,
+    grounded_fallback_text: str | None = None,
 ) -> AsyncIterator[bytes]:
     collected = bytearray()
     assistant_parts: list[str] = []
@@ -4373,14 +4418,29 @@ async def stream_gateway(
             assistant_parts.append(safe_tail)
             yield _sse_delta(safe_tail)
         performance.mark(request_id, "T8_STREAM_FINISHED")
-    except GatewayTimeoutError:
-        yield _sse_error("AI_GATEWAY_TIMEOUT")
-        return
-    except GatewayHTTPError:
-        yield _sse_error("AI_GATEWAY_HTTP_ERROR")
-        return
-    except GatewayInvalidResponseError:
-        yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
+    except (GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+        if grounded_fallback_text:
+            fallback_text = sanitize_assistant_text(grounded_fallback_text)
+            completion_state = completion_state if completion_state is not None else {}
+            completion_state["assistant_text"] = fallback_text
+            performance.mark(request_id, "T7_FIRST_TOKEN")
+            if request_started_at is not None:
+                logger.warning(
+                    "stream_grounded_fallback request_id=%s error=%s elapsed_ms=%.2f",
+                    request_id,
+                    type(exc).__name__,
+                    (time.perf_counter() - request_started_at) * 1000,
+                )
+            for piece in _sse_text_chunks(fallback_text):
+                yield _sse_delta(piece)
+            yield b"data: [DONE]\n\n"
+            return
+        if isinstance(exc, GatewayTimeoutError):
+            yield _sse_error("AI_GATEWAY_TIMEOUT")
+        elif isinstance(exc, GatewayHTTPError):
+            yield _sse_error("AI_GATEWAY_HTTP_ERROR")
+        else:
+            yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
     if tool_markup_filter.suppressed:
@@ -4598,6 +4658,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         payload = base_payload
         resolved_personality = personality
         sources_count = 0
+        grounded_fallback_text: str | None = None
         web_required = (
             not skip_web_tools
             and DEEP33_WEB_TOOLS_ENABLED
@@ -4696,6 +4757,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                         working, sources, _evidence_fragments, _search_results = (
                             await prefetch_search_task
                         )
+                        grounded_fallback_text = _grounded_web_stream_fallback(
+                            latest_user_query(messages),
+                            _search_results,
+                        )
                     else:
                         working, sources, _evidence_fragments, _search_results = (
                             await prepare_web_evidence(
@@ -4706,6 +4771,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                                     or is_realtime_query(latest_user_query(messages))
                                 ),
                             )
+                        )
+                        grounded_fallback_text = _grounded_web_stream_fallback(
+                            latest_user_query(messages),
+                            _search_results,
                         )
                     sources_count = len(sources or [])
                     if working is None:
@@ -4774,6 +4843,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     lease_token=lease_token,
                     completion_state=completion_state,
                     request_started_at=request_started_at,
+                    grounded_fallback_text=grounded_fallback_text,
                 ):
                     yield chunk
         except asyncio.CancelledError:
