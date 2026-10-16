@@ -918,7 +918,7 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
         async def provider(query, _timeout, _limit):
             calls.append((name, query))
             for marker, item in company_results.items():
-                if marker in query:
+                if marker in query.casefold():
                     return [item]
             return press_results
         return provider
