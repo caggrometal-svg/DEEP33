@@ -546,6 +546,19 @@ class WebOrchestrator:
             )
             self._inflight[flight_key] = task
 
+            def cleanup(completed: asyncio.Task[dict]) -> None:
+                if self._inflight.get(flight_key) is completed:
+                    self._inflight.pop(flight_key, None)
+                # A requester may cancel before the shielded shared task returns.
+                # Retrieve any terminal exception even when no waiter remains.
+                if not completed.cancelled():
+                    try:
+                        completed.exception()
+                    except Exception:
+                        pass
+
+            task.add_done_callback(cleanup)
+
         try:
             # One caller cancelling a request must not cancel the shared upstream
             # search for every other concurrent request.
