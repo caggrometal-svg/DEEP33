@@ -460,7 +460,7 @@ async def fetch_source_quorum(
     target = min(policy.target_sources, policy.max_sources, len(candidates))
     started = time.perf_counter()
     deadline = asyncio.get_running_loop().time() + policy.global_budget_seconds
-    pending: dict[asyncio.Task, tuple[dict[str, Any], float]] = {}
+    pending: dict[asyncio.Task, tuple[dict[str, Any], float, float]] = {}
     next_index = 0
     documents: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -483,7 +483,7 @@ async def fetch_source_quorum(
                 fetcher(source, timeout),
                 name=f"fetch-quorum:{next_index}:{_host(url)}",
             )
-            pending[task] = (source, timeout)
+            pending[task] = (source, timeout, time.perf_counter())
 
     launch()
     try:
@@ -500,9 +500,8 @@ async def fetch_source_quorum(
                 break
 
             for task in done:
-                source, effective_timeout = pending.pop(task)
+                source, effective_timeout, source_started = pending.pop(task)
                 url = str(source.get("url") or "")
-                source_started = time.perf_counter()
                 try:
                     document = task.result()
                 except asyncio.CancelledError:
