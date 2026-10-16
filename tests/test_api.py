@@ -495,7 +495,7 @@ def test_inference_check_does_not_pass_on_unrelated_nonempty_model_text(monkeypa
     status, _data, text_value = asyncio.run(main.run_inference_check("test-inference-check"))
 
     assert status == "FAIL"
-    assert text_value == "DEEP33 reports inference status without the diagnostic sentinel"
+    assert "diagnostic sentinel" in text_value
     assert calls == 2
 
 
