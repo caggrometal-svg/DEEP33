@@ -586,8 +586,12 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
     monkeypatch.setattr(main, "search_web", fake_search)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
-    response = client.get("/v1/web/search", params={"q": "política Chile hoy últimas noticias"})
-    assert response.status_code == 200
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "política Chile hoy últimas noticias"},
+        headers={"X-DEEP33-Session-Id": "test-web-search-resolution"},
+    )
+    assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
     assert body["domains_used"] == 2
