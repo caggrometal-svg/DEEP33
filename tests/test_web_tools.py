@@ -1127,3 +1127,39 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
         assert completion_state["assistant_text"].startswith("No pude completar la síntesis")
 
     asyncio.run(exercise())
+
+
+def test_stream_gateway_emits_visible_fallback_on_provider_timeout(monkeypatch):
+    import backend.main as main
+    from backend.gateway import GatewayTimeoutError
+
+    async def fake_stream(payload, **kwargs):
+        if False:
+            yield b""
+        raise GatewayTimeoutError("provider timeout")
+
+    monkeypatch.setattr(main.gateway, "stream", fake_stream)
+
+    async def exercise():
+        completion_state = {}
+        generator = main.stream_gateway(
+            {"messages": [{"role": "user", "content": "busca en internet"}], "model": "test"},
+            "session",
+            "NEUTRO",
+            request_id="provider-timeout-visible-fallback",
+            idempotency_key="provider-timeout-visible-fallback",
+            request_hash="provider-timeout-visible-fallback",
+            lease_token="lease",
+            completion_state=completion_state,
+        )
+        output = bytearray()
+        async for part in generator:
+            output.extend(part)
+        raw = output.decode("utf-8")
+        assert "AI_GATEWAY_TIMEOUT" not in raw
+        assert '"content":' in raw
+        assert "No pude completar la respuesta" in raw
+        assert raw.endswith("data: [DONE]\n\n")
+        assert completion_state["assistant_text"].startswith("No pude completar la respuesta")
+
+    asyncio.run(exercise())
