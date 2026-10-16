@@ -43,7 +43,7 @@ class FetchPolicy(BaseModel):
     concurrency: int = Field(default=4, ge=1, le=8)
     target_sources: int = Field(default=3, ge=1, le=5)
     max_sources: int = Field(default=5, ge=1, le=5)
-    min_text_chars: int = Field(default=240, ge=80, le=5000)
+    min_text_chars: int = Field(default=240, ge=1, le=5000)
     min_total_chars: int = Field(default=2400, ge=240, le=50000)
     ewma_alpha: float = Field(default=0.35, ge=0.05, le=0.95)
 
@@ -614,7 +614,7 @@ async def fetch_many(
     target_sources: int = 3,
     max_sources: int = 5,
     global_budget_seconds: float = 4.8,
-    min_text_chars: int = 240,
+    min_text_chars: int = 1,
     min_total_chars: int = 2400,
 ) -> dict[str, Any]:
     policy = FetchPolicy(
@@ -641,7 +641,7 @@ async def fetch_many(
             policy=policy,
         )
         if not outcome.ok or outcome.document is None:
-            return None
+            raise WebFetchError(outcome.status)
         return {
             **outcome.document,
             "domain": outcome.domain,
