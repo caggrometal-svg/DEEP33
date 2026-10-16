@@ -917,7 +917,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
 
     assert working
     assert len(sources) == len(urls)
-    assert set(attempted) == {urls[0], urls[1], urls[3], urls[4]}
+    assert set(attempted) == {urls[0], urls[1], urls[3], urls[4], urls[5]}
     assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 

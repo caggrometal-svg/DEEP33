@@ -6,7 +6,9 @@ import math
 import re
 import socket
 import time
-from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+
+from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -33,13 +35,133 @@ SHORTENER_HOSTS = {
 }
 
 
-@dataclass(slots=True)
-class FetchOutcome:
+class FetchPolicy(BaseModel):
+    base_timeout_seconds: float = Field(default=2.5, ge=0.8, le=8.0)
+    min_timeout_seconds: float = Field(default=1.0, ge=0.5, le=4.0)
+    max_timeout_seconds: float = Field(default=5.5, ge=1.0, le=8.0)
+    global_budget_seconds: float = Field(default=4.8, ge=1.0, le=15.0)
+    concurrency: int = Field(default=4, ge=1, le=8)
+    target_sources: int = Field(default=3, ge=1, le=5)
+    max_sources: int = Field(default=5, ge=1, le=5)
+    min_text_chars: int = Field(default=240, ge=1, le=5000)
+    min_total_chars: int = Field(default=2400, ge=240, le=50000)
+    ewma_alpha: float = Field(default=0.35, ge=0.05, le=0.95)
+
+
+class DomainFetchProfile(BaseModel):
+    samples: int = 0
+    successes: int = 0
+    failures: int = 0
+    timeouts: int = 0
+    blocked: int = 0
+    ewma_latency_seconds: float = 0.0
+    consecutive_timeouts: int = 0
+
+
+class FetchOutcome(BaseModel):
     url: str
+    domain: str = ""
     ok: bool
     status: str
-    document: dict | None
+    document: dict[str, Any] | None = None
     latency_ms: float
+    timeout_seconds: float = 0.0
+    text_chars: int = 0
+
+
+class FetchBatchResult(BaseModel):
+    ok: bool
+    status: str
+    documents: list[dict[str, Any]] = Field(default_factory=list)
+    failures: list[dict[str, Any]] = Field(default_factory=list)
+    fetched: int = 0
+    failed: int = 0
+    cancelled: int = 0
+    distinct_domains: int = 0
+    total_text_chars: int = 0
+    quorum_reached: bool = False
+    elapsed_ms: float = 0.0
+
+
+_DOMAIN_FETCH_PROFILES: dict[str, DomainFetchProfile] = {}
+
+
+def _host(value: str) -> str:
+    return (urlsplit(str(value or "")).hostname or "").casefold().rstrip(".").removeprefix("www.")
+
+
+def reset_domain_fetch_profiles() -> None:
+    _DOMAIN_FETCH_PROFILES.clear()
+
+
+def domain_fetch_profile(url: str) -> DomainFetchProfile:
+    host = _host(url)
+    current = _DOMAIN_FETCH_PROFILES.get(host)
+    return current.model_copy(deep=True) if current is not None else DomainFetchProfile()
+
+
+def adaptive_timeout_seconds(url: str, policy: FetchPolicy | None = None) -> float:
+    policy = policy or FetchPolicy()
+    profile = _DOMAIN_FETCH_PROFILES.get(_host(url))
+    if profile is None or profile.samples <= 0:
+        return float(policy.base_timeout_seconds)
+
+    # EWMA learns the observed end-to-end source cost, while timeout history adds
+    # only a bounded allowance. Repeatedly blocked sources never get a larger
+    # budget merely because they reject us.
+    latency_target = max(
+        policy.min_timeout_seconds,
+        profile.ewma_latency_seconds * 1.85 + 0.35,
+    )
+    timeout_penalty = min(1.0, 0.22 * profile.consecutive_timeouts)
+    if profile.blocked > profile.successes:
+        timeout_penalty *= 0.35
+    return round(
+        max(
+            policy.min_timeout_seconds,
+            min(policy.max_timeout_seconds, latency_target + timeout_penalty),
+        ),
+        3,
+    )
+
+
+def record_fetch_metric(
+    url: str,
+    *,
+    ok: bool,
+    latency_seconds: float,
+    status: str,
+    policy: FetchPolicy | None = None,
+) -> None:
+    policy = policy or FetchPolicy()
+    host = _host(url)
+    if not host:
+        return
+    profile = _DOMAIN_FETCH_PROFILES.setdefault(host, DomainFetchProfile())
+    profile.samples += 1
+    if profile.ewma_latency_seconds <= 0:
+        profile.ewma_latency_seconds = max(0.001, latency_seconds)
+    else:
+        profile.ewma_latency_seconds = (
+            policy.ewma_alpha * max(0.001, latency_seconds)
+            + (1.0 - policy.ewma_alpha) * profile.ewma_latency_seconds
+        )
+    code = str(status or "").upper()
+    if ok:
+        profile.successes += 1
+        profile.consecutive_timeouts = 0
+        return
+    profile.failures += 1
+    if "TIMEOUT" in code:
+        profile.timeouts += 1
+        profile.consecutive_timeouts += 1
+    else:
+        profile.consecutive_timeouts = max(0, profile.consecutive_timeouts - 1)
+    if any(marker in code for marker in ("BLOCKED", "HTTP_401", "HTTP_403", "HTTP_429")):
+        profile.blocked += 1
+
+
+FetchSource = Callable[[dict[str, Any], float], Awaitable[dict[str, Any] | None]]
 
 
 def canonicalize_url(url: str) -> str:
@@ -214,52 +336,272 @@ def rank_evidence(query: str, items: list[dict]) -> list[dict]:
 async def fetch_one(
     url: str,
     *,
-    timeout_seconds: float = 2.5,
+    timeout_seconds: float | None = None,
     max_redirects: int = 3,
     max_text_chars: int = 50_000,
+    policy: FetchPolicy | None = None,
 ) -> FetchOutcome:
+    policy = policy or FetchPolicy(
+        base_timeout_seconds=timeout_seconds or 2.5,
+    )
+    effective_timeout = (
+        max(policy.min_timeout_seconds, min(policy.max_timeout_seconds, timeout_seconds))
+        if timeout_seconds is not None
+        else adaptive_timeout_seconds(url, policy)
+    )
     started = time.perf_counter()
+    resolved = str(url)
     try:
         canonical = canonicalize_url(url)
         resolved = await resolve_tracking_url(
             canonical,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=min(effective_timeout, 2.5),
             max_redirects=max_redirects,
         )
         document = await asyncio.wait_for(
             fetch_page(
                 resolved,
-                timeout_seconds=min(2.5, timeout_seconds),
+                timeout_seconds=effective_timeout,
                 max_redirects=max_redirects,
                 max_text_chars=max_text_chars,
                 fresh=True,
             ),
-            timeout=min(3.0, timeout_seconds + 0.5),
+            timeout=min(policy.max_timeout_seconds + 0.4, effective_timeout + 0.4),
+        )
+        text_chars = len(str(document.get("text") or "").strip())
+        if text_chars < policy.min_text_chars:
+            raise WebFetchError(f"WEB_FETCH_SHORT_TEXT:{text_chars}")
+        elapsed = time.perf_counter() - started
+        record_fetch_metric(
+            resolved,
+            ok=True,
+            latency_seconds=elapsed,
+            status="OK",
+            policy=policy,
         )
         return FetchOutcome(
             url=resolved,
+            domain=_host(resolved),
             ok=True,
             status="OK",
             document=document,
-            latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            latency_ms=round(elapsed * 1000.0, 2),
+            timeout_seconds=effective_timeout,
+            text_chars=text_chars,
         )
+    except asyncio.CancelledError:
+        raise
     except asyncio.TimeoutError:
+        elapsed = time.perf_counter() - started
+        record_fetch_metric(
+            resolved,
+            ok=False,
+            latency_seconds=elapsed,
+            status="FETCH_TIMEOUT",
+            policy=policy,
+        )
         return FetchOutcome(
-            url=str(url),
+            url=resolved,
+            domain=_host(resolved),
             ok=False,
             status="FETCH_TIMEOUT",
             document=None,
-            latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            latency_ms=round(elapsed * 1000.0, 2),
+            timeout_seconds=effective_timeout,
         )
     except Exception as exc:
-        code = str(exc).strip() or type(exc).__name__
-        return FetchOutcome(
-            url=str(url),
+        elapsed = time.perf_counter() - started
+        code = (str(exc).strip() or type(exc).__name__)[:120]
+        record_fetch_metric(
+            resolved,
             ok=False,
-            status=code[:120],
-            document=None,
-            latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
+            latency_seconds=elapsed,
+            status=code,
+            policy=policy,
         )
+        return FetchOutcome(
+            url=resolved,
+            domain=_host(resolved),
+            ok=False,
+            status=code,
+            document=None,
+            latency_ms=round(elapsed * 1000.0, 2),
+            timeout_seconds=effective_timeout,
+        )
+
+
+def _unique_source_candidates(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen_domains: set[str] = set()
+    seen_urls: set[str] = set()
+    for source in sources:
+        url = str(source.get("url") or "").strip()
+        host = str(source.get("source_domain") or source.get("domain") or _host(url)).casefold().removeprefix("www.")
+        if not url or not host or url in seen_urls or host in seen_domains:
+            continue
+        seen_urls.add(url)
+        seen_domains.add(host)
+        unique.append(source)
+    return unique
+
+
+async def fetch_source_quorum(
+    sources: list[dict[str, Any]],
+    fetcher: FetchSource,
+    *,
+    policy: FetchPolicy | None = None,
+) -> FetchBatchResult:
+    """Race independent domains and stop once enough high-quality evidence exists."""
+    policy = policy or FetchPolicy()
+    candidates = _unique_source_candidates(sources)
+    if not candidates:
+        return FetchBatchResult(ok=False, status="NO_FETCHABLE_SOURCES")
+
+    target = min(policy.target_sources, policy.max_sources, len(candidates))
+    started = time.perf_counter()
+    deadline = asyncio.get_running_loop().time() + policy.global_budget_seconds
+    pending: dict[asyncio.Task, tuple[dict[str, Any], float, float]] = {}
+    next_index = 0
+    documents: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    accepted_domains: set[str] = set()
+    total_text_chars = 0
+    cancelled = 0
+
+    def launch() -> None:
+        nonlocal next_index
+        while (
+            next_index < len(candidates)
+            and len(pending) < policy.concurrency
+            and len(documents) < policy.max_sources
+        ):
+            source = candidates[next_index]
+            next_index += 1
+            url = str(source.get("url") or "")
+            timeout = adaptive_timeout_seconds(url, policy)
+            task = asyncio.create_task(
+                fetcher(source, timeout),
+                name=f"fetch-quorum:{next_index}:{_host(url)}",
+            )
+            pending[task] = (source, timeout, time.perf_counter())
+
+    launch()
+    try:
+        while pending and len(documents) < policy.max_sources:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            done, _ = await asyncio.wait(
+                tuple(pending),
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                break
+
+            for task in done:
+                source, effective_timeout, source_started = pending.pop(task)
+                url = str(source.get("url") or "")
+                try:
+                    document = task.result()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    status = (str(exc).strip() or f"UNEXPECTED:{type(exc).__name__}")[:120]
+                    failures.append({
+                        "url": url,
+                        "status": status,
+                        "timeout_seconds": effective_timeout,
+                    })
+                    record_fetch_metric(
+                        url,
+                        ok=False,
+                        latency_seconds=max(0.001, time.perf_counter() - source_started),
+                        status=status,
+                        policy=policy,
+                    )
+                    continue
+
+                if not isinstance(document, dict):
+                    failures.append({
+                        "url": url,
+                        "status": "FETCH_FAILED",
+                        "timeout_seconds": effective_timeout,
+                    })
+                    record_fetch_metric(
+                        url,
+                        ok=False,
+                        latency_seconds=max(0.001, time.perf_counter() - source_started),
+                        status="FETCH_FAILED",
+                        policy=policy,
+                    )
+                    continue
+
+                text = str(document.get("text") or "").strip()
+                final_url = str(document.get("url") or document.get("final_url") or url)
+                domain = str(document.get("domain") or _host(final_url)).casefold().removeprefix("www.")
+                if len(text) < policy.min_text_chars:
+                    failures.append({
+                        "url": final_url,
+                        "status": f"FETCH_SHORT_TEXT:{len(text)}",
+                        "timeout_seconds": effective_timeout,
+                    })
+                    continue
+                if not domain or domain in accepted_domains:
+                    failures.append({
+                        "url": final_url,
+                        "status": "FETCH_DUPLICATE_DOMAIN",
+                        "timeout_seconds": effective_timeout,
+                    })
+                    continue
+
+                accepted_domains.add(domain)
+                documents.append(document)
+                total_text_chars += len(text)
+                record_fetch_metric(
+                    final_url,
+                    ok=True,
+                    latency_seconds=max(0.001, time.perf_counter() - source_started),
+                    status="OK",
+                    policy=policy,
+                )
+
+            quality_ready = (
+                len(documents) >= target
+                and total_text_chars >= policy.min_total_chars
+            )
+            if quality_ready:
+                break
+            launch()
+    finally:
+        for task in pending:
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    elapsed_ms = round((time.perf_counter() - started) * 1000.0, 2)
+    quorum_reached = len(documents) >= target and total_text_chars >= policy.min_total_chars
+    if quorum_reached:
+        status = "OK"
+    elif documents:
+        status = "DEGRADED"
+    else:
+        status = "NO_FETCHABLE_SOURCES"
+    return FetchBatchResult(
+        ok=bool(documents),
+        status=status,
+        documents=documents[: policy.max_sources],
+        failures=failures,
+        fetched=len(documents),
+        failed=len(failures),
+        cancelled=cancelled,
+        distinct_domains=len(accepted_domains),
+        total_text_chars=total_text_chars,
+        quorum_reached=quorum_reached,
+        elapsed_ms=elapsed_ms,
+    )
 
 
 async def fetch_many(
@@ -269,8 +611,28 @@ async def fetch_many(
     concurrency: int = 4,
     max_redirects: int = 3,
     max_text_chars: int = 50_000,
-) -> dict:
+    target_sources: int = 3,
+    max_sources: int = 5,
+    global_budget_seconds: float = 4.8,
+    min_text_chars: int = 1,
+    min_total_chars: int = 2400,
+) -> dict[str, Any]:
+    """Compatibility helper: fetch every supplied URL independently.
+
+    Production evidence collection uses fetch_source_quorum(), which enforces
+    independent-domain quorum and early cancellation. This helper intentionally
+    preserves the historical contract used by diagnostics/global-gate tests.
+    """
     semaphore = asyncio.Semaphore(max(1, min(8, int(concurrency))))
+    policy = FetchPolicy(
+        base_timeout_seconds=timeout_seconds,
+        concurrency=concurrency,
+        target_sources=max(1, min(5, target_sources)),
+        max_sources=max(1, min(5, max_sources)),
+        global_budget_seconds=global_budget_seconds,
+        min_text_chars=max(1, min_text_chars),
+        min_total_chars=max(240, min_total_chars),
+    )
 
     async def guarded(url: str) -> FetchOutcome:
         async with semaphore:
@@ -279,6 +641,7 @@ async def fetch_many(
                 timeout_seconds=timeout_seconds,
                 max_redirects=max_redirects,
                 max_text_chars=max_text_chars,
+                policy=policy,
             )
 
     tasks = [
@@ -308,9 +671,17 @@ async def fetch_many(
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    documents = [outcome.document for outcome in outcomes if outcome.ok and outcome.document]
+    documents = [
+        outcome.document
+        for outcome in outcomes
+        if outcome.ok and outcome.document is not None
+    ]
     failures = [
-        {"url": outcome.url, "status": outcome.status, "latency_ms": outcome.latency_ms}
+        {
+            "url": outcome.url,
+            "status": outcome.status,
+            "latency_ms": outcome.latency_ms,
+        }
         for outcome in outcomes
         if not outcome.ok
     ]
