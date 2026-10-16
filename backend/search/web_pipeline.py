@@ -617,38 +617,79 @@ async def fetch_many(
     min_text_chars: int = 1,
     min_total_chars: int = 2400,
 ) -> dict[str, Any]:
+    """Compatibility helper: fetch every supplied URL independently.
+
+    Production evidence collection uses fetch_source_quorum(), which enforces
+    independent-domain quorum and early cancellation. This helper intentionally
+    preserves the historical contract used by diagnostics/global-gate tests.
+    """
+    semaphore = asyncio.Semaphore(max(1, min(8, int(concurrency))))
     policy = FetchPolicy(
         base_timeout_seconds=timeout_seconds,
         concurrency=concurrency,
-        target_sources=target_sources,
-        max_sources=max_sources,
+        target_sources=max(1, min(5, target_sources)),
+        max_sources=max(1, min(5, max_sources)),
         global_budget_seconds=global_budget_seconds,
-        min_text_chars=min_text_chars,
-        min_total_chars=min_total_chars,
+        min_text_chars=max(1, min_text_chars),
+        min_total_chars=max(240, min_total_chars),
     )
-    sources = [
-        {"url": url, "source_domain": _host(url)}
-        for url in urls
-        if str(url or "").strip()
+
+    async def guarded(url: str) -> FetchOutcome:
+        async with semaphore:
+            return await fetch_one(
+                url,
+                timeout_seconds=timeout_seconds,
+                max_redirects=max_redirects,
+                max_text_chars=max_text_chars,
+                policy=policy,
+            )
+
+    tasks = [
+        asyncio.create_task(guarded(url), name=f"fetch:{index}")
+        for index, url in enumerate(urls)
     ]
+    outcomes: list[FetchOutcome] = []
+    try:
+        for task in asyncio.as_completed(tasks):
+            try:
+                outcomes.append(await task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                outcomes.append(
+                    FetchOutcome(
+                        url="",
+                        ok=False,
+                        status=f"UNEXPECTED:{type(exc).__name__}",
+                        document=None,
+                        latency_ms=0.0,
+                    )
+                )
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def fetcher(source: dict[str, Any], adaptive_timeout: float) -> dict[str, Any] | None:
-        outcome = await fetch_one(
-            str(source.get("url") or ""),
-            timeout_seconds=adaptive_timeout,
-            max_redirects=max_redirects,
-            max_text_chars=max_text_chars,
-            policy=policy,
-        )
-        if not outcome.ok or outcome.document is None:
-            raise WebFetchError(outcome.status)
-        return {
-            **outcome.document,
-            "domain": outcome.domain,
-            "text_chars": outcome.text_chars,
-            "fetch_latency_ms": outcome.latency_ms,
-            "fetch_timeout_seconds": outcome.timeout_seconds,
+    documents = [
+        outcome.document
+        for outcome in outcomes
+        if outcome.ok and outcome.document is not None
+    ]
+    failures = [
+        {
+            "url": outcome.url,
+            "status": outcome.status,
+            "latency_ms": outcome.latency_ms,
         }
-
-    result = await fetch_source_quorum(sources, fetcher, policy=policy)
-    return result.model_dump()
+        for outcome in outcomes
+        if not outcome.ok
+    ]
+    return {
+        "ok": bool(documents),
+        "status": "OK" if documents else "NO_FETCHABLE_SOURCES",
+        "documents": documents,
+        "failures": failures,
+        "fetched": len(documents),
+        "failed": len(failures),
+    }
