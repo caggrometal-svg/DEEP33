@@ -730,6 +730,24 @@ class WebOrchestrator:
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
             })
+        if python_asyncio_official_intent:
+            # The user explicitly requested official Python asyncio documentation.
+            # General SERPs can omit the word "Python" in titles/snippets even when
+            # the canonical docs.python.org result is correct, causing strict
+            # relevance filtering to reject every candidate. Probe the authoritative
+            # documentation domain through independent indexes; ranking still uses
+            # the untouched user query, so unrelated docs cannot bypass relevance.
+            python_docs_query = (
+                "site:docs.python.org/3/library/asyncio "
+                "Python asyncio official documentation"
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, python_docs_query),
+                    name=f"search:python-asyncio-official:{provider}",
+                )
+                for provider in ("bing", "google", "duckduckgo", "cl0q")
+            })
         if who_dengue_source_intent:
             # The source is part of the request, not an optional citation. Search
             # WHO's primary fact-sheet domain through independent general-web indexes
