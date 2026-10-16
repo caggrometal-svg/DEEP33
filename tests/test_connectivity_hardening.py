@@ -512,3 +512,11 @@ def test_initial_realtime_provider_network_errors_enter_bounded_fallback() -> No
         assert "const recoveryPlan = [" in search
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
         assert 'event: "edge_web_search_recovery_complete"' in search
+
+def test_primary_edge_silent_internal_provider_fails_fast_without_empty_success() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    assert "const EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS = 2500;" in source
+    assert 'if (!fullText.trim()) throw new Error("EDGE_AI_EMPTY_RESPONSE");' in source
+    assert "if (emitted) {" in source
+    assert "EDGE_AI_RETRY_COUNT = 0;" in source
+
