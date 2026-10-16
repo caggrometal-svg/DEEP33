@@ -136,7 +136,7 @@ def test_web_fetch_is_mandatory_for_explicit_current_queries_even_with_snippets(
     assert len(sources) == 2
     assert len(compact["search_results"]) == 2
     assert compact["fetched_pages"]
-    assert len(attempted) == 1
+    assert len(attempted) == 2  # Fast single-source searches race two independent publishers.
     assert "REAL_ORIGINAL_SOURCE_TEXT" in str(working[-1]["content"])
     assert any("REAL_ORIGINAL_SOURCE_TEXT" in fragment for fragment in evidence)
 
