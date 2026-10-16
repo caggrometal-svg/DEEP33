@@ -652,6 +652,64 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
     assert body["results"][0]["source_domain"] == "www.emol.com"
 
 
+
+
+def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(monkeypatch):
+    import time
+    from backend import main
+
+    wrapper = "https://news.google.com/rss/articles/opaque-slow"
+    direct_a = "https://www.cooperativa.cl/noticias/pais/a.html"
+    direct_b = "https://www.biobiochile.cl/noticias/nacional/b.shtml"
+    fetched = []
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search(_query, **kwargs):
+        assert kwargs["timeout_seconds"] <= 2.05
+        return {
+            "ok": True,
+            "results": [
+                {"title": "Wrapper", "url": wrapper, "source_domain": "emol.com", "provider": "google_news"},
+                {"title": "Direct A", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing"},
+                {"title": "Direct B", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo"},
+            ],
+            "errors": [],
+        }
+
+    async def fake_fetch_source(source, **kwargs):
+        fetched.append(source["url"])
+        assert kwargs["timeout_seconds"] <= 1.2
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": "Texto editorial directo verificable. " * 8,
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "retrieved_at": "2026-10-16T03:00:00+00:00",
+            "text_chars": 280,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
+
+    started = time.perf_counter()
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "noticias Chile hoy"},
+        headers={"X-DEEP33-Session-Id": "edge-budget-test"},
+    )
+    elapsed = time.perf_counter() - started
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["domains_used"] == 2
+    assert fetched == [direct_a, direct_b]
+    assert elapsed < 0.5
+
+
 def test_editorial_domain_dedup_normalizes_www_prefix():
     from backend.search.engine import deduplicate
 
