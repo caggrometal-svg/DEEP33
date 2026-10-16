@@ -2963,7 +2963,30 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         ordered_sources = sorted(normalized_sources.values(), key=_fetch_priority)
         max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
-        for source in ordered_sources:
+        direct_sources = [
+            item for item in ordered_sources
+            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            != "news.google.com"
+        ]
+        wrapper_sources = [
+            item for item in ordered_sources
+            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            == "news.google.com"
+        ]
+        direct_editorial_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in direct_sources
+        } - {""}
+        # When at least two direct publisher URLs exist, fetch those first and
+        # avoid spending the public Edge budget on opaque RSS wrappers. Retain
+        # wrapper resolution as a fallback for sparse result sets.
+        candidate_pool = (
+            direct_sources
+            if len(direct_editorial_domains) >= 2
+            else [*direct_sources, *wrapper_sources]
+        )
+        for source in candidate_pool:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
                 editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
