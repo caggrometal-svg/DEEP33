@@ -2890,6 +2890,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or result.get("provider")
                     or "unknown"
                 ),
+                # Preserve editorial provenance from RSS/search adapters. Without
+                # this field Google News wrapper URLs lose the publisher identity
+                # before _fetch_web_source can resolve them to the original article.
+                "source_domain": str(
+                    source.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().removeprefix("www.")[:255],
             }
 
         # /v1/web/search is an end-to-end search-and-read contract: result links
