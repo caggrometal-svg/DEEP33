@@ -486,7 +486,7 @@ def test_inference_check_does_not_pass_on_unrelated_nonempty_model_text(monkeypa
             "_deep33_gateway": {"provider": "test-provider", "model": "test-model"},
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": "unrelated but non-empty response"},
+                "message": {"role": "assistant", "content": "DEEP33 reports inference status without the diagnostic sentinel"},
                 "finish_reason": "stop",
             }],
         }
@@ -495,7 +495,7 @@ def test_inference_check_does_not_pass_on_unrelated_nonempty_model_text(monkeypa
     status, _data, text_value = asyncio.run(main.run_inference_check("test-inference-check"))
 
     assert status == "FAIL"
-    assert text_value == "unrelated but non-empty response"
+    assert text_value == "DEEP33 reports inference status without the diagnostic sentinel"
     assert calls == 2
 
 
