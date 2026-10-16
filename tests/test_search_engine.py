@@ -975,3 +975,25 @@ def test_realtime_search_respects_explicit_nasa_authority_with_one_topic_anchor(
     assert any("artemis" in item["url"].casefold() for item in ranked)
     assert all("/about/" not in item["url"] for item in ranked)
 
+def test_academic_ai_search_accepts_machine_learning_terminology_but_rejects_unrelated_papers():
+    results = [
+        {
+            "title": "Machine Learning Research at the University",
+            "url": "https://arxiv.org/abs/2601.12345",
+            "snippet": "A university research paper about machine learning models and neural networks.",
+        },
+        {
+            "title": "University research paper about Roman architecture",
+            "url": "https://example.edu/roman-architecture",
+            "snippet": "This academic study examines Roman architecture and historical buildings.",
+        },
+    ]
+    ranked = rank_results(
+        "universidad investigación inteligencia artificial paper",
+        results,
+        realtime=False,
+    )
+
+    assert any("arxiv.org" in item["url"] for item in ranked)
+    assert all("roman-architecture" not in item["url"] for item in ranked)
+
