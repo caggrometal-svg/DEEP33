@@ -41,6 +41,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
+from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
 from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
@@ -1931,123 +1932,63 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
     if must_fetch or not snippets_sufficient:
-        if required_pages == 1 and not contrast_required:
-            # A single-source answer should not spend the deep-research budget
-            # waiting on one dead publisher. Race two independent candidates and
-            # stop when the first page with sufficient extracted text is ready.
-            fetch_timeout = max(
-                1.0,
-                min(3.0, float(os.getenv("WEB_FETCH_FAST_TIMEOUT_SECONDS", "2.5"))),
-            )
-            fetch_budget = max(
-                1.0,
-                min(3.2, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "2.8"))),
-            )
-            fetch_concurrency = 2
-        else:
-            fetch_timeout = max(
-                3.0,
-                min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
-            )
-            fetch_budget = max(
-                4.0,
-                min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
-            )
-            fetch_concurrency = 2
-        fetch_deadline = asyncio.get_running_loop().time() + fetch_budget
-        pending_fetches: dict[asyncio.Task, dict[str, Any]] = {}
-        next_candidate = 0
-        fetched_domains: set[str] = set()
-        try:
-            while (
-                len(fetched_pages) < required_pages
-                and (next_candidate < len(candidates) or pending_fetches)
-            ):
-                while next_candidate < len(candidates) and len(pending_fetches) < fetch_concurrency:
-                    source = candidates[next_candidate]
-                    next_candidate += 1
-                    task = asyncio.create_task(
-                        _fetch_web_source(
-                            source,
-                            request_id=str(request_id or "unknown"),
-                            timeout_seconds=fetch_timeout,
-                        ),
-                        name=f"web-evidence-fetch:{next_candidate}",
-                    )
-                    pending_fetches[task] = source
+        fast_path = required_pages == 1 and not contrast_required
+        configured_target = int(os.getenv(
+            "WEB_EVIDENCE_TARGET_SOURCES",
+            "4" if (deep or contrast_required) else "3",
+        ))
+        target_sources = max(
+            required_pages,
+            min(5, max(1, configured_target)),
+        )
+        fetch_policy = FetchPolicy(
+            base_timeout_seconds=(
+                max(1.0, min(3.0, float(os.getenv("WEB_FETCH_FAST_TIMEOUT_SECONDS", "2.4"))))
+                if fast_path
+                else max(2.0, min(6.5, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "4.8"))))
+            ),
+            min_timeout_seconds=0.9 if fast_path else 1.2,
+            max_timeout_seconds=3.2 if fast_path else 5.8,
+            global_budget_seconds=(
+                max(2.0, min(5.0, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "3.6"))))
+                if fast_path
+                else max(3.5, min(9.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "6.2"))))
+            ),
+            concurrency=4 if fast_path else 5,
+            target_sources=min(target_sources, max(1, len(candidates))),
+            max_sources=min(5, max(1, len(candidates))),
+            min_text_chars=240,
+            min_total_chars=2400 if fast_path else 3600,
+        )
 
-                if not pending_fetches:
-                    break
-                remaining = fetch_deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                done, _ = await asyncio.wait(
-                    tuple(pending_fetches),
-                    timeout=remaining,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if not done:
-                    for source in pending_fetches.values():
-                        _log_web_fetch_failure(
-                            request_id=str(request_id or "unknown"),
-                            url=str(source.get("url") or ""),
-                            provider=str(source.get("provider") or "unknown"),
-                            error="FETCH_DEADLINE_REACHED",
-                            reason="FETCH_TIMEOUT",
-                        )
-                    break
+        async def evidence_fetcher(
+            source: dict[str, Any],
+            adaptive_timeout: float,
+        ) -> dict[str, Any] | None:
+            return await _fetch_web_source(
+                source,
+                request_id=str(request_id or "unknown"),
+                timeout_seconds=adaptive_timeout,
+            )
 
-                for task in done:
-                    source = pending_fetches.pop(task)
-                    if len(fetched_pages) >= required_pages:
-                        continue
-                    try:
-                        page = task.result()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        _log_web_fetch_failure(
-                            request_id=str(request_id or "unknown"),
-                            url=str(source.get("url") or ""),
-                            provider=str(source.get("provider") or "unknown"),
-                            error=exc,
-                        )
-                        continue
-                    if page is None:
-                        continue
-                    domain = str(page.get("domain") or "")
-                    if not domain or domain in fetched_domains:
-                        logger.warning(
-                            "web_evidence_duplicate_or_unknown_domain request_id=%s url=%s provider=%s domain=%s",
-                            request_id or "unknown", page.get("url"), page.get("provider"), domain or "unknown",
-                        )
-                        continue
-                    fetched_domains.add(domain)
-                    fetched_pages.append(page)
-        finally:
-            # Drain any already-completed task before returning so an exception
-            # from a parallel fetch cannot disappear after another URL succeeded.
-            remaining_items = list(pending_fetches.items())
-            remaining_tasks = [task for task, _source in remaining_items]
-            for task, source in remaining_items:
-                if task.done():
-                    if task.cancelled():
-                        continue
-                    try:
-                        task.result()
-                    except asyncio.CancelledError:
-                        continue
-                    except Exception as exc:
-                        _log_web_fetch_failure(
-                            request_id=str(request_id or "unknown"),
-                            url=str(source.get("url") or ""),
-                            provider=str(source.get("provider") or "unknown"),
-                            error=exc,
-                        )
-                else:
-                    task.cancel()
-            if remaining_tasks:
-                await asyncio.gather(*remaining_tasks, return_exceptions=True)
+        fetch_batch = await fetch_source_quorum(
+            candidates,
+            evidence_fetcher,
+            policy=fetch_policy,
+        )
+        fetched_pages = list(fetch_batch.documents)
+        logger.info(
+            "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
+            "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
+            request_id or "unknown",
+            fetch_batch.status,
+            fetch_batch.fetched,
+            fetch_batch.distinct_domains,
+            fetch_batch.total_text_chars,
+            fetch_policy.target_sources,
+            fetch_batch.cancelled,
+            fetch_batch.elapsed_ms,
+        )
 
     if must_fetch and len(fetched_pages) < required_pages:
         logger.warning(
@@ -2065,7 +2006,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "text_chars": item.get("text_chars"),
             "text": str(item.get("text") or "")[:2200],
         }
-        for item in fetched_pages[:required_pages]
+        for item in fetched_pages[:5]
     ]
     evidence_fragments = [
         str(item.get("snippet") or "")
