@@ -1957,8 +1957,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             concurrency=4 if fast_path else 5,
             target_sources=min(target_sources, max(1, len(candidates))),
             max_sources=min(5, max(1, len(candidates))),
-            min_text_chars=240,
-            min_total_chars=2400 if fast_path else 3600,
+            min_text_chars=80,
+            min_total_chars=360 if fast_path else 720,
         )
 
         async def evidence_fetcher(
