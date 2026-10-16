@@ -695,13 +695,36 @@ def rank_results(
             )
             normalized_anchor_evidence = political_context.sub(" politics ", normalized_anchor_evidence)
             normalized_anchor_query = political_context.sub(" politics ", normalized_anchor_query)
-        effective_anchor_tokens = _token_set(normalized_anchor_query)
+        query_folded_for_authority = str(query or "").casefold()
+        requested_authority = None
+        source_reference_tokens: set[str] = set()
+        if re.search(r"\\bnasa\\b|national aeronautics and space administration", query_folded_for_authority):
+            requested_authority = "nasa.gov"
+            source_reference_tokens.add("nasa")
+        elif "world health organization" in query_folded_for_authority or re.search(r"\\bwho\\b", query_folded_for_authority):
+            requested_authority = "who.int"
+            source_reference_tokens.add("who")
+
+        effective_anchor_tokens = _token_set(normalized_anchor_query) - source_reference_tokens
+        # Request-shape words such as "official" and generic "mission" do not
+        # count as independent topic anchors when a named authority was requested.
+        if requested_authority:
+            effective_anchor_tokens -= {"official", "officially", "mission", "fact", "sheet"}
         evidence_tokens = _token_set(normalized_anchor_evidence)
         anchor_hits = len(effective_anchor_tokens & evidence_tokens)
         required_anchor_hits = min(2, len(effective_anchor_tokens))
         if realtime and anchor_tokens and anchor_hits < required_anchor_hits:
-            # Country/currentness words alone do not prove relevance to a named locality.
-            continue
+            host = source_host.removeprefix("www.")
+            is_requested_authority = bool(
+                requested_authority
+                and (host == requested_authority or host.endswith("." + requested_authority))
+            )
+            authority_topic_hits = len(effective_anchor_tokens & evidence_tokens)
+            if not (is_requested_authority and authority_topic_hits >= 1):
+                # Country/currentness words alone do not prove relevance to a named locality.
+                # For an explicitly requested authority, one topical anchor is sufficient
+                # only after the candidate host is verified against that authority domain.
+                continue
         topic_evidence = anchor_evidence
         for pattern, replacement in _TOPIC_PHRASE_ALIASES:
             topic_evidence = pattern.sub(replacement, topic_evidence)
