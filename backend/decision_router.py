@@ -479,18 +479,119 @@ async def validate_evidence(evidence: Evidence) -> Evidence:
                 return evidence
 
     elif evidence.route == DecisionRoute.WEATHER:
-        required = ("time", "temperature_c", "weather_code")
-        if any(key not in data or data.get(key) is None for key in required):
-            evidence.ok = False
-            evidence.error = "WEATHER_VALIDATION_FAILED"
-            return evidence
-        temperature = data.get("temperature_c")
-        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not -100 <= temperature <= 70:
-            evidence.ok = False
-            evidence.error = "WEATHER_TEMPERATURE_OUT_OF_RANGE"
-            return evidence
+        if data.get("forecast") is True:
+            required = (
+                "forecast_date",
+                "temperature_min_c",
+                "temperature_max_c",
+                "weather_code",
+            )
+            if any(key not in data or data.get(key) is None for key in required):
+                evidence.ok = False
+                evidence.error = "WEATHER_FORECAST_VALIDATION_FAILED"
+                return evidence
+            low = data.get("temperature_min_c")
+            high = data.get("temperature_max_c")
+            try:
+                forecast_date = datetime.fromisoformat(str(data.get("forecast_date")))
+                forecast_days = (forecast_date.date() - datetime.now(timezone.utc).date()).days
+            except (TypeError, ValueError):
+                evidence.ok = False
+                evidence.error = "WEATHER_FORECAST_DATE_INVALID"
+                return evidence
+            if (
+                isinstance(low, bool) or isinstance(high, bool)
+                or not isinstance(low, (int, float)) or not isinstance(high, (int, float))
+                or low > high or not -100 <= low <= 70 or not -100 <= high <= 70
+                or forecast_days < -1 or forecast_days > 8
+            ):
+                evidence.ok = False
+                evidence.error = "WEATHER_FORECAST_VALUES_INVALID"
+                return evidence
+            rain = data.get("precipitation_probability_pct")
+            if rain is not None and (
+                isinstance(rain, bool) or not isinstance(rain, (int, float)) or not 0 <= rain <= 100
+            ):
+                evidence.ok = False
+                evidence.error = "WEATHER_PRECIPITATION_PROBABILITY_INVALID"
+                return evidence
+        else:
+            required = ("time", "temperature_c", "weather_code")
+            if any(key not in data or data.get(key) is None for key in required):
+                evidence.ok = False
+                evidence.error = "WEATHER_VALIDATION_FAILED"
+                return evidence
+            temperature = data.get("temperature_c")
+            if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not -100 <= temperature <= 70:
+                evidence.ok = False
+                evidence.error = "WEATHER_TEMPERATURE_OUT_OF_RANGE"
+                return evidence
 
     return evidence
+
+def _format_number_es(value: Any, *, decimals: int = 2) -> str:
+    number = float(value)
+    if number.is_integer():
+        return f"{int(number):,}".replace(",", ".")
+    rendered = f"{number:,.{decimals}f}"
+    return rendered.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def format_structured_answer(query: str, evidence: Evidence) -> str:
+    """Render critical numeric facts deterministically instead of asking the LLM to restate them."""
+    data = evidence.data
+    if not evidence.ok:
+        return "No pude verificar el dato actual con una fuente válida. No voy a inventar una cifra."
+    if evidence.route == DecisionRoute.FINANCE:
+        value = _format_number_es(data["value"])
+        market_timestamp = data.get("market_timestamp")
+        if market_timestamp:
+            return (
+                f"La cotización USD/CLP reportada por {evidence.provider} es "
+                f"1 dólar estadounidense = {value} pesos chilenos. "
+                f"Hora de mercado reportada: {market_timestamp} (UTC). "
+                "La cotización puede tener retraso y no equivale necesariamente al precio que aplicará un banco o una casa de cambio."
+            )
+        return (
+            f"El dólar observado informado por {evidence.provider} es "
+            f"{value} pesos chilenos por dólar para la fecha {data['date']}. "
+            "Es un indicador diario, no una cotización intradía en tiempo real."
+        )
+    if evidence.route == DecisionRoute.SEISMIC:
+        return (
+            f"El catálogo global de {evidence.provider} registra {data['count']} eventos "
+            f"de magnitud 0 o superior entre {data['start']} y {data['end']} (UTC). "
+            "Es el conteo publicado por esa fuente para esa ventana; los microsismos por debajo de su umbral no se incluyen."
+        )
+    if evidence.route == DecisionRoute.WEATHER:
+        place = str(data.get("location_name") or "la ubicación consultada")
+        condition = str(data.get("condition") or "condición no especificada")
+        if data.get("forecast") is True:
+            rain = data.get("precipitation_probability_pct")
+            rain_text = (
+                f" Probabilidad máxima de precipitación: {_format_number_es(rain, decimals=0)}%."
+                if isinstance(rain, (int, float)) else ""
+            )
+            return (
+                f"Pronóstico de {evidence.provider} para {place}, {data['forecast_date']}: "
+                f"mínima de {_format_number_es(data['temperature_min_c'], decimals=1)} °C, "
+                f"máxima de {_format_number_es(data['temperature_max_c'], decimals=1)} °C; "
+                f"{condition}.{rain_text} Es un pronóstico, no una medición ni una garantía."
+            )
+        temperature = _format_number_es(data["temperature_c"], decimals=1)
+        when = f" a las {data['time']} ({data.get('timezone') or 'zona horaria del proveedor'})" if data.get("time") else ""
+        extra = []
+        if isinstance(data.get("feels_like_c"), (int, float)):
+            extra.append(f"sensación térmica {_format_number_es(data['feels_like_c'], decimals=1)} °C")
+        if isinstance(data.get("relative_humidity_pct"), (int, float)):
+            extra.append(f"humedad {_format_number_es(data['relative_humidity_pct'], decimals=0)}%")
+        suffix = f" Además: {', '.join(extra)}." if extra else ""
+        return (
+            f"En {place}, {evidence.provider} reporta {temperature} °C{when}, con {condition}."
+            f"{suffix}"
+        )
+    return "Los datos estructurados se validaron correctamente, pero no hay un formato de respuesta específico para esta ruta."
+
 
 
 class UniversalDecisionRouter:
