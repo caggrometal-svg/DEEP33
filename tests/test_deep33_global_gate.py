@@ -784,12 +784,24 @@ def test_web_orchestrator_single_flight_coalesces_concurrent_fresh_requests():
             async def provider(_query: str, _timeout: float, _limit: int) -> list[dict]:
                 calls[name] = calls.get(name, 0) + 1
                 await asyncio.sleep(0.03)
-                if name == "google":
-                    return [_result(
-                        "Python asyncio official documentation",
-                        "https://docs.python.org/3/library/asyncio.html",
-                        "Official Python asyncio reference documentation for asynchronous I/O.",
-                    )]
+                if name in {"google", "bing"}:
+                    return [
+                        _result(
+                            "Python asyncio official documentation",
+                            "https://docs.python.org/3/library/asyncio.html",
+                            "Official Python asyncio reference documentation for asynchronous I/O.",
+                        ),
+                        _result(
+                            "Python asyncio guide",
+                            "https://realpython.com/async-io-python/",
+                            "Python asyncio guide to asynchronous I/O and concurrency.",
+                        ),
+                        _result(
+                            "Exception groups and asyncio",
+                            "https://peps.python.org/pep-0654/",
+                            "Python PEP about exception groups used with asynchronous tasks.",
+                        ),
+                    ]
                 return []
             return provider
 
