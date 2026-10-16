@@ -85,6 +85,7 @@ type NavigatedWebSource = {
   title: string;
   url: string;
   snippet: string;
+  source_domain?: string;
   page_text?: string;
   final_url?: string;
   retrieved_at?: string;
@@ -115,6 +116,7 @@ async function buildNavigatedWebEvidence(
           title: String(item.title ?? item.url).slice(0, 300),
           url: String(item.url).slice(0, 2000),
           snippet: String(item.snippet ?? "").slice(0, 900),
+          source_domain: String(item.source_domain ?? "").slice(0, 255),
         }))
     : [];
 
@@ -2852,7 +2854,24 @@ async function runPublicWebSearchQuery(
         const url = rssText(itemXml, "link");
         const snippet = rssText(itemXml, "description");
         const published_at = rssText(itemXml, "pubDate");
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
+        const publisherUrlMatch = itemXml.match(/<source\b[^>]*\burl=["']([^"']+)["'][^>]*>/i);
+        let source_domain = "";
+        if (publisherUrlMatch?.[1]) {
+          try {
+            source_domain = new URL(decodeHtml(publisherUrlMatch[1])).hostname.toLowerCase().replace(/^www\./, "");
+          } catch {
+            source_domain = "";
+          }
+        }
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({
+            title,
+            url,
+            snippet,
+            published_at,
+            ...(source_domain ? { source_domain } : {}),
+          });
+        }
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -3001,6 +3020,7 @@ const EDGE_REALTIME_FILLERS = new Set([
   "ocurrido","ocurridos","ocurrió","ocurrio","ocurrieron","durante","importante","importantes",
   "dime","fuente","fuentes","obtuviste","información","informacion","sido","fue","fueron",
   "situación","situacion","actual","actualmente","ahora","mismo","hoy","ayer",
+  "horas","hour","hours","today","tonight","yesterday","days","day",
   "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
   "noticia","noticias","actualidad","reciente","recientes","información","informacion",
   "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
@@ -3179,12 +3199,17 @@ function edgeFilterSearchResults(
       const genericLandingPage = path === "/" ||
         /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
       if (genericLandingPage) return false;
-      if (googleNewsStory) return !countryIntent || /\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) || host.endsWith(".cl");
+      const publisherHost = String(item.source_domain || "").toLowerCase().replace(/^www\./, "");
+      if (googleNewsStory) {
+        return !countryIntent ||
+          /\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) ||
+          host.endsWith(".cl") || publisherHost.endsWith(".cl");
+      }
       const hasNewsEvidence = /\b(?:noticia|noticias|actualidad|última hora|ultima hora|news|breaking|emergencia|alerta|incidente|aluvión|aluvion|santiago|las condes|internacional|international|global|globales|mundial|mundiales|mundo|world|worldwide|diplomacia|diplomacy|geopolítica|geopolitics|conflicto|conflict)\b/i.test(evidence);
       if (!hasNewsEvidence) return false;
       if (!countryIntent) return true;
       return /\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) ||
-        host.endsWith(".cl");
+        host.endsWith(".cl") || publisherHost.endsWith(".cl");
     });
   }
   const requiredHits = Math.min(2, tokens.size);
