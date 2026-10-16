@@ -768,3 +768,82 @@ def test_global_gate_requires_authenticated_token_for_live_mode(monkeypatch, cap
 
     assert gate.main() == 1
     assert "DEEP33_TEST_AUTH_TOKEN is empty" in capsys.readouterr().err
+
+
+def test_web_orchestrator_single_flight_coalesces_concurrent_fresh_requests():
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=1,
+            provider_total_seconds=0.25,
+            global_budget_seconds=0.6,
+            fallback_delay_seconds=0,
+        )
+        calls: dict[str, int] = {}
+
+        def make_provider(name: str):
+            async def provider(_query: str, _timeout: float, _limit: int) -> list[dict]:
+                calls[name] = calls.get(name, 0) + 1
+                await asyncio.sleep(0.03)
+                if name in {"google", "bing"}:
+                    return [_result(
+                        "Python asyncio official documentation",
+                        "https://docs.python.org/3/library/asyncio.html",
+                        "Official Python asyncio reference documentation for asynchronous I/O.",
+                    )]
+                return []
+            return provider
+
+        for name in list(orchestrator.providers):
+            orchestrator.providers[name] = make_provider(name)
+
+        results = await asyncio.gather(*[
+            orchestrator.search(
+                "Python asyncio official documentation",
+                fresh=True,
+                budget_seconds=0.5,
+            )
+            for _ in range(12)
+        ])
+        assert len(results) == 12
+        assert all(isinstance(result.get("results"), list) for result in results)
+        # The Google adapter can run in both the primary and recovery wave,
+        # but not once per incoming request when single-flight is active.
+        assert 0 < calls.get("google", 0) < 12
+        baseline = list(results[1]["results"])
+        results[0]["results"].append({"title": "single-flight-mutation"})
+        assert results[1]["results"] == baseline, (
+            "coalesced callers must receive independent payload copies"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_web_orchestrator_honors_fast_budget_even_when_providers_are_slow():
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=3,
+            provider_total_seconds=0.5,
+            global_budget_seconds=0.6,
+            fallback_delay_seconds=0,
+        )
+
+        async def slow(_query: str, _timeout: float, _limit: int) -> list[dict]:
+            await asyncio.sleep(0.5)
+            return []
+
+        for name in list(orchestrator.providers):
+            orchestrator.providers[name] = slow
+        for name in list(orchestrator.fallback_providers):
+            orchestrator.fallback_providers[name] = slow
+
+        started = time.perf_counter()
+        result = await orchestrator.search(
+            "a query with unavailable providers",
+            fresh=True,
+            budget_seconds=0.15,
+        )
+        elapsed = time.perf_counter() - started
+        assert elapsed < 0.35
+        assert result.get("ok") is False
+
+    asyncio.run(scenario())

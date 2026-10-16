@@ -975,7 +975,7 @@ async def search_web(
     fresh: bool = False,
 ):
     from backend.search.engine import _normalise_lookup_query
-    from backend.search.resilient import get_web_orchestrator
+    from backend.search.resilient import WebOrchestrator, get_web_orchestrator
 
     raw_query = " ".join(str(query or "").split()).strip()
     cleaned = _normalise_lookup_query(raw_query) or raw_query
@@ -992,7 +992,19 @@ async def search_web(
 
     max_results = max(1, min(8, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
-    result = await orchestrator.search(cleaned, fresh=fresh)
+    # The fast flag was previously accepted but ignored. A bounded budget on
+    # this path protects first-token latency; fallback still has a reserved slice.
+    if fast and isinstance(orchestrator, WebOrchestrator):
+        fast_budget = max(0.8, min(2.4, float(timeout_seconds)))
+        result = await orchestrator.search(
+            cleaned,
+            fresh=fresh,
+            budget_seconds=fast_budget,
+        )
+    else:
+        # Preserve the narrow legacy call contract for injected adapters that
+        # expose only search(query, fresh=...), without widening that contract.
+        result = await orchestrator.search(cleaned, fresh=fresh)
     if not result.get("ok"):
         from backend.weather import fetch_named_location_weather, is_weather_query
         if is_weather_query(cleaned):

@@ -1828,16 +1828,32 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
     if must_fetch or not snippets_sufficient:
-        fetch_timeout = max(
-            6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
-        )
-        fetch_budget = max(
-            6.0, min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
-        )
+        if required_pages == 1 and not contrast_required:
+            # A single-source answer should not spend the deep-research budget
+            # waiting on one dead publisher. Race two independent candidates and
+            # stop when the first page with sufficient extracted text is ready.
+            fetch_timeout = max(
+                1.0,
+                min(3.0, float(os.getenv("WEB_FETCH_FAST_TIMEOUT_SECONDS", "2.5"))),
+            )
+            fetch_budget = max(
+                1.0,
+                min(3.2, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "2.8"))),
+            )
+            fetch_concurrency = 2
+        else:
+            fetch_timeout = max(
+                3.0,
+                min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            )
+            fetch_budget = max(
+                4.0,
+                min(12.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "8.0"))),
+            )
+            fetch_concurrency = 2
         fetch_deadline = asyncio.get_running_loop().time() + fetch_budget
         pending_fetches: dict[asyncio.Task, dict[str, Any]] = {}
         next_candidate = 0
-        fetch_concurrency = 2 if required_pages > 1 else 1
         fetched_domains: set[str] = set()
         try:
             while (
@@ -1880,6 +1896,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
                 for task in done:
                     source = pending_fetches.pop(task)
+                    if len(fetched_pages) >= required_pages:
+                        continue
                     try:
                         page = task.result()
                     except asyncio.CancelledError:
@@ -4254,6 +4272,17 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
     )
     raw_query = latest_user_query(raw_messages)
     router_decision = classify_query(raw_query)
+    router_prefetch_task: asyncio.Task | None = None
+    if (
+        not is_connectivity_question(raw_query)
+        and router_decision.route in {DecisionRoute.SEISMIC, DecisionRoute.FINANCE}
+    ):
+        # Fetch the dedicated structured provider in parallel with idempotency,
+        # session-context preparation, and the web stream setup—not after the
+        # first SSE frame has already been sent.
+        router_prefetch_task = asyncio.create_task(
+            universal_router.resolve(raw_query, messages=raw_messages)
+        )
     prefetch_search_task: asyncio.Task | None = None
     if (
         DEEP33_WEB_TOOLS_ENABLED
@@ -4280,6 +4309,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             if prefetch_search_task is not None and not prefetch_search_task.done():
                 prefetch_search_task.cancel()
                 await asyncio.gather(prefetch_search_task, return_exceptions=True)
+            if router_prefetch_task is not None and not router_prefetch_task.done():
+                router_prefetch_task.cancel()
+                await asyncio.gather(router_prefetch_task, return_exceptions=True)
             cached = normalize_shared_generation_output(
                 replay_idempotent(state, record),
                 request,
@@ -4302,6 +4334,12 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             if weather_task is not None and not weather_task.done():
                 weather_task.cancel()
                 await asyncio.gather(weather_task, return_exceptions=True)
+            if router_prefetch_task is not None and not router_prefetch_task.done():
+                router_prefetch_task.cancel()
+                await asyncio.gather(router_prefetch_task, return_exceptions=True)
+            if prefetch_search_task is not None and not prefetch_search_task.done():
+                prefetch_search_task.cancel()
+                await asyncio.gather(prefetch_search_task, return_exceptions=True)
             raise HTTPException(status_code=503, detail="IDEMPOTENCY_LEASE_MISSING")
 
         messages, personality = await context_task
@@ -4314,11 +4352,14 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             weather_task.cancel()
         if prefetch_search_task is not None and not prefetch_search_task.done():
             prefetch_search_task.cancel()
+        if router_prefetch_task is not None and not router_prefetch_task.done():
+            router_prefetch_task.cancel()
         await asyncio.gather(
             claim_task,
             context_task,
             weather_task if weather_task is not None else asyncio.sleep(0),
             prefetch_search_task if prefetch_search_task is not None else asyncio.sleep(0),
+            router_prefetch_task if router_prefetch_task is not None else asyncio.sleep(0),
             return_exceptions=True,
         )
         raise
@@ -4369,12 +4410,15 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     if weather_task is not None
                     else None
                 )
-                _decision, router_evidence = await universal_router.resolve(
-                    latest_user_query(messages),
-                    messages=messages,
-                    weather=prefetched_weather,
-                    weather_resolver=resolve_universal_weather,
-                )
+                if router_prefetch_task is not None:
+                    _decision, router_evidence = await router_prefetch_task
+                else:
+                    _decision, router_evidence = await universal_router.resolve(
+                        latest_user_query(messages),
+                        messages=messages,
+                        weather=prefetched_weather,
+                        weather_resolver=resolve_universal_weather,
+                    )
                 router_evidence = await validate_evidence(router_evidence)
                 if router_evidence is not None and router_evidence.ok:
                     web_required = False
