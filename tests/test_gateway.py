@@ -707,7 +707,7 @@ def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
     first = gateway._stream_visible_budget(0, 2)
     second = gateway._stream_visible_budget(1, 2)
     assert first == pytest.approx(0.35)
-    assert second == pytest.approx(2.50)
+    assert second == pytest.approx(2.40)
     assert first + second < 3.0
 
 
