@@ -1337,6 +1337,58 @@ class SearchEngine:
             realtime=plan.depth == "realtime",
         )
         selected = deduplicate(ranked, self.max_results)
+
+        # A provider can return HTTP-successful results that the strict relevance
+        # filter correctly rejects. Do one bounded semantic rescue before declaring
+        # NO_RESULTS; this fixes broad category queries without weakening relevance.
+        if not selected:
+            lowered_original = plan.original_query.casefold()
+            rescue_query = ""
+            if any(term in lowered_original for term in (
+                "tecnolog", "technology", "software", "telecom", "comercial",
+                "empresa", "empresas", "comercio",
+            )):
+                locality = "chile" if "chile" in lowered_original else ""
+                rescue_query = (
+                    f"{locality} empresas tecnología software telecomunicaciones servicios digitales"
+                ).strip()
+            else:
+                rescue_base = _normalise_lookup_query(plan.original_query) or plan.original_query
+                rescue_query = f"{rescue_base} sitios oficiales información".strip()
+
+            if (
+                rescue_query
+                and rescue_query.casefold() != plan.original_query.casefold()
+                and asyncio.get_running_loop().time() < search_deadline - 0.25
+            ):
+                executed_queries.append(rescue_query)
+                _rescue_query, rescue_result = await run_planned(rescue_query)
+                rescue_batch, rescue_errors, rescue_attempted = rescue_result
+                errors.extend(rescue_errors)
+                for provider_used in rescue_attempted:
+                    if provider_used not in providers_attempted:
+                        providers_attempted.append(provider_used)
+                for provider_used, items in rescue_batch:
+                    successful.append((rescue_query, provider_used, items))
+
+                merged = []
+                providers_used = []
+                for planned_query, name, items in successful:
+                    if name not in providers_used:
+                        providers_used.append(name)
+                    for item in items:
+                        merged.append({
+                            **item,
+                            "search_query": planned_query,
+                            "provider": name,
+                        })
+                ranked = rank_results(
+                    plan.original_query,
+                    merged,
+                    realtime=plan.depth == "realtime",
+                )
+                selected = deduplicate(ranked, self.max_results)
+
         distinct_domains = sorted({
             _host(str(item.get("url") or ""))
             for item in selected
