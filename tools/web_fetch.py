@@ -95,7 +95,7 @@ def _clean_extracted_text(value: str, *, max_chars: int) -> str:
         if len(line) <= 180 and any(marker in lowered for marker in NOISE_LINE_MARKERS):
             continue
         # Repeated short chrome labels/menus add tokens but no evidence.
-        fingerprint = re.sub(r"\\W+", " ", lowered).strip()
+        fingerprint = re.sub(r"\W+", " ", lowered).strip()
         if len(line) <= 100 and fingerprint:
             if fingerprint in seen_short:
                 continue
@@ -103,7 +103,7 @@ def _clean_extracted_text(value: str, *, max_chars: int) -> str:
         output.append(line)
         if sum(len(item) + 1 for item in output) >= max_chars:
             break
-    return "\\n".join(output)[:max_chars].strip()
+    return "\n".join(output)[:max_chars].strip()
 
 
 def _retryable_direct_fetch_error(exc: WebFetchError) -> bool:
