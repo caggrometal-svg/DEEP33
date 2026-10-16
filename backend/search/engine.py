@@ -418,17 +418,11 @@ def _evidence_text(item: dict) -> str:
 
 
 def _source_host(item: dict) -> str:
-    """Use a normalized editorial publisher host before falling back to the result URL."""
-    domain = (
-        str(item.get("source_domain") or "")
-        .strip()
-        .casefold()
-        .rstrip(".")
-        .removeprefix("www.")
-    )
+    """Use a feed-provided publisher host when it is valid, otherwise the result URL host."""
+    domain = str(item.get("source_domain") or "").strip().casefold().rstrip(".")
     if domain and re.fullmatch(r"[a-z0-9.-]{1,253}", domain) and "." in domain:
         return domain
-    return _host(str(item.get("url") or "")).removeprefix("www.")
+    return _host(str(item.get("url") or ""))
 
 
 def _similarity(left: dict, right: dict) -> float:
@@ -840,7 +834,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     for item in results:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
-        domain = _source_host(item)
+        domain = _source_host(item).removeprefix("www.")
         title_key = (domain, title) if title else None
         if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
@@ -858,13 +852,13 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     # Pass 2: fill remaining slots, capped by two results per domain.
     domain_counts: dict[str, int] = {}
     for item in output:
-        domain = _source_host(item)
+        domain = _source_host(item).removeprefix("www.")
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
 
     for item in results:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
-        domain = _source_host(item)
+        domain = _source_host(item).removeprefix("www.")
         title_key = (domain, title) if title else None
         if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
             continue
