@@ -529,7 +529,8 @@ class AIGateway:
         saw_http_error = False
         saw_invalid_response = False
 
-        for provider in self._ordered_providers(prefer_ttft=prefer_ttft):
+        ordered_providers = self._ordered_providers(prefer_ttft=prefer_ttft)
+        for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             now = time.monotonic()
             if not circuit.available(now):
@@ -545,9 +546,15 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     started_request = time.perf_counter()
-                    timeout = self._remaining(
-                        deadline, self.config.provider_timeout_seconds
-                    )
+                    provider_timeout = self.config.provider_timeout_seconds
+                    if prefer_ttft and deadline is not None:
+                        # Diagnostic/TTFT-sensitive calls must leave budget for fallback.
+                        # A slow first provider may not consume the entire global deadline.
+                        remaining_total = max(0.0, deadline - time.monotonic())
+                        providers_left = max(1, len(ordered_providers) - provider_index)
+                        fair_share = max(1.5, remaining_total / providers_left)
+                        provider_timeout = min(provider_timeout, fair_share)
+                    timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
                     response = await self._client().post(
                         provider.url,
@@ -763,7 +770,7 @@ class AIGateway:
                     },
                     {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
                 ],
-                "max_tokens": 128,
+                "max_tokens": 32,
                 "temperature": 0.0,
             },
             request_id=request_id,
