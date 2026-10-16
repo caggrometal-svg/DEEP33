@@ -25,24 +25,82 @@ jobs:
         run: |
           set -euo pipefail
           token=""
-          for attempt in $(seq 1 3); do
-            profile_id="warmup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-${attempt}"
-            status="$(curl -sS --connect-timeout 8 --max-time 30 -o "$RUNNER_TEMP/deep33-warmup-auth.json" -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/deep33-auth" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "content-type: application/json" -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+          profile_id="warmup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}"
+          for attempt in $(seq 1 5); do
+            status="$(curl -sS --connect-timeout 8 --max-time 20 -o "$RUNNER_TEMP/deep33-warmup-auth.json" -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/deep33-auth" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "content-type: application/json" -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
             if [ "$status" = "200" ]; then
-              token="$(jq -r '.access_token // empty' "$RUNNER_TEMP/deep33-warmup-auth.json")"
-              break
+              token="$(jq -r '.access_token // empty' "$RUNNER_TEMP/deep33-warmup-auth.json" 2>/dev/null || true)"
+              if [ -n "$token" ]; then break; fi
+              status="200_NO_TOKEN"
             fi
-            if [ "$status" = "409" ]; then echo "WARMUP_AUTH_PROFILE_COLLISION attempt=$attempt"; continue; fi
-            echo "WARMUP_AUTH_SESSION_FAILED status=$status"
-            jq -c '{error: (.error // "unknown")}' "$RUNNER_TEMP/deep33-warmup-auth.json" || true
+            error_code="$(jq -r '.error // "unknown"' "$RUNNER_TEMP/deep33-warmup-auth.json" 2>/dev/null || echo unknown)"
+            echo "WARMUP_AUTH_ATTEMPT_FAILED attempt=$attempt http=$status error=$error_code"
+            if [ "$status" = "409" ]; then
+              # The previous response may have been lost after a successful bind.
+              # Never reuse a profile id that is already bound to a Supabase user.
+              profile_id="warmup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-retry${attempt}"
+              continue
+            fi
+            if [[ "$status" =~ ^(000|429|500|502|503|504)$ || "$status" == "200_NO_TOKEN" ]]; then
+              case "$attempt" in
+                1) delay=1 ;;
+                2) delay=2 ;;
+                3) delay=4 ;;
+                4) delay=8 ;;
+                *) delay=0 ;;
+              esac
+              if [ "$delay" -gt 0 ]; then
+                echo "WARMUP_AUTH_BACKOFF_SECONDS=$delay"
+                sleep "$delay"
+              fi
+              continue
+            fi
+            echo "::error::WARMUP_AUTH_NON_RETRYABLE_FAILURE http=$status error=$error_code"
             exit 1
           done
-          test -n "$token" || { echo "WARMUP_AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
+          if [ -z "$token" ]; then
+            # Warmup is an availability aid, not a reason to abort the app/deploy.
+            # Do not manufacture an anonymous fallback token: that would bypass the
+            # per-profile JWT-sub isolation contract. The next step performs public
+            # transport probes and reports a degraded warmup instead.
+            echo "::warning::WARMUP_AUTH_DEGRADED retries_exhausted"
+            echo "DEEP33_WARMUP_TOKEN=" >> "$GITHUB_ENV"
+            echo "DEEP33_WARMUP_AUTH_DEGRADED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
           echo "DEEP33_WARMUP_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "DEEP33_WARMUP_AUTH_DEGRADED=false" >> "$GITHUB_ENV"
 
       - name: Keep every DEEP33 transport node warm
         run: |
           set -euo pipefail
+          if [ -z "${DEEP33_WARMUP_TOKEN:-}" ]; then
+            echo "::warning::WARMUP_PUBLIC_PROBE_ONLY authentication unavailable; protected edge readiness not certified"
+            for pair in "PRIMARY|$PRIMARY_URL/v1/web/status" "SECONDARY|$SECONDARY_URL/v1/web/status"; do
+              name="${pair%%|*}"
+              url="${pair#*|}"
+              status="$(curl -sS --connect-timeout 8 --max-time 15 -o "$RUNNER_TEMP/${name,,}-warmup-options.txt" -w "%{http_code}" -X OPTIONS "$url" || true)"
+              echo "${name}_PUBLIC_PROBE_HTTP=$status"
+            done
+            ready=0
+            for attempt in $(seq 1 6); do
+              health="$(curl -sS --connect-timeout 8 --max-time 20 "$TERTIARY_URL/health" || true)"
+              if printf "%s" "$health" | jq -e '.status=="PASS"' >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              echo "TERTIARY_WARM_NOT_READY attempt=$attempt"
+              sleep 5
+            done
+            if [ "$ready" != "1" ]; then
+              echo "TERTIARY_WARM_FAIL"
+              printf "%s\n" "$health"
+              exit 1
+            fi
+            echo "TERTIARY_WARM_PASS"
+            echo "DEEP33_WARM_DEGRADED_AUTH_UNAVAILABLE"
+            exit 0
+          fi
           entries=("PRIMARY|$PRIMARY_URL" "SECONDARY|$SECONDARY_URL" "TERTIARY|$TERTIARY_URL")
           for entry in "${entries[@]}"; do
             name="${entry%%|*}"
