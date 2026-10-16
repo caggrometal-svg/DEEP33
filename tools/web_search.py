@@ -1072,7 +1072,7 @@ async def search_web(
     fast: bool = False,
     fresh: bool = False,
 ):
-    from backend.search.engine import _normalise_lookup_query
+    from backend.search.engine import _normalise_lookup_query, is_realtime_query
     from backend.search.resilient import WebOrchestrator, get_web_orchestrator
 
     raw_query = " ".join(str(query or "").split()).strip()
