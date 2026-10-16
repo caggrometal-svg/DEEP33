@@ -9,6 +9,7 @@ import os
 import re
 import time
 from html.parser import HTMLParser
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -1088,6 +1089,39 @@ async def search_web(
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
     max_results = max(1, min(8, int(max_results)))
+    authoritative_seed = _authoritative_navigation_results(cleaned)
+    if authoritative_seed:
+        limited = authoritative_seed[:max_results]
+        now = datetime.now(timezone.utc).isoformat()
+        return {
+            "ok": True,
+            "query": cleaned,
+            "realtime": is_realtime_query(cleaned),
+            "fresh_request": bool(fresh),
+            "realtime_news": _looks_realtime_news(cleaned),
+            "retrieved_at": now,
+            "engine": "DEEP33 Search Engine",
+            "engine_version": "1.3.0",
+            "provider_independent": True,
+            "depth": "authoritative-navigation",
+            "providers": ["authoritative_resolver"],
+            "provider": "authoritative_resolver",
+            "winner_provider": "authoritative_resolver",
+            "results": limited,
+            "sources": list(limited),
+            "verification": {
+                "level": "authoritative-navigation",
+                "distinct_domains": len({
+                    str(item.get("source_domain") or "")
+                    for item in limited
+                    if item.get("source_domain")
+                }),
+                "distinct_providers": 1,
+                "corroborated_results": 0,
+                "relevant_results": len(limited),
+            },
+            "errors": [],
+        }
     orchestrator = get_web_orchestrator(max_results)
     # The fast flag was previously accepted but ignored. A bounded budget on
     # this path protects first-token latency; fallback still has a reserved slice.
