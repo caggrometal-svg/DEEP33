@@ -1069,10 +1069,15 @@ class WebOrchestrator:
             and loop.time() < deadline
         ):
             political_source_queries = (
+                # Bing currently yields readable direct publisher URLs more reliably
+                # than the HTML-only fallback engines for Chilean news domains.
+                # Fan out several editorial domains in parallel; Google News remains
+                # an independent RSS source for corroboration, not the only path.
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
+                ("bing", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
-                ("duckduckgo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
             )
             political_tasks = {
                 asyncio.create_task(
