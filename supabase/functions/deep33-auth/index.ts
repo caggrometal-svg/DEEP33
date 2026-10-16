@@ -61,6 +61,58 @@ function requireClientBody(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+type RpcResponse<T> = { data: T | null; error: unknown | null };
+
+function isTransientRpcError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return true;
+  const value = error as Record<string, unknown>;
+  const code = String(value.code ?? "").toUpperCase();
+  const message = String(value.message ?? error).toLowerCase();
+  const status = Number(value.status ?? value.statusCode ?? 0);
+  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+  if (/^(08|40|53|57|PGRST000|PGRST001|PGRST002|PGRST003|ECONNRESET|ETIMEDOUT|EAI_AGAIN)/.test(code)) return true;
+  return /timeout|timed out|temporar|connection|network|fetch failed|gateway|upstream|too many connections|server error/.test(message);
+}
+
+const RPC_RETRY_DELAYS_MS = [150, 350, 750];
+
+async function rpcWithBackoff<T>(
+  operation: string,
+  invoke: () => Promise<RpcResponse<T>>,
+): Promise<RpcResponse<T>> {
+  let last: RpcResponse<T> = { data: null, error: new Error("RPC_NOT_ATTEMPTED") };
+  for (let attempt = 0; attempt <= RPC_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      last = await invoke();
+    } catch (error) {
+      last = { data: null, error };
+    }
+    if (!last.error) return last;
+    const transient = isTransientRpcError(last.error);
+    if (!transient || attempt === RPC_RETRY_DELAYS_MS.length) break;
+    const detail = last.error && typeof last.error === "object"
+      ? String((last.error as Record<string, unknown>).code ?? (last.error as Record<string, unknown>).message ?? "unknown")
+      : "unknown";
+    console.warn("deep33_auth_rpc_retry", {
+      operation,
+      attempt: attempt + 1,
+      transient,
+      error_code: detail.slice(0, 80),
+      delay_ms: RPC_RETRY_DELAYS_MS[attempt],
+    });
+    await new Promise((resolve) => setTimeout(resolve, RPC_RETRY_DELAYS_MS[attempt]));
+  }
+  const detail = last.error && typeof last.error === "object"
+    ? String((last.error as Record<string, unknown>).code ?? (last.error as Record<string, unknown>).message ?? "unknown")
+    : String(last.error ?? "unknown");
+  console.error("deep33_auth_rpc_failed", {
+    operation,
+    retriable: isTransientRpcError(last.error),
+    detail: detail.slice(0, 180),
+  });
+  return last;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
@@ -91,13 +143,19 @@ Deno.serve(async (req) => {
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: existingMapping, error: lookupError } = await admin.rpc(
+      const { data: existingMapping, error: lookupError } = await rpcWithBackoff(
         "deep33_auth_profile_lookup",
-        { p_memory_profile_id: localProfileId },
+        () => admin.rpc(
+          "deep33_auth_profile_lookup",
+          { p_memory_profile_id: localProfileId },
+        ),
       );
 
       if (lookupError) {
-        return json({ error: "AUTH_PROFILE_LOOKUP_FAILED" }, 503);
+        return json({
+          error: "AUTH_PROFILE_LOOKUP_FAILED",
+          retryable: isTransientRpcError(lookupError),
+        }, 503);
       }
       // Supabase returns scalar SQL functions as the scalar value itself.
       // Accept the UUID form produced by deep33_auth_profile_lookup while
@@ -163,12 +221,15 @@ Deno.serve(async (req) => {
         userId = signedIn.data.user.id;
       }
 
-      const { data: bound, error: mapError } = await admin.rpc(
+      const { data: bound, error: mapError } = await rpcWithBackoff(
         "deep33_auth_profile_bind",
-        {
-          p_user_id: userId,
-          p_memory_profile_id: localProfileId,
-        },
+        () => admin.rpc(
+          "deep33_auth_profile_bind",
+          {
+            p_user_id: userId,
+            p_memory_profile_id: localProfileId,
+          },
+        ),
       );
 
       if (mapError || bound !== true) {
