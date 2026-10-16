@@ -728,6 +728,8 @@ class AIGateway:
                     },
                     {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
                 ],
+                "max_tokens": 8,
+                "temperature": 0,
             },
             request_id=request_id,
             idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
