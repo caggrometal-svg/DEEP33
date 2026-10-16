@@ -956,3 +956,22 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
         assert cancelled["count"] >= 1
 
     asyncio.run(scenario())
+
+def test_realtime_search_respects_explicit_nasa_authority_with_one_topic_anchor():
+    results = [
+        {
+            "title": "NASA's Artemis missions",
+            "url": "https://www.nasa.gov/humans-in-space/artemis/",
+            "snippet": "NASA describes the Artemis campaign and its lunar mission objectives.",
+        },
+        {
+            "title": "NASA agency overview",
+            "url": "https://www.nasa.gov/about/",
+            "snippet": "Information about NASA leadership and agency administration.",
+        },
+    ]
+    ranked = rank_results("nasa artemis mission official", results, realtime=True)
+
+    assert any("artemis" in item["url"].casefold() for item in ranked)
+    assert all("/about/" not in item["url"] for item in ranked)
+
