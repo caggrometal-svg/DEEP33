@@ -329,7 +329,7 @@ _TOPIC_PHRASE_ALIASES = (
     # Normalize common industry abbreviations before strict topic filtering.
     (re.compile(r"\basync[\s-]+io\b", re.IGNORECASE), "asyncio"),
     # This preserves relevance gates while allowing equivalent terms across providers.
-    (re.compile(r"\b(?:AI|artificial\s+intelligence|inteligencia\s+artificial)\b", re.IGNORECASE), "artificial intelligence"),
+    (re.compile(r"\b(?:AI|artificial\s+intelligence|inteligencia\s+artificial|machine\s+learning|deep\s+learning|neural\s+networks?|large\s+language\s+models?|generative\s+AI)\b", re.IGNORECASE), "artificial intelligence"),
     (re.compile(r"\b(?:universidad(?:es)?|universitari[oa]s?|university|universities|college|colleges)\b", re.IGNORECASE), "university"),
     (re.compile(r"\b(?:investigaci[oó]n(?:es)?|researchers?|research|paper(?:s)?|estudio(?:s)?|stud(?:y|ies))\b", re.IGNORECASE), "research"),
     (re.compile(r"\b(?:tech|technology|technologies|technological|tecnolog[ií]a|tecnol[oó]gic[oa]s?)\b", re.IGNORECASE), "technology"),
