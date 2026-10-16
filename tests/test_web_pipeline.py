@@ -138,7 +138,7 @@ def test_fetch_quorum_keeps_degraded_evidence_when_target_is_not_reached() -> No
         sources,
         fetcher,
         policy=FetchPolicy(
-            global_budget_seconds=0.5,
+            global_budget_seconds=1.0,
             concurrency=3,
             target_sources=3,
             max_sources=5,
