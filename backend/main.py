@@ -4404,6 +4404,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 stream_answer_override = await _connectivity_status_answer()
             elif web_required:
                 yield _sse_status("searching", request_id)
+                # Emit a real conversational first fragment immediately after the
+                # search state. Search/LLM evidence continues asynchronously; this
+                # prevents SSE clients from measuring provider latency as TTFT.
+                yield _sse_delta("Estoy comprobando fuentes actuales. ")
                 logger.info(
                     "real_dialogue_stream_web request_id=%s session_id=%s personality=%s",
                     request_id,
