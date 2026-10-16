@@ -12,6 +12,7 @@ on:
       - fix/deep33-ttft-under-3s
       - fix/deep33-global-101026-final-gates
       - fix/deep33-global-101026-live-search
+      - fix/cert-green-live-search-161026
   pull_request:
     branches:
       - main
@@ -43,7 +44,7 @@ jobs:
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-      DEEP33_REQUIRE_LIVE_GATE: ${{ github.ref == 'refs/heads/main' && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
+      DEEP33_REQUIRE_LIVE_GATE: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'push' && github.ref == 'refs/heads/fix/cert-green-live-search-161026')) && 'true' || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true' && 'true' || 'false') }}
 
     steps:
       - name: Checkout
