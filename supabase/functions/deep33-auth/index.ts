@@ -71,7 +71,7 @@ function isTransientRpcError(error: unknown): boolean {
   const status = Number(value.status ?? value.statusCode ?? 0);
   if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return true;
   if (/^(08|40|53|57|PGRST000|PGRST001|PGRST002|PGRST003|ECONNRESET|ETIMEDOUT|EAI_AGAIN)/.test(code)) return true;
-  return /timeout|timed out|temporar|connection|network|fetch failed|gateway|upstream|too many connections|server error/.test(message);
+  return /\\b(?:408|425|429|500|502|503|504)\\b|timeout|timed out|temporar|connection|network|fetch failed|gateway|upstream|too many connections|server error/.test(message);
 }
 
 const RPC_RETRY_DELAYS_MS = [150, 350, 750];
