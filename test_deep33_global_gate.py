@@ -371,6 +371,12 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
 
         thinking_offset = deferred.index('yield _sse_status("thinking"')
         searching_offset = deferred.index('yield _sse_status("searching"', thinking_offset)
+        progress_offset = deferred.index(
+            'yield _sse_delta("Estoy comprobando fuentes actuales. ")',
+            searching_offset,
+        )
+        # Visible progress must precede web extraction and model inference; it is
+        # explicitly a status update, never a substitute for sourced final content.
         # Dedicated structured-data routes may emit their own earlier sources_ready
         # event without entering the generic web-search branch. Check the web branch's
         # matching sources_ready instead of the first occurrence in the whole function.
@@ -381,6 +387,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         offsets = [
             thinking_offset,
             searching_offset,
+            progress_offset,
             sources_ready_offset,
             token_stream_offset,
         ]
