@@ -738,6 +738,12 @@ class AIGateway:
         request_id: str | None = None,
         deadline: float | None = None,
     ) -> dict:
+        # Reasoning models can consume a tiny completion budget entirely on hidden
+        # reasoning and return HTTP 200 with empty assistant content. Give the
+        # diagnostic enough room to emit the sentinel, but cap the whole check so
+        # a slow provider cannot hold the production gate open indefinitely.
+        local_deadline = time.monotonic() + 8.0
+        effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         return await self.complete(
             {
                 "messages": [
@@ -750,12 +756,12 @@ class AIGateway:
                     },
                     {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
                 ],
-                "max_tokens": 16,
+                "max_tokens": 128,
                 "temperature": 0.0,
             },
             request_id=request_id,
             idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
-            deadline=deadline,
+            deadline=effective_deadline,
             prefer_ttft=True,
         )
 
