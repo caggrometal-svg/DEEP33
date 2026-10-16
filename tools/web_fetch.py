@@ -57,7 +57,7 @@ def _request_headers(url: str, user_agent: str) -> dict[str, str]:
     host = (urlparse(str(url or "")).hostname or "").casefold().rstrip(".")
     headers = {
         "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.7,*/*;q=0.1",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "DNT": "1",
