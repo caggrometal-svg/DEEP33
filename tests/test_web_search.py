@@ -1266,3 +1266,38 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
     assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
     assert len({provider for provider, _ in queries}) == len(queries)
 
+
+
+def test_authoritative_navigation_resolver_short_circuits_noisy_serp(monkeypatch):
+    from tools import web_search
+
+    async def forbidden_orchestrator(*_args, **_kwargs):
+        raise AssertionError("public provider fanout should be bypassed for canonical docs intent")
+
+    class Forbidden:
+        search = forbidden_orchestrator
+
+    monkeypatch.setattr(web_search, "getattr" if False else "_SEARCH_CACHE", web_search._SEARCH_CACHE)
+    monkeypatch.setattr(
+        "backend.search.resilient.get_web_orchestrator",
+        lambda _limit: Forbidden(),
+    )
+    result = asyncio.run(web_search.search_web(
+        "Python asyncio official documentation",
+        max_results=5,
+        fresh=True,
+    ))
+    assert result["ok"] is True
+    assert result["provider"] == "authoritative_resolver"
+    assert result["depth"] == "authoritative-navigation"
+    assert result["results"][0]["url"] == "https://docs.python.org/3/library/asyncio.html"
+    assert {item["source_domain"] for item in result["results"]} >= {"docs.python.org", "python.org"}
+
+
+def test_wikipedia_asyncio_authoritative_resolver_preserves_independent_reference() -> None:
+    from tools.web_search import _authoritative_navigation_results
+
+    results = _authoritative_navigation_results("Wikipedia asyncio Python")
+    domains = {item["source_domain"] for item in results}
+    assert "en.wikipedia.org" in domains
+    assert "docs.python.org" in domains
