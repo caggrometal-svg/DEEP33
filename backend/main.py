@@ -42,7 +42,8 @@ from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
-from backend.weather import build_weather_evidence, is_weather_query, resolve_gps_weather
+from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
+from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -276,6 +277,19 @@ class IdempotencyConflictError(RuntimeError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def resolve_universal_weather(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select forecast/current weather from the appropriate Open-Meteo endpoint."""
+    query = latest_user_query(messages)
+    timeout = min(2.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "2.5")))
+    if is_forecast_weather_query(query):
+        return await fetch_weather_forecast(messages, query, timeout_seconds=timeout)
+
+    weather = await resolve_gps_weather(messages, timeout_seconds=min(1.5, timeout))
+    if weather is not None:
+        return weather
+    return await fetch_named_location_weather(query, timeout_seconds=min(1.5, timeout))
 
 
 DEEP33_RUNTIME_TIMEZONE = os.getenv("DEEP33_TIMEZONE", "America/Santiago").strip() or "America/Santiago"
@@ -2021,11 +2035,11 @@ async def run_web_tool_loop(
     if force_web:
         # GPS-aware weather goes through a dedicated current-weather provider first.
         # Generic web search remains the fallback and the transport layer is untouched.
-        if weather is None:
+        if weather is None and not is_forecast_weather_query(latest_user_query(messages)):
             try:
                 weather = await resolve_gps_weather(
                     messages,
-                    timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+                    timeout_seconds=min(1.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "1.5"))),
                 )
             except Exception as exc:
                 logger.warning(
@@ -3452,12 +3466,13 @@ async def generate(
         asyncio.create_task(
             resolve_gps_weather(
                 raw_messages,
-                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+                timeout_seconds=min(1.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "1.5"))),
             )
         )
         if DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and is_weather_query(latest_user_query(raw_messages))
+        and not is_forecast_weather_query(latest_user_query(raw_messages))
         else None
     )
     try:
@@ -3500,7 +3515,26 @@ async def generate(
 
         started = time.perf_counter()
         deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
-        if is_connectivity_question(latest_user_query(messages)):
+        raw_query = latest_user_query(messages)
+        prefetched_weather = None
+        if weather_task is not None:
+            prefetched_weather = await weather_task
+        decision, evidence = await universal_router.resolve(
+            raw_query,
+            messages=messages,
+            weather=prefetched_weather,
+            weather_resolver=resolve_universal_weather,
+        )
+        evidence = await validate_evidence(evidence) if evidence is not None else None
+        logger.info(
+            "universal_router_decision request_id=%s route=%s confidence=%.2f evidence_ok=%s reason=%s",
+            request_id,
+            decision.route,
+            decision.confidence,
+            bool(evidence and evidence.ok),
+            decision.reason,
+        )
+        if is_connectivity_question(raw_query):
             logger.info("backend_connectivity_question request_id=%s session_id=%s", request_id, session_id)
             data = {
                 "model": payload["model"],
@@ -3514,15 +3548,74 @@ async def generate(
                 }],
             }
             sources = []
+        elif decision.route == DecisionRoute.CLOCK:
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": _runtime_clock_answer(),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = []
+        elif evidence is not None and evidence.ok and decision.route in {
+            DecisionRoute.WEATHER,
+            DecisionRoute.SEISMIC,
+            DecisionRoute.FINANCE,
+        }:
+            # Critical current numbers come directly from validated source data.
+            # Avoid a second LLM rewriting a USD/CLP quote or a seismic count.
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": format_structured_answer(raw_query, evidence),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = [{
+                "title": evidence.provider or decision.route,
+                "url": evidence.source_url,
+                "snippet": str(evidence.data)[:1000],
+            }]
+        elif (
+            decision.route in {DecisionRoute.WEATHER, DecisionRoute.SEISMIC, DecisionRoute.FINANCE}
+            and (evidence is None or not evidence.ok)
+            and (skip_web_tools or not DEEP33_WEB_TOOLS_ENABLED)
+        ):
+            # Fail closed: never ask the model to guess realtime facts without evidence.
+            data = {
+                "model": payload["model"],
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": (
+                            "No pude verificar ese dato en tiempo real porque el proveedor "
+                            "de datos y la búsqueda web no están disponibles para esta consulta. "
+                            "No voy a inventar una cifra ni presentarla como actual."
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }],
+            }
+            sources = []
         elif DEEP33_WEB_TOOLS_ENABLED and not skip_web_tools and (
-            should_force_web(messages) or should_deep_web(messages, personality)
+            decision.route == DecisionRoute.WEB
+            or should_force_web(messages)
+            or should_deep_web(messages, personality)
+            or (
+                decision.route in {DecisionRoute.WEATHER, DecisionRoute.SEISMIC, DecisionRoute.FINANCE}
+                and (evidence is None or not evidence.ok)
+            )
         ):
             logger.info("real_dialogue_web_required request_id=%s session_id=%s personality=%s", request_id, session_id, personality)
-            prefetched_weather = (
-                await weather_task
-                if weather_task is not None
-                else None
-            )
             data, sources = await run_web_tool_loop(
                 messages,
                 model=payload["model"],
@@ -4156,15 +4249,17 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         if DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and is_weather_query(latest_user_query(raw_messages))
+        and not is_forecast_weather_query(latest_user_query(raw_messages))
         else None
     )
     raw_query = latest_user_query(raw_messages)
+    router_decision = classify_query(raw_query)
     prefetch_search_task: asyncio.Task | None = None
     if (
         DEEP33_WEB_TOOLS_ENABLED
         and not skip_web_tools
         and not is_connectivity_question(raw_query)
-        and not is_weather_query(raw_query)
+        and router_decision.route == DecisionRoute.WEB
         and (should_force_web(raw_messages) or should_deep_web(raw_messages, personality))
     ):
         prefetch_deep = should_deep_web(raw_messages, personality) or is_realtime_query(raw_query)
@@ -4249,7 +4344,8 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             not skip_web_tools
             and DEEP33_WEB_TOOLS_ENABLED
             and (
-                should_force_web(messages)
+                router_decision.route == DecisionRoute.WEB
+                or should_force_web(messages)
                 or should_deep_web(messages, resolved_personality)
             )
         )
@@ -4257,6 +4353,48 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             yield _sse_status("thinking", request_id)
 
             stream_answer_override: str | None = None
+            router_evidence = None
+            if is_connectivity_question(latest_user_query(messages)):
+                router_evidence = None
+            elif router_decision.route == DecisionRoute.CLOCK:
+                stream_answer_override = _runtime_clock_answer()
+                web_required = False
+            elif router_decision.route in {
+                DecisionRoute.WEATHER,
+                DecisionRoute.SEISMIC,
+                DecisionRoute.FINANCE,
+            }:
+                prefetched_weather = (
+                    await weather_task
+                    if weather_task is not None
+                    else None
+                )
+                _decision, router_evidence = await universal_router.resolve(
+                    latest_user_query(messages),
+                    messages=messages,
+                    weather=prefetched_weather,
+                    weather_resolver=resolve_universal_weather,
+                )
+                router_evidence = await validate_evidence(router_evidence)
+                if router_evidence is not None and router_evidence.ok:
+                    web_required = False
+                    stream_answer_override = format_structured_answer(
+                        latest_user_query(messages),
+                        router_evidence,
+                    )
+                    sources_count = 1
+                    yield _sse_status("sources_ready", request_id, sources=sources_count)
+                else:
+                    web_required = (
+                        not skip_web_tools
+                        and DEEP33_WEB_TOOLS_ENABLED
+                    )
+                    if not web_required:
+                        stream_answer_override = (
+                            "No pude verificar ese dato en tiempo real porque el proveedor "
+                            "de datos y la búsqueda web no están disponibles para esta consulta. "
+                            "No voy a inventar una cifra ni presentarla como actual."
+                        )
             if is_connectivity_question(latest_user_query(messages)):
                 logger.info(
                     "backend_connectivity_stream request_id=%s session_id=%s",
