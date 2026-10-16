@@ -1266,3 +1266,48 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
     assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
     assert len({provider for provider, _ in queries}) == len(queries)
 
+
+
+def test_python_asyncio_official_intent_probes_authoritative_docs_domain() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    calls = []
+
+    async def provider(query, _timeout, _limit):
+        calls.append(query)
+        if "site:docs.python.org/3/library/asyncio" in query:
+            return [{
+                "title": "asyncio — Asynchronous I/O",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+                "snippet": "Python documentation for asynchronous I/O and asyncio.",
+                "source_domain": "docs.python.org",
+            }]
+        return []
+
+    async def empty(_query, _timeout, _limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.2,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            "bing": provider,
+            "google": provider,
+            "cl0q": provider,
+            "mojeek": empty,
+            "duckduckgo": provider,
+        }
+        return await orchestrator.search("python asyncio official", fresh=True)
+
+    result = asyncio.run(exercise())
+
+    assert any("site:docs.python.org/3/library/asyncio" in query for query in calls)
+    assert result["ok"] is True, result
+    assert any(
+        str(item.get("source_domain") or "").endswith("python.org")
+        for item in result["results"]
+    ), result
