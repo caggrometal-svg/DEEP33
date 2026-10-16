@@ -506,14 +506,20 @@ async def live_gate(base_url: str, token: str | None, session_id: str) -> None:
             urls: list[str] = []
             for item in results:
                 url = str(item.get("url") or "").strip()
-                host = (urlparse(url).hostname or "").casefold()
+                host = str(item.get("source_domain") or "").strip().casefold().rstrip(".")
+                if not host:
+                    host = (urlparse(url).hostname or "").casefold().rstrip(".")
+                host = host.removeprefix("www.")
                 if url and host and host not in domains:
                     domains.append(host)
                     urls.append(url)
             if len(domains) < 3:
                 diagnostics = [
                     {
-                        "domain": (urlparse(str(item.get("url") or "")).hostname or "").casefold(),
+                        "domain": (
+                            str(item.get("source_domain") or "").strip().casefold().rstrip(".").removeprefix("www.")
+                            or (urlparse(str(item.get("url") or "")).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                        ),
                         "provider": item.get("provider"),
                         "title": str(item.get("title") or "")[:180],
                         "score": item.get("score"),
