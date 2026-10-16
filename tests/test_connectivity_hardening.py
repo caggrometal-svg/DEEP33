@@ -349,16 +349,18 @@ def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
 
 
 def test_country_scoped_news_search_rejects_unrelated_google_news_stories() -> None:
-    for path in (
-        "supabase/functions/deep33-proxy/index.ts",
-        "supabase/functions/deep33-tertiary/index.ts",
-    ):
-        source = read(path)
-        assert (
-            'if (googleNewsStory) return !countryIntent || '
-            r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
-            '|| host.endsWith(".cl");'
-        ) in source
+    primary = read("supabase/functions/deep33-proxy/index.ts")
+    secondary = read("supabase/functions/deep33-tertiary/index.ts")
+    # Primary preserves the RSS publisher host, allowing Chilean Google News
+    # wrappers only when their publisher provenance confirms a .cl source.
+    assert 'const publisherHost = String(item.source_domain || "")' in primary
+    assert 'host.endsWith(".cl") || publisherHost.endsWith(".cl")' in primary
+    # Tertiary keeps its independent existing country filter.
+    assert (
+        'if (googleNewsStory) return !countryIntent || '
+        r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
+        '|| host.endsWith(".cl");'
+    ) in secondary
 
 
 def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> None:
