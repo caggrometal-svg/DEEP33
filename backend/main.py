@@ -1694,10 +1694,14 @@ async def _fetch_web_source(
                 f"{publisher_host} {' '.join(title_terms)}",
             ]
             resolved_candidate = None
+            rescue_deadline = asyncio.get_running_loop().time() + min(1.1, timeout_seconds)
             for rescue_query in rescue_queries:
+                remaining_rescue = rescue_deadline - asyncio.get_running_loop().time()
+                if remaining_rescue <= 0.05:
+                    break
                 rescued = await search_web(
                     rescue_query,
-                    timeout_seconds=min(1.35, timeout_seconds),
+                    timeout_seconds=max(0.05, min(0.75, remaining_rescue)),
                     max_results=6,
                     fast=True,
                     fresh=True,
@@ -1740,6 +1744,18 @@ async def _fetch_web_source(
                 publisher_host,
                 type(exc).__name__,
             )
+
+    # An unresolved opaque Google News URL is not publisher evidence. Do not
+    # spend the remaining Edge budget fetching the wrapper/Reader fallback.
+    if (urlparse(url).hostname or "").casefold().removeprefix("www.") == "news.google.com":
+        _log_web_fetch_failure(
+            request_id=request_id,
+            url=url,
+            provider=provider,
+            error="GOOGLE_NEWS_WRAPPER_UNRESOLVED",
+            reason="PARSER_FAIL",
+        )
+        return None
 
     try:
         result = await fetch_page(
@@ -1812,7 +1828,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     try:
         search_result = await search_web(
             query,
-            timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            timeout_seconds=min(2.05, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
                 _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
@@ -2926,7 +2942,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # wrapper cannot crowd out all readable sources.
         fetch_candidates: list[dict[str, Any]] = []
         seen_fetch_domains: set[str] = set()
-        for source in normalized_sources.values():
+        # The public Edge has a ~3.5 s request budget. Prefer already-direct
+        # publisher URLs before Google News wrappers so readable evidence can be
+        # returned without spending the whole budget on wrapper recovery.
+        ordered_sources = sorted(
+            normalized_sources.values(),
+            key=lambda item: (
+                (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+                == "news.google.com"
+            ),
+        )
+        for source in ordered_sources:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
                 editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -2934,11 +2960,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 continue
             seen_fetch_domains.add(editorial_host)
             fetch_candidates.append(source)
-            if len(fetch_candidates) >= 4:
+            if len(fetch_candidates) >= 2:
                 break
         fetch_timeout = max(
-            6.0,
-            min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            0.8,
+            min(1.2, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
         )
         fetch_results = await asyncio.gather(
             *(
