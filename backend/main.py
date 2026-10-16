@@ -3466,7 +3466,7 @@ async def generate(
         asyncio.create_task(
             resolve_gps_weather(
                 raw_messages,
-                timeout_seconds=min(4.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+                timeout_seconds=min(1.5, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "1.5"))),
             )
         )
         if DEEP33_WEB_TOOLS_ENABLED
