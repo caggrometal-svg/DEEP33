@@ -248,6 +248,159 @@ async def fetch_named_location_weather(
     return weather
 
 
+
+
+def is_forecast_weather_query(query: str) -> bool:
+    """Detect forecasts so they are never answered with current conditions."""
+    value = " ".join(str(query or "").split()).casefold()
+    return bool(re.search(
+        r"\b(?:mañana|manana|pasado mañana|pasado manana|pron[oó]stico|pronostico|"
+        r"previsi[oó]n|prevision|forecast|pr[oó]ximos?\s+d[ií]as|fin de semana|"
+        r"next few days|tomorrow)\b",
+        value,
+    ))
+
+
+async def fetch_weather_forecast(
+    messages: list[dict[str, Any]],
+    query: str,
+    *,
+    timeout_seconds: float = 2.5,
+) -> dict[str, Any] | None:
+    """Fetch a daily Open-Meteo forecast for tomorrow or the requested forecast day."""
+    coordinates = extract_gps_coordinates(messages)
+    location_name = ""
+    country = ""
+    admin1 = ""
+    timeout = max(0.6, min(2.5, float(timeout_seconds)))
+    client = await _weather_http_client()
+
+    if coordinates is None:
+        location = _named_weather_location(query)
+        if len(location) < 2:
+            return None
+        geocode_url = (
+            os.getenv("DEEP33_WEATHER_GEOCODING_URL", DEFAULT_GEOCODING_API_URL).strip()
+            or DEFAULT_GEOCODING_API_URL
+        )
+        try:
+            response = await asyncio.wait_for(
+                client.get(
+                    geocode_url,
+                    params={"name": location, "count": "5", "language": "es", "format": "json"},
+                    timeout=httpx.Timeout(
+                        connect=min(0.7, timeout),
+                        read=timeout,
+                        write=min(0.7, timeout),
+                        pool=min(0.5, timeout),
+                    ),
+                ),
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            candidates = response.json().get("results") or []
+        except (asyncio.TimeoutError, httpx.HTTPError, ValueError, TypeError, AttributeError):
+            return None
+        if not isinstance(candidates, list) or not candidates:
+            return None
+        lowered = str(query or "").casefold()
+        country_hint = "CL" if "chile" in lowered else ""
+        selected = next(
+            (
+                item for item in candidates
+                if isinstance(item, dict)
+                and (not country_hint or str(item.get("country_code") or "").upper() == country_hint)
+            ),
+            next((item for item in candidates if isinstance(item, dict)), None),
+        )
+        if not selected:
+            return None
+        try:
+            coordinates = (float(selected["latitude"]), float(selected["longitude"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        location_name = str(selected.get("name") or location)
+        country = str(selected.get("country") or "")
+        admin1 = str(selected.get("admin1") or "")
+
+    latitude, longitude = coordinates
+    lowered = str(query or "").casefold()
+    day_offset = 1 if re.search(r"\b(?:mañana|manana|tomorrow)\b", lowered) else 0
+    if re.search(r"\b(?:pasado mañana|pasado manana|day after tomorrow)\b", lowered):
+        day_offset = 2
+
+    forecast_url = os.getenv("DEEP33_WEATHER_API_URL", DEFAULT_WEATHER_API_URL).strip() or DEFAULT_WEATHER_API_URL
+    params = {
+        "latitude": f"{latitude:.6f}",
+        "longitude": f"{longitude:.6f}",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum",
+        "forecast_days": str(max(3, day_offset + 1)),
+        "timezone": "auto",
+        "temperature_unit": "celsius",
+        "wind_speed_unit": "kmh",
+        "precipitation_unit": "mm",
+    }
+    try:
+        response = await asyncio.wait_for(
+            client.get(
+                forecast_url,
+                params=params,
+                timeout=httpx.Timeout(
+                    connect=min(0.7, timeout),
+                    read=timeout,
+                    write=min(0.7, timeout),
+                    pool=min(0.5, timeout),
+                ),
+            ),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        daily = payload.get("daily")
+        times = daily.get("time") if isinstance(daily, dict) else None
+        if not isinstance(times, list) or len(times) <= day_offset:
+            return None
+        required_keys = (
+            "temperature_2m_min",
+            "temperature_2m_max",
+            "weather_code",
+            "precipitation_probability_max",
+            "precipitation_sum",
+        )
+        if any(not isinstance(daily.get(key), list) or len(daily[key]) <= day_offset for key in required_keys):
+            return None
+        low = daily["temperature_2m_min"][day_offset]
+        high = daily["temperature_2m_max"][day_offset]
+        code = daily["weather_code"][day_offset]
+        if (
+            not isinstance(low, (int, float))
+            or not isinstance(high, (int, float))
+            or not isinstance(code, (int, float))
+            or low > high
+        ):
+            return None
+        return {
+            "provider": "Open-Meteo",
+            "source_url": str(response.request.url),
+            "forecast": True,
+            "forecast_date": str(times[day_offset]),
+            "forecast_day_offset": day_offset,
+            "timezone": str(payload.get("timezone") or "auto"),
+            "latitude": float(payload.get("latitude", latitude)),
+            "longitude": float(payload.get("longitude", longitude)),
+            "location_name": location_name,
+            "country": country,
+            "admin1": admin1,
+            "temperature_min_c": float(low),
+            "temperature_max_c": float(high),
+            "weather_code": int(code),
+            "condition": _weather_description(code),
+            "precipitation_probability_pct": daily["precipitation_probability_max"][day_offset],
+            "precipitation_sum_mm": daily["precipitation_sum"][day_offset],
+        }
+    except (asyncio.TimeoutError, httpx.HTTPError, ValueError, TypeError, AttributeError):
+        return None
+
 def build_weather_evidence(messages: list[dict[str, Any]], weather: dict[str, Any]) -> str:
     query = next(
         (
