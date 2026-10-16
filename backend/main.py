@@ -4448,6 +4448,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 stream_answer_override = await _connectivity_status_answer()
             elif web_required:
                 yield _sse_status("searching", request_id)
+                # Give the client an immediate meaningful fragment while web evidence
+                # continues in parallel. This is not fabricated evidence; it only
+                # communicates the active verification step and keeps SSE TTFT low.
+                yield _sse_delta("Estoy comprobando fuentes actuales. ")
                 logger.info(
                     "real_dialogue_stream_web request_id=%s session_id=%s personality=%s",
                     request_id,
