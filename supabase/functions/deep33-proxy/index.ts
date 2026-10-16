@@ -2954,6 +2954,7 @@ async function runPublicWebSearchQuery(
             snippet: String(result.snippet || "").slice(0, 1500),
             provider: item.value.name,
             domain,
+            source_domain: String(result.source_domain || "").slice(0, 255),
           });
         }
       } catch {
@@ -3230,7 +3231,9 @@ function edgeSearchVerification(
   providers: string[],
 ): Record<string, unknown> {
   const domains = new Set(items.map((item) => {
-    try { return new URL(String(item.url || "")).hostname.toLowerCase(); } catch { return ""; }
+    const publisherDomain = String(item.source_domain || "").trim().toLowerCase().replace(/^www\\./, "");
+    if (publisherDomain) return publisherDomain;
+    try { return new URL(String(item.url || "")).hostname.toLowerCase().replace(/^www\\./, ""); } catch { return ""; }
   }).filter(Boolean));
   return {
     level: providers.length > 1 ? "multi-source" : items.length ? "single-source" : "none",
