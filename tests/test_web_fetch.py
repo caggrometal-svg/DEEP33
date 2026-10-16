@@ -353,3 +353,71 @@ def test_reader_fallback_allows_method_not_allowed() -> None:
 
     assert _reader_fallback_allowed(WebFetchError("WEB_FETCH_HTTP_405")) is True
 
+
+
+def test_extraction_removes_common_chrome_noise() -> None:
+    html = b"""
+    <html><head><title>Clean report</title></head><body>
+      <nav>Home Politics Markets Subscribe Now</nav>
+      <article>
+        <p>The verified report states that the system completed the deployment successfully.</p>
+        <p>The same report records the exact production revision and its observed runtime status.</p>
+      </article>
+      <footer>Privacy Policy Terms of Use All Rights Reserved</footer>
+    </body></html>
+    """
+    title, text = _extract_text(html, "text/html", 5000)
+    assert title == "Clean report"
+    assert "completed the deployment successfully" in text
+    assert "Subscribe Now" not in text
+    assert "Privacy Policy" not in text
+    assert "All Rights Reserved" not in text
+
+
+def test_transient_direct_fetch_error_is_retryable_but_policy_error_is_not() -> None:
+    from tools.web_fetch import WebFetchError, _retryable_direct_fetch_error
+
+    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_TIMEOUT"))
+    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_NETWORK_ERROR"))
+    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_429"))
+    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_503"))
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_403"))
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_PARSER_FAIL"))
+
+
+def test_reader_pipeline_retries_one_transient_direct_get(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    calls = {"direct": 0}
+    url = "https://example.com/retry-once"
+
+    async def direct(**kwargs):
+        calls["direct"] += 1
+        if calls["direct"] == 1:
+            raise web_fetch.WebFetchError("WEB_FETCH_TIMEOUT")
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Recovered",
+            "text": "Recovered factual article evidence after one transient timeout. " * 3,
+            "content_type": "text/html",
+            "bytes": 400,
+            "redirects": 0,
+            "retrieved_at": "2026-10-16T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(web_fetch, "_fetch_page_uncached", direct)
+    result = asyncio.run(web_fetch._fetch_with_reader_fallback(
+        original_url=url,
+        current_url=url,
+        timeout_seconds=2.0,
+        max_redirects=3,
+        max_text_chars=5000,
+        user_agent="DEEP33-test",
+    ))
+
+    assert result["ok"] is True
+    assert calls["direct"] == 2
+    assert "Recovered factual article evidence" in result["text"]
