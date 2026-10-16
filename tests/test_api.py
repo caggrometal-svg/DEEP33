@@ -433,7 +433,8 @@ def test_google_news_wrapper_resolves_to_readable_publisher_article(monkeypatch)
     fetched = []
 
     async def fake_search(query, **_kwargs):
-        assert "site:emol.com" in query
+        assert "emol.com" in query
+        assert "Noticia de Chile" in query
         return {
             "ok": True,
             "results": [{
@@ -525,6 +526,7 @@ def test_diagnostic_inference_uses_a_short_deterministic_completion(monkeypatch)
     ))
 
     assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
-    assert seen["payload"]["max_tokens"] == 16
+    assert seen["payload"]["max_tokens"] == 128
+    assert seen["kwargs"]["deadline"] <= __import__("time").monotonic() + 8.1
     assert seen["payload"]["temperature"] == 0.0
     assert seen["kwargs"]["prefer_ttft"] is True
