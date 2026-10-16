@@ -2945,14 +2945,48 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # The public Edge has a ~3.5 s request budget. Prefer already-direct
         # publisher URLs before Google News wrappers so readable evidence can be
         # returned without spending the whole budget on wrapper recovery.
-        ordered_sources = sorted(
-            normalized_sources.values(),
-            key=lambda item: (
-                (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-                == "news.google.com"
-            ),
+        def _fetch_priority(item: dict[str, Any]) -> tuple[int, int, int]:
+            parsed = urlparse(str(item.get("url") or ""))
+            host = (parsed.hostname or "").casefold().removeprefix("www.")
+            path_parts = [part for part in parsed.path.split("/") if part]
+            path = "/".join(path_parts).casefold()
+            # Prefer an article permalink over generic landing/category pages. They
+            # are often the top-ranked SERP hits but can be shells or very slow,
+            # crowding out a readable third result under the short Edge budget.
+            landing_paths = {
+                "", "noticias", "chile", "actualidad", "politica", "política",
+                "lo-ultimo", "ultimas-noticias", "últimas-noticias", "news",
+            }
+            landing_penalty = int(path in landing_paths or len(path_parts) <= 1)
+            wrapper_penalty = int(host == "news.google.com")
+            return (wrapper_penalty, landing_penalty, -len(path_parts))
+
+        ordered_sources = sorted(normalized_sources.values(), key=_fetch_priority)
+        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        direct_sources = [
+            item for item in ordered_sources
+            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            != "news.google.com"
+        ]
+        wrapper_sources = [
+            item for item in ordered_sources
+            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            == "news.google.com"
+        ]
+        direct_editorial_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in direct_sources
+        } - {""}
+        # When at least two direct publisher URLs exist, fetch those first and
+        # avoid spending the public Edge budget on opaque RSS wrappers. Retain
+        # wrapper resolution as a fallback for sparse result sets.
+        candidate_pool = (
+            direct_sources
+            if len(direct_editorial_domains) >= 2
+            else [*direct_sources, *wrapper_sources]
         )
-        for source in ordered_sources:
+        for source in candidate_pool:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
                 editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -2960,7 +2994,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 continue
             seen_fetch_domains.add(editorial_host)
             fetch_candidates.append(source)
-            if len(fetch_candidates) >= 2:
+            if len(fetch_candidates) >= max_fetch_candidates:
                 break
         fetch_timeout = max(
             0.8,

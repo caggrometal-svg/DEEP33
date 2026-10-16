@@ -349,16 +349,18 @@ def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
 
 
 def test_country_scoped_news_search_rejects_unrelated_google_news_stories() -> None:
-    for path in (
-        "supabase/functions/deep33-proxy/index.ts",
-        "supabase/functions/deep33-tertiary/index.ts",
-    ):
-        source = read(path)
-        assert (
-            'if (googleNewsStory) return !countryIntent || '
-            r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
-            '|| host.endsWith(".cl");'
-        ) in source
+    primary = read("supabase/functions/deep33-proxy/index.ts")
+    secondary = read("supabase/functions/deep33-tertiary/index.ts")
+    # Primary preserves the RSS publisher host, allowing Chilean Google News
+    # wrappers only when their publisher provenance confirms a .cl source.
+    assert 'const publisherHost = String(item.source_domain || "")' in primary
+    assert 'host.endsWith(".cl") || publisherHost.endsWith(".cl")' in primary
+    # Tertiary keeps its independent existing country filter.
+    assert (
+        'if (googleNewsStory) return !countryIntent || '
+        r'/\bchile\b|chilean|\blas\s+condes\b|\bsantiago\b/i.test(evidence) '
+        '|| host.endsWith(".cl");'
+    ) in secondary
 
 
 def test_diagnostic_probe_trims_provider_whitespace_and_recovery_retries() -> None:
@@ -510,3 +512,11 @@ def test_initial_realtime_provider_network_errors_enter_bounded_fallback() -> No
         assert "const recoveryPlan = [" in search
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
         assert 'event: "edge_web_search_recovery_complete"' in search
+
+def test_primary_edge_silent_internal_provider_fails_fast_without_empty_success() -> None:
+    source = read("supabase/functions/deep33-proxy/index.ts")
+    assert "const EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS = 2500;" in source
+    assert 'if (!fullText.trim()) throw new Error("EDGE_AI_EMPTY_RESPONSE");' in source
+    assert "if (emitted) {" in source
+    assert "EDGE_AI_RETRY_COUNT = 0;" in source
+

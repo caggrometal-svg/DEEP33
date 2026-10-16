@@ -17,7 +17,7 @@ on:
       - ".github/workflows/ci.yml"
       - ".github/workflows/production-e2e.yml"
   push:
-    branches: ["main"]
+    branches: ["main", "fix/cert-green-live-search-161026"]
     paths:
       - "backend/search/**"
       - "tools/web_search.py"
@@ -70,7 +70,7 @@ jobs:
           python -m py_compile             backend/main.py             backend/search/engine.py             backend/search/resilience.py             tools/web_search.py             tools/web_fetch.py
 
   production-railway-gate:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/cert-green-live-search-161026')) || github.event_name == 'workflow_dispatch'
     needs: chaos-unit-gate
     runs-on: ubuntu-latest
     steps:

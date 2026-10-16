@@ -280,7 +280,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
         async def provider(query, _timeout, _limit):
             calls.append((provider_name, query))
             for marker, result in targets.items():
-                if marker in query:
+                if marker in query.casefold():
                     return [result]
             if provider_name == "bing":
                 return [item("www.gob.cl", "Gobierno de Chile", "Información pública del Gobierno de Chile")]
@@ -874,25 +874,25 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
 
     calls = []
     company_results = {
-        "site:sonda.com/es": {
+        "sonda": {
             "title": "SONDA soluciones TI y tecnología digital",
             "url": "https://www.sonda.com/es",
             "snippet": "Servicios de tecnología, cloud, ciberseguridad y soluciones digitales para empresas.",
             "source_domain": "www.sonda.com",
         },
-        "site:entel.cl/corporaciones": {
+        "entel": {
             "title": "Soluciones tecnológicas para empresas Entel",
             "url": "https://www.entel.cl/corporaciones/sdwan",
             "snippet": "Solución tecnológica para empresas, conectividad segura y servicios digitales en Chile.",
             "source_domain": "www.entel.cl",
         },
-        "site:wom.cl": {
+        "wom": {
             "title": "WOM canales digitales e internet",
             "url": "https://www.wom.cl/",
             "snippet": "Servicios móviles, internet y canales digitales para clientes en Chile.",
             "source_domain": "www.wom.cl",
         },
-        "site:ww2.movistar.cl/empresas": {
+        "movistar": {
             "title": "Movistar Empresas soluciones digitales y tecnología",
             "url": "https://ww2.movistar.cl/empresas/comunidad/soluciones-digitales-para-tu-negocio/",
             "snippet": "Soluciones tecnológicas, servicios digitales, cloud y conectividad para negocios en Chile.",
@@ -918,7 +918,7 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
         async def provider(query, _timeout, _limit):
             calls.append((name, query))
             for marker, item in company_results.items():
-                if marker in query:
+                if marker in query.casefold():
                     return [item]
             return press_results
         return provider
@@ -946,10 +946,11 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
     assert result["ok"] is True, result
     assert len(domains) >= 3, result["results"]
     assert not any("prnewswire.com" in item.get("url", "") or "einnews.com" in item.get("url", "") for item in result["results"])
-    assert any("site:sonda.com/es" in query for _provider, query in calls)
-    assert any("site:entel.cl/corporaciones" in query for _provider, query in calls)
-    assert any("site:wom.cl" in query for _provider, query in calls)
-    assert any("site:ww2.movistar.cl/empresas" in query for _provider, query in calls)
+    assert any("sonda" in query.casefold() for _provider, query in calls)
+    assert any("entel" in query.casefold() for _provider, query in calls)
+    assert any("wom" in query.casefold() for _provider, query in calls)
+    assert any("movistar" in query.casefold() for _provider, query in calls)
+    assert not any(query.casefold().lstrip().startswith("site:") for _provider, query in calls)
 
 
 def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
@@ -1253,3 +1254,15 @@ def test_google_news_keeps_explicit_publisher_site_scope(monkeypatch) -> None:
     )
 
     assert seen == ["site:emol.com Chile política gobierno Congreso noticias hoy"]
+
+
+def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
+    from backend.search.resilient import _commercial_technology_queries
+
+    queries = _commercial_technology_queries()
+    assert len(queries) >= 4
+    assert all(not query.casefold().lstrip().startswith("site:") for _, query in queries)
+    corpus = " ".join(query.casefold() for _, query in queries)
+    assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
+    assert len({provider for provider, _ in queries}) == len(queries)
+

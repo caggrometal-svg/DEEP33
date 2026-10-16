@@ -2,7 +2,7 @@ name: DEEP33 Railway Production Gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/cert-green-live-search-161026]
     paths:
       - "backend/**"
       - "tools/**"
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   railway-production-gate:
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
+    if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/cert-green-live-search-161026')) || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:

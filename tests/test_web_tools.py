@@ -940,3 +940,102 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "if (!search.ok || sources.length < 1)" in source
         assert 'fallback_path: "railway-recovery"' in source
         assert "async function buildNavigatedWebEvidence(" in source
+
+def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable(monkeypatch):
+    import backend.main as main
+    from starlette.requests import Request
+
+    query = "política Chile hoy últimas noticias"
+    sources = [
+        {
+            "title": "Últimas noticias de Chile y el mundo hoy - Meganoticias",
+            "url": "https://www.meganoticias.cl/lo-ultimo",
+            "snippet": "Últimas noticias actualizadas de Chile.",
+            "provider": "duckduckgo",
+        },
+        {
+            "title": "Actualidad en Chile - El País",
+            "url": "https://elpais.com/chile/actualidad",
+            "snippet": "Noticias de política y actualidad chilena.",
+            "provider": "duckduckgo",
+        },
+        {
+            "title": "Presidente de la DC analiza las elecciones - T13",
+            "url": "https://www.t13.cl/noticia/politica/presidente-dc-analiza-elecciones-15-10-2026",
+            "snippet": "Artículo periodístico con declaraciones sobre política chilena.",
+            "provider": "duckduckgo",
+        },
+    ]
+    attempted = []
+
+    async def fake_search(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "status": "success",
+            "results": sources,
+            "sources": sources,
+            "provider": "duckduckgo",
+            "winner_provider": "duckduckgo",
+            "providers_attempted": ["duckduckgo", "bing"],
+            "retrieved_at": "2026-10-16T04:00:00Z",
+            "queries": [query],
+            "errors": [],
+            "verification": {"distinct_domains": 3, "distinct_providers": 2},
+        }
+
+    async def fake_fetch(url, **_kwargs):
+        attempted.append(url)
+        if "t13.cl" not in url:
+            return {"ok": False, "error": "WEB_FETCH_HTTP_403"}
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Presidente de la DC analiza las elecciones - T13",
+            "text": (
+                "El artículo informa declaraciones y contexto sobre la actualidad "
+                "política en Chile, incluyendo las elecciones parlamentarias y "
+                "presidenciales. " * 5
+            ),
+            "retrieved_at": "2026-10-16T04:00:01Z",
+        }
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "session_id_from_request", lambda _request: "test-session")
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "test-third-publisher")
+
+    request = Request({
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/v1/web/search",
+        "raw_path": b"/v1/web/search",
+        "query_string": b"q=politica",
+        "headers": [],
+        "server": ("testserver", 443),
+        "client": ("127.0.0.1", 12345),
+    })
+    result = asyncio.run(main.web_search_endpoint(request, q=query))
+
+    assert any("t13.cl" in url for url in attempted)
+    assert result["ok"] is True
+    assert result["domains_used"] == 1
+    assert result["extracted_text_chars"] >= 80
+    assert result["fetched_pages"][0]["url"].startswith("https://www.t13.cl/")
+
+def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "backend/main.py").read_text(encoding="utf-8")
+    assert 'max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))' in source
+    assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
+    assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
+

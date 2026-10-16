@@ -24,3 +24,13 @@ def test_tertiary_names_railway_backend_explicitly() -> None:
     assert '"render-backend-fallback"' in TERTIARY
     assert '"render-api-fallback"' in TERTIARY
     assert '"render-backup-fallback"' in TERTIARY
+
+def test_edge_realtime_news_keeps_publisher_provenance_and_ignores_time_fillers() -> None:
+    proxy = (ROOT / "supabase/functions/deep33-proxy/index.ts").read_text(encoding="utf-8")
+    assert '"horas","hour","hours"' in proxy
+    assert 'publisherUrlMatch = itemXml.match(/<source\\b' in proxy
+    assert 'source_domain: String(item.source_domain ?? "").slice(0, 255)' in proxy
+    assert 'publisherHost.endsWith(".cl")' in proxy
+    assert 'source_domain: String(result.source_domain || "").slice(0, 255)' in proxy
+    assert 'const publisherDomain = String(item.source_domain || "")' in proxy
+

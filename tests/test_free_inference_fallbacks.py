@@ -71,7 +71,7 @@ def test_primary_and_secondary_edge_first_chunk_budgets_match() -> None:
     for source in (primary, secondary):
         assert '|| "25000"' in source
         assert "EDGE_AI_FIRST_CHUNK_TIMEOUT_MS = 1800" in source
-        assert "EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS = 18000" in source
+        assert "EDGE_AI_INTERNAL_FIRST_CHUNK_TIMEOUT_MS = 2500" in source
         assert 'page_text: pageText.slice(0, 2400)' in source
         assert 'snippet: String(item.snippet ?? "").slice(0, 900)' in source
         stream_section = source.split("async function streamEdgeAI(", 1)[1].split("\nasync function ", 1)[0]
