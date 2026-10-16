@@ -27,6 +27,54 @@ def _max_response_bytes() -> int:
 MAX_TEXT_CHARS=50_000
 DEFAULT_TIMEOUT_SECONDS=5.0
 DEFAULT_USER_AGENT="DEEP33-WebFetcher/1.0"
+
+_BROWSER_HEADER_PROFILES = (
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+        "sec-ch-ua": '"Chromium";v="141", "Not_A Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    },
+    {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
+        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+    },
+    {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0",
+        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+    },
+)
+
+
+def _request_headers(url: str, user_agent: str) -> dict[str, str]:
+    """Return one stable browser-like header profile per host.
+
+    Stability matters more than random rotation: changing identity on every retry
+    looks less coherent to origin/CDN anti-abuse systems and hurts cacheability.
+    Explicit custom user agents used by tests/clients are preserved.
+    """
+    host = (urlparse(str(url or "")).hostname or "").casefold().rstrip(".")
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,application/json;q=0.7,*/*;q=0.1",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    if user_agent and user_agent != DEFAULT_USER_AGENT:
+        headers["User-Agent"] = user_agent
+        headers["Accept-Language"] = "en-US,en;q=0.9,es;q=0.8"
+        return headers
+
+    digest = hashlib.sha256(host.encode("utf-8")).digest() if host else b"\x00"
+    profile = _BROWSER_HEADER_PROFILES[digest[0] % len(_BROWSER_HEADER_PROFILES)]
+    headers.update(profile)
+    return headers
 FETCH_CACHE_TTL_SECONDS = max(
     30.0, min(600.0, float(os.getenv("WEB_FETCH_CACHE_TTL_SECONDS", "300")))
 )
@@ -559,8 +607,9 @@ async def _fetch_with_reader_fallback(
             "GET",
             f"https://r.jina.ai/{original_url}",
             headers={
-                "User-Agent": user_agent,
+                "User-Agent": _request_headers(original_url, user_agent)["User-Agent"],
                 "Accept": "text/plain",
+                "Accept-Language": _request_headers(original_url, user_agent).get("Accept-Language", "en-US,en;q=0.9"),
             },
             timeout=timeout,
             follow_redirects=False,
@@ -645,7 +694,7 @@ async def _fetch_page_uncached(
         pool=min(timeout_seconds, 0.5),
     )
     client=await _fetch_http_client()
-    headers={"User-Agent":user_agent,"Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1"}
+    headers = _request_headers(current_url, user_agent)
     redirects=[]
     for hop in range(max_redirects+1):
         current_url=await asyncio.to_thread(validate_public_url, current_url)
