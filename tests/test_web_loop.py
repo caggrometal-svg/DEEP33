@@ -484,3 +484,12 @@ def test_search_failure_preserves_runtime_clock_answer():
     assert "reloj de ejecución del backend" in answer
     assert main.DEEP33_RUNTIME_TIMEZONE in answer
     assert "No pude verificar información actual" not in answer
+
+
+def test_web_grounding_contract_forbids_model_memory_gap_filling() -> None:
+    prompt = main.WEB_EVIDENCE_SYNTHESIS_PROMPT
+    assert "GROUNDING CONTRACT" in prompt
+    assert "every externally verifiable factual claim" in prompt
+    assert "Never fill an evidence gap from model memory" in prompt
+    assert "Fetched-page text outranks search snippets" in prompt
+    assert "conflict" in prompt.lower()
