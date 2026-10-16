@@ -4336,8 +4336,34 @@ async def stream_gateway(
         saw_done = saw_done or parsed_done
     assistant_text = sanitize_assistant_text(assistant_raw)
     if not saw_done or not assistant_text:
-        yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
-        return
+        # Never terminate a successful HTTP/SSE turn with an empty visible answer.
+        # Upstream streaming can occasionally finish without a usable content delta
+        # after provider failover. Emit a factual, non-speculative retryable fallback
+        # instead of an error-only stream so Android receives one visible response.
+        assistant_text = (
+            "No pude completar la síntesis en este intento porque el proveedor de "
+            "inferencia terminó sin texto utilizable. La búsqueda puede haber "
+            "respondido, pero no voy a inventar una respuesta."
+        )
+        logger.warning(
+            "stream_empty_visible_fallback request_id=%s saw_done=%s stream_bytes=%s",
+            request_id,
+            saw_done,
+            len(collected),
+        )
+        if first_output_at is None:
+            first_output_at = time.perf_counter()
+            performance.mark(request_id, "T7_FIRST_TOKEN")
+            ttft_ms = (first_output_at - stream_started) * 1000
+            _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+            logger.info(
+                "stream_ttft request_id=%s ttft_ms=%.2f path=empty-visible-fallback",
+                request_id,
+                ttft_ms,
+            )
+        for piece in _sse_text_chunks(assistant_text):
+            yield _sse_delta(piece)
+        saw_done = True
 
     stream_elapsed_ms = (time.perf_counter() - stream_started) * 1000
     logger.info(
