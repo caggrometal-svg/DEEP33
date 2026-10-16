@@ -1301,3 +1301,12 @@ def test_wikipedia_asyncio_authoritative_resolver_preserves_independent_referenc
     domains = {item["source_domain"] for item in results}
     assert "en.wikipedia.org" in domains
     assert "docs.python.org" in domains
+
+
+def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
+    from tools.web_search import _authoritative_navigation_results
+
+    results = _authoritative_navigation_results("Python asyncio TaskGroup documentación oficial")
+    domains = {item["source_domain"] for item in results}
+    assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
+    assert len(domains) >= 3
