@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.decision_router import (
     DecisionRoute,
     Evidence,
     classify_query,
+    format_structured_answer,
     validate_evidence,
 )
 
@@ -48,3 +49,50 @@ def test_validation_rejects_incomplete_finance_data():
     )
     validated = __import__("asyncio").run(validate_evidence(evidence))
     assert validated.ok is False
+
+
+
+def test_forecast_weather_evidence_validates_and_formats_the_forecast_day():
+    forecast_date = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    evidence = Evidence(
+        ok=True,
+        route=DecisionRoute.WEATHER,
+        provider="Open-Meteo",
+        source_url="https://api.open-meteo.com/v1/forecast",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        data={
+            "forecast": True,
+            "forecast_date": forecast_date,
+            "temperature_min_c": 4,
+            "temperature_max_c": 17,
+            "weather_code": 2,
+            "condition": "parcialmente nublado",
+            "precipitation_probability_pct": 10,
+            "location_name": "Santiago",
+        },
+    )
+    validated = __import__("asyncio").run(validate_evidence(evidence))
+    assert validated.ok is True
+    answer = format_structured_answer("¿Mañana hará frío?", validated)
+    assert forecast_date in answer
+    assert "4 °C" in answer
+    assert "17 °C" in answer
+
+
+def test_finance_answer_uses_the_validated_value_verbatim():
+    evidence = Evidence(
+        ok=True,
+        route=DecisionRoute.FINANCE,
+        provider="Yahoo Finance (USD/CLP)",
+        source_url="https://query1.finance.yahoo.com/v8/finance/chart/CLP=X",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        data={
+            "value": 965.5,
+            "market_timestamp": datetime.now(timezone.utc).isoformat(),
+            "unit": "CLP/USD",
+        },
+    )
+    validated = __import__("asyncio").run(validate_evidence(evidence))
+    assert validated.ok is True
+    answer = format_structured_answer("¿A cuánto está el dólar?", validated)
+    assert "965,50 pesos chilenos" in answer
