@@ -7,6 +7,7 @@ import html
 import json
 import ipaddress
 import os
+import re
 import socket
 import time
 from html.parser import HTMLParser
@@ -68,11 +69,55 @@ async def close_fetch_http_client() -> None:
 BLOCKED_HOSTNAMES={"localhost","localhost.localdomain","ip6-localhost","ip6-loopback","metadata","metadata.google.internal","instance-data","instance-data.ec2.internal","169.254.169.254","100.100.100.200"}
 REDIRECT_STATUSES={301,302,303,307,308}
 ALLOWED_CONTENT_TYPES={"text/html","application/xhtml+xml","text/plain","application/json"}
-BLOCKED_HTML_TAGS={"script","style","noscript","svg","canvas","template"}
+BLOCKED_HTML_TAGS={"script","style","noscript","svg","canvas","template","nav","footer","form","button","select","option","iframe","dialog"}
 
 class WebFetchError(RuntimeError): pass
 class SSRFBlockedError(WebFetchError): pass
 class DownloadLimitError(WebFetchError): pass
+
+NOISE_LINE_MARKERS = (
+    "accept all cookies", "accept cookies", "cookie preferences", "manage cookies",
+    "privacy policy", "terms of use", "terms and conditions", "subscribe now",
+    "sign up for", "newsletter", "advertisement", "sponsored content",
+    "enable notifications", "push notifications", "all rights reserved",
+)
+
+
+def _clean_extracted_text(value: str, *, max_chars: int) -> str:
+    """Remove common site chrome/noise while preserving article semantics and order."""
+    output: list[str] = []
+    seen_short: set[str] = set()
+    for raw in str(value or "").splitlines():
+        line = " ".join(html.unescape(raw).split()).strip()
+        if not line:
+            continue
+        lowered = line.casefold()
+        if len(line) <= 180 and any(marker in lowered for marker in NOISE_LINE_MARKERS):
+            continue
+        # Repeated short chrome labels/menus add tokens but no evidence.
+        fingerprint = re.sub(r"\\W+", " ", lowered).strip()
+        if len(line) <= 100 and fingerprint:
+            if fingerprint in seen_short:
+                continue
+            seen_short.add(fingerprint)
+        output.append(line)
+        if sum(len(item) + 1 for item in output) >= max_chars:
+            break
+    return "\\n".join(output)[:max_chars].strip()
+
+
+def _retryable_direct_fetch_error(exc: WebFetchError) -> bool:
+    code = str(exc)
+    if code in {"WEB_FETCH_TIMEOUT", "WEB_FETCH_NETWORK_ERROR"}:
+        return True
+    prefix = "WEB_FETCH_HTTP_"
+    if code.startswith(prefix):
+        try:
+            status = int(code[len(prefix):].split("_", 1)[0])
+        except ValueError:
+            return False
+        return status in {408, 425, 429} or 500 <= status <= 599
+    return False
 
 class HTMLTextExtractor(HTMLParser):
     """Extract visible HTML and conservative, server-rendered article metadata."""
@@ -349,7 +394,7 @@ def _extract_text(content, content_type, max_text_chars):
     mime = content_type.split(";", 1)[0].strip().lower()
     if mime == "text/plain":
         plain = "\n".join(line.strip() for line in decoded.splitlines() if line.strip())
-        return "", plain[:max_text_chars]
+        return "", _clean_extracted_text(plain, max_chars=max_text_chars)
     if mime == "application/json":
         try:
             parsed = json.loads(decoded)
@@ -361,7 +406,7 @@ def _extract_text(content, content_type, max_text_chars):
     parser = HTMLTextExtractor()
     parser.feed(decoded)
     parser.close()
-    visible_text = parser.text[:max_text_chars].strip()
+    visible_text = _clean_extracted_text(parser.text, max_chars=max_text_chars)
     article_body, structured_description, structured_title = _structured_article_fields(
         parser.jsonld_blocks
     )
@@ -463,24 +508,33 @@ async def _fetch_with_reader_fallback(
     user_agent: str,
 ) -> dict:
     direct_error: WebFetchError
-    try:
-        direct_result = await _fetch_page_uncached(
-            original_url=original_url,
-            current_url=current_url,
-            timeout_seconds=timeout_seconds,
-            max_redirects=max_redirects,
-            max_text_chars=max_text_chars,
-            user_agent=user_agent,
-        )
-        # HTTP 200 is not sufficient evidence when the source yields only a
-        # short shell/metadata fragment. Let Reader try to extract real content.
-        if len(str(direct_result.get("text") or "").strip()) > 80:
-            return direct_result
-        direct_error = WebFetchError("WEB_FETCH_SHORT_TEXT")
-    except WebFetchError as direct_exception:
-        if not _reader_fallback_allowed(direct_exception):
-            raise
-        direct_error = direct_exception
+    # GET is idempotent, so one bounded retry is safe for transient transport/5xx
+    # failures. Never retry policy/SSRF/parser failures and never create an
+    # unbounded retry loop before Reader fallback.
+    for attempt in range(2):
+        try:
+            direct_result = await _fetch_page_uncached(
+                original_url=original_url,
+                current_url=current_url,
+                timeout_seconds=timeout_seconds,
+                max_redirects=max_redirects,
+                max_text_chars=max_text_chars,
+                user_agent=user_agent,
+            )
+            # HTTP 200 is not sufficient evidence when the source yields only a
+            # short shell/metadata fragment. Let Reader try to extract real content.
+            if len(str(direct_result.get("text") or "").strip()) > 80:
+                return direct_result
+            direct_error = WebFetchError("WEB_FETCH_SHORT_TEXT")
+            break
+        except WebFetchError as direct_exception:
+            if not _reader_fallback_allowed(direct_exception):
+                raise
+            direct_error = direct_exception
+            if attempt == 0 and _retryable_direct_fetch_error(direct_exception):
+                await asyncio.sleep(min(0.12, max(0.03, timeout_seconds * 0.03)))
+                continue
+            break
 
     if not _reader_fallback_allowed(direct_error):
         raise direct_error
