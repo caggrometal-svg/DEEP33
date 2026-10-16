@@ -1069,14 +1069,17 @@ class WebOrchestrator:
             and loop.time() < deadline
         ):
             political_source_queries = (
-                # Bing currently yields readable direct publisher URLs more reliably
-                # than the HTML-only fallback engines for Chilean news domains.
-                # Fan out several editorial domains in parallel; Google News remains
-                # an independent RSS source for corroboration, not the only path.
+                # Use both direct web search and publisher-scoped Google News RSS.
+                # Direct hits are preferred for readability; RSS preserves editorial
+                # provenance when a general index is sparse or temporarily blocked.
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
             political_tasks = {
@@ -1153,6 +1156,51 @@ class WebOrchestrator:
             ]
             ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
+
+            # The strict relevance ranker can legitimately prefer two headlines
+            # from one publisher over a lower-scoring but still valid independent
+            # newsroom. For live Chile political news, preserve real candidates
+            # discovered by the targeted publisher searches so one editorial
+            # domain cannot consume the entire evidence set.
+            political_publishers = {
+                "biobiochile.cl", "cooperativa.cl", "latercera.com",
+                "24horas.cl", "emol.com", "cnnchile.com",
+            }
+            diverse_selected: list[dict] = []
+            diverse_domains: set[str] = set()
+            for item in selected:
+                host = str(
+                    item.get("source_domain")
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                ).casefold().rstrip(".").removeprefix("www.")
+                if host and host not in diverse_domains:
+                    diverse_selected.append(item)
+                    diverse_domains.add(host)
+            for item in merged:
+                if len(diverse_selected) >= self.max_results:
+                    break
+                url = str(item.get("url") or "").strip()
+                host = str(
+                    item.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().rstrip(".").removeprefix("www.")
+                if not url.startswith("https://") or not host or host in diverse_domains:
+                    continue
+                if not any(host == domain or host.endswith("." + domain) for domain in political_publishers):
+                    continue
+                story = f"{item.get('title', '')} {item.get('snippet', '')}"
+                if re.search(
+                    r"\b(?:pol[ií]tic\w*|gobiern\w*|president\w*|elecci\w*|"
+                    r"congreso|senad\w*|ministro\w*|parlament\w*|diputad\w*|"
+                    r"reforma\w*|proyecto de ley|gabinete|partido\w*)\b",
+                    story,
+                    re.IGNORECASE,
+                ) is None:
+                    continue
+                diverse_selected.append(item)
+                diverse_domains.add(host)
+            if len(diverse_selected) >= min(3, self.max_results):
+                selected = diverse_selected[: self.max_results]
             recovered_domains = {
                 str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
                 for item in selected

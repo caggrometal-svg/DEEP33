@@ -530,3 +530,102 @@ def test_diagnostic_inference_uses_a_short_deterministic_completion(monkeypatch)
     assert seen["kwargs"]["deadline"] <= __import__("time").monotonic() + 8.1
     assert seen["payload"]["temperature"] == 0.0
     assert seen["kwargs"]["prefer_ttft"] is True
+
+
+def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url(monkeypatch):
+    import asyncio
+    from backend import main
+
+    wrapper = "https://news.google.com/rss/articles/opaque-token"
+    direct = "https://www.emol.com/noticias/Nacional/2026/10/16/article.html"
+    cooperativa = "https://www.cooperativa.cl/noticias/pais/politica/article.html"
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Gobierno y Congreso acuerdan agenda política",
+                    "url": wrapper,
+                    "source_domain": "www.emol.com",
+                    "provider": "google_news",
+                    "snippet": "Gobierno y Congreso avanzan en una agenda política nacional.",
+                },
+                {
+                    "title": "Senado debate nueva reforma",
+                    "url": cooperativa,
+                    "source_domain": "www.cooperativa.cl",
+                    "provider": "bing",
+                    "snippet": "El Senado inició el debate de una reforma del Gobierno.",
+                },
+            ],
+            "sources": [],
+            "errors": [],
+            "providers": ["google_news", "bing"],
+            "providers_attempted": ["google_news", "bing"],
+            "winner_provider": "multi",
+        }
+
+    async def fake_fetch_source(source, **_kwargs):
+        assert source.get("source_domain") in {"emol.com", "cooperativa.cl"}
+        url = direct if source["source_domain"] == "emol.com" else cooperativa
+        return {
+            "title": source["title"],
+            "url": url,
+            "text": "Texto editorial verificable de la fuente original. " * 8,
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "retrieved_at": "2026-10-16T02:00:00+00:00",
+            "text_chars": 360,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
+
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "política Chile hoy últimas noticias"},
+        headers={"X-DEEP33-Session-Id": "test-web-search-resolution"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["domains_used"] == 2
+    assert body["results"][0]["url"] == direct
+    assert body["results"][0]["original_url"] == wrapper
+    assert body["results"][0]["source_domain"] == "www.emol.com"
+
+
+def test_editorial_domain_dedup_normalizes_www_prefix():
+    from backend.search.engine import deduplicate
+
+    ranked = [
+        {
+            "title": "Primera noticia política",
+            "url": "https://news.google.com/rss/articles/a",
+            "source_domain": "www.emol.com",
+            "snippet": "Gobierno y Congreso de Chile.",
+        },
+        {
+            "title": "Segunda noticia política",
+            "url": "https://news.google.com/rss/articles/b",
+            "source_domain": "emol.com",
+            "snippet": "Senado y política nacional.",
+        },
+        {
+            "title": "Tercera noticia política",
+            "url": "https://www.cooperativa.cl/noticias/pais/politica/c",
+            "source_domain": "www.cooperativa.cl",
+            "snippet": "Gobierno y oposición en Chile.",
+        },
+    ]
+    selected = deduplicate(ranked, 2)
+    domains = {
+        str(item.get("source_domain") or "").removeprefix("www.")
+        for item in selected
+    }
+    assert domains == {"emol.com", "cooperativa.cl"}
