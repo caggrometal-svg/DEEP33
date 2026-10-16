@@ -3143,7 +3143,23 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 timeout=remaining,
             )
             result = normalized_generation(data, DEFAULT_PERSONALITY)
-            return "PASS", data, result["text"]
+            text_value = str(result.get("text") or "").strip()
+            if "DEEP33_DIAGNOSTIC_OK" in text_value:
+                return "PASS", data, text_value
+
+            provider_meta = data.get("_deep33_gateway") or {}
+            logger.warning(
+                "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
+                request_id,
+                diagnostic_id,
+                provider_meta.get("provider", "unknown"),
+                provider_meta.get("model", "unknown"),
+                len(text_value),
+            )
+            if attempt == 0 and time.monotonic() + 0.15 < deadline:
+                await asyncio.sleep(0.15)
+                continue
+            return "FAIL", data, text_value
         except GatewayTimeoutError:
             last_timeout = True
             logger.warning(
@@ -3156,7 +3172,18 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 await asyncio.sleep(1.0)
                 continue
             break
-        except (GatewayHTTPError, GatewayInvalidResponseError, HTTPException):
+        except GatewayInvalidResponseError:
+            logger.warning(
+                "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
+                request_id,
+                diagnostic_id,
+                attempt + 1,
+            )
+            if attempt == 0 and time.monotonic() + 0.25 < deadline:
+                await asyncio.sleep(0.25)
+                continue
+            return "FAIL", None, None
+        except (GatewayHTTPError, HTTPException):
             return "FAIL", None, None
         except Exception as exc:
             logger.warning(
@@ -3179,7 +3206,7 @@ async def inference_check(request: Request) -> dict:
         "request_id": request_id,
         "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
         "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
-        "text_ok": text == "DEEP33_DIAGNOSTIC_OK",
+        "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
         "timestamp": utc_now(),
     }
 
