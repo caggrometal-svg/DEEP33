@@ -1097,6 +1097,8 @@ def test_academic_ai_research_intent_fans_out_to_independent_domains():
 
 
 def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monkeypatch):
+    import backend.main as main
+
     async def fake_stream(payload, **kwargs):
         yield b"data: [DONE]\n\n"
 
