@@ -499,11 +499,15 @@ async def validate_evidence(evidence: Evidence) -> Evidence:
                 evidence.ok = False
                 evidence.error = "WEATHER_FORECAST_DATE_INVALID"
                 return evidence
+            offset = data.get("forecast_day_offset", 0)
+            minimum_allowed_day = int(offset) - 1 if isinstance(offset, int) and not isinstance(offset, bool) else 0
             if (
-                isinstance(low, bool) or isinstance(high, bool)
+                isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 7
+                or isinstance(low, bool) or isinstance(high, bool)
                 or not isinstance(low, (int, float)) or not isinstance(high, (int, float))
                 or low > high or not -100 <= low <= 70 or not -100 <= high <= 70
-                or forecast_days < -1 or forecast_days > 8
+                or forecast_days < minimum_allowed_day or forecast_days > offset + 1
+                or forecast_days > 8
             ):
                 evidence.ok = False
                 evidence.error = "WEATHER_FORECAST_VALUES_INVALID"
