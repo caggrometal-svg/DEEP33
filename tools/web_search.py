@@ -1056,9 +1056,9 @@ def _authoritative_navigation_results(query: str) -> list[dict]:
                 "provider": "authoritative_resolver",
             },
             {
-                "title": "Artemis - NASA Science",
-                "url": "https://science.nasa.gov/moon/artemis/",
-                "snippet": "NASA Science overview of Artemis lunar exploration.",
+                "title": "Earth's Moon - NASA Science",
+                "url": "https://science.nasa.gov/moon/",
+                "snippet": "NASA Science lunar exploration hub with Artemis-related mission context.",
                 "source_domain": "science.nasa.gov",
                 "provider": "authoritative_resolver",
             },
