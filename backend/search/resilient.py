@@ -120,6 +120,18 @@ class TTLRUCache:
             self._items.popitem(last=False)
 
 
+def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
+    """Use broad, brand-specific web searches; strict site: filters were returning zero candidates."""
+    return (
+        ("bing", "SONDA Chile servicios TI tecnología soluciones digitales empresa"),
+        ("google", "Entel Empresas Chile tecnología servicios digitales"),
+        ("duckduckgo", "WOM Chile internet tecnología empresas servicios digitales"),
+        ("cl0q", "Movistar Empresas Chile tecnología servicios digitales"),
+        ("mojeek", "empresas tecnológicas Chile software telecomunicaciones SONDA Entel WOM Movistar"),
+        ("yahoo", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
+    )
+
+
 class WebOrchestrator:
     """Strict-budget parallel search with circuit breaking and graceful fallback."""
 
@@ -735,12 +747,7 @@ class WebOrchestrator:
             # websites. Search official commercial domains through independent
             # providers in the first bounded wave; ranking still uses the original
             # user query and a host whitelist only prevents false early completion.
-            company_queries = (
-                ("bing", "site:sonda.com/es Chile tecnología servicios TI soluciones digitales"),
-                ("google", "site:entel.cl/corporaciones Chile tecnología empresas servicios digitales"),
-                ("duckduckgo", "site:wom.cl Chile tecnología servicios digitales internet"),
-                ("cl0q", "site:ww2.movistar.cl/empresas Chile tecnología servicios digitales"),
-            )
+            company_queries = _commercial_technology_queries()
             tasks.update({
                 asyncio.create_task(
                     self._bounded_call_provider(provider, company_query),
