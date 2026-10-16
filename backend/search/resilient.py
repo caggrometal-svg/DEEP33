@@ -139,6 +139,7 @@ class WebOrchestrator:
         self.fallback_delay_seconds = max(0.0, min(2.0, float(fallback_delay_seconds)))
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
+        self._inflight: dict[str, asyncio.Task[dict]] = {}
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
@@ -509,7 +510,58 @@ class WebOrchestrator:
             await asyncio.sleep(self.fallback_delay_seconds)
         return await self._bounded_call_provider(provider, query)
 
-    async def search(self, query: str, *, fresh: bool = False) -> dict:
+    async def search(
+        self,
+        query: str,
+        *,
+        fresh: bool = False,
+        budget_seconds: float | None = None,
+    ) -> dict:
+        """Coalesce identical concurrent searches, including concurrent fresh requests."""
+        cleaned = " ".join(str(query or "").split()).strip()
+        if not cleaned:
+            return await self._search_uncached(cleaned, fresh=fresh, budget_seconds=budget_seconds)
+
+        cache_key = self._cache_key(cleaned)
+        if not fresh:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                cached["cache_hit"] = True
+                return cached
+
+        budget_key = (
+            "default" if budget_seconds is None
+            else f"{max(0.05, min(self.global_budget_seconds, float(budget_seconds))):.3f}"
+        )
+        flight_key = f"{cache_key}:{budget_key}"
+        task = self._inflight.get(flight_key)
+        if task is None or task.done():
+            task = asyncio.create_task(
+                self._search_uncached(
+                    cleaned,
+                    fresh=fresh,
+                    budget_seconds=budget_seconds,
+                ),
+                name=f"search:singleflight:{cache_key[:12]}",
+            )
+            self._inflight[flight_key] = task
+
+        try:
+            # One caller cancelling a request must not cancel the shared upstream
+            # search for every other concurrent request.
+            result = await asyncio.shield(task)
+            return copy.deepcopy(result)
+        finally:
+            if task.done() and self._inflight.get(flight_key) is task:
+                self._inflight.pop(flight_key, None)
+
+    async def _search_uncached(
+        self,
+        query: str,
+        *,
+        fresh: bool = False,
+        budget_seconds: float | None = None,
+    ) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return self._empty_payload(
@@ -529,13 +581,17 @@ class WebOrchestrator:
 
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.global_budget_seconds
-        # Reserve almost half of the end-to-end budget for recovery. Without a
-        # separate primary deadline, slow providers can consume all 5s and prevent
-        # the fallback query from ever running.
+        effective_budget = self.global_budget_seconds
+        if budget_seconds is not None:
+            effective_budget = max(
+                0.05,
+                min(self.global_budget_seconds, float(budget_seconds)),
+            )
+        deadline = loop.time() + effective_budget
+        # Reserve time for recovery while honoring the fast-response budget.
         primary_deadline = min(
             deadline,
-            loop.time() + max(0.05, self.global_budget_seconds * 0.55),
+            loop.time() + max(0.05, effective_budget * 0.55),
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
