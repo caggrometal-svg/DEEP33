@@ -4625,6 +4625,10 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 stream_answer_override = await _connectivity_status_answer()
             elif web_required:
                 yield _sse_status("searching", request_id)
+                # Send a truthful visible progress fragment immediately. This is
+                # navigation status, not evidence or a substitute for model output;
+                # source verification and inference continue before the final answer.
+                yield _sse_delta("Estoy comprobando fuentes actuales. ")
                 logger.info(
                     "real_dialogue_stream_web request_id=%s session_id=%s personality=%s",
                     request_id,
