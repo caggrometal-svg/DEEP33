@@ -328,7 +328,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
         assert 'event: "edge_web_search_recovery_complete"' in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
-        assert "query: rescueQuery" in source
+        assert "query: plan.queries[2] || rescueQuery" in source
         assert '"parallel_recovery_failed"' in source
         assert "2500" in source and "3000" in source
         assert "socialPublisherSuffix" in source
