@@ -3286,7 +3286,8 @@ function edgeFilterSearchResults(
         const title = String(item.title || "").trim();
         const snippet = String(item.snippet || "").trim();
         const publisherHost = String(
-          item.source_domain || item.publisher_domain || "",
+          item.source_domain || item.publisher_domain ||
+            (host === "news.google.com" ? "" : host),
         ).toLowerCase().replace(/^www\./, "");
         const googleNewsStory = host === "news.google.com" &&
           path.startsWith("/rss/articles/");
