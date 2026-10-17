@@ -336,7 +336,11 @@ class AIGateway:
             return configured
         if provider_index < provider_count - 1:
             return min(configured, 0.35)
-        return max(configured, 2.40)
+        # Honor the configured final-provider window. For a two-provider chain,
+        # the primary's bounded 0.5s connection/read attempt plus this window
+        # must leave room for the visible fallback response inside Android's
+        # sub-3s first-visible contract.
+        return configured
 
     @staticmethod
     def _provider_url_is_secure(value: str) -> bool:
