@@ -298,3 +298,12 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
         assert "const ChileanNationalSection = !googleNewsStory" in result_filter
+        # Google News wraps every story in one URL host; diversity and fetch scheduling
+        # must use the actual publisher domain from RSS metadata.
+        assert "const publisherDomain = String(result.source_domain || \"\").trim()" in source
+        assert "distinct_domains: new Set(finalResults.map((item) =>" in source
+        assert "const effectiveDomain = isSearchWrapper(canonicalUrl) && publisherHost" in source
+        assert "source_domain: String(item.source_domain ?? \"\").slice(0, 255)" in source
+        assert "const MIN_REALTIME_NEWS_RESULTS = 3;" in source
+        assert "finalResults.length < MIN_REALTIME_NEWS_RESULTS" in source
+        assert "expected_min_results: MIN_REALTIME_NEWS_RESULTS" in source
