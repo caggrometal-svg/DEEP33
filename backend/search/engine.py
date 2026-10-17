@@ -555,10 +555,10 @@ def rank_results(
         # locality must remain the stronger relevance anchor.
         chile_locality_scope = bool(_extract_realtime_locality(query)) or bool(
             re.search(
-                r"\\b(?:las\\s+condes|santiago|valpara[ií]so|viña\\s+del\\s+mar|"
-                r"concepci[oó]n|temuco|antofagasta|arica|iquique|puerto\\s+montt|"
-                r"punta\\s+arenas|la\\s+serena|coquimbo|rancagua|talca|chill[aá]n|"
-                r"copiap[oó]|calama|ñuñoa|providencia|maip[uú]|puente\\s+alto)\\b",
+                r"\b(?:las\s+condes|santiago|valpara[ií]so|viña\s+del\s+mar|"
+                r"concepci[oó]n|temuco|antofagasta|arica|iquique|puerto\s+montt|"
+                r"punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|"
+                r"copiap[oó]|calama|ñuñoa|providencia|maip[uú]|puente\s+alto)\b",
                 query_folded,
             )
         )
