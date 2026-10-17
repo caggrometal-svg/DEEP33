@@ -80,6 +80,7 @@ const MAX_WEB_SEARCH_RESULTS = 12;
 const MAX_WEB_NAVIGATION_CANDIDATES = 12;
 const TARGET_READABLE_WEB_SOURCES = 4;
 const MIN_READABLE_WEB_SOURCES = 2;
+const MIN_REALTIME_NEWS_RESULTS = 3;
 
 function requestedReadableSourceCount(query: string): number {
   if (edgeCurrentDateTimeQuery(query)) return 1;
@@ -97,6 +98,7 @@ type NavigatedWebSource = {
   title: string;
   url: string;
   snippet: string;
+  source_domain?: string;
   page_text?: string;
   final_url?: string;
   retrieved_at?: string;
@@ -127,6 +129,7 @@ async function buildNavigatedWebEvidence(
           title: String(item.title ?? item.url).slice(0, 300),
           url: String(item.url).slice(0, 2000),
           snippet: String(item.snippet ?? "").slice(0, 900),
+          source_domain: String(item.source_domain ?? "").slice(0, 255),
         }))
     : [];
 
@@ -197,17 +200,24 @@ async function buildNavigatedWebEvidence(
           if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
           const canonicalUrl = parsed.href;
           const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+          const publisherHost = String(source.source_domain ?? "").trim().toLowerCase().replace(/^www\./, "");
+          // Google News RSS wraps every article with news.google.com. Use the actual
+          // publisher for deduplication so one wrapper host cannot suppress all stories.
+          const effectiveDomain = isSearchWrapper(canonicalUrl) && publisherHost
+            ? publisherHost
+            : hostname;
           if (
             !hostname ||
+            !effectiveDomain ||
             excludedUrls.has(canonicalUrl) ||
-            excludedDomains.has(hostname) ||
+            excludedDomains.has(effectiveDomain) ||
             scheduledUrls.has(canonicalUrl) ||
-            scheduledDomains.has(hostname)
+            scheduledDomains.has(effectiveDomain)
           ) return false;
           scheduledUrls.add(canonicalUrl);
-          scheduledDomains.add(hostname);
+          scheduledDomains.add(effectiveDomain);
           attemptedUrls.add(canonicalUrl);
-          attemptedDomains.add(hostname);
+          attemptedDomains.add(effectiveDomain);
           return true;
         } catch {
           return false;
@@ -2958,7 +2968,24 @@ async function runPublicWebSearchQuery(
         const url = rssText(itemXml, "link");
         const snippet = rssText(itemXml, "description");
         const published_at = rssText(itemXml, "pubDate");
-        if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet, published_at });
+        const publisherUrlMatch = itemXml.match(/<source\b[^>]*\burl=["']([^"']+)["'][^>]*>/i);
+        let source_domain = "";
+        if (publisherUrlMatch?.[1]) {
+          try {
+            source_domain = new URL(decodeHtml(publisherUrlMatch[1])).hostname.toLowerCase().replace(/^www\./, "");
+          } catch {
+            source_domain = "";
+          }
+        }
+        if (title && /^https?:\/\//i.test(url)) {
+          results.push({
+            title,
+            url,
+            snippet,
+            published_at,
+            ...(source_domain ? { source_domain } : {}),
+          });
+        }
       }
     } else if (provider.name === "mojeek_public") {
       const items = [...html.matchAll(/<a[^>]+class="ob"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
@@ -3033,7 +3060,8 @@ async function runPublicWebSearchQuery(
     providerNames.push(item.value.name);
     for (const result of item.value.results) {
       try {
-        const domain = new URL(result.url).hostname;
+        const publisherDomain = String(result.source_domain || "").trim().toLowerCase().replace(/^www\./, "");
+        const domain = publisherDomain || new URL(result.url).hostname.toLowerCase().replace(/^www\./, "");
         if (!merged.has(result.url)) {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
@@ -3041,6 +3069,7 @@ async function runPublicWebSearchQuery(
             snippet: String(result.snippet || "").slice(0, 1500),
             provider: item.value.name,
             domain,
+            source_domain: String(result.source_domain || "").slice(0, 255),
           });
         }
       } catch {
@@ -3072,7 +3101,10 @@ async function runPublicWebSearchQuery(
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) =>
+          String(item.source_domain || item.domain || new URL(item.url).hostname)
+            .toLowerCase().replace(/^www\./, "")
+        )).size,
       },
     };
   }
@@ -3528,40 +3560,25 @@ async function publicWebSearchUncached(
     edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
-  // Fresh news from a single provider is usable, but not yet independently corroborated.
-  // Give public secondary providers one short bounded window before returning.
+  // A single surviving headline is not enough for a current-news query. Recover
+  // whenever we have fewer than three candidates or no independent provider mix.
+  // Query variants run in parallel with bounded timeouts rather than serial retries.
   if (
     realtimeNewsPlan &&
-    finalResults.length > 0 &&
-    edgeProvidersForResults(finalResults).length < 2
+    (finalResults.length < MIN_REALTIME_NEWS_RESULTS ||
+      edgeProvidersForResults(finalResults).length < 2)
   ) {
-    const corroborationQuery = plan.queries[0] || plan.original;
-    const corroborationData = await runPublicWebSearchQuery(
-      corroborationQuery,
-      true,
-      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
-    ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
-    const corroborationBatch = { query: corroborationQuery, data: corroborationData };
-    batches.push(corroborationBatch);
-    mergeBatch(corroborationBatch);
-    finalResults = filteredResults();
-  }
-
-  // Empty or irrelevant initial news results trigger one bounded, parallel recovery.
-  // Do not serialize several full provider timeout windows: this used to leave the
-  // Android client waiting 9-16s before returning a false empty result.
-  if (realtimeNewsPlan && finalResults.length < 1) {
     const locality = edgeExtractLocality(plan.original);
     const rescueQuery = edgeBroadWorldNewsQuery(plan.original)
       ? "noticias internacionales de hoy"
       : locality
         ? locality + " noticias de hoy"
         : /\b(?:chile|chileno|chilena)\b/i.test(plan.original)
-          ? "Chile noticias hoy"
+          ? "Chile noticias de hoy " + new Date().toISOString().slice(0, 10)
           : normalizeEdgeSearchQuery(plan.original) + " actualidad de hoy";
     const recoveryPlan = [
-      { query: plan.queries[0] || plan.original, forceFullSearch: true },
-      { query: rescueQuery, forceFullSearch: false },
+      { query: plan.queries[1] || plan.queries[0] || plan.original, forceFullSearch: true },
+      { query: plan.queries[2] || rescueQuery, forceFullSearch: false },
     ].filter((item, index, all) =>
       Boolean(item.query.trim()) &&
       all.findIndex((candidate) => candidate.query.trim().toLowerCase() === item.query.trim().toLowerCase()) === index
@@ -3584,6 +3601,7 @@ async function publicWebSearchUncached(
       event: "edge_web_search_recovery_complete",
       elapsed_ms: Math.round(performance.now() - recoveryStarted),
       queries_attempted: recoveryBatches.length,
+      expected_min_results: MIN_REALTIME_NEWS_RESULTS,
       result_count: finalResults.length,
       providers: edgeProvidersForResults(finalResults),
     }));
@@ -4010,10 +4028,15 @@ Deno.serve(async (req) => {
                   const value = item as Record<string, unknown>;
                   const parsed = new URL(String(value.url || ""));
                   const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+                  const publisherHost = String(value.source_domain || "").trim().toLowerCase().replace(/^www\./, "");
+                  const candidateDomain = hostname === "news.google.com" &&
+                    parsed.pathname.toLowerCase().startsWith("/rss/articles/") && publisherHost
+                    ? publisherHost
+                    : hostname;
                   return (
                     (parsed.protocol === "https:" || parsed.protocol === "http:") &&
                     !excludedUrls.has(parsed.href) &&
-                    !excludedDomains.has(hostname)
+                    !excludedDomains.has(candidateDomain)
                   );
                 } catch {
                   return false;
@@ -4556,10 +4579,15 @@ Deno.serve(async (req) => {
                   const value = item as Record<string, unknown>;
                   const parsed = new URL(String(value.url || ""));
                   const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+                  const publisherHost = String(value.source_domain || "").trim().toLowerCase().replace(/^www\./, "");
+                  const candidateDomain = hostname === "news.google.com" &&
+                    parsed.pathname.toLowerCase().startsWith("/rss/articles/") && publisherHost
+                    ? publisherHost
+                    : hostname;
                   return (
                     (parsed.protocol === "https:" || parsed.protocol === "http:") &&
                     !excludedUrls.has(parsed.href) &&
-                    !excludedDomains.has(hostname)
+                    !excludedDomains.has(candidateDomain)
                   );
                 } catch {
                   return false;
