@@ -4635,7 +4635,11 @@ Deno.serve(async (req) => {
               idempotencyContext,
               req.headers.get("authorization") || "",
             );
-            const responseText = extractProviderText(ai.body);
+            const responseText = appendVerifiedSourceLinks(
+              sanitizeAssistantText(extractProviderText(ai.body)),
+              searchQuery,
+              sources,
+            );
             let memoryPersisted = false;
             try {
               void persistDeep33SelfName(sessionId, responseText, memoryProfileId).catch(() => {});
@@ -4699,17 +4703,19 @@ return json({
           return json(responseBody, upstream.status);
         }
 
-        const result =
+        const upstreamResult =
           responseBody.result && typeof responseBody.result === "object"
-            ? {
-                ...(responseBody.result as Record<string, unknown>),
-                sources,
-              }
-            : {
-                role: "assistant",
-                text: String(responseBody.text ?? ""),
-                sources,
-              };
+            ? responseBody.result as Record<string, unknown>
+            : { role: "assistant", text: String(responseBody.text ?? "") };
+        const result = {
+          ...upstreamResult,
+          text: appendVerifiedSourceLinks(
+            sanitizeAssistantText(String(upstreamResult.text ?? "")),
+            searchQuery,
+            sources,
+          ),
+          sources,
+        };
 return json({
           ...responseBody,
           web_navigation: true,
