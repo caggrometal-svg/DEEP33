@@ -213,6 +213,6 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert 'const chilePageEvidence = (String(source.title || "") + " " + pageText).toLowerCase();' in navigation
         assert "if (!explicitChilePageContext.test(chilePageEvidence)) return null;" in navigation
         # A publisher hosted on .cl is not, by itself, accepted as local-news evidence.
-        assert 'publisherHost.endsWith(".cl")' in result_filter
-        assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
-        assert "const ChileanNationalSection = !googleNewsStory" in result_filter
+        assert 'publisherHost.endsWith(".cl")' in navigation
+        assert "const googleNewsStory = host === \"news.google.com\"" in navigation
+        assert "const ChileanNationalSection = !googleNewsStory" in navigation
