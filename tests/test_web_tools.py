@@ -935,7 +935,7 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "const MIN_READABLE_WEB_SOURCES = 2;" in source
         assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
         assert "const fetchedDomains = new Set<string>();" in source
-        assert "const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)" in source
+        assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
         assert "if (!search.ok || sources.length < 1)" in source
         assert 'fallback_path: "railway-recovery"' in source
