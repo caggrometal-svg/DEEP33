@@ -205,17 +205,7 @@ jobs:
               -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
               --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
             status="${response##*STATUS:}"
-            body="${response%
-            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e --arg pattern "$context_pattern" '.ok == true and ((.text // "") | length) > 80 and (((.title // "") + " " + (.text // "")) | test($pattern; "i"))' >/dev/null 2>&1; then
-              printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
-              fetched=1
-              break
-            fi
-            echo "RAILWAY_CHILE_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
-          done
-          test "$fetched" = "1" || { echo "RAILWAY_CHILE_WEB_FETCH_FAIL: no readable page carried Chilean context"; exit 1; }
-          echo "RAILWAY_CHILE_WEB_FETCH_PASS"
-\n'STATUS:*}"
+            body="${response%$'\n'STATUS:*}"
             if [ "$status" = "200" ] && printf '%s' "$body" | jq -e --arg pattern "$context_pattern" '.ok == true and ((.text // "") | length) > 80 and (((.title // "") + " " + (.text // "")) | test($pattern; "i"))' >/dev/null 2>&1; then
               printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
               fetched=1
