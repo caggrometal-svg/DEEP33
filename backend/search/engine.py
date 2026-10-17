@@ -593,7 +593,7 @@ def rank_results(
             path_segments = [part for part in parsed_url.path.split("/") if part.strip()]
             story_text = f"{story_title} {story_snippet}"
             political_story_signal = re.search(
-                r"\b(?:pol[ií]tic\w*|gobiern\w*|president\w*|elecci\w*|"
+                r"\b(?:pol[ií]tica(?:s)?|politics?|political|gobiern\w*|president\w*|elecci\w*|"
                 r"congreso|congress|senad\w*|ministro\w*|parlament\w*|"
                 r"diputad\w*|legislador\w*|oposici[oó]n|oficialismo|"
                 r"candidat\w*|campa[nñ]a\w*|partido(?:s)?|bancada(?:s)?|"

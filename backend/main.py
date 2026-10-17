@@ -1702,6 +1702,60 @@ async def _fetch_web_source(
         and publisher_host != "google.com"
         and not publisher_host.endswith(".google.com")
     ):
+        # Google News article URLs can safely redirect to the editorial URL.
+        # Try that path first; fetch_page validates every hop against SSRF rules.
+        # Accept it only when the final host matches the publisher provenance and
+        # the page contains real extracted text, never wrapper/snippet metadata.
+        try:
+            direct_probe = await fetch_page(
+                url,
+                timeout_seconds=min(1.0, timeout_seconds),
+                max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
+                max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
+                fresh=True,
+            )
+            direct_url = str(
+                direct_probe.get("final_url") or direct_probe.get("url") or ""
+            ).strip() if isinstance(direct_probe, dict) else ""
+            direct_host = (
+                urlparse(direct_url).hostname or ""
+            ).casefold().removeprefix("www.")
+            direct_text = str(direct_probe.get("text") or "").strip() if isinstance(direct_probe, dict) else ""
+            publisher_match = bool(
+                direct_host
+                and (direct_host == publisher_host or direct_host.endswith("." + publisher_host))
+            )
+            if (
+                isinstance(direct_probe, dict)
+                and direct_probe.get("ok") is True
+                and publisher_match
+                and len(direct_text) >= 80
+            ):
+                logger.info(
+                    "web_evidence_google_news_unwrapped_via_redirect request_id=%s publisher=%s domain=%s",
+                    request_id or "unknown",
+                    publisher_host,
+                    direct_host,
+                )
+                return {
+                    "title": str(direct_probe.get("title") or source.get("title") or direct_url)[:300],
+                    "url": direct_url[:2000],
+                    "text": direct_text[:5000],
+                    "provider": provider,
+                    "domain": direct_host,
+                    "retrieved_at": direct_probe.get("retrieved_at"),
+                    "text_chars": len(direct_text),
+                }
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info(
+                "web_evidence_google_news_direct_probe_miss request_id=%s publisher=%s error=%s",
+                request_id or "unknown",
+                publisher_host,
+                type(exc).__name__,
+            )
+
         try:
             raw_title = str(source.get("title") or "").strip()
             # Site-qualified exact-title searches are fragile across free engines.
@@ -1718,14 +1772,14 @@ async def _fetch_web_source(
                 f"{publisher_host} {' '.join(title_terms)}",
             ]
             resolved_candidate = None
-            rescue_deadline = asyncio.get_running_loop().time() + min(1.1, timeout_seconds)
+            rescue_deadline = asyncio.get_running_loop().time() + min(0.35, max(0.20, timeout_seconds * 0.30))
             for rescue_query in rescue_queries:
                 remaining_rescue = rescue_deadline - asyncio.get_running_loop().time()
                 if remaining_rescue <= 0.05:
                     break
                 rescued = await search_web(
                     rescue_query,
-                    timeout_seconds=max(0.05, min(0.75, remaining_rescue)),
+                    timeout_seconds=max(0.05, min(0.35, remaining_rescue)),
                     max_results=6,
                     fast=True,
                     fresh=True,
@@ -4321,9 +4375,22 @@ async def stream_gateway(
         ):
             collected.extend(chunk)
             frame_buffer.extend(chunk)
-            while b"\n\n" in frame_buffer:
-                frame, _, remainder = frame_buffer.partition(b"\n\n")
-                frame_buffer = bytearray(remainder)
+            # Upstream SSE providers do not all use LF-only framing. Recognize
+            # both LF and CRLF event separators so a CRLF stream is not buffered
+            # until [DONE] and then silently discarded as one opaque tail.
+            while True:
+                lf_delimiter = frame_buffer.find(b"\n\n")
+                crlf_delimiter = frame_buffer.find(b"\r\n\r\n")
+                delimiters = []
+                if lf_delimiter >= 0:
+                    delimiters.append((lf_delimiter, 2))
+                if crlf_delimiter >= 0:
+                    delimiters.append((crlf_delimiter, 4))
+                if not delimiters:
+                    break
+                delimiter_index, delimiter_size = min(delimiters, key=lambda value: value[0])
+                frame = bytes(frame_buffer[:delimiter_index])
+                frame_buffer = bytearray(frame_buffer[delimiter_index + delimiter_size:])
                 if b"data: [DONE]" in frame:
                     saw_done = True
                     continue

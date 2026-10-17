@@ -1310,3 +1310,87 @@ def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
     domains = {item["source_domain"] for item in results}
     assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
     assert len(domains) >= 3
+
+
+def test_chile_political_news_recovery_is_provider_neutral():
+    from backend.search.resilient import WebOrchestrator
+
+    query = WebOrchestrator._recovery_query("política Chile hoy últimas noticias")
+    assert query.startswith("Chile política gobierno Congreso elecciones actualidad noticias")
+    assert not any(
+        outlet in query.casefold()
+        for outlet in ("biobiochile", "cooperativa", "emol", "latercera", "24horas", "cnn chile")
+    )
+
+
+def test_current_political_news_excludes_administrative_map_from_story_evidence():
+    from backend.search.engine import rank_results
+
+    map_url = "https://www.bcn.cl/siit/mapoteca/provincia_view?dato=Ays%C3%A9n"
+    article_url = "https://www.emol.com/noticias/Nacional/2026/10/17/12345/actualidad.html"
+    results = rank_results(
+        "política Chile hoy últimas noticias",
+        [
+            {
+                "title": "Sistema Integrado de Información Territorial - Mapoteca",
+                "url": map_url,
+                "snippet": "Mapas relacionados División Político Administrativo Región Aysén",
+                "source_domain": "www.bcn.cl",
+            },
+            {
+                "title": "Gobierno y Congreso debaten nuevas medidas políticas en Chile",
+                "url": article_url,
+                "snippet": "Últimas noticias de política en Chile: el Gobierno y el Congreso revisan nuevas medidas nacionales.",
+                "source_domain": "www.emol.com",
+            },
+        ],
+        realtime=True,
+    )
+    urls = {item["url"] for item in results}
+    assert map_url not in urls
+    assert article_url in urls
+
+
+def test_google_news_wrapper_uses_verified_editorial_redirect_before_search(monkeypatch):
+    from backend import main
+
+    article_url = "https://www.emol.com/noticias/Nacional/2026/10/17/12345/actualidad.html"
+    page_text = (
+        "El Gobierno de Chile informó una actualización de política nacional para hoy. "
+        "El anuncio incluye nuevas medidas, revisión legislativa y detalles de implementación. "
+    ) * 3
+    calls = []
+
+    async def fake_fetch_page(url, **kwargs):
+        calls.append((url, kwargs))
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": article_url,
+            "title": "Actualidad política en Chile",
+            "text": page_text,
+            "retrieved_at": "2026-10-17T00:00:00+00:00",
+        }
+
+    async def search_must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("A verified publisher redirect should not trigger a second search")
+
+    monkeypatch.setattr(main, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(main, "search_web", search_must_not_be_called)
+    result = asyncio.run(
+        main._fetch_web_source(
+            {
+                "url": "https://news.google.com/rss/articles/example?oc=5",
+                "title": "Actualidad política en Chile",
+                "source_domain": "www.emol.com",
+                "provider": "google_news",
+            },
+            request_id="test-google-news-unwrapping",
+            timeout_seconds=1.2,
+        )
+    )
+    assert result is not None
+    assert result["url"] == article_url
+    assert result["domain"] == "emol.com"
+    assert result["text_chars"] >= 80
+    assert len(calls) == 1
