@@ -3563,8 +3563,7 @@ async function publicWebSearchUncached(
   // A single surviving headline is not enough for a current-news query. Recover
   // whenever we have fewer than three candidates or no independent provider mix.
   // Query variants run in parallel with bounded timeouts rather than serial retries.
-  if (
-    realtimeNewsPlan &&
+  if (realtimeNewsPlan &&
     (finalResults.length < MIN_REALTIME_NEWS_RESULTS ||
       edgeProvidersForResults(finalResults).length < 2)
   ) {
