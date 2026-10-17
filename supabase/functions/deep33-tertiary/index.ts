@@ -2100,6 +2100,45 @@ function sanitizeAssistantText(value: string): string {
   return text.trim();
 }
 
+
+function appendVerifiedSourceLinks(
+  text: string,
+  query: string,
+  sources: NavigatedWebSource[],
+): string {
+  const asksForSources = /\b(?:fuentes?|enlaces?|links?|referencias?|citations?|citas?|urls?|sitios\s+web|websites?)\b/i.test(query);
+  const cleanText = String(text || "").trim();
+  if (!asksForSources || !Array.isArray(sources) || sources.length === 0) return cleanText;
+
+  const seenUrls = new Set<string>();
+  const seenDomains = new Set<string>();
+  const links: string[] = [];
+  for (const source of sources) {
+    // Only pages that were actually fetched and extracted are allowed to appear.
+    if (String(source.page_text || "").trim().length < 40) continue;
+    try {
+      const parsed = new URL(String(source.final_url || source.url || "").trim());
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      const url = parsed.href;
+      const domain = parsed.hostname.toLowerCase().replace(/^www\./, "");
+      if (!domain || seenUrls.has(url) || seenDomains.has(domain)) continue;
+      seenUrls.add(url);
+      seenDomains.add(domain);
+      const title = String(source.title || domain)
+        .replace(/[\[\]\r\n]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160) || domain;
+      links.push("- [" + title + "](" + url + ")");
+      if (links.length >= MAX_WEB_SEARCH_RESULTS) break;
+    } catch {
+      // Invalid or non-HTTP URLs are never exposed as citations.
+    }
+  }
+  if (!links.length) return cleanText;
+  return (cleanText ? cleanText + "\n\n" : "") + "Fuentes consultadas:\n" + links.join("\n");
+}
+
 const SUPABASE_SECRET_KEYS = (() => {
   try {
     return JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
@@ -4106,8 +4145,8 @@ Deno.serve(async (req) => {
                 );
               };
 
-              const bufferedWebChunks: string[] = [];
               let ai: { text: string; provider: string; model: string };
+              let recoveryOutputEmitted = false;
               try {
                 ai = await streamEdgeAI(
                   {
@@ -4120,19 +4159,16 @@ Deno.serve(async (req) => {
                   },
                   (chunk) => {
                     if (!chunk) return;
-                    if (webTrigger) {
-                      bufferedWebChunks.push(chunk);
-                      return;
-                    }
+                    // Web output remains buffered inside streamEdgeAI until a
+                    // complete response is available; sanitize it before display.
+                    if (webTrigger) return;
                     emitVisibleChunk(chunk);
                   },
                   idempotencyContext,
                   req.headers.get("authorization") || "",
                 );
 
-                if (webTrigger) {
-                  for (const chunk of bufferedWebChunks) emitVisibleChunk(chunk);
-                }
+                // For web turns, emit only the complete sanitized answer below.
               } catch (streamError) {
                 if (!webTrigger) throw streamError;
 
@@ -4159,7 +4195,11 @@ Deno.serve(async (req) => {
                   req.headers.get("authorization") || "",
                   sessionId,
                 );
-                const recoveredText = sanitizeAssistantText(extractProviderText(recovered.body));
+                const recoveredText = appendVerifiedSourceLinks(
+                  sanitizeAssistantText(extractProviderText(recovered.body)),
+                  query,
+                  readableSources,
+                );
                 if (!recoveredText) throw new Error("EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE");
 
                 ai = {
@@ -4178,10 +4218,20 @@ Deno.serve(async (req) => {
                 for (let offset = 0; offset < recoveredText.length; offset += 120) {
                   emitVisibleChunk(recoveredText.slice(offset, offset + 120));
                 }
+                recoveryOutputEmitted = true;
               }
 
-              const responseText = sanitizeAssistantText(ai.text);
+              const responseText = appendVerifiedSourceLinks(
+                sanitizeAssistantText(ai.text),
+                query,
+                webTrigger ? readableSources : [],
+              );
               if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
+              if (webTrigger && !recoveryOutputEmitted) {
+                for (let offset = 0; offset < responseText.length; offset += 120) {
+                  emitVisibleChunk(responseText.slice(offset, offset + 120));
+                }
+              }
               controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 
               // Memory remains outside the first-response path. The answer is already
