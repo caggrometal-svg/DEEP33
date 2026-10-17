@@ -1045,7 +1045,7 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
         expected = {
             "https://www.chileatiende.gob.cl/",
             "https://datos.gob.cl/",
-            "https://www.bcn.cl/leychile/",
+            "https://www.bcn.cl/leychile",
             "https://www.consejotransparencia.cl/",
         }
         assert result["ok"] is True, result
