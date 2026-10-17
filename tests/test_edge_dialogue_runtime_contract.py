@@ -265,20 +265,28 @@ def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
 def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
     import re
 
-    prompt = (
-        "Busca en Internet información actualizada a hoy sobre los principales "
-        "acontecimientos de Chile. Consulta al menos 3 sitios web distintos, "
-        "abre las páginas y extrae información directamente de ellas."
+    prompts = (
+        (
+            "Busca información actualizada sobre los principales acontecimientos de Chile. "
+            "Consulta al menos 3 sitios web distintos, abre las páginas y extrae información.",
+            "principales acontecimientos de chile",
+        ),
+        (
+            "Busca información actualizada sobre los principales acontecimientos actuales en Chile. "
+            "Consulta al menos 3 sitios web distintos, abre las páginas y extrae información.",
+            "principales acontecimientos actuales en chile",
+        ),
     )
     topic_pattern = re.compile(
         r"\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?"
         r"(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)"
-        r"(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b",
+        r"(?:\s+actuales?)?\s+(?:(?:de|en)\s+)?Chile)\b",
         re.IGNORECASE,
     )
-    match = topic_pattern.search(prompt)
-    assert match is not None
-    assert re.sub(r"\s+", " ", match.group(1)).strip().lower() == "principales acontecimientos de chile"
+    for prompt, expected_topic in prompts:
+        match = topic_pattern.search(prompt)
+        assert match is not None, prompt
+        assert re.sub(r"\s+", " ", match.group(1)).strip().lower() == expected_topic
 
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
@@ -286,6 +294,7 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         query_end = source.index("function requiresFreshWeb(", query_start)
         query_builder = source[query_start:query_end]
         assert "const chileTopicMatch = query.match(" in query_builder
+        assert "(?:de|en)" in query_builder
         assert 'return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";' in query_builder
 
         filter_start = source.index("function edgeFilterSearchResults(")
