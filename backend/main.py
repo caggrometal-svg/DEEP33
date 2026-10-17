@@ -4753,6 +4753,9 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 stream_answer_override = await _connectivity_status_answer()
             elif web_required:
                 yield _sse_status("searching", request_id)
+                # Flush truthful visible progress before awaiting the slower web evidence
+                # stage; this keeps Android first-visible latency independent of search time.
+                yield _sse_delta("Estoy consultando fuentes actuales y leyendo las páginas relevantes antes de responder.")
                 logger.info(
                     "real_dialogue_stream_web request_id=%s session_id=%s personality=%s",
                     request_id,
