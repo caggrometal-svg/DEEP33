@@ -1446,6 +1446,101 @@ class WebOrchestrator:
                     len(selected),
                 )
 
+        # A broad international-news query has no narrow named-entity topic.
+        # If strict lexical ranking rejects every provider result, retain only
+        # real article-shaped candidates from independent publishers so the
+        # evidence fetcher can read and validate the actual pages. Never accept
+        # provider homepages, index/search pages, or Google News wrappers here.
+        global_world_news_intent = (
+            is_realtime_query(cleaned)
+            and "chile" not in _tokens(cleaned)
+            and any(
+                marker in cleaned.casefold()
+                for marker in ("noticia", "noticias", "news", "actualidad", "breaking")
+            )
+            and any(
+                marker in cleaned.casefold()
+                for marker in ("internacional", "international", "mundo", "world", "global")
+            )
+            and set(_topic_tokens(cleaned)).issubset({
+                "medio", "medios", "internacional", "internacionales", "international",
+                "mundo", "world", "global", "globales", "noticia", "noticias",
+                "news", "hoy", "today", "latest",
+            })
+        )
+        if not selected and merged and global_world_news_intent:
+            blocked_hosts = {
+                "google.com", "bing.com", "duckduckgo.com", "search.yahoo.com",
+                "news.google.com", "wikipedia.org", "britannica.com",
+                "facebook.com", "instagram.com", "tiktok.com", "reddit.com",
+                "youtube.com", "youtu.be",
+            }
+            blocked_path = re.compile(
+                r"(^|/)(?:search|search-results|tag|tags|category|categories|"
+                r"topics|topic|author|authors|video|videos|photos|gallery)(?:/|$)",
+                re.IGNORECASE,
+            )
+            article_candidates: list[dict] = []
+            seen_urls: set[str] = set()
+            seen_domains: set[str] = set()
+            seen_providers: set[str] = set()
+            # Prefer provider diversity first, then fill remaining slots from
+            # other independent domains without repeating a publisher.
+            remaining = list(merged)
+            for distinct_provider_pass in (True, False):
+                for item in remaining:
+                    provider_name = str(item.get("provider") or "").casefold()
+                    url = str(item.get("url") or "").strip()
+                    parsed = urlparse(url)
+                    host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+                    path = parsed.path or "/"
+                    path_segments = [part for part in path.split("/") if part]
+                    title = " ".join(str(item.get("title") or "").split())
+                    snippet = " ".join(str(item.get("snippet") or "").split())
+                    if (
+                        parsed.scheme != "https"
+                        or not host
+                        or not url
+                        or host in blocked_hosts
+                        or any(host.endswith("." + blocked) for blocked in blocked_hosts)
+                        or len(path_segments) < 2
+                        or blocked_path.search(path)
+                        or len(title.split()) < 4
+                        or len(snippet.split()) < 5
+                        or url in seen_urls
+                        or host in seen_domains
+                    ):
+                        continue
+                    story_text = f"{title} {snippet}".casefold()
+                    if re.search(
+                        r"\b(?:fixtures?|live scores?|match results|product review|"
+                        r"shopping|coupon|real estate listings|weather forecast|"
+                        r"tag archives?|search results)\b",
+                        story_text,
+                    ):
+                        continue
+                    if distinct_provider_pass and provider_name in seen_providers:
+                        continue
+                    candidate = dict(item)
+                    candidate["source_domain"] = host
+                    article_candidates.append(candidate)
+                    seen_urls.add(url)
+                    seen_domains.add(host)
+                    if provider_name:
+                        seen_providers.add(provider_name)
+                    if len(article_candidates) >= self.max_results:
+                        break
+                if len(article_candidates) >= min(3, self.max_results):
+                    break
+            if len(article_candidates) >= min(3, self.max_results):
+                selected = article_candidates[:self.max_results]
+                logger.warning(
+                    "web_search_global_news_article_fallback result_count=%d domains=%d providers=%d",
+                    len(selected),
+                    len({str(item.get("source_domain") or "") for item in selected}),
+                    len({str(item.get("provider") or "") for item in selected if item.get("provider")}),
+                )
+
         if who_dengue_source_intent and merged and not _has_who_dengue_item(selected):
             # If a valid WHO fact sheet was found, preserve it in the final set even
             # when higher-volume CDC/PAHO results otherwise occupy every slot.
