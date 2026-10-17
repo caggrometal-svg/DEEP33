@@ -399,7 +399,7 @@ function buildWebSearchQuery(query: string): string {
     // preserve the actual topic. A generic "noticias de Chile hoy" query caused
     // unrelated Mexico/history results to be accepted as if they answered the user.
     const chileTopicMatch = query.match(
-      /\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b/i,
+      /\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)(?:\s+actuales?)?\s+(?:(?:de|en)\s+)?Chile)\b/i,
     );
     const chileTopic = chileTopicMatch?.[1]?.replace(/\s+/g, " ").trim();
     return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";
