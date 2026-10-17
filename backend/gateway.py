@@ -153,7 +153,8 @@ class GatewayConfig:
             providers=secure_providers,
             timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
             provider_timeout_seconds=max(
-                3.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))
+                3.0,
+                min(12.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))),
             ),
             first_visible_timeout_seconds=max(
                 0.8, min(
@@ -555,14 +556,24 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     started_request = time.perf_counter()
-                    provider_timeout = self.config.provider_timeout_seconds
-                    if prefer_ttft and deadline is not None:
-                        # Diagnostic/TTFT-sensitive calls must leave budget for fallback.
-                        # A slow first provider may not consume the entire global deadline.
+                    provider_timeout = min(12.0, self.config.provider_timeout_seconds)
+                    if deadline is not None:
+                        # Every provider attempt must preserve enough wall-clock budget
+                        # for a distinct fallback. This prevents a slow primary from
+                        # consuming the caller/proxy deadline before failover can run.
                         remaining_total = max(0.0, deadline - time.monotonic())
                         providers_left = max(1, len(ordered_providers) - provider_index)
-                        fair_share = max(1.5, remaining_total / providers_left)
-                        provider_timeout = min(provider_timeout, fair_share)
+                        if providers_left > 1:
+                            fallback_reserve = min(
+                                remaining_total * 0.40,
+                                4.0 * (providers_left - 1),
+                            )
+                            provider_timeout = min(
+                                provider_timeout,
+                                max(1.5, remaining_total - fallback_reserve),
+                            )
+                        elif prefer_ttft:
+                            provider_timeout = min(provider_timeout, max(1.5, remaining_total))
                     timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
                     response = await self._client().post(
@@ -593,8 +604,10 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # A provider 5xx is ambiguous after a POST. Do not retry or
-                            # switch providers because the inference may already exist.
+                            # A POST 5xx is ambiguous: the provider may have accepted
+                            # the inference before returning the error. Preserve the
+                            # no-failover contract here; the endpoint layer converts
+                            # the gateway error into a bounded degraded response.
                             circuit.failure(
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
@@ -734,7 +747,7 @@ class AIGateway:
                     break
                 except httpx.HTTPError as exc:
                     saw_http_error = True
-                    provider_failed_transiently = False
+                    provider_failed_transiently = True
                     logger.warning(
                         "ai_provider_transport_failure request_id=%s provider=%s error=%s",
                         request_id,
@@ -876,7 +889,12 @@ class AIGateway:
                                         len(ordered_providers),
                                     )
                                 if 500 <= status <= 599:
-                                    raise GatewayHTTPError
+                                    transient_failure = True
+                                    circuit.failure(
+                                        self.config.circuit_failure_threshold,
+                                        self.config.circuit_cooldown_seconds,
+                                    )
+                                    break
                             else:
                                 stream_iterator = response.aiter_bytes().__aiter__()
                                 while True:

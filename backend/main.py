@@ -78,6 +78,13 @@ logger = logging.getLogger("deep33")
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
+NON_STREAM_AI_TIMEOUT = max(
+    8.0,
+    min(
+        18.0,
+        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "16")),
+    ),
+)
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
 RATE_LIMIT_WINDOW = max(10.0, float(os.getenv("DEEP33_RATE_LIMIT_WINDOW_SECONDS", "60")))
 AUTH_TIMEOUT_SECONDS = max(1.0, min(5.0, float(os.getenv("DEEP33_AUTH_TIMEOUT_SECONDS", "2.5"))))
@@ -3393,6 +3400,29 @@ async def ai_diagnostics(request: Request) -> dict:
     }
 
 
+def _degraded_gateway_response(payload: dict, reason: str) -> dict:
+    return {
+        "model": payload.get("model"),
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "El proveedor de inferencia no respondió dentro del presupuesto "
+                    "operativo. DEEP33 mantiene la sesión activa; reintenta la consulta "
+                    "sin perder el contexto."
+                ),
+            },
+            "finish_reason": "degraded",
+        }],
+        "_deep33_gateway": {
+            "provider": "degraded",
+            "model": payload.get("model"),
+            "reason": reason,
+        },
+    }
+
+
 async def call_gateway(
     payload: dict,
     *,
@@ -3400,25 +3430,33 @@ async def call_gateway(
     idempotency_key: str,
     deadline: float | None = None,
 ) -> dict:
-    deadline = deadline or (time.monotonic() + GLOBAL_AI_TIMEOUT)
+    now = time.monotonic()
+    endpoint_deadline = now + NON_STREAM_AI_TIMEOUT
+    effective_deadline = min(deadline, endpoint_deadline) if deadline is not None else endpoint_deadline
+    wait_budget = max(0.5, effective_deadline - now)
     try:
         return await asyncio.wait_for(
             gateway.complete(
                 payload,
                 request_id=request_id,
                 idempotency_key=idempotency_key,
-                deadline=deadline,
+                deadline=effective_deadline,
             ),
-            timeout=GLOBAL_AI_TIMEOUT,
+            timeout=wait_budget,
         )
-    except asyncio.TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
-    except GatewayTimeoutError as exc:
-        raise HTTPException(status_code=504, detail="AI_GATEWAY_TIMEOUT") from exc
-    except GatewayHTTPError as exc:
-        raise HTTPException(status_code=502, detail="AI_GATEWAY_HTTP_ERROR") from exc
-    except GatewayInvalidResponseError as exc:
-        raise HTTPException(status_code=502, detail="AI_GATEWAY_INVALID_RESPONSE") from exc
+    except (asyncio.TimeoutError, GatewayTimeoutError):
+        logger.warning(
+            "ai_gateway_degraded_timeout request_id=%s budget_ms=%.2f",
+            request_id,
+            wait_budget * 1000,
+        )
+        return _degraded_gateway_response(payload, "timeout")
+    except GatewayHTTPError:
+        logger.warning("ai_gateway_degraded_http request_id=%s", request_id)
+        return _degraded_gateway_response(payload, "provider_http_error")
+    except GatewayInvalidResponseError:
+        logger.warning("ai_gateway_degraded_invalid_response request_id=%s", request_id)
+        return _degraded_gateway_response(payload, "invalid_response")
 
 
 def normalized_generation(data: dict, personality: str = DEFAULT_PERSONALITY) -> dict:
@@ -3690,7 +3728,7 @@ async def generate(
         )
 
         started = time.perf_counter()
-        deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
+        deadline = time.monotonic() + NON_STREAM_AI_TIMEOUT
         raw_query = latest_user_query(messages)
         prefetched_weather = None
         if weather_task is not None:

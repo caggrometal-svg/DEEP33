@@ -76,7 +76,7 @@ object Deep33Api {
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
-    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 7_000
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
@@ -319,6 +319,13 @@ object Deep33Api {
                 activeStreamConnections[requestId] = connection
                 val output = StringBuilder()
                 var emitted = false
+                // Enforce an absolute first-token budget per endpoint. A read timeout
+                // alone is insufficient because SSE status/heartbeat frames can keep the
+                // socket active forever without producing assistant text.
+                val firstTextDeadlineNanos = minOf(
+                    deadline,
+                    System.nanoTime() + STREAM_FIRST_TEXT_TIMEOUT_MS * 1_000_000L
+                )
                 var requestBodyStarted = false
                 var sawDone = false
                 var eventType: String? = null
@@ -381,7 +388,17 @@ object Deep33Api {
                     connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         lines.forEach { line ->
                             if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
-                            if (System.nanoTime() >= deadline) {
+                            val nowNanos = System.nanoTime()
+                            if (nowNanos >= deadline) {
+                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
+                            }
+                            // Bound time-to-first-visible-text, not just socket inactivity:
+                            // heartbeats/status events must not mask a stalled inference.
+                            if (!emitted && nowNanos >= firstTextDeadlineNanos) {
+                                android.util.Log.w(
+                                    "DEEP33_PERF",
+                                    "FIRST_TEXT_TIMEOUT request_id=$requestId endpoint=$endpoint budget_ms=$STREAM_FIRST_TEXT_TIMEOUT_MS"
+                                )
                                 throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
                             }
                             // [DONE] marks the end of content, not the end of the HTTP body.
