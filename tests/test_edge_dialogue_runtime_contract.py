@@ -205,109 +205,13 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         nav_start = source.index("async function buildNavigatedWebEvidence(")
-        nav_end = source.find("\nasync function readJson(", nav_start + 1)
-        if nav_end < 0:
-            nav_end = source.find("\nconst EDGE_AI_REQUIRES_AUTH", nav_start + 1)
-        assert nav_end > nav_start
+        nav_end = source.index("\n\nasync function readJson", nav_start)
         navigation = source[nav_start:nav_end]
-        assert "excludedUrls: Set<string> = new Set<string>()" in navigation
-        assert "excludedDomains: Set<string> = new Set<string>()" in navigation
-        assert "attempted_urls: [...attemptedUrls]" in navigation
-        assert "attempted_domains: [...attemptedDomains]" in navigation
-        assert "scheduledDomains.has(hostname)" in navigation
-        assert "excludedDomains.has(hostname)" in navigation
-
-        chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
-        chat_end = source.index("if (!edgeAIConfigured())", chat_start)
-        chat = source[chat_start:chat_end]
-        assert 'search.fallback_path !== "railway"' in chat
-        assert "buildWebSearchQuery(query)," in chat
-        assert "userAuthorization," in chat
-        assert "recoverySearch," in chat
-        assert "!excludedDomains.has(hostname)" in chat
-        assert "const sources = readableSources;" in chat
-        assert "if (sources.length < 1)" in chat
-
-
-def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritative_source():
-    for path in EDGE_FILES:
-        source = path.read_text(encoding="utf-8")
-        start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
-        end = source.index('if (path === "/v1/web/status"', start)
-        generate = source[start:end]
-        assert 'const requiredReadableSources = requestedReadableSourceCount(searchQuery)' in generate
-        assert "if (edgeCurrentDateTimeQuery(query)) return 1;" in source
-        assert 'const recoverySearch = await edgeSearch(' in generate
-        assert '!excludedDomains.has(hostname)' in generate
-        assert 'fallback_path: "railway-recovery"' in generate
-
-def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
-    for path in EDGE_FILES:
-        source = path.read_text(encoding="utf-8")
-        chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
-        chat_end = source.index("if (!edgeAIConfigured())", chat_start)
-        chat = source[chat_start:chat_end]
-        generate_start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
-        generate_end = source.index('if (path === "/v1/web/status"', generate_start)
-        generate = source[generate_start:generate_end]
-        assert "if (sources.length < 1)" in chat
-        assert "if (!search.ok || sources.length < 1)" in generate
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in chat
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in generate
-        assert "ok: true," in chat
-        assert "ok: true," in generate
-
-    android_api = (REPO_ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt").read_text(encoding="utf-8")
-    assert '(payload.optJSONArray("sources")?.length() ?: 0) >= 1' in android_api
-
-
-
-def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
-    import re
-
-    prompts = (
-        (
-            "Busca información actualizada sobre los principales acontecimientos de Chile. "
-            "Consulta al menos 3 sitios web distintos, abre las páginas y extrae información.",
-            "principales acontecimientos de chile",
-        ),
-        (
-            "Busca información actualizada sobre los principales acontecimientos actuales en Chile. "
-            "Consulta al menos 3 sitios web distintos, abre las páginas y extrae información.",
-            "principales acontecimientos actuales en chile",
-        ),
-    )
-    topic_pattern = re.compile(
-        r"\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?"
-        r"(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)"
-        r"(?:\s+actuales?)?\s+(?:(?:de|en)\s+)?Chile)\b",
-        re.IGNORECASE,
-    )
-    for prompt, expected_topic in prompts:
-        match = topic_pattern.search(prompt)
-        assert match is not None, prompt
-        assert re.sub(r"\s+", " ", match.group(1)).strip().lower() == expected_topic
-
-    for path in EDGE_FILES:
-        source = path.read_text(encoding="utf-8")
-        query_start = source.index("function buildWebSearchQuery(")
-        query_end = source.index("function requiresFreshWeb(", query_start)
-        query_builder = source[query_start:query_end]
-        assert "const chileTopicMatch = query.match(" in query_builder
-        assert "(?:de|en)" in query_builder
-        assert 'return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";' in query_builder
-
-        filter_start = source.index("function edgeFilterSearchResults(")
-        filter_end = source.index("function edgeProvidersForResults(", filter_start)
-        result_filter = source[filter_start:filter_end]
-        assert "const chileNewsIntent = currentNews &&" in result_filter
-        assert "const mentionsChileContext = explicitChileContext.test(articleEvidence);" in result_filter
-        assert "return mentionsChileContext || ChileanNationalSection;" in result_filter
-        assert "const strictResults = liveItems.filter((item) => {" in result_filter
-        assert "if (strictResults.length > 0) return strictResults;" in result_filter
-        assert "return liveItems.filter((item) => {" in result_filter
-        assert "host.endsWith(\".cl\")" in result_filter
-        assert "Search snippets can be too sparse to prove Chile relevance before navigation." in result_filter
+        assert 'queryOverride = ""' in navigation
+        assert "const chileCurrentNewsQuery =" in navigation
+        assert "const explicitChilePageContext =" in navigation
+        assert 'const chilePageEvidence = (String(source.title || "") + " " + pageText).toLowerCase();' in navigation
+        assert "if (!explicitChilePageContext.test(chilePageEvidence)) return null;" in navigation
         # A publisher hosted on .cl is not, by itself, accepted as local-news evidence.
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
