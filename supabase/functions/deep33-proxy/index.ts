@@ -3299,7 +3299,7 @@ function edgeFilterSearchResults(
   if (chileNewsIntent) {
     const explicitChileContext =
       /\b(?:chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña\s+del\s+mar|concepci[oó]n|biob[ií]o|araucan[ií]a|temuco|antofagasta|arica|iquique|puerto\s+montt|punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|copiap[oó]|calama|las\s+condes|ñuñoa|providencia|maip[uú]|puente\s+alto|la\s+moneda|senapred|sernageomin|carabineros\s+de\s+chile|congreso\s+nacional\s+de\s+chile|banco\s+central\s+de\s+chile|fiscal[ií]a\s+nacional\s+de\s+chile|ministerio\s+p[uú]blico\s+de\s+chile)\b/i;
-    return liveItems.filter((item) => {
+    const strictResults = liveItems.filter((item) => {
       try {
         const parsed = new URL(String(item.url || ""));
         const host = parsed.hostname.toLowerCase();
@@ -3324,6 +3324,28 @@ function edgeFilterSearchResults(
           publisherHost.endsWith(".cl") &&
           /(?:^|\/)(?:nacional|chile|pais|pol[ií]tica)(?:\/|$)/i.test(path);
         return mentionsChileContext || ChileanNationalSection;
+      } catch {
+        return false;
+      }
+    });
+    if (strictResults.length > 0) return strictResults;
+
+    // Search snippets can be too sparse to prove Chile relevance before navigation.
+    // Do not turn that into a false empty result: retain article-shaped Chilean
+    // candidates so the navigation/fetch stage can read the page and verify it.
+    return liveItems.filter((item) => {
+      try {
+        const parsed = new URL(String(item.url || ""));
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        const title = String(item.title || "").trim();
+        if (title.length < 8 || path === "/") return false;
+        if (/\/(?:search|shopping|products?|product|store|shop)(?:\/|$)/i.test(path)) return false;
+        if (/^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path)) return false;
+        const evidence = (
+          title + " " + String(item.snippet || "") + " " + path.replace(/[-_]/g, " ")
+        ).toLowerCase();
+        return explicitChileContext.test(evidence) || host.endsWith(".cl");
       } catch {
         return false;
       }
