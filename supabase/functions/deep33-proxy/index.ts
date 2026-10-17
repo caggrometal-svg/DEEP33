@@ -395,8 +395,14 @@ function buildWebSearchQuery(query: string): string {
     /\b(?:chile|chileno|chilena)\b/i.test(query) &&
     /\b(?:noticias?|acontecimientos?|actualidad|eventos?)\b/i.test(query)
   ) {
-    // Keep procedural requirements out of the topic sent to the search engine.
-    return "noticias de Chile hoy";
+    // Remove the "search 3 sites / summarize / include links" instructions, but
+    // preserve the actual topic. A generic "noticias de Chile hoy" query caused
+    // unrelated Mexico/history results to be accepted as if they answered the user.
+    const chileTopicMatch = query.match(
+      /\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b/i,
+    );
+    const chileTopic = chileTopicMatch?.[1]?.replace(/\s+/g, " ").trim();
+    return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";
   }
   const normalized = query
     .replace(/\b(busca|buscar|búscame|investiga|investigar|consulta|consultar|comprueba|comprobar|verifica|verificar)\b/giu, " ")
@@ -3125,6 +3131,7 @@ const EDGE_REALTIME_FILLERS = new Set([
   "último","últimos","última","últimas","ultimo","ultimos","ultima","ultimas",
   "noticia","noticias","actualidad","reciente","recientes","información","informacion",
   "actualización","actualizacion","novedades","novedad","estado","ocurre","ocurriendo",
+  "principal","principales","acontecimiento","acontecimientos","evento","eventos","hecho","hechos",
   "sucede","sucediendo","pasa","pasando","emergencia","incidente","incidentes",
   "contingencia","suceso","sucesos","en","vivo","de","del","la","las","los","el","al",
   "comuna","comunas","municipio","municipios","municipalidad","municipalidades",
@@ -3279,6 +3286,43 @@ function edgeFilterSearchResults(
         const genericLandingPage = path === "/" ||
           /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
         return !genericLandingPage && String(item.title || "").trim().length >= 8;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  // Regional current-news queries must be relevant to the country, not merely
+  // fresh. Google News can return a recent Mexico/history result from a Chilean
+  // publisher; a .cl publisher alone is not proof that the article is about Chile.
+  const chileNewsIntent = currentNews && /\b(?:chile|chileno|chilena)\b/i.test(query);
+  if (chileNewsIntent) {
+    const explicitChileContext =
+      /\b(?:chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña\s+del\s+mar|concepci[oó]n|biob[ií]o|araucan[ií]a|temuco|antofagasta|arica|iquique|puerto\s+montt|punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|copiap[oó]|calama|las\s+condes|ñuñoa|providencia|maip[uú]|puente\s+alto|la\s+moneda|senapred|sernageomin|carabineros\s+de\s+chile|congreso\s+nacional\s+de\s+chile|banco\s+central\s+de\s+chile|fiscal[ií]a\s+nacional\s+de\s+chile|ministerio\s+p[uú]blico\s+de\s+chile)\b/i;
+    return liveItems.filter((item) => {
+      try {
+        const parsed = new URL(String(item.url || ""));
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        const title = String(item.title || "").trim();
+        const snippet = String(item.snippet || "").trim();
+        const publisherHost = String(
+          item.source_domain || item.publisher_domain || "",
+        ).toLowerCase().replace(/^www\./, "");
+        const googleNewsStory = host === "news.google.com" &&
+          path.startsWith("/rss/articles/");
+        const genericLandingPage = path === "/" ||
+          /^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path);
+        if (genericLandingPage || title.length < 8) return false;
+
+        const articleEvidence = (
+          title + " " + snippet + " " + path.replace(/[-_]/g, " ")
+        ).toLowerCase();
+        const mentionsChileContext = explicitChileContext.test(articleEvidence);
+        const ChileanNationalSection = !googleNewsStory &&
+          publisherHost.endsWith(".cl") &&
+          /(?:^|\/)(?:nacional|chile|pais|pol[ií]tica)(?:\/|$)/i.test(path);
+        return mentionsChileContext || ChileanNationalSection;
       } catch {
         return false;
       }
