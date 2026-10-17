@@ -470,7 +470,7 @@ def test_google_news_wrapper_resolves_to_readable_publisher_article(monkeypatch)
 
     assert result is not None
     assert result["url"] == publisher_url
-    assert fetched == [publisher_url]
+    assert fetched == [original, publisher_url]
 
 
 
@@ -739,3 +739,38 @@ def test_editorial_domain_dedup_normalizes_www_prefix():
         for item in selected
     }
     assert domains == {"emol.com", "cooperativa.cl"}
+
+
+def test_stream_gateway_handles_crlf_delimited_provider_frames(monkeypatch):
+    import asyncio
+
+    async def fake_gateway_stream(*_args, **_kwargs):
+        yield (
+            b'data: {"choices":[{"delta":{"content":"Primer token"}}]}\r\n\r\n'
+            b'data: {"choices":[{"delta":{"content":" final"}}]}\r\n\r\n'
+            b"data: [DONE]\r\n\r\n"
+        )
+
+    monkeypatch.setattr(main.gateway, "stream", fake_gateway_stream)
+
+    async def exercise():
+        completion_state = {}
+        output = bytearray()
+        async for frame in main.stream_gateway(
+            {"messages": [{"role": "user", "content": "Hola"}], "model": "test-model"},
+            "phase1-crlf-session",
+            "NEUTRO",
+            request_id="phase1-crlf-stream",
+            idempotency_key="phase1-crlf-key",
+            request_hash="phase1-crlf-hash",
+            lease_token="phase1-crlf-lease",
+            completion_state=completion_state,
+        ):
+            output.extend(frame)
+        return bytes(output), completion_state
+
+    output, completion_state = asyncio.run(exercise())
+    assert b"Primer token" in output
+    assert b" final" in output
+    assert b"data: [DONE]" in output
+    assert completion_state["assistant_text"] == "Primer token final"

@@ -332,22 +332,23 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
 
     async def provider_for(name):
         async def provider(query, timeout, limit):
-            if "BioBioChile Cooperativa Emol" not in query:
+            if query != initial_query:
                 if name == "bing":
-                    return [item("solo.example", "Política Chile última noticia")]
+                    return [
+                        item("biobiochile.cl", "Política Chile noticias gobierno"),
+                        item("cooperativa.cl", "Política Chile últimas noticias"),
+                        item("emol.com", "Política Chile noticias de hoy"),
+                    ]
+                if name == "duckduckgo":
+                    return [
+                        item("latercera.com", "Política Chile últimas noticias del gobierno"),
+                        item("24horas.cl", "Noticias política en Chile hoy"),
+                    ]
                 await asyncio.sleep(0.6)
                 return []
             if name == "bing":
-                return [
-                    item("biobiochile.cl", "Política Chile noticias gobierno"),
-                    item("cooperativa.cl", "Política Chile últimas noticias"),
-                    item("emol.com", "Política Chile noticias de hoy"),
-                ]
-            if name == "duckduckgo":
-                return [
-                    item("latercera.com", "Política Chile últimas noticias del gobierno"),
-                    item("24horas.cl", "Noticias política en Chile hoy"),
-                ]
+                return [item("solo.example", "Política Chile última noticia")]
+            await asyncio.sleep(0.6)
             return []
 
         return provider
@@ -600,8 +601,7 @@ def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
     assert result == []
     assert observed == [
         (
-            "Chile política gobierno Congreso elecciones actualidad noticias "
-            "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile",
+            "Chile política gobierno Congreso elecciones actualidad noticias hoy últimas novedades",
             0.2,
             5,
         )
@@ -1131,10 +1131,14 @@ def test_chile_current_political_news_recovers_independent_domains() -> None:
     def provider_for(name: str):
         async def provider(query, _timeout, _limit):
             calls.append((name, query))
-            lowered_query = query.casefold()
-            for host, result in source_results.items():
-                if f"site:{host}" in lowered_query:
-                    return [result]
+            if query == "política Chile hoy últimas noticias":
+                return base_results
+            # Provider-neutral recovery queries should still produce independent
+            # real candidates; do not make tests depend on a hard-coded site: list.
+            if name in {"bing", "google_news"}:
+                return [source_results["biobiochile.cl"], source_results["emol.com"]]
+            if name in {"duckduckgo", "mojeek"}:
+                return [source_results["cooperativa.cl"], source_results["latercera.com"]]
             return base_results
         return provider
 
@@ -1166,9 +1170,13 @@ def test_chile_current_political_news_recovers_independent_domains() -> None:
     assert result["ok"] is True, result
     assert len(result_domains - {""}) >= 3, result["results"]
     assert result["verification"]["distinct_domains"] >= 3
-    assert any("site:" in query for _provider, query in calls)
+    assert any(query != "política Chile hoy últimas noticias" for _provider, query in calls)
     assert all(
-        any(host in item.get("url", "") for host in ("elpais.com", "gob.cl", "biobiochile.cl", "emol.com", "cooperativa.cl", "latercera.com"))
+        re.search(
+            r"\b(?:pol[ií]tica(?:s)?|gobiern\w*|president\w*|elecci\w*|congreso|senad\w*|ministro\w*)\b",
+            f"{item.get('title', '')} {item.get('snippet', '')}",
+            re.IGNORECASE,
+        )
         for item in result["results"]
     )
 
@@ -1310,3 +1318,87 @@ def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
     domains = {item["source_domain"] for item in results}
     assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
     assert len(domains) >= 3
+
+
+def test_chile_political_news_recovery_is_provider_neutral():
+    from backend.search.resilient import WebOrchestrator
+
+    query = WebOrchestrator._recovery_query("política Chile hoy últimas noticias")
+    assert query.startswith("Chile política gobierno Congreso elecciones actualidad noticias")
+    assert not any(
+        outlet in query.casefold()
+        for outlet in ("biobiochile", "cooperativa", "emol", "latercera", "24horas", "cnn chile")
+    )
+
+
+def test_current_political_news_excludes_administrative_map_from_story_evidence():
+    from backend.search.engine import rank_results
+
+    map_url = "https://www.bcn.cl/siit/mapoteca/provincia_view?dato=Ays%C3%A9n"
+    article_url = "https://www.emol.com/noticias/Nacional/2026/10/17/12345/actualidad.html"
+    results = rank_results(
+        "política Chile hoy últimas noticias",
+        [
+            {
+                "title": "Sistema Integrado de Información Territorial - Mapoteca",
+                "url": map_url,
+                "snippet": "Mapas relacionados División Político Administrativo Región Aysén",
+                "source_domain": "www.bcn.cl",
+            },
+            {
+                "title": "Gobierno y Congreso debaten nuevas medidas políticas en Chile",
+                "url": article_url,
+                "snippet": "Últimas noticias de política en Chile: el Gobierno y el Congreso revisan nuevas medidas nacionales.",
+                "source_domain": "www.emol.com",
+            },
+        ],
+        realtime=True,
+    )
+    urls = {item["url"] for item in results}
+    assert map_url not in urls
+    assert article_url in urls
+
+
+def test_google_news_wrapper_uses_verified_editorial_redirect_before_search(monkeypatch):
+    from backend import main
+
+    article_url = "https://www.emol.com/noticias/Nacional/2026/10/17/12345/actualidad.html"
+    page_text = (
+        "El Gobierno de Chile informó una actualización de política nacional para hoy. "
+        "El anuncio incluye nuevas medidas, revisión legislativa y detalles de implementación. "
+    ) * 3
+    calls = []
+
+    async def fake_fetch_page(url, **kwargs):
+        calls.append((url, kwargs))
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": article_url,
+            "title": "Actualidad política en Chile",
+            "text": page_text,
+            "retrieved_at": "2026-10-17T00:00:00+00:00",
+        }
+
+    async def search_must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("A verified publisher redirect should not trigger a second search")
+
+    monkeypatch.setattr(main, "fetch_page", fake_fetch_page)
+    monkeypatch.setattr(main, "search_web", search_must_not_be_called)
+    result = asyncio.run(
+        main._fetch_web_source(
+            {
+                "url": "https://news.google.com/rss/articles/example?oc=5",
+                "title": "Actualidad política en Chile",
+                "source_domain": "www.emol.com",
+                "provider": "google_news",
+            },
+            request_id="test-google-news-unwrapping",
+            timeout_seconds=1.2,
+        )
+    )
+    assert result is not None
+    assert result["url"] == article_url
+    assert result["domain"] == "emol.com"
+    assert result["text_chars"] >= 80
+    assert len(calls) == 1

@@ -432,10 +432,10 @@ class WebOrchestrator:
             # The first phrase is too close to the user's wording and tends to
             # return the same small publisher set. Broaden the provider query;
             # every candidate is still ranked against the original user query.
-            return (
-                "Chile política gobierno Congreso elecciones actualidad noticias "
-                "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
-            )
+            # Keep recovery topic-led and provider-neutral. Hard-coding a short
+            # publisher list narrowed discovery and made the result set brittle when
+            # those outlets were blocked or their URLs were only RSS wrappers.
+            return "Chile política gobierno Congreso elecciones actualidad noticias hoy últimas novedades"
         if news_intent and "chile" in lowered:
             return "Chile últimas noticias hoy"
         if news_intent and compact:
@@ -1113,18 +1113,15 @@ class WebOrchestrator:
             and loop.time() < deadline
         ):
             political_source_queries = (
-                # Use both direct web search and publisher-scoped Google News RSS.
-                # Direct hits are preferred for readability; RSS preserves editorial
-                # provenance when a general index is sparse or temporarily blocked.
-                ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                # Fan out topic-equivalent queries across independent general-web
+                # providers. Do not bind browsing to a hand-maintained outlet list.
+                ("bing", "Chile política gobierno Congreso elecciones actualidad noticias hoy"),
+                ("google_news", "Chile política gobierno Congreso elecciones actualidad noticias hoy"),
+                ("google", "Chile últimas noticias de política nacional y decisiones del Gobierno"),
+                ("mojeek", "Chile actualidad política debate legislativo elecciones gobierno hoy"),
+                ("duckduckgo", "Chile noticias actuales gobierno Congreso partidos nacionales"),
+                ("bing", "Chile últimas novedades gubernamentales y debates legislativos"),
+                ("google_news", "Chile noticias de hoy medidas oficiales y reacciones políticas"),
             )
             political_tasks = {
                 asyncio.create_task(
@@ -1206,10 +1203,7 @@ class WebOrchestrator:
             # newsroom. For live Chile political news, preserve real candidates
             # discovered by the targeted publisher searches so one editorial
             # domain cannot consume the entire evidence set.
-            political_publishers = {
-                "biobiochile.cl", "cooperativa.cl", "latercera.com",
-                "24horas.cl", "emol.com", "cnnchile.com",
-            }
+            known_chile_publishers = ("emol.com", "latercera.com", "cnnchile.com")
             diverse_selected: list[dict] = []
             diverse_domains: set[str] = set()
             for item in selected:
@@ -1230,11 +1224,18 @@ class WebOrchestrator:
                 ).casefold().rstrip(".").removeprefix("www.")
                 if not url.startswith("https://") or not host or host in diverse_domains:
                     continue
-                if not any(host == domain or host.endswith("." + domain) for domain in political_publishers):
-                    continue
                 story = f"{item.get('title', '')} {item.get('snippet', '')}"
+                host_is_chilean = (
+                    host.endswith(".cl")
+                    or any(host == domain or host.endswith("." + domain) for domain in known_chile_publishers)
+                    or re.search(r"\bChile\b", story, re.IGNORECASE) is not None
+                )
+                if not host_is_chilean:
+                    continue
+                # Require real political-story wording; an administrative map
+                # labelled "división político-administrativa" is not a news story.
                 if re.search(
-                    r"\b(?:pol[ií]tic\w*|gobiern\w*|president\w*|elecci\w*|"
+                    r"\b(?:pol[ií]tica(?:s)?|politics?|political|gobiern\w*|president\w*|elecci\w*|"
                     r"congreso|senad\w*|ministro\w*|parlament\w*|diputad\w*|"
                     r"reforma\w*|proyecto de ley|gabinete|partido\w*)\b",
                     story,
