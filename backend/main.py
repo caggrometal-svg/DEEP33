@@ -4430,7 +4430,7 @@ async def stream_gateway(
                 yield _sse_delta(piece)
         else:
             assistant_text = (
-                "No pude completar la respuesta en este intento. No voy a inventar información."
+                "No pude completar la síntesis en este intento porque el proveedor de inferencia terminó sin texto utilizable. La búsqueda puede haber respondido, pero no voy a inventar una respuesta."
             )
             logger.warning(
                 "stream_empty_visible_fallback request_id=%s error=%s stream_bytes=%s",
@@ -4464,7 +4464,7 @@ async def stream_gateway(
             # after provider failover. Emit a factual, non-speculative retryable fallback
             # instead of an error-only stream so Android receives one visible response.
             assistant_text = (
-                "No pude completar la respuesta en este intento. No voy a inventar información."
+                "No pude completar la síntesis en este intento porque el proveedor de inferencia terminó sin texto utilizable. La búsqueda puede haber respondido, pero no voy a inventar una respuesta."
             )
             logger.warning(
                 "stream_empty_visible_fallback request_id=%s saw_done=%s stream_bytes=%s",
