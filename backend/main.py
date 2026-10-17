@@ -4311,6 +4311,7 @@ async def stream_gateway(
     first_output_at: float | None = None
     frame_buffer = bytearray()
     tool_markup_filter = _InternalToolMarkupStreamFilter()
+    gateway_failure: str | None = None
 
     try:
         async for chunk in gateway.stream(
@@ -4391,55 +4392,99 @@ async def stream_gateway(
             yield _sse_delta(safe_tail)
         performance.mark(request_id, "T8_STREAM_FINISHED")
     except GatewayTimeoutError:
-        yield _sse_error("AI_GATEWAY_TIMEOUT")
-        return
+        gateway_failure = "timeout"
+        logger.warning(
+            "stream_gateway_failure_visible_fallback request_id=%s error=timeout stream_bytes=%s",
+            request_id,
+            len(collected),
+        )
     except GatewayHTTPError:
-        yield _sse_error("AI_GATEWAY_HTTP_ERROR")
-        return
+        gateway_failure = "http_error"
+        logger.warning(
+            "stream_gateway_failure_visible_fallback request_id=%s error=http_error stream_bytes=%s",
+            request_id,
+            len(collected),
+        )
     except GatewayInvalidResponseError:
-        yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
-        return
+        gateway_failure = "invalid_response"
+        logger.warning(
+            "stream_gateway_failure_visible_fallback request_id=%s error=invalid_response stream_bytes=%s",
+            request_id,
+            len(collected),
+        )
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
         return
 
-    if saw_done and assistant_parts:
-        assistant_raw = "".join(assistant_parts)
-    else:
-        assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
-        saw_done = saw_done or parsed_done
-    assistant_text = sanitize_assistant_text(assistant_raw)
-    if not saw_done or not assistant_text:
-        # Never terminate a successful HTTP/SSE turn with an empty visible answer.
-        # Upstream streaming can occasionally finish without a usable content delta
-        # after provider failover. Emit a factual, non-speculative retryable fallback
-        # instead of an error-only stream so Android receives one visible response.
-        assistant_text = (
-            "No pude completar la síntesis en este intento porque el proveedor de "
-            "inferencia terminó sin texto utilizable. La búsqueda puede haber "
-            "respondido, pero no voy a inventar una respuesta."
-        )
-        logger.warning(
-            "stream_empty_visible_fallback request_id=%s saw_done=%s stream_bytes=%s",
-            request_id,
-            saw_done,
-            len(collected),
-        )
+    if gateway_failure:
+        partial_text = sanitize_assistant_text("".join(assistant_parts))
+        if partial_text:
+            # Some providers can fail after already emitting a partial answer.
+            # Continue that visible answer rather than duplicating it or dropping
+            # the text the user has already seen.
+            continuation = " La respuesta se interrumpió antes de terminar; no voy a inventar el contenido que falta."
+            assistant_text = partial_text + continuation
+            for piece in _sse_text_chunks(continuation):
+                yield _sse_delta(piece)
+        else:
+            assistant_text = (
+                "No pude completar la síntesis en este intento porque el proveedor de inferencia terminó sin texto utilizable. La búsqueda puede haber respondido, pero no voy a inventar una respuesta."
+            )
+            logger.warning(
+                "stream_empty_visible_fallback request_id=%s error=%s stream_bytes=%s",
+                request_id,
+                gateway_failure,
+                len(collected),
+            )
+            for piece in _sse_text_chunks(assistant_text):
+                yield _sse_delta(piece)
         if first_output_at is None:
             first_output_at = time.perf_counter()
             performance.mark(request_id, "T7_FIRST_TOKEN")
             ttft_ms = (first_output_at - stream_started) * 1000
             _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
             logger.info(
-                "stream_ttft request_id=%s ttft_ms=%.2f path=empty-visible-fallback",
+                "stream_ttft request_id=%s ttft_ms=%.2f path=provider-failure-fallback",
                 request_id,
                 ttft_ms,
             )
-        for piece in _sse_text_chunks(assistant_text):
-            yield _sse_delta(piece)
         saw_done = True
+    else:
+        if saw_done and assistant_parts:
+            assistant_raw = "".join(assistant_parts)
+        else:
+            assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
+            saw_done = saw_done or parsed_done
+        assistant_text = sanitize_assistant_text(assistant_raw)
+        if not saw_done or not assistant_text:
+            # Never terminate a successful HTTP/SSE turn with an empty visible answer.
+            # Upstream streaming can occasionally finish without a usable content delta
+            # after provider failover. Emit a factual, non-speculative retryable fallback
+            # instead of an error-only stream so Android receives one visible response.
+            assistant_text = (
+                "No pude completar la síntesis en este intento porque el proveedor de inferencia terminó sin texto utilizable. La búsqueda puede haber respondido, pero no voy a inventar una respuesta."
+            )
+            logger.warning(
+                "stream_empty_visible_fallback request_id=%s saw_done=%s stream_bytes=%s",
+                request_id,
+                saw_done,
+                len(collected),
+            )
+            if first_output_at is None:
+                first_output_at = time.perf_counter()
+                performance.mark(request_id, "T7_FIRST_TOKEN")
+                ttft_ms = (first_output_at - stream_started) * 1000
+                _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
+                logger.info(
+                    "stream_ttft request_id=%s ttft_ms=%.2f path=empty-visible-fallback",
+                    request_id,
+                    ttft_ms,
+                )
+            for piece in _sse_text_chunks(assistant_text):
+                yield _sse_delta(piece)
+            saw_done = True
 
     stream_elapsed_ms = (time.perf_counter() - stream_started) * 1000
     logger.info(

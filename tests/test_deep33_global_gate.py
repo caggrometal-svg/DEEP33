@@ -847,3 +847,35 @@ def test_web_orchestrator_honors_fast_budget_even_when_providers_are_slow():
         assert result.get("ok") is False
 
     asyncio.run(scenario())
+
+
+
+def test_stream_gateway_emits_visible_fallback_after_provider_timeout(monkeypatch) -> None:
+    import backend.main as main
+
+    class TimedOutGateway:
+        async def stream(self, *args, **kwargs):
+            if False:
+                yield b""
+            raise main.GatewayTimeoutError()
+
+    monkeypatch.setattr(main, "gateway", TimedOutGateway())
+
+    async def scenario() -> bytes:
+        output = bytearray()
+        async for chunk in main.stream_gateway(
+            {"messages": [{"role": "user", "content": "test"}]},
+            "session-timeout",
+            "NEUTRO",
+            request_id="stream-timeout-fallback-test",
+            idempotency_key="stream-timeout-fallback-test",
+            request_hash="hash",
+            lease_token="lease",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    raw = asyncio.run(scenario()).decode("utf-8", errors="replace")
+    assert "No pude completar la síntesis" in raw
+    assert "event: error" not in raw
+    assert "data: [DONE]" in raw
