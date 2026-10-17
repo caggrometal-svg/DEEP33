@@ -549,22 +549,68 @@ def rank_results(
         # Current-news searches explicitly scoped to Chile must not fill results
         # with unrelated publishers from another country's politics section.
         query_folded = str(query or "").casefold()
-        chile_current_news_intent = (
+        # Broad Chile current-events questions are country-scoped but often have
+        # no single lexical topic anchor (e.g. "principales acontecimientos
+        # actuales en Chile"). Keep article-shaped Chile candidates for the
+        # downstream page extractor, which validates the article body before
+        # anything is used as model evidence.
+        chile_general_current_news_intent = (
             realtime
             and "chile" in _token_set(query)
             and any(
                 marker in query_folded
-                for marker in ("noticia", "actualidad", "breaking", "latest news", "news")
+                for marker in (
+                    "noticia", "noticias", "actualidad", "acontecimiento",
+                    "acontecimientos", "evento", "eventos", "hecho", "hechos",
+                    "suceso", "sucesos", "incidente", "incidentes", "contingencia",
+                )
             )
+        )
+        chile_current_news_intent = (
+            chile_general_current_news_intent
             and any(
                 marker in query_folded
                 for marker in (
                     "política", "politica", "politics", "political", "gobierno",
                     "government", "elecciones", "elections", "congreso", "congress",
+                    "senado", "presidente", "ministro",
                 )
             )
         )
         host = source_host
+        if chile_general_current_news_intent:
+            publisher_host = host.removeprefix("www.")
+            is_chile_news_publisher = publisher_host.endswith(".cl") or any(
+                publisher_host == publisher or publisher_host.endswith("." + publisher)
+                for publisher in ("emol.com", "latercera.com", "cnnchile.com")
+            )
+            url_host = (parsed_url.hostname or "").casefold().removeprefix("www.")
+            if (
+                url_host == "news.google.com"
+                or publisher_host == "britannica.com"
+                or publisher_host.endswith(".britannica.com")
+                or publisher_host == "wikipedia.org"
+                or publisher_host.endswith(".wikipedia.org")
+            ):
+                continue
+            # Country locality must be explicit in the publisher or article
+            # evidence. A .cl host is only a candidate signal, never proof.
+            if not is_chile_news_publisher and "chile" not in _token_set(anchor_evidence):
+                continue
+            path_segments = [part for part in parsed_url.path.split("/") if part.strip()]
+            story_title = str(item.get("title") or "").strip()
+            if (
+                not path_segments
+                or len(story_title.split()) < 3
+                or re.fullmatch(
+                    r"/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)/?",
+                    parsed_url.path,
+                    re.IGNORECASE,
+                )
+            ):
+                continue
+            if is_chile_news_publisher:
+                anchor_evidence = f"{anchor_evidence} Chile"
         if chile_current_news_intent:
             # A Chilean ccTLD is reliable locality metadata even when a result
             # headline omits the country name. Topic relevance remains mandatory.
@@ -706,6 +752,12 @@ def rank_results(
             source_reference_tokens.add("who")
 
         effective_anchor_tokens = _token_set(normalized_anchor_query) - source_reference_tokens
+        # For broad country-level current events, validate country context here;
+        # article-specific relevance is checked after fetching the actual page.
+        # Requiring both "principales" and "acontecimientos" in every headline
+        # falsely discarded all results before navigation could occur.
+        if chile_general_current_news_intent:
+            effective_anchor_tokens = {"chile"}
         # Request-shape words such as "official" and generic "mission" do not
         # count as independent topic anchors when a named authority was requested.
         if requested_authority:
