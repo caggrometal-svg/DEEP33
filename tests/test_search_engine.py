@@ -1011,7 +1011,7 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
         )
 
         async def sparse_bing(query: str, timeout: float, limit: int) -> list[dict]:
-            if query.startswith("ChileAtiende datos.gob.cl cplt.cl gob.cl"):
+            if "chile" in query.casefold() and "site:" not in query.casefold():
                 return [{
                     "title": "Gobierno de Chile - Gob.cl",
                     "url": "https://www.gob.cl/",
