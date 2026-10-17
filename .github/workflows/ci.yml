@@ -239,7 +239,7 @@ jobs:
     env:
       DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
       DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-      DEEP33_TERTIARY_URL: https://iac33-fastapi-edge-production.up.railway.app
+      DEEP33_TERTIARY_URL: ""
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
