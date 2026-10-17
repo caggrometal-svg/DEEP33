@@ -358,7 +358,8 @@ def test_edge_realtime_news_limits_initial_fanout_and_runs_variants_after_empty_
         assert "const recoveryPlan = [" in source
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
         assert 'event: "edge_web_search_recovery_complete"' in source
-        assert "if (realtimeNewsPlan && finalResults.length < 1)" in source or "if (realtimeNewsPlan && results.length < 1)" in source
+        assert "finalResults.length < MIN_REALTIME_NEWS_RESULTS" in source
+        assert "expected_min_results: MIN_REALTIME_NEWS_RESULTS" in source
 
 def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):
