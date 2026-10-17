@@ -407,9 +407,13 @@ def test_edge_web_stream_recovers_before_exposing_partial_output() -> None:
     source = (
         ROOT / "supabase" / "functions" / "deep33-proxy" / "index.ts"
     ).read_text(encoding="utf-8")
-    assert "const bufferedWebChunks: string[] = [];" in source
-    assert "if (webTrigger) {" in source
-    assert "bufferedWebChunks.push(chunk);" in source
+    assert "function appendVerifiedSourceLinks(" in source
+    assert "source.page_text" in source
+    assert "asksForSources" in source
+    assert "const responseText = appendVerifiedSourceLinks(" in source
+    assert "const bufferedWebChunks: string[] = [];" not in source
+    assert "recoveryOutputEmitted = true;" in source
+    assert "if (webTrigger && !recoveryOutputEmitted)" in source
     assert "edge_web_stream_recovery_started" in source
     assert 'requestId + "-web-recovery"' in source
     assert "EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE" in source
