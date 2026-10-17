@@ -214,8 +214,8 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "excludedDomains: Set<string> = new Set<string>()" in navigation
         assert "attempted_urls: [...attemptedUrls]" in navigation
         assert "attempted_domains: [...attemptedDomains]" in navigation
-        assert "scheduledDomains.has(hostname)" in navigation
-        assert "excludedDomains.has(hostname)" in navigation
+        assert "scheduledDomains.has(effectiveDomain)" in navigation
+        assert "excludedDomains.has(effectiveDomain)" in navigation
 
         chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
         chat_end = source.index("if (!edgeAIConfigured())", chat_start)
@@ -224,7 +224,7 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "buildWebSearchQuery(query)," in chat
         assert "userAuthorization," in chat
         assert "recoverySearch," in chat
-        assert "!excludedDomains.has(hostname)" in chat
+        assert "!excludedDomains.has(candidateDomain)" in chat
         assert "const sources = readableSources;" in chat
         assert "if (sources.length < 1)" in chat
 
@@ -238,7 +238,7 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         assert 'const requiredReadableSources = requestedReadableSourceCount(searchQuery)' in generate
         assert "if (edgeCurrentDateTimeQuery(query)) return 1;" in source
         assert 'const recoverySearch = await edgeSearch(' in generate
-        assert '!excludedDomains.has(hostname)' in generate
+        assert '!excludedDomains.has(candidateDomain)' in generate
         assert 'fallback_path: "railway-recovery"' in generate
 
 def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
@@ -298,3 +298,12 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
         assert "const ChileanNationalSection = !googleNewsStory" in result_filter
+        # Google News wraps every story in one URL host; diversity and fetch scheduling
+        # must use the actual publisher domain from RSS metadata.
+        assert "const publisherDomain = String(result.source_domain || \"\").trim()" in source
+        assert "distinct_domains: new Set(finalResults.map((item) =>" in source
+        assert "const effectiveDomain = isSearchWrapper(canonicalUrl) && publisherHost" in source
+        assert "source_domain: String(item.source_domain ?? \"\").slice(0, 255)" in source
+        assert "const MIN_REALTIME_NEWS_RESULTS = 3;" in source
+        assert "finalResults.length < MIN_REALTIME_NEWS_RESULTS" in source
+        assert "expected_min_results: MIN_REALTIME_NEWS_RESULTS" in source

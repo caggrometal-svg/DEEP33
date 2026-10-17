@@ -328,7 +328,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
         assert 'event: "edge_web_search_recovery_complete"' in source
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in source
-        assert "query: rescueQuery" in source
+        assert "query: plan.queries[2] || rescueQuery" in source
         assert '"parallel_recovery_failed"' in source
         assert "2500" in source and "3000" in source
         assert "socialPublisherSuffix" in source
@@ -358,7 +358,8 @@ def test_edge_realtime_news_limits_initial_fanout_and_runs_variants_after_empty_
         assert "const recoveryPlan = [" in source
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
         assert 'event: "edge_web_search_recovery_complete"' in source
-        assert "if (realtimeNewsPlan && finalResults.length < 1)" in source or "if (realtimeNewsPlan && results.length < 1)" in source
+        assert "finalResults.length < MIN_REALTIME_NEWS_RESULTS" in source
+        assert "expected_min_results: MIN_REALTIME_NEWS_RESULTS" in source
 
 def test_realtime_news_broad_fallback_is_lazy_and_bounded() -> None:
     for function_name in ("deep33-proxy", "deep33-tertiary"):

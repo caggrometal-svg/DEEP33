@@ -471,7 +471,7 @@ def test_realtime_edge_search_uses_lazy_fallback_and_bounded_rss_retries() -> No
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in search
         assert 'event: "edge_web_search_recovery_complete"' in search
         assert "const rescueQuery = edgeBroadWorldNewsQuery(plan.original)" in search
-        assert "query: rescueQuery" in search
+        assert "query: plan.queries[2] || rescueQuery" in search
         assert '"parallel_recovery_failed"' in search
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "providerTimeoutMs?: number" in source
