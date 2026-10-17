@@ -172,7 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          query="latest artificial intelligence research and technology news today"
+          query="principales acontecimientos actuales en Chile hoy"
           response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
             -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
             -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
@@ -196,6 +196,7 @@ jobs:
           mapfile -t urls < <(jq -r '.results[0:5][]?.url // empty' /tmp/railway-live-search.json)
           fetched=0
           index=0
+          context_pattern='(chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña del mar|concepción|biobío|temuco|antofagasta|arica|iquique|puerto montt|punta arenas|la serena|coquimbo|rancagua|talca|chillán|copiapó|calama|las condes|ñuñoa|providencia|maipú|puente alto|senapred|sernageomin)'
           for url in "${urls[@]}"; do
             index=$((index + 1))
             [ -n "$url" ] || continue
@@ -204,13 +205,14 @@ jobs:
               -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
               --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
             status="${response##*STATUS:}"
-            body="${response%$'\n'STATUS:*}"
-            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ok == true and ((.text // "") | length) > 80' >/dev/null 2>&1; then
+            body="${response%
+\n'STATUS:*}"
+            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e --arg pattern "$context_pattern" '.ok == true and ((.text // "") | length) > 80 and (((.title // "") + " " + (.text // "")) | test($pattern; "i"))' >/dev/null 2>&1; then
               printf '%s' "$body" | jq -c '{ok, final_url, title, text_chars: ((.text // "") | length), redirects}'
               fetched=1
               break
             fi
-            echo "RAILWAY_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
+            echo "RAILWAY_CHILE_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
           done
-          test "$fetched" = "1" || { echo "RAILWAY_WEB_FETCH_FAIL"; exit 1; }
-          echo "RAILWAY_WEB_FETCH_PASS"
+          test "$fetched" = "1" || { echo "RAILWAY_CHILE_WEB_FETCH_FAIL: no readable page carried Chilean context"; exit 1; }
+          echo "RAILWAY_CHILE_WEB_FETCH_PASS"

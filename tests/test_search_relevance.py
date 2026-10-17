@@ -567,3 +567,49 @@ def test_spanish_academic_ai_search_matches_english_indexed_research() -> None:
     assert len(domains) >= 3, ranked
     assert not any("chemistry.example.edu" in item["url"] for item in ranked)
 
+
+
+def test_chile_broad_current_events_preserves_article_candidates_for_page_validation() -> None:
+    query = "principales acontecimientos actuales en Chile"
+    ranked = rank_results(
+        query,
+        [
+            {
+                "title": "Paro de funcionarios genera demoras",
+                "url": "https://noticias.example.cl/nacional/paro-funcionarios-hoy",
+                "snippet": "Servicios públicos reportan interrupciones durante la jornada.",
+                "source_domain": "noticias.example.cl",
+            },
+            {
+                "title": "Gobierno de Chile anuncia nuevas medidas",
+                "url": "https://news.example.org/americas/chile-government-measures",
+                "snippet": "Autoridades chilenas dieron a conocer nuevas medidas este martes.",
+                "source_domain": "news.example.org",
+            },
+            {
+                "title": "Mexico politics today",
+                "url": "https://news.example.mx/politica/mexico",
+                "snippet": "Latest government and election news in Mexico.",
+                "source_domain": "news.example.mx",
+            },
+            {
+                "title": "Noticias",
+                "url": "https://noticias.example.cl/",
+                "snippet": "Portal de noticias.",
+                "source_domain": "noticias.example.cl",
+            },
+            {
+                "title": "Politics of Chile - Encyclopedia",
+                "url": "https://www.britannica.com/place/Chile/Politics",
+                "snippet": "Historical overview of Chilean political institutions.",
+                "source_domain": "britannica.com",
+            },
+        ],
+        realtime=True,
+    )
+    urls = {item["url"] for item in ranked}
+    assert "https://noticias.example.cl/nacional/paro-funcionarios-hoy" in urls
+    assert "https://news.example.org/americas/chile-government-measures" in urls
+    assert "https://news.example.mx/politica/mexico" not in urls
+    assert "https://noticias.example.cl/" not in urls
+    assert "https://www.britannica.com/place/Chile/Politics" not in urls
