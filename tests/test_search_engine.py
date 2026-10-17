@@ -1104,3 +1104,75 @@ def test_chile_commercial_site_fallback_returns_official_navigation_candidates_w
         assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
 
     asyncio.run(scenario())
+
+
+def test_global_current_news_keeps_independent_article_candidates_after_strict_ranker_empty() -> None:
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0.01,
+        )
+
+        async def broad_world_articles(query: str, timeout: float, limit: int) -> list[dict]:
+            return [
+                {
+                    "title": "European leaders agree new security package",
+                    "url": "https://www.reuters.com/world/europe/security-package-2026-10-17/",
+                    "snippet": "The announcement followed talks between several governments on Friday, with implementation details expected this week.",
+                    "source_domain": "reuters.com",
+                },
+                {
+                    "title": "Parliament approves emergency funding measures",
+                    "url": "https://apnews.com/article/world-parliament-funding-2026-10-17",
+                    "snippet": "Lawmakers passed the package after an overnight debate, according to officials familiar with the vote.",
+                    "source_domain": "apnews.com",
+                },
+                {
+                    "title": "Relief agencies respond after overnight flooding",
+                    "url": "https://www.bbc.com/news/articles/c9q0world-news",
+                    "snippet": "Emergency crews were deployed across several regions as authorities assessed damage and warned residents.",
+                    "source_domain": "bbc.com",
+                },
+                {
+                    "title": "Latest news and headlines",
+                    "url": "https://example.org/world/",
+                    "snippet": "A general landing page containing links to current international news stories.",
+                    "source_domain": "example.org",
+                },
+                {
+                    "title": "World news search results",
+                    "url": "https://news.google.com/search?q=world",
+                    "snippet": "Search results for global news.",
+                    "source_domain": "news.google.com",
+                },
+            ]
+
+        async def offline(query: str, timeout: float, limit: int) -> list[dict]:
+            return []
+
+        orchestrator.providers = {
+            "bing": broad_world_articles,
+            "google": offline,
+            "cl0q": offline,
+            "google_news": offline,
+            "duckduckgo": offline,
+            "mojeek": offline,
+        }
+        orchestrator.fallback_providers = {"yahoo": offline}
+        result = await orchestrator.search("medio internacional noticias mundo hoy", fresh=True)
+        urls = {str(item.get("url") or "") for item in result.get("results", [])}
+        domains = {
+            str(item.get("source_domain") or "").casefold().removeprefix("www.")
+            for item in result.get("results", [])
+        }
+        assert result["ok"] is True, result
+        assert len(domains - {""}) >= 3, result
+        assert "https://www.reuters.com/world/europe/security-package-2026-10-17/" in urls
+        assert "https://apnews.com/article/world-parliament-funding-2026-10-17" in urls
+        assert "https://www.bbc.com/news/articles/c9q0world-news" in urls
+        assert "https://example.org/world/" not in urls
+        assert "https://news.google.com/search?q=world" not in urls
+
+    asyncio.run(scenario())
