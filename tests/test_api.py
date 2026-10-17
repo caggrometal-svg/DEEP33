@@ -470,7 +470,7 @@ def test_google_news_wrapper_resolves_to_readable_publisher_article(monkeypatch)
 
     assert result is not None
     assert result["url"] == publisher_url
-    assert fetched == [publisher_url]
+    assert fetched == [original, publisher_url]
 
 
 

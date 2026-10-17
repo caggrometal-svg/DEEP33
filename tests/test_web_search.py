@@ -332,22 +332,23 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
 
     async def provider_for(name):
         async def provider(query, timeout, limit):
-            if "BioBioChile Cooperativa Emol" not in query:
+            if query != initial_query:
                 if name == "bing":
-                    return [item("solo.example", "Política Chile última noticia")]
+                    return [
+                        item("biobiochile.cl", "Política Chile noticias gobierno"),
+                        item("cooperativa.cl", "Política Chile últimas noticias"),
+                        item("emol.com", "Política Chile noticias de hoy"),
+                    ]
+                if name == "duckduckgo":
+                    return [
+                        item("latercera.com", "Política Chile últimas noticias del gobierno"),
+                        item("24horas.cl", "Noticias política en Chile hoy"),
+                    ]
                 await asyncio.sleep(0.6)
                 return []
             if name == "bing":
-                return [
-                    item("biobiochile.cl", "Política Chile noticias gobierno"),
-                    item("cooperativa.cl", "Política Chile últimas noticias"),
-                    item("emol.com", "Política Chile noticias de hoy"),
-                ]
-            if name == "duckduckgo":
-                return [
-                    item("latercera.com", "Política Chile últimas noticias del gobierno"),
-                    item("24horas.cl", "Noticias política en Chile hoy"),
-                ]
+                return [item("solo.example", "Política Chile última noticia")]
+            await asyncio.sleep(0.6)
             return []
 
         return provider
@@ -600,8 +601,7 @@ def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
     assert result == []
     assert observed == [
         (
-            "Chile política gobierno Congreso elecciones actualidad noticias "
-            "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile",
+            "Chile política gobierno Congreso elecciones actualidad noticias hoy últimas novedades",
             0.2,
             5,
         )
@@ -1131,10 +1131,14 @@ def test_chile_current_political_news_recovers_independent_domains() -> None:
     def provider_for(name: str):
         async def provider(query, _timeout, _limit):
             calls.append((name, query))
-            lowered_query = query.casefold()
-            for host, result in source_results.items():
-                if f"site:{host}" in lowered_query:
-                    return [result]
+            if query == "política Chile hoy últimas noticias":
+                return base_results
+            # Provider-neutral recovery queries should still produce independent
+            # real candidates; do not make tests depend on a hard-coded site: list.
+            if name in {"bing", "google_news"}:
+                return [source_results["biobiochile.cl"], source_results["emol.com"]]
+            if name in {"duckduckgo", "mojeek"}:
+                return [source_results["cooperativa.cl"], source_results["latercera.com"]]
             return base_results
         return provider
 
@@ -1166,9 +1170,13 @@ def test_chile_current_political_news_recovers_independent_domains() -> None:
     assert result["ok"] is True, result
     assert len(result_domains - {""}) >= 3, result["results"]
     assert result["verification"]["distinct_domains"] >= 3
-    assert any("site:" in query for _provider, query in calls)
+    assert any(query != "política Chile hoy últimas noticias" for _provider, query in calls)
     assert all(
-        any(host in item.get("url", "") for host in ("elpais.com", "gob.cl", "biobiochile.cl", "emol.com", "cooperativa.cl", "latercera.com"))
+        re.search(
+            r"\b(?:pol[ií]tica(?:s)?|gobiern\w*|president\w*|elecci\w*|congreso|senad\w*|ministro\w*)\b",
+            f"{item.get('title', '')} {item.get('snippet', '')}",
+            re.IGNORECASE,
+        )
         for item in result["results"]
     )
 
