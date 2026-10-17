@@ -384,7 +384,7 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);" in source
     assert "pageByUrl.size < TARGET_READABLE_WEB_SOURCES" in source
     assert "isSearchWrapper(a.url)" in source
-    assert "const requiredReadableSources = edgeCurrentDateTimeQuery(searchQuery)" in source
+    assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
     assert "readableSources.length < requiredReadableSources" in source
     assert "if (!search.ok || sources.length < 1)" in source
     assert 'fallback_path: "railway-recovery"' in source
