@@ -879,3 +879,17 @@ def test_stream_gateway_emits_visible_fallback_after_provider_timeout(monkeypatc
     assert "No pude completar la síntesis" in raw
     assert "event: error" not in raw
     assert "data: [DONE]" in raw
+
+
+def test_web_query_emits_visible_progress_before_waiting_for_live_evidence() -> None:
+    import inspect
+    import backend.main as main
+
+    source = inspect.getsource(main.chat_stream)
+    search_status = source.index('yield _sse_status("searching", request_id)')
+    visible_progress = source.index(
+        'yield _sse_delta("Estoy consultando fuentes actuales y leyendo las páginas relevantes antes de responder.")',
+        search_status,
+    )
+    evidence_wait = source.index("await prefetch_search_task", visible_progress)
+    assert search_status < visible_progress < evidence_wait
