@@ -997,3 +997,60 @@ def test_academic_ai_search_accepts_machine_learning_terminology_but_rejects_unr
     assert any("arxiv.org" in item["url"] for item in ranked)
     assert all("roman-architecture" not in item["url"] for item in ranked)
 
+
+
+def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_collapse() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0.01,
+        )
+
+        async def sparse_bing(query: str, timeout: float, limit: int) -> list[dict]:
+            if "chile" in query.casefold() and "site:" not in query.casefold():
+                return [{
+                    "title": "Gobierno de Chile - Gob.cl",
+                    "url": "https://www.gob.cl/",
+                    "snippet": "Portal oficial del Gobierno de Chile.",
+                    "source_domain": "www.gob.cl",
+                }]
+            return []
+
+        async def empty_provider(query: str, timeout: float, limit: int) -> list[dict]:
+            return []
+
+        orchestrator.providers = {
+            "bing": sparse_bing,
+            "google": empty_provider,
+            "google_news": empty_provider,
+            "cl0q": empty_provider,
+            "mojeek": empty_provider,
+            "duckduckgo": empty_provider,
+        }
+        orchestrator.fallback_providers = {"yahoo": empty_provider}
+
+        result = await orchestrator.search(
+            "sitio gubernamental Chile información pública",
+            fresh=True,
+        )
+        urls = {str(item.get("url") or "") for item in result.get("results", [])}
+        domains = {
+            str(item.get("source_domain") or "").casefold().removeprefix("www.")
+            for item in result.get("results", [])
+        }
+        expected = {
+            "https://www.chileatiende.gob.cl/",
+            "https://datos.gob.cl/",
+            "https://www.bcn.cl/leychile",
+            "https://www.consejotransparencia.cl/",
+        }
+        assert result["ok"] is True, result
+        assert len(domains - {""}) >= 3, result
+        assert len(urls & expected) >= 3, result
+        assert "https://www.gob.cl/" not in urls
+
+    asyncio.run(scenario())

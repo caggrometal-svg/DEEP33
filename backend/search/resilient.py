@@ -120,6 +120,49 @@ class TTLRUCache:
             self._items.popitem(last=False)
 
 
+_CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES = (
+    {
+        "title": "ChileAtiende — Servicios y trámites del Estado",
+        "url": "https://www.chileatiende.gob.cl/",
+        "snippet": (
+            "Portal del Estado de Chile con información pública sobre trámites, "
+            "beneficios y servicios gubernamentales para la ciudadanía."
+        ),
+        "source_domain": "www.chileatiende.gob.cl",
+        "provider": "official_portal_fallback",
+    },
+    {
+        "title": "Datos.gob.cl — Portal de Datos Abiertos del Estado",
+        "url": "https://datos.gob.cl/",
+        "snippet": (
+            "Portal de datos abiertos de Chile con conjuntos de datos publicados "
+            "por organismos públicos e información pública del Estado."
+        ),
+        "source_domain": "datos.gob.cl",
+        "provider": "official_portal_fallback",
+    },
+    {
+        "title": "Ley Chile — Biblioteca del Congreso Nacional",
+        "url": "https://www.bcn.cl/leychile/",
+        "snippet": (
+            "Servicio de la Biblioteca del Congreso Nacional de Chile con acceso "
+            "público a normas vigentes e información jurídico-legislativa."
+        ),
+        "source_domain": "www.bcn.cl",
+        "provider": "official_portal_fallback",
+    },
+    {
+        "title": "Consejo para la Transparencia — Información pública",
+        "url": "https://www.consejotransparencia.cl/",
+        "snippet": (
+            "Organismo de Chile que promueve la transparencia del Estado y el "
+            "acceso a información pública, solicitudes y reclamos."
+        ),
+        "source_domain": "www.consejotransparencia.cl",
+        "provider": "official_portal_fallback",
+    },
+)
+
 def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
     """Use broad, brand-specific web searches; strict site: filters were returning zero candidates."""
     return (
@@ -1369,6 +1412,40 @@ class WebOrchestrator:
             ]
             if who_candidates:
                 selected = deduplicate([*who_candidates, *selected], self.max_results)
+
+        if chile_public_info_intent:
+            selected_domains_before_portal_fallback = {
+                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
+                for item in selected
+                if item.get("url")
+            }
+            if len(selected_domains_before_portal_fallback - {""}) < min(3, self.max_results):
+                # A single unreadable gob.cl homepage is not useful evidence.
+                # Keep known, canonical public portals as navigation candidates
+                # when live indexes collapse to one domain. The HTTP fetch/extractor
+                # must still read their real pages before any text reaches synthesis.
+                merged = [
+                    item for item in merged
+                    if not (
+                        (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.") == "gob.cl"
+                        and urlparse(str(item.get("url") or "")).path in {"", "/"}
+                    )
+                ]
+                merged.extend(dict(item) for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
+                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                selected = deduplicate(ranked, self.max_results)
+                selected_domains_after_portal_fallback = {
+                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
+                    for item in selected
+                    if item.get("url")
+                } - {""}
+                logger.warning(
+                    "web_search_chile_public_info_portal_fallback candidate_count=%d "
+                    "selected_count=%d distinct_domains=%d",
+                    len(_CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES),
+                    len(selected),
+                    len(selected_domains_after_portal_fallback),
+                )
 
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
