@@ -528,6 +528,6 @@ def test_publication_metadata_does_not_route_news_search_to_clock_provider():
         ]
         assert "publicationDateContext" in clock_router
         assert "if (publicationDateContext) return false;" in clock_router
-        assert "return \"noticias de Chile hoy\";" in source
+        assert 'return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";' in source
         assert "function requestedReadableSourceCount(query: string): number" in source
         assert "readableSources.length < requiredReadableSources" in source
