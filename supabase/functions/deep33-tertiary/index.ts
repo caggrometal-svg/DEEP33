@@ -4198,7 +4198,7 @@ Deno.serve(async (req) => {
                 const recoveredText = appendVerifiedSourceLinks(
                   sanitizeAssistantText(extractProviderText(recovered.body)),
                   query,
-                  readableSources,
+                  sources,
                 );
                 if (!recoveredText) throw new Error("EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE");
 
@@ -4224,7 +4224,7 @@ Deno.serve(async (req) => {
               const responseText = appendVerifiedSourceLinks(
                 sanitizeAssistantText(ai.text),
                 query,
-                webTrigger ? readableSources : [],
+                webTrigger ? sources : [],
               );
               if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
               if (webTrigger && !recoveryOutputEmitted) {
