@@ -271,14 +271,14 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         "abre las páginas y extrae información directamente de ellas."
     )
     topic_pattern = re.compile(
-        r"\\b((?:(?:principales?|más\\s+importantes|mayores?|recientes?|actuales?)\\s+)?"
+        r"\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?"
         r"(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)"
-        r"(?:\\s+actuales?)?\\s+(?:de\\s+)?Chile)\\b",
+        r"(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b",
         re.IGNORECASE,
     )
     match = topic_pattern.search(prompt)
     assert match is not None
-    assert re.sub(r"\\s+", " ", match.group(1)).strip().lower() == "principales acontecimientos de chile"
+    assert re.sub(r"\s+", " ", match.group(1)).strip().lower() == "principales acontecimientos de chile"
 
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
