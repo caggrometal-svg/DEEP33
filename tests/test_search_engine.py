@@ -1054,3 +1054,53 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
         assert "https://www.gob.cl/" not in urls
 
     asyncio.run(scenario())
+
+
+
+def test_chile_commercial_site_fallback_returns_official_navigation_candidates_when_indexes_collapse() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario() -> None:
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0.01,
+        )
+
+        async def directory_only(query: str, timeout: float, limit: int) -> list[dict]:
+            return [{
+                "title": "Tecnología en Chile — Directorio de empresas",
+                "url": "https://www.encuentraempresas.cl/categoria-tecnologia.html",
+                "snippet": "Directorio comercial de proveedores de tecnología en Chile.",
+                "source_domain": "encuentraempresas.cl",
+            }]
+
+        orchestrator.providers = {
+            "bing": directory_only,
+            "google": directory_only,
+            "google_news": directory_only,
+            "cl0q": directory_only,
+            "mojeek": directory_only,
+            "duckduckgo": directory_only,
+        }
+        orchestrator.fallback_providers = {"yahoo": directory_only}
+
+        result = await orchestrator.search("sitio comercial tecnología Chile", fresh=True)
+        urls = {str(item.get("url") or "") for item in result.get("results", [])}
+        domains = {
+            str(item.get("source_domain") or "").casefold().removeprefix("www.")
+            for item in result.get("results", [])
+        }
+        expected = {
+            "https://www.sonda.com/",
+            "https://www.entel.cl/empresas/",
+            "https://www.wom.cl/empresas/",
+            "https://ww2.movistar.cl/empresas/",
+        }
+        assert result["ok"] is True, result
+        assert len(domains - {""}) >= 3, result
+        assert len(urls & expected) >= 3, result
+        assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
+
+    asyncio.run(scenario())
