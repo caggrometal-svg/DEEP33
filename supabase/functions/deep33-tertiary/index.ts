@@ -108,6 +108,7 @@ async function buildNavigatedWebEvidence(
   userAuthorization = "",
   excludedUrls: Set<string> = new Set<string>(),
   excludedDomains: Set<string> = new Set<string>(),
+  queryOverride = "",
 ): Promise<{
   sources: NavigatedWebSource[];
   attempted: number;
@@ -117,6 +118,12 @@ async function buildNavigatedWebEvidence(
   readable_domains: string[];
 }> {
   const navigationStarted = performance.now();
+  const navigationQuery = queryOverride.trim() || String(search.query ?? search.original_query ?? search.q ?? "");
+  const chileCurrentNewsQuery =
+    edgeCurrentNewsQuery(navigationQuery) &&
+    /\b(?:chile|chileno|chilena)\b/i.test(navigationQuery);
+  const explicitChilePageContext = /\b(?:chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña\s+del\s+mar|concepci[oó]n|biob[ií]o|araucan[ií]a|temuco|antofagasta|arica|iquique|puerto\s+montt|punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|copiap[oó]|calama|las\s+condes|ñuñoa|providencia|maip[uú]|puente\s+alto|la\s+moneda|senapred|sernageomin|carabineros\s+de\s+chile|congreso\s+nacional\s+de\s+chile|banco\s+central\s+de\s+chile|fiscal[ií]a\s+nacional\s+de\s+chile|ministerio\s+p[uú]blico\s+de\s+chile)\b/i;
+
   const sources: NavigatedWebSource[] = Array.isArray(search.results)
     ? search.results
         .filter((item): item is Record<string, unknown> =>
@@ -235,6 +242,13 @@ async function buildNavigatedWebEvidence(
         const body = await readJson(response);
         const pageText = typeof body.text === "string" ? body.text.trim() : "";
         if (body.ok !== true || pageText.length < 40) return null;
+
+        // When search snippets cannot prove Chile relevance, validate the extracted
+        // article body before allowing it into the model's evidence set.
+        if (chileCurrentNewsQuery) {
+          const chilePageEvidence = (String(source.title || "") + " " + pageText).toLowerCase();
+          if (!explicitChilePageContext.test(chilePageEvidence)) return null;
+        }
 
         const finalUrl = typeof body.final_url === "string"
           ? body.final_url.slice(0, 2000)
@@ -3315,16 +3329,14 @@ function edgeFilterSearchResults(
     return liveItems.filter((item) => {
       try {
         const parsed = new URL(String(item.url || ""));
-        const host = parsed.hostname.toLowerCase();
         const path = parsed.pathname.toLowerCase();
         const title = String(item.title || "").trim();
         if (title.length < 8 || path === "/") return false;
         if (/\/(?:search|shopping|products?|product|store|shop)(?:\/|$)/i.test(path)) return false;
         if (/^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path)) return false;
-        const evidence = (
-          title + " " + String(item.snippet || "") + " " + path.replace(/[-_]/g, " ")
-        ).toLowerCase();
-        return explicitChileContext.test(evidence) || host.endsWith(".cl");
+        // Hostname and snippets are insufficient proof. Fetch candidates across domains,
+        // then require Chilean context in the extracted page text above.
+        return true;
       } catch {
         return false;
       }
@@ -3998,6 +4010,9 @@ Deno.serve(async (req) => {
           search,
           sessionId,
           userAuthorization,
+          new Set<string>(),
+          new Set<string>(),
+          buildWebSearchQuery(query),
         );
         const isReadableSource = (source: NavigatedWebSource) =>
           typeof source.page_text === "string" &&
@@ -4049,6 +4064,7 @@ Deno.serve(async (req) => {
               userAuthorization,
               excludedUrls,
               excludedDomains,
+              buildWebSearchQuery(query),
             );
             const merged = new Map<string, NavigatedWebSource>();
             const mergedDomains = new Set<string>();
@@ -4544,6 +4560,9 @@ Deno.serve(async (req) => {
           search,
           sessionId,
           userAuthorization,
+          new Set<string>(),
+          new Set<string>(),
+          buildWebSearchQuery(searchQuery),
         );
         const isReadableSource = (source: NavigatedWebSource) =>
           typeof source.page_text === "string" &&
@@ -4595,6 +4614,7 @@ Deno.serve(async (req) => {
               userAuthorization,
               excludedUrls,
               excludedDomains,
+              buildWebSearchQuery(searchQuery),
             );
             const merged = new Map<string, NavigatedWebSource>();
             const mergedDomains = new Set<string>();
