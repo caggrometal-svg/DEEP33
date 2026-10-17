@@ -549,13 +549,22 @@ def rank_results(
         # Current-news searches explicitly scoped to Chile must not fill results
         # with unrelated publishers from another country's politics section.
         query_folded = str(query or "").casefold()
-        # Broad Chile current-events questions are country-scoped but often have
-        # no single lexical topic anchor (e.g. "principales acontecimientos
-        # actuales en Chile"). Keep article-shaped Chile candidates for the
-        # downstream page extractor, which validates the article body before
-        # anything is used as model evidence.
+        # Broad country-level Chile current-events questions can lack a useful
+        # lexical topic anchor (e.g. "principales acontecimientos actuales en
+        # Chile"). Do not apply this rescue to a named city/comuna query; its
+        # locality must remain the stronger relevance anchor.
+        chile_locality_scope = bool(_extract_realtime_locality(query)) or bool(
+            re.search(
+                r"\\b(?:las\\s+condes|santiago|valpara[ií]so|viña\\s+del\\s+mar|"
+                r"concepci[oó]n|temuco|antofagasta|arica|iquique|puerto\\s+montt|"
+                r"punta\\s+arenas|la\\s+serena|coquimbo|rancagua|talca|chill[aá]n|"
+                r"copiap[oó]|calama|ñuñoa|providencia|maip[uú]|puente\\s+alto)\\b",
+                query_folded,
+            )
+        )
         chile_general_current_news_intent = (
             realtime
+            and not chile_locality_scope
             and "chile" in _token_set(query)
             and any(
                 marker in query_folded
@@ -584,10 +593,8 @@ def rank_results(
                 publisher_host == publisher or publisher_host.endswith("." + publisher)
                 for publisher in ("emol.com", "latercera.com", "cnnchile.com")
             )
-            url_host = (parsed_url.hostname or "").casefold().removeprefix("www.")
             if (
-                url_host == "news.google.com"
-                or publisher_host == "britannica.com"
+                publisher_host == "britannica.com"
                 or publisher_host.endswith(".britannica.com")
                 or publisher_host == "wikipedia.org"
                 or publisher_host.endswith(".wikipedia.org")
