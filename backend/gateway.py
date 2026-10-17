@@ -604,15 +604,15 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # Do not retry the same provider after an ambiguous POST.
-                            # A distinct configured provider is safe to try with the same
-                            # idempotency key and is preferable to surfacing a 5xx.
-                            provider_failed_transiently = True
+                            # A POST 5xx is ambiguous: the provider may have accepted
+                            # the inference before returning the error. Preserve the
+                            # no-failover contract here; the endpoint layer converts
+                            # the gateway error into a bounded degraded response.
                             circuit.failure(
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            break
+                            raise GatewayHTTPError
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
