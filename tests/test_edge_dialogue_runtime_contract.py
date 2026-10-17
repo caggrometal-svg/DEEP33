@@ -260,3 +260,41 @@ def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
     android_api = (REPO_ROOT / "android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt").read_text(encoding="utf-8")
     assert '(payload.optJSONArray("sources")?.length() ?: 0) >= 1' in android_api
 
+
+
+def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
+    import re
+
+    prompt = (
+        "Busca en Internet información actualizada a hoy sobre los principales "
+        "acontecimientos de Chile. Consulta al menos 3 sitios web distintos, "
+        "abre las páginas y extrae información directamente de ellas."
+    )
+    topic_pattern = re.compile(
+        r"\\b((?:(?:principales?|más\\s+importantes|mayores?|recientes?|actuales?)\\s+)?"
+        r"(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)"
+        r"(?:\\s+actuales?)?\\s+(?:de\\s+)?Chile)\\b",
+        re.IGNORECASE,
+    )
+    match = topic_pattern.search(prompt)
+    assert match is not None
+    assert re.sub(r"\\s+", " ", match.group(1)).strip().lower() == "principales acontecimientos de chile"
+
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        query_start = source.index("function buildWebSearchQuery(")
+        query_end = source.index("function requiresFreshWeb(", query_start)
+        query_builder = source[query_start:query_end]
+        assert "const chileTopicMatch = query.match(" in query_builder
+        assert 'return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";' in query_builder
+
+        filter_start = source.index("function edgeFilterSearchResults(")
+        filter_end = source.index("function edgeProvidersForResults(", filter_start)
+        result_filter = source[filter_start:filter_end]
+        assert "const chileNewsIntent = currentNews &&" in result_filter
+        assert "const mentionsChileContext = explicitChileContext.test(articleEvidence);" in result_filter
+        assert "return mentionsChileContext || ChileanNationalSection;" in result_filter
+        # A publisher hosted on .cl is not, by itself, accepted as local-news evidence.
+        assert 'publisherHost.endsWith(".cl")' in result_filter
+        assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
+        assert "const ChileanNationalSection = !googleNewsStory" in result_filter
