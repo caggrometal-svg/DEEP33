@@ -238,7 +238,7 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         assert 'const requiredReadableSources = requestedReadableSourceCount(searchQuery)' in generate
         assert "if (edgeCurrentDateTimeQuery(query)) return 1;" in source
         assert 'const recoverySearch = await edgeSearch(' in generate
-        assert '!excludedDomains.has(hostname)' in generate
+        assert '!excludedDomains.has(candidateDomain)' in generate
         assert 'fallback_path: "railway-recovery"' in generate
 
 def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
