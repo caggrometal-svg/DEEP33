@@ -3945,6 +3945,7 @@ Deno.serve(async (req) => {
         .join(" ")
         .trim();
       const webTrigger = requiresFreshWeb(query);
+      let verifiedSourcesForOutput: NavigatedWebSource[] = [];
 
       let workingMessages = messages;
       if (webTrigger) {
@@ -4046,6 +4047,7 @@ Deno.serve(async (req) => {
         }
 
         const sources = readableSources;
+        verifiedSourcesForOutput = sources;
         if (sources.length < 1) {
           return new Response(
             "event: error\ndata: " +
@@ -4226,7 +4228,7 @@ Deno.serve(async (req) => {
                 const recoveredText = appendVerifiedSourceLinks(
                   sanitizeAssistantText(extractProviderText(recovered.body)),
                   query,
-                  sources,
+                  verifiedSourcesForOutput,
                 );
                 if (!recoveredText) throw new Error("EDGE_WEB_COMPLETION_RECOVERY_EMPTY_RESPONSE");
 
@@ -4252,7 +4254,7 @@ Deno.serve(async (req) => {
               const responseText = appendVerifiedSourceLinks(
                 sanitizeAssistantText(ai.text),
                 query,
-                webTrigger ? sources : [],
+                webTrigger ? verifiedSourcesForOutput : [],
               );
               if (!responseText) throw new Error("EDGE_AI_EMPTY_RESPONSE");
               if (webTrigger && !recoveryOutputEmitted) {
