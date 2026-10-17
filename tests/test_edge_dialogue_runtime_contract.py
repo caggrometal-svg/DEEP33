@@ -294,6 +294,11 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert "const chileNewsIntent = currentNews &&" in result_filter
         assert "const mentionsChileContext = explicitChileContext.test(articleEvidence);" in result_filter
         assert "return mentionsChileContext || ChileanNationalSection;" in result_filter
+        assert "const strictResults = liveItems.filter((item) => {" in result_filter
+        assert "if (strictResults.length > 0) return strictResults;" in result_filter
+        assert "return liveItems.filter((item) => {" in result_filter
+        assert "host.endsWith(\".cl\")" in result_filter
+        assert "Search snippets can be too sparse to prove Chile relevance before navigation." in result_filter
         # A publisher hosted on .cl is not, by itself, accepted as local-news evidence.
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
