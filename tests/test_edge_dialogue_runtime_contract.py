@@ -214,8 +214,8 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "excludedDomains: Set<string> = new Set<string>()" in navigation
         assert "attempted_urls: [...attemptedUrls]" in navigation
         assert "attempted_domains: [...attemptedDomains]" in navigation
-        assert "scheduledDomains.has(hostname)" in navigation
-        assert "excludedDomains.has(hostname)" in navigation
+        assert "scheduledDomains.has(effectiveDomain)" in navigation
+        assert "excludedDomains.has(effectiveDomain)" in navigation
 
         chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
         chat_end = source.index("if (!edgeAIConfigured())", chat_start)
@@ -224,7 +224,7 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "buildWebSearchQuery(query)," in chat
         assert "userAuthorization," in chat
         assert "recoverySearch," in chat
-        assert "!excludedDomains.has(hostname)" in chat
+        assert "!excludedDomains.has(candidateDomain)" in chat
         assert "const sources = readableSources;" in chat
         assert "if (sources.length < 1)" in chat
 
