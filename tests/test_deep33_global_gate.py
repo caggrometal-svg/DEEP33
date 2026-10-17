@@ -876,6 +876,6 @@ def test_stream_gateway_emits_visible_fallback_after_provider_timeout(monkeypatc
         return bytes(output)
 
     raw = asyncio.run(scenario()).decode("utf-8", errors="replace")
-    assert "No pude completar la respuesta en este intento" in raw
+    assert "No pude completar la síntesis" in raw
     assert "event: error" not in raw
     assert "data: [DONE]" in raw
