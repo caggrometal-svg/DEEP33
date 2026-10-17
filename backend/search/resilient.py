@@ -86,6 +86,49 @@ def _has_who_dengue_item(items: list[dict]) -> bool:
 
 _CHILE_TECH_COMPANY_HOSTS = ("sonda.com", "entel.cl", "wom.cl", "movistar.cl")
 
+_CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES = (
+    {
+        "title": "SONDA — servicios de TI y transformación digital",
+        "url": "https://www.sonda.com/",
+        "snippet": (
+            "Sitio corporativo oficial de SONDA, proveedor regional de servicios de TI, "
+            "soluciones tecnológicas y transformación digital, con operaciones en Chile."
+        ),
+        "source_domain": "sonda.com",
+        "provider": "official_navigation_fallback",
+    },
+    {
+        "title": "Entel Empresas — conectividad y soluciones digitales en Chile",
+        "url": "https://www.entel.cl/empresas/",
+        "snippet": (
+            "Portal oficial Entel Empresas: planes móviles, internet para empresas, "
+            "servicios cloud y soluciones digitales para negocios en Chile."
+        ),
+        "source_domain": "entel.cl",
+        "provider": "official_navigation_fallback",
+    },
+    {
+        "title": "WOM Empresas — planes móviles e internet para negocios",
+        "url": "https://www.wom.cl/empresas/",
+        "snippet": (
+            "Portal oficial WOM Empresas en Chile con planes móviles, internet y "
+            "conectividad para empresas y negocios."
+        ),
+        "source_domain": "wom.cl",
+        "provider": "official_navigation_fallback",
+    },
+    {
+        "title": "Movistar Empresas Chile — conectividad y servicios digitales",
+        "url": "https://ww2.movistar.cl/empresas/",
+        "snippet": (
+            "Sitio oficial Movistar Empresas Chile con soluciones de conectividad, "
+            "internet fibra, servicios móviles y herramientas digitales para empresas."
+        ),
+        "source_domain": "ww2.movistar.cl",
+        "provider": "official_navigation_fallback",
+    },
+)
+
 
 def _is_chile_commercial_technology_item(item: dict) -> bool:
     """Identify results from independently recognized Chilean commercial tech providers."""
@@ -1445,6 +1488,44 @@ class WebOrchestrator:
                     len(_CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES),
                     len(selected),
                     len(selected_domains_after_portal_fallback),
+                )
+
+        if commercial_technology_site_intent:
+            selected_company_hosts = {
+                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+                .casefold().rstrip(".").removeprefix("www.")
+                for item in selected
+                if _is_chile_commercial_technology_item(item)
+            } - {""}
+            if len(selected_company_hosts) < min(3, self.max_results):
+                # Search indexes sometimes return only commercial directories or
+                # press releases for this intent. Keep canonical company websites
+                # as navigation candidates; they become evidence only after the
+                # fetcher extracts their actual page text.
+                navigation_candidates: list[dict] = []
+                seen_company_hosts: set[str] = set()
+                for item in [*selected, *[dict(candidate) for candidate in _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES]]:
+                    if not _is_chile_commercial_technology_item(item):
+                        continue
+                    host = str(
+                        item.get("source_domain")
+                        or (urlparse(str(item.get("url") or "")).hostname or "")
+                    ).casefold().rstrip(".").removeprefix("www.")
+                    url = str(item.get("url") or "").strip()
+                    if not host or not url or host in seen_company_hosts:
+                        continue
+                    seen_company_hosts.add(host)
+                    navigation_candidates.append(item)
+                    if len(navigation_candidates) >= self.max_results:
+                        break
+                if len(navigation_candidates) >= min(3, self.max_results):
+                    selected = navigation_candidates
+                logger.warning(
+                    "web_search_chile_commercial_navigation_fallback candidate_count=%d "
+                    "selected_count=%d distinct_company_domains=%d",
+                    len(_CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES),
+                    len(navigation_candidates),
+                    len(seen_company_hosts),
                 )
 
         if not selected and merged:
