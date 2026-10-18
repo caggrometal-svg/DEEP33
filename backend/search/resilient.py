@@ -836,18 +836,24 @@ class WebOrchestrator:
         # is synthesized locally and every candidate is ranked against the
         # untouched user query.
         if chile_economic_news_intent:
+            # Economy queries were depending on one Bing SERP and could collapse
+            # to two domains. Fan out publisher-specific discovery across Bing and
+            # Google News in the primary wave; all candidates are still ranked
+            # against the untouched user query and no evidence is synthesized.
             economic_queries = (
-                "site:df.cl Chile economía mercados noticias",
-                "site:latercera.com/pulso Chile economía mercados",
-                "site:emol.com/economia Chile economía noticias",
-                "site:bcentral.cl Chile economía mercado informe",
+                ("google_news", "site:df.cl Chile economía mercados noticias hoy"),
+                ("google_news", "site:latercera.com Chile Pulso economía mercados hoy"),
+                ("google_news", "site:emol.com Chile economía noticias mercados hoy"),
+                ("bing", "site:df.cl Chile economía mercados noticias"),
+                ("bing", "site:latercera.com/pulso Chile economía mercados"),
+                ("bing", "site:bcentral.cl Chile economía mercado informe"),
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider("bing", targeted_query),
-                    name=f"search:bing-chile-economy-{index}",
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-economy-primary:{provider}:{index}",
                 )
-                for index, targeted_query in enumerate(economic_queries)
+                for index, (provider, targeted_query) in enumerate(economic_queries)
             })
         if broad_ai_news_intent:
             tasks.add(
