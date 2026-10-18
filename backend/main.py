@@ -1925,6 +1925,19 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if len(str(item.get("snippet") or "").strip()) >= 120
         ) >= 2
     )
+    # Search-provider snippets are weaker than extracted publisher pages, but they
+    # are still live evidence tied to concrete source URLs. When publishers block
+    # automated extraction, preserve a multi-domain degraded path instead of
+    # converting a successful current search into a false "no web results" refusal.
+    snippet_evidence = [
+        item for item in compact_search_results
+        if str(item.get("url") or "").strip()
+        and len(str(item.get("snippet") or "").strip()) >= 80
+    ]
+    snippet_evidence_domains = {
+        (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        for item in snippet_evidence
+    } - {""}
 
     candidate_limit = max(
         required_pages,
@@ -2012,13 +2025,27 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             fetch_batch.elapsed_ms,
         )
 
+    snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        logger.warning(
-            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
-        )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        # Realtime/current-event searches must not claim that web search failed
+        # merely because publisher pages reject automated readers. Require at
+        # least two independently hosted live search results before degrading to
+        # snippet evidence; otherwise keep the strict refusal path.
+        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+            snippet_fallback_used = True
+            logger.warning(
+                "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
+                "snippet_sources=%s snippet_domains=%s",
+                request_id or "unknown", required_pages, len(fetched_pages),
+                len(snippet_evidence), len(snippet_evidence_domains),
+            )
+        else:
+            logger.warning(
+                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
+                request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -2041,10 +2068,13 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     ]
 
     extracted_text_chars = sum(len(str(item.get("text") or "")) for item in compact_fetched_pages)
-    domains_used = len({
+    extracted_domains = {
         (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
         for item in compact_fetched_pages
-    } - {""})
+    } - {""}
+    domains_used = len(
+        extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
+    )
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
@@ -2057,6 +2087,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
         "fetch_required_pages": required_pages,
+        "snippet_fallback": snippet_fallback_used,
     }
     compact_web_evidence = {
         "search_results": [
@@ -2069,6 +2100,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         ],
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
+        "snippet_fallback": snippet_fallback_used,
     }
 
     logger.info(
