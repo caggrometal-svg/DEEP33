@@ -960,9 +960,9 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
             "provider": "duckduckgo",
         },
         {
-            "title": "Presidente de la DC analiza las elecciones - T13",
+            "title": "Últimas noticias de política en Chile hoy: Presidente de la DC analiza las elecciones - T13",
             "url": "https://www.t13.cl/noticia/politica/presidente-dc-analiza-elecciones-15-10-2026",
-            "snippet": "Artículo periodístico con declaraciones sobre política chilena.",
+            "snippet": "Artículo periodístico con declaraciones sobre política en Chile hoy; últimas noticias de las elecciones.",
             "provider": "duckduckgo",
         },
     ]
