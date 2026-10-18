@@ -108,8 +108,8 @@ def _clean_extracted_text(value: str, *, max_chars: int) -> str:
 
 def _retryable_direct_fetch_error(exc: WebFetchError) -> bool:
     code = str(exc)
-    if code in {"WEB_FETCH_TIMEOUT", "WEB_FETCH_NETWORK_ERROR"}:
-        return True
+    # A timeout or network error should transfer to Reader immediately; retrying
+    # the same direct fetch consumes the one caller-visible budget and starves fallback.
     prefix = "WEB_FETCH_HTTP_"
     if code.startswith(prefix):
         try:
@@ -603,6 +603,7 @@ async def _fetch_with_total_budget(
     original_url: str,
     current_url: str,
     timeout_seconds: float,
+    direct_timeout_seconds: float | None = None,
     max_redirects: int,
     max_text_chars: int,
     user_agent: str,
@@ -615,7 +616,11 @@ async def _fetch_with_total_budget(
             _fetch_with_reader_fallback(
                 original_url=original_url,
                 current_url=current_url,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=(
+                    direct_timeout_seconds
+                    if direct_timeout_seconds is not None
+                    else timeout_seconds
+                ),
                 max_redirects=max_redirects,
                 max_text_chars=max_text_chars,
                 user_agent=user_agent,
@@ -691,10 +696,28 @@ async def _fetch_page_uncached(
     raise WebFetchError("WEB_FETCH_REDIRECT_LIMIT")
 
 
-async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects=MAX_REDIRECTS,max_text_chars=MAX_TEXT_CHARS,user_agent=DEFAULT_USER_AGENT,fresh=False):
-    if not 1<=max_redirects<=MAX_REDIRECTS: raise ValueError("max_redirects must be between 1 and 3")
-    timeout_seconds=max(1.0,min(8.0,timeout_seconds)); max_text_chars=max(1000,min(MAX_TEXT_CHARS,max_text_chars))
-    original_url=url.strip(); current_url=await asyncio.to_thread(validate_public_url, original_url)
+async def fetch_page(
+    url,
+    *,
+    timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+    direct_timeout_seconds: float | None = None,
+    max_redirects=MAX_REDIRECTS,
+    max_text_chars=MAX_TEXT_CHARS,
+    user_agent=DEFAULT_USER_AGENT,
+    fresh=False,
+):
+    if not 1 <= max_redirects <= MAX_REDIRECTS:
+        raise ValueError("max_redirects must be between 1 and 3")
+    timeout_seconds = max(1.0, min(8.0, timeout_seconds))
+    direct_timeout = None
+    if direct_timeout_seconds is not None:
+        direct_timeout = max(
+            0.5,
+            min(2.0, timeout_seconds, float(direct_timeout_seconds)),
+        )
+    max_text_chars = max(1000, min(MAX_TEXT_CHARS, max_text_chars))
+    original_url = url.strip()
+    current_url = await asyncio.to_thread(validate_public_url, original_url)
     cache_key=hashlib.sha256(
         f"{current_url}{max_redirects}{max_text_chars}{user_agent}".encode("utf-8")
     ).hexdigest()
@@ -711,6 +734,7 @@ async def fetch_page(url,*,timeout_seconds=DEFAULT_TIMEOUT_SECONDS,max_redirects
             original_url=original_url,
             current_url=current_url,
             timeout_seconds=timeout_seconds,
+            direct_timeout_seconds=direct_timeout,
             max_redirects=max_redirects,
             max_text_chars=max_text_chars,
             user_agent=user_agent,
