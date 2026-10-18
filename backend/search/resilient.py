@@ -1190,9 +1190,19 @@ class WebOrchestrator:
                 for provider in self.providers
             }
             pending_recovery = set(recovery_tasks)
+            recovery_deadline = deadline
+            if chile_political_news_intent:
+                # Keep part of the tail available for publisher-scoped political
+                # recovery. A broad recovery query may corroborate providers, but
+                # must not consume the entire live-search budget.
+                remaining_budget = max(0.0, deadline - loop.time())
+                recovery_deadline = min(
+                    deadline,
+                    loop.time() + max(0.05, remaining_budget * 0.35),
+                )
             try:
                 while pending_recovery:
-                    remaining = deadline - loop.time()
+                    remaining = recovery_deadline - loop.time()
                     if remaining <= 0:
                         break
                     done, pending_recovery = await asyncio.wait(
@@ -1276,17 +1286,19 @@ class WebOrchestrator:
             and loop.time() < deadline
         ):
             political_source_queries = (
-                # Use both direct web search and publisher-scoped Google News RSS.
-                # Direct hits are preferred for readability; RSS preserves editorial
-                # provenance when a general index is sparse or temporarily blocked.
+                # Reserve the recovery budget for direct publisher discovery.
+                # Avoid spending the tail on one broad recovery query that can
+                # finish with a single editorial domain.
+                ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
             political_tasks = {

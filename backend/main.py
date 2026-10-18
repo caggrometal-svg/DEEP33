@@ -3145,7 +3145,53 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 if len(snippet_fallback_results) >= 5:
                     break
 
-        has_snippet_evidence = bool(snippet_fallback_results)
+        # Realtime discovery can produce more independent domains than the
+        # short extraction window can fully read. When at least one real page was
+        # extracted but fewer than three public results survived, retain additional
+        # already-ranked live snippets from distinct domains. They are explicitly
+        # marked as non-fetched evidence and never replace extracted page text.
+        supplemental_snippet_results: list[dict[str, Any]] = []
+        if search_ok and is_realtime_query(q) and has_extracted_content and len(resolved_results) < 3:
+            extracted_result_domains = {
+                (urlparse(str(item.get("url") or "")).hostname or "")
+                .casefold().removeprefix("www.")
+                for item in resolved_results
+                if item.get("url")
+            }
+            extracted_result_urls = {
+                str(item.get("url") or "").strip()
+                for item in resolved_results
+                if str(item.get("url") or "").strip()
+            }
+            for item in candidate_sources:
+                snippet = str(item.get("snippet") or "").strip()
+                url = str(item.get("url") or "").strip()
+                domain = str(
+                    item.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().removeprefix("www.")
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or len(snippet) < 24
+                    or url in extracted_result_urls
+                    or domain in extracted_result_domains
+                ):
+                    continue
+                supplemental_snippet_results.append({
+                    **item,
+                    "evidence_type": "search_snippet",
+                    "fetched": False,
+                    "source_domain": domain,
+                })
+                extracted_result_domains.add(domain)
+                if len(resolved_results) + len(supplemental_snippet_results) >= 5:
+                    break
+
+        has_snippet_evidence = bool(snippet_fallback_results or supplemental_snippet_results)
+        # domains_used remains the count of pages actually fetched/extracted.
+        # Search-snippet diversity is represented by verification/source_domain,
+        # so callers can distinguish navigated pages from degraded live evidence.
         if has_snippet_evidence and not has_extracted_content:
             domains_used = len({
                 str(item.get("source_domain") or "")
@@ -3156,7 +3202,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         final_ok = search_ok and (has_extracted_content or has_snippet_evidence)
         if not search_ok or (not has_extracted_content and not has_snippet_evidence):
             status = "failed"
-        elif not has_extracted_content or fetch_failures:
+        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
             status = "degraded"
         else:
             status = "success"
@@ -3184,7 +3230,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         response_payload = dict(result)
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
-        public_results = resolved_results if has_extracted_content else snippet_fallback_results
+        public_results = (
+            [*resolved_results, *supplemental_snippet_results]
+            if has_extracted_content
+            else snippet_fallback_results
+        )
         response_payload["results"] = public_results
         response_payload["sources"] = public_results
         response_payload.update({

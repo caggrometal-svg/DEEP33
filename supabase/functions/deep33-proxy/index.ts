@@ -2705,16 +2705,44 @@ async function probeInternetConnectivity(): Promise<Record<string, unknown>> {
 
 async function auditSearch(sessionId: string, userAuthorization = ""): Promise<Record<string, unknown>> {
   const candidates = [
+    "principales acontecimientos actuales en Chile hoy",
     "noticias recientes en Chile",
     "últimas noticias de Chile hoy",
-    "noticias Chile últimas horas",
   ];
   let last: Record<string, unknown> = { ok: false, results: [] };
+
+  const sufficientSearchCoverage = (result: Record<string, unknown>): boolean => {
+    const results = Array.isArray(result.results)
+      ? result.results.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      : [];
+    const domains = new Set(results.map((item) => {
+      const explicit = String(item.source_domain || "").toLowerCase().replace(/^www\./, "");
+      if (explicit) return explicit;
+      try {
+        return new URL(String(item.url || "")).hostname.toLowerCase().replace(/^www\./, "");
+      } catch {
+        return "";
+      }
+    }).filter(Boolean));
+    const providers = new Set(
+      Array.isArray(result.providers)
+        ? result.providers.map((item) => String(item || "")).filter(Boolean)
+        : results.map((item) => String(item.provider || "")).filter(Boolean),
+    );
+    return result.ok === true && results.length >= 2 && domains.size >= 2 && providers.size >= 2;
+  };
+
   for (let index = 0; index < candidates.length; index++) {
     try {
-      const result = await edgeSearch(candidates[index], sessionId, userAuthorization, false, true);
+      // Connectivity audit verifies that independent search providers can return
+      // current, relevant candidates. Full page extraction remains mandatory in
+      // the normal chat/navigation path and is validated by production web gates.
+      let result = await edgeSearch(candidates[index], sessionId, userAuthorization, false, false);
+      if (!sufficientSearchCoverage(result) && userAuthorization.startsWith("Bearer ")) {
+        result = await edgeSearch(candidates[index], sessionId, userAuthorization, true, false);
+      }
       const results = Array.isArray(result.results) ? result.results : [];
-      if (result.ok === true && results.length > 0) {
+      if (sufficientSearchCoverage(result)) {
         return { ...result, audit_query: candidates[index], audit_attempts: index + 1 };
       }
       last = { ...result, ok: false, results };

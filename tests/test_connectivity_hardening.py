@@ -158,7 +158,9 @@ def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() ->
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert "async function probeInternetConnectivity()" in source
     assert 'async function auditSearch(sessionId: string, userAuthorization = "")' in source
-    assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, true)" in source
+    assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, false)" in source
+    assert "edgeSearch(candidates[index], sessionId, userAuthorization, true, false)" in source
+    assert "sufficientSearchCoverage" in source
     assert 'const safeSearch = auditSearch(auditSession, req.headers.get("authorization") || "");' in source
     assert 'INTERNET: internetOk ? "PASS" : "FAIL"' in source
     assert 'DNS: dnsOk ? "PASS" : "FAIL"' in source
