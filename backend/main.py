@@ -41,7 +41,7 @@ from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query
-from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum
+from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
 from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
@@ -2902,6 +2902,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     source.get("source_domain")
                     or (urlparse(url).hostname or "")
                 ).casefold().removeprefix("www.")[:255],
+                "published_at": source.get("published_at"),
             }
 
         # /v1/web/search is an end-to-end search-and-read contract: result links
@@ -2929,7 +2930,27 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             wrapper_penalty = int(host == "news.google.com")
             return (wrapper_penalty, landing_penalty, -len(path_parts))
 
-        ordered_sources = sorted(normalized_sources.values(), key=_fetch_priority)
+        # Provider rank is not relevance: a direct but unrelated landing page
+        # (for example a health-insurance login) must not crowd out a matching news
+        # article or official document. Filter weak results, then use direct/permalink
+        # priority only as a tie-breaker between similarly relevant candidates.
+        minimum_relevance_score = max(
+            0.18,
+            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+        )
+        ranked_sources = [
+            {**item, "relevance_score": score_result(q, item)}
+            for item in normalized_sources.values()
+        ]
+        relevant_sources = [
+            item
+            for item in ranked_sources
+            if item["relevance_score"] >= minimum_relevance_score
+        ]
+        ordered_sources = sorted(
+            relevant_sources,
+            key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
+        )
         max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
         direct_sources = [
             item for item in ordered_sources
@@ -3025,8 +3046,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if not isinstance(item, dict):
                 continue
             original_url = str(item.get("url") or "").strip()
+            # Return only URLs whose original pages were successfully extracted;
+            # raw snippets and unreadable/unrelated SERP entries are not evidence.
             direct_url = resolved_urls.get(original_url)
-            if direct_url and direct_url != original_url:
+            if not direct_url:
+                continue
+            if direct_url != original_url:
                 resolved_results.append({**item, "original_url": original_url, "url": direct_url})
             else:
                 resolved_results.append(dict(item))
