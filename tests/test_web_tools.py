@@ -1218,3 +1218,89 @@ def test_chile_current_events_provider_query_uses_news_vocabulary():
     assert provider_query == "Chile noticias hoy actualidad acontecimientos recientes"
     assert recovery_query == provider_query
     assert "site:" not in provider_query
+
+
+def test_web_search_endpoint_fetches_orchestrator_selected_sources_when_secondary_score_is_empty(monkeypatch):
+    import asyncio
+    from starlette.requests import Request
+    import backend.main as main
+
+    query = "producto tecnológico smartphone actual especificaciones"
+    selected = [
+        {
+            "title": "Phone specifications",
+            "url": "https://phones.example/device-a",
+            "snippet": "Current mobile device specifications and comparison.",
+            "provider": "bing",
+            "source_domain": "phones.example",
+        },
+        {
+            "title": "Mobile review",
+            "url": "https://reviews.example/device-b",
+            "snippet": "New phone model technical specifications.",
+            "provider": "bing",
+            "source_domain": "reviews.example",
+        },
+    ]
+
+    async def fake_search_web(*args, **kwargs):
+        return {
+            "ok": True,
+            "status": "OK",
+            "engine": "DEEP33 Search Engine",
+            "engine_version": "1.4.0",
+            "realtime": True,
+            "fresh_request": True,
+            "retrieved_at": "2026-10-18T08:00:00+00:00",
+            "results": selected,
+            "sources": selected,
+            "providers": ["bing"],
+            "providers_attempted": ["bing", "duckduckgo"],
+            "verification": {
+                "level": "multi-source",
+                "distinct_domains": 2,
+                "distinct_providers": 1,
+                "corroborated_results": 0,
+            },
+        }
+
+    attempted = []
+
+    async def fake_fetch(source, **kwargs):
+        attempted.append(source["url"])
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "domain": source["source_domain"],
+            "provider": source["provider"],
+            "text": ("Verified extracted phone specification page content. " * 8),
+            "text_chars": 400,
+            "retrieved_at": "2026-10-18T08:00:01+00:00",
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search_web)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    # Force the endpoint-only heuristic below threshold. The orchestrator-selected
+    # URLs must still be fetched; they are not exposed unless extraction succeeds.
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.05)
+    monkeypatch.setattr(main, "enforce_client_controls", lambda *_args, **_kwargs: asyncio.sleep(0))
+
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/v1/web/search",
+        "headers": [],
+        "query_string": b"",
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+        "scheme": "http",
+    })
+    result = asyncio.run(main.web_search_endpoint(request, q=query))
+
+    assert result["ok"] is True
+    assert result["status"] == "success"
+    assert len(attempted) == 2
+    assert set(attempted) == {item["url"] for item in selected}
+    assert result["domains_used"] == 2
+    assert len(result["results"]) == 2
+    assert result["extracted_text_chars"] >= 160
