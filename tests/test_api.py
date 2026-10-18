@@ -680,7 +680,8 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
-        assert kwargs["timeout_seconds"] <= 1.2
+        assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
+        assert kwargs["direct_timeout_seconds"] == 0.85
         return {
             "title": source["title"],
             "url": source["url"],
