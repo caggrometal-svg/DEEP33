@@ -804,9 +804,40 @@ class AIGateway:
         request_id: str | None = None,
         deadline: float | None = None,
     ) -> dict:
-        # Production chat is a streaming contract. Probe that same path instead
-        # of the non-stream completion path, which some free gateway models
-        # throttle or leave empty even while streaming inference is healthy.
+        # Reasoning models can consume a tiny completion budget entirely on hidden
+        # reasoning and return HTTP 200 with empty assistant content. Give the
+        # diagnostic enough room to emit the sentinel, but cap the whole check so
+        # a slow provider cannot hold the production gate open indefinitely.
+        local_deadline = time.monotonic() + 8.0
+        effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
+        return await self.complete(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Reply with exactly this token and no other text: "
+                            "DEEP33_DIAGNOSTIC_OK"
+                        ),
+                    },
+                    {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
+                ],
+                "max_tokens": 128,
+                "temperature": 0.0,
+            },
+            request_id=request_id,
+            idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
+            deadline=effective_deadline,
+            prefer_ttft=True,
+        )
+
+    async def diagnostic_stream_inference(
+        self,
+        *,
+        request_id: str | None = None,
+        deadline: float | None = None,
+    ) -> dict:
+        """Probe the production streaming path when non-stream diagnostics fail."""
         local_deadline = time.monotonic() + 8.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         payload = {
@@ -827,7 +858,7 @@ class AIGateway:
         async for chunk in self.stream(
             payload,
             request_id=request_id,
-            idempotency_key=f"diagnostic-{request_id or uuid4_short()}",
+            idempotency_key=f"diagnostic-stream-{request_id or uuid4_short()}",
             deadline=effective_deadline,
         ):
             collected.extend(chunk)
@@ -851,7 +882,6 @@ class AIGateway:
                 model = event["model"].strip() or model
                 if model:
                     break
-
         if not model:
             model = next(
                 (provider.model for provider in self.config.providers if provider.model),
