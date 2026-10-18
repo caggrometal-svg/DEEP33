@@ -2961,9 +2961,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             fetch_candidates.append(source)
             if len(fetch_candidates) >= max_fetch_candidates:
                 break
+        # Direct fetch and the bounded Reader fallback share this deadline.
+        # A 1.2s hard cap cancelled Reader before it could return useful page text,
+        # so search returned URLs but no verified extracted evidence. Fetch candidates
+        # run concurrently; keep each per-page budget bounded for the public edge.
         fetch_timeout = max(
-            0.8,
-            min(1.2, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            2.0,
+            min(2.2, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "2.2"))),
         )
         fetch_results = await asyncio.gather(
             *(
