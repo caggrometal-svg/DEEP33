@@ -709,8 +709,12 @@ async def fetch_page(
     if not 1 <= max_redirects <= MAX_REDIRECTS:
         raise ValueError("max_redirects must be between 1 and 3")
     timeout_seconds = max(1.0, min(8.0, timeout_seconds))
-    direct_timeout = None
-    if direct_timeout_seconds is not None:
+    # Reserve most of the total deadline for Jina Reader by default. Explicit
+    # callers may provide a smaller direct budget when their upstream has a
+    # tighter response deadline (for example the Supabase Edge proxy).
+    if direct_timeout_seconds is None:
+        direct_timeout = max(0.5, min(1.2, timeout_seconds * 0.25))
+    else:
         direct_timeout = max(
             0.5,
             min(2.0, timeout_seconds, float(direct_timeout_seconds)),
