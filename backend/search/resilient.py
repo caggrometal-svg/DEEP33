@@ -802,6 +802,16 @@ class WebOrchestrator:
                 "noticia", "noticias", "hoy", "actualidad", "latest", "news",
             ))
         )
+        chile_current_events_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "acontecimiento", "acontecimientos", "evento", "eventos",
+                "hecho", "hechos", "suceso", "sucesos",
+                "qué está pasando", "que esta pasando", "qué pasa", "que pasa",
+                "what is happening", "current events",
+            ))
+        )
         chile_political_news_intent = (
             "chile" in lowered_cleaned
             and is_realtime_query(cleaned)
@@ -866,6 +876,29 @@ class WebOrchestrator:
                 )
             )
 
+        if chile_current_events_intent:
+            # Generic current-events queries are a production gate and must not
+            # depend on a single broad SERP. Fan out across independent Chilean
+            # newsrooms using two live providers; candidates remain real search
+            # results and final ranking is still anchored to the original query.
+            current_events_queries = (
+                ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
+                ("google_news", "site:cooperativa.cl Chile noticias hoy actualidad"),
+                ("google_news", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("google_news", "site:latercera.com Chile noticias hoy actualidad"),
+                ("bing", "site:biobiochile.cl Chile noticias hoy actualidad"),
+                ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
+                ("bing", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("bing", "site:latercera.com Chile noticias hoy actualidad"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-current-events:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(current_events_queries)
+            })
+
         if chile_political_news_intent:
             # Do not postpone Chile political source diversity until the recovery
             # tail: public providers can consume the full search budget first.
@@ -888,6 +921,11 @@ class WebOrchestrator:
                 ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                # Prefer direct official pages as extractable evidence when news
+                # aggregators expose only opaque Google News wrapper URLs.
+                ("bing", "site:senado.cl Chile política Congreso noticias"),
+                ("bing", "site:camara.cl Chile política Congreso noticias"),
+                ("bing", "site:gob.cl Chile gobierno política noticias"),
             )
             tasks.update({
                 asyncio.create_task(
@@ -1384,6 +1422,7 @@ class WebOrchestrator:
             political_publishers = {
                 "biobiochile.cl", "cooperativa.cl", "latercera.com",
                 "24horas.cl", "emol.com", "cnnchile.com",
+                "senado.cl", "camara.cl", "gob.cl",
             }
             diverse_selected: list[dict] = []
             diverse_domains: set[str] = set()
