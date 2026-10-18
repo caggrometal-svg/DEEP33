@@ -3398,68 +3398,83 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
 
 
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
-    # Prefer the deterministic non-stream completion probe for compatibility,
-    # then verify the actual production streaming path if a provider rejects,
-    # times out, or returns an empty non-stream completion.
+    # Preserve the deterministic completion probe and its semantic retry. If the
+    # non-stream transport itself is unavailable, verify the streaming production
+    # path before declaring the model down.
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     last_timeout = False
+    transport_failed = False
 
-    diagnostic_id = f"{request_id}-diag-1"
-    try:
-        remaining = max(0.1, deadline - time.monotonic())
-        data = await asyncio.wait_for(
-            gateway.diagnostic_inference(
-                request_id=diagnostic_id,
-                deadline=deadline,
-            ),
-            timeout=remaining,
-        )
-        result = normalized_generation(data, DEFAULT_PERSONALITY)
-        text_value = str(result.get("text") or "").strip()
-        if "DEEP33_DIAGNOSTIC_OK" in text_value:
-            return "PASS", data, text_value
-        provider_meta = data.get("_deep33_gateway") or {}
-        logger.warning(
-            "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
-            request_id,
-            diagnostic_id,
-            provider_meta.get("provider", "unknown"),
-            provider_meta.get("model", "unknown"),
-            len(text_value),
-        )
-        # A provider that returned visible but incorrect text is reachable; this
-        # is a semantic diagnostic failure, not a transport failure. Do not mask it
-        # by asking a second path for the sentinel.
-        return "FAIL", data, text_value
-    except (asyncio.TimeoutError, GatewayTimeoutError):
-        last_timeout = True
-        logger.warning(
-            "inference_check_timeout request_id=%s diagnostic_id=%s attempt=1",
-            request_id,
-            diagnostic_id,
-        )
-    except GatewayInvalidResponseError:
-        logger.warning(
-            "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=1",
-            request_id,
-            diagnostic_id,
-        )
-    except (GatewayHTTPError, HTTPException) as exc:
-        logger.warning(
-            "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
-            request_id,
-            diagnostic_id,
-            type(exc).__name__,
-        )
-    except Exception as exc:
-        logger.warning(
-            "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
-            request_id,
-            diagnostic_id,
-            type(exc).__name__,
-        )
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        diagnostic_id = f"{request_id}-diag-{attempt + 1}"
+        try:
+            data = await asyncio.wait_for(
+                gateway.diagnostic_inference(
+                    request_id=diagnostic_id,
+                    deadline=deadline,
+                ),
+                timeout=remaining,
+            )
+            result = normalized_generation(data, DEFAULT_PERSONALITY)
+            text_value = str(result.get("text") or "").strip()
+            if "DEEP33_DIAGNOSTIC_OK" in text_value:
+                return "PASS", data, text_value
 
-    if deadline > time.monotonic():
+            provider_meta = data.get("_deep33_gateway") or {}
+            logger.warning(
+                "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
+                request_id,
+                diagnostic_id,
+                provider_meta.get("provider", "unknown"),
+                provider_meta.get("model", "unknown"),
+                len(text_value),
+            )
+            if attempt == 0 and time.monotonic() + 0.15 < deadline:
+                await asyncio.sleep(0.15)
+                continue
+            return "FAIL", data, text_value
+        except (asyncio.TimeoutError, GatewayTimeoutError):
+            last_timeout = True
+            transport_failed = True
+            logger.warning(
+                "inference_check_timeout request_id=%s diagnostic_id=%s attempt=%s",
+                request_id,
+                diagnostic_id,
+                attempt + 1,
+            )
+            break
+        except GatewayInvalidResponseError:
+            transport_failed = True
+            logger.warning(
+                "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
+                request_id,
+                diagnostic_id,
+                attempt + 1,
+            )
+            break
+        except (GatewayHTTPError, HTTPException) as exc:
+            transport_failed = True
+            logger.warning(
+                "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
+                request_id,
+                diagnostic_id,
+                type(exc).__name__,
+            )
+            break
+        except Exception as exc:
+            transport_failed = True
+            logger.warning(
+                "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
+                request_id,
+                diagnostic_id,
+                type(exc).__name__,
+            )
+            break
+
+    if transport_failed and deadline > time.monotonic():
         stream_id = f"{request_id}-stream-diag"
         try:
             remaining = max(0.1, deadline - time.monotonic())
@@ -3480,6 +3495,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 stream_id,
                 len(text_value),
             )
+            return "FAIL", data, text_value
         except (asyncio.TimeoutError, GatewayTimeoutError):
             last_timeout = True
             logger.warning(
