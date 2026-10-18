@@ -756,3 +756,33 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     assert fallback.url == config.providers[0].url
     assert fallback.health_url == config.providers[0].health_url
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
+
+def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(monkeypatch) -> None:
+    import json
+
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
+        {
+            "name": "configured-fallback",
+            "url": "https://api.kilo.ai/api/gateway/chat/completions",
+            "health_url": "https://api.kilo.ai/api/gateway/models",
+            "api_key": "",
+            "model": "some-provider/fast-model:free",
+        }
+    ]))
+
+    config = GatewayConfig.from_env()
+
+    assert len(config.providers) == 3
+    assert [provider.name for provider in config.providers] == [
+        "kilo-dots-fallback",
+        "configured-fallback",
+        "kilo-laguna-fallback",
+    ]
+    assert config.providers[-1].model == "poolside/laguna-s-2.1:free"
+    assert config.providers[-1].url == config.providers[0].url
+    assert config.providers[-1].health_url == config.providers[0].health_url
