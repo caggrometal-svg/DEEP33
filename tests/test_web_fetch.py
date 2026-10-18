@@ -479,12 +479,12 @@ def test_direct_timeout_transfers_to_reader_without_retrying(monkeypatch) -> Non
         web_fetch.fetch_page(
             url,
             timeout_seconds=3.3,
-            direct_timeout_seconds=0.85,
             fresh=True,
         )
     )
 
-    assert direct_timeouts == [0.85]
+    assert len(direct_timeouts) == 1
+    assert abs(direct_timeouts[0] - 0.825) < 0.001
     assert result["ok"] is True
     assert result["reader_fallback"] == "jina_reader"
     assert "Reader extracted current reporting" in result["text"]
