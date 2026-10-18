@@ -3094,9 +3094,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
 
         response_payload = dict(result)
-        if resolved_results:
-            response_payload["results"] = resolved_results
-            response_payload["sources"] = resolved_results
+        # Keep the public source list aligned with successfully extracted pages.
+        # Do not leak raw, unrelated or unreadable search snippets when no page was read.
+        response_payload["results"] = resolved_results
+        response_payload["sources"] = resolved_results
         response_payload.update({
             "ok": final_ok,
             "status": status,
