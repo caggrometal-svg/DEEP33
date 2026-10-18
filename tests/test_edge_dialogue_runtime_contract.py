@@ -318,3 +318,17 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
         assert "const ChileanNationalSection = !googleNewsStory" in result_filter
+
+
+def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pages():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert 'async function auditSearch(sessionId: string, userAuthorization = "")' in source
+        assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, true)" in source
+        assert 'const safeSearch = auditSearch(auditSession, req.headers.get("authorization") || "");' in source
+        assert "requireExtractedEvidence = false" in source
+        assert "const verifyCandidatePayload = async (" in source
+        assert "source.page_text.trim().length >= 80" in source
+        assert 'fallback_path: "railway-candidates"' in source
+        assert 'recoverySearch.fallback_path === "railway-candidates"' in source
+        assert "WEB_SEARCH_NO_VERIFIED_PAGES" in source
