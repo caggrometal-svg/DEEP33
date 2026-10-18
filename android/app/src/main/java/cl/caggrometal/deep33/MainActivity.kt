@@ -1758,11 +1758,16 @@ class MainActivity : Activity() {
                             if (!generationActive && !pendingRecovery) {
                                 scheduleHealthCheck(350L)
                             }
+                        } else if (resolvedOnline) {
+                            updateConnection(ConnectionState.ONLINE)
                         } else {
-                            updateConnection(
-                                if (resolvedOnline) ConnectionState.ONLINE
-                                else ConnectionState.OFFLINE
-                            )
+                            // Routine startup/foreground health probes are advisory.
+                            // A single /ready miss during network handoff, cold start or
+                            // backend transition must not flash a false OFFLINE state.
+                            // Keep CONNECTING and retry; the explicit connectivity audit
+                            // remains the place that can present a confirmed OFFLINE state.
+                            updateConnection(ConnectionState.CONNECTING)
+                            scheduleHealthCheck(750L)
                         }
                         if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
                             diagnosticsView.text = when {
@@ -1791,7 +1796,10 @@ class MainActivity : Activity() {
                                 scheduleHealthCheck(350L)
                             }
                         } else {
-                            updateConnection(ConnectionState.OFFLINE)
+                            // Transport exceptions from the lightweight health probe are
+                            // transient until an explicit connectivity audit confirms them.
+                            updateConnection(ConnectionState.CONNECTING)
+                            scheduleHealthCheck(750L)
                         }
                         if (::diagnosticsView.isInitialized && currentTab == Tab.STATUS) {
                             diagnosticsView.text = if (keepConnecting) {
