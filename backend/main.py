@@ -3173,9 +3173,15 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
             text="",
         )
     try:
+        # The Supabase Edge caller has a 4s per-source deadline. Keep this
+        # backend endpoint below it and reserve time for the Reader fallback.
         result = await fetch_page(
             url,
-            timeout_seconds=max(6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
+            timeout_seconds=max(
+                3.3,
+                min(4.0, float(os.getenv("WEB_FETCH_EDGE_TIMEOUT_SECONDS", "3.3"))),
+            ),
+            direct_timeout_seconds=0.85,
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
