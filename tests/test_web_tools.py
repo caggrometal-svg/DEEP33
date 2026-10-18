@@ -1141,3 +1141,15 @@ def test_chile_current_events_query_gets_broad_news_recovery():
     assert any(term in recovery for term in ("sociedad", "economía", "seguridad", "ciencia"))
     # General-web recovery stays broad; source restrictions are not baked into it.
     assert "site:" not in recovery
+
+
+def test_chile_current_events_provider_query_uses_news_vocabulary():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "principales acontecimientos actuales en Chile hoy"
+    provider_query = WebOrchestrator._provider_query(query)
+    recovery_query = WebOrchestrator._recovery_query(query)
+
+    assert provider_query == "Chile noticias hoy actualidad acontecimientos recientes"
+    assert recovery_query == provider_query
+    assert "site:" not in provider_query
