@@ -506,9 +506,25 @@ class WebOrchestrator:
                     "Pulso Emol economía actualidad"
                 )
             return "economia economy markets financial news"
+        current_events_intent = any(
+            term in lowered
+            for term in (
+                "acontecimiento", "acontecimientos", "evento", "eventos",
+                "hecho", "hechos", "suceso", "sucesos",
+                "qué está pasando", "que esta pasando", "qué pasa", "que pasa",
+                "what is happening", "current events",
+            )
+        )
         news_intent = any(
             term in lowered
-            for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
+            for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+                "acontecimiento", "acontecimientos", "evento", "eventos",
+                "hecho", "hechos", "suceso", "sucesos",
+                "qué está pasando", "que esta pasando", "qué pasa", "que pasa",
+                "what is happening", "current events",
+            )
         )
         politics_intent = any(
             term in lowered
@@ -523,6 +539,16 @@ class WebOrchestrator:
                 "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
             )
         if news_intent and "chile" in lowered:
+            if current_events_intent:
+                # Generic current-events phrasing ("acontecimientos actuales",
+                # "what is happening") was not classified as news here. The
+                # primary engines then repeated a narrow query and recovery could
+                # collapse to country-only tokens. Broaden discovery across topics
+                # and providers without restricting results to named sites.
+                return (
+                    "Chile últimas noticias hoy acontecimientos recientes sociedad "
+                    "economía seguridad ciencia tecnología cultura deportes"
+                )
             return "Chile últimas noticias hoy"
         if news_intent and compact:
             return f"{compact} latest news today"
