@@ -860,6 +860,29 @@ class WebOrchestrator:
                 )
             )
 
+        if chile_political_news_intent:
+            # Do not postpone Chile political source diversity until the recovery
+            # tail: public providers can consume the full search budget first.
+            # Probe several independent Chilean newsrooms in the primary wave so
+            # the normal rank/dedupe stage can return >=3 editorial domains.
+            political_primary_queries = (
+                ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-political-primary:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(political_primary_queries)
+            })
+
         if chile_public_info_intent:
             # Probe independent search engines against distinct official Chilean
             # domains in the primary wave. One Bing SERP has repeatedly collapsed

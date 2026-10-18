@@ -987,6 +987,21 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
     assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
 
 
+def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            root / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "snippet_fallback: true" in source
+        assert "snippetFallback.length < 2 || snippetDomains.size < 2" in source
+        assert "item.snippet.length >= 80" in source
+        assert 'status: "degraded"' in source
+        assert 'fallbackPath + "-snippet-fallback"' in source
+
+
 def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable() -> None:
     from pathlib import Path
 
@@ -1104,6 +1119,62 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
     assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
 
+
+
+def test_chile_political_news_fans_out_in_primary_wave():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.08,
+        global_budget_seconds=0.5,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    seen = []
+
+    async def provider(query, _timeout, _limit):
+        seen.append(query)
+        lowered = query.casefold()
+        if "site:biobiochile.cl" in lowered:
+            return [{
+                "title": "Política Chile hoy — BioBioChile",
+                "url": "https://www.biobiochile.cl/noticias/nacional/chile/2026/10/18/politica.shtml",
+                "snippet": "Noticias de política, gobierno y Congreso en Chile hoy.",
+                "source_domain": "biobiochile.cl",
+            }]
+        if "site:cooperativa.cl" in lowered:
+            return [{
+                "title": "Actualidad política de Chile — Cooperativa",
+                "url": "https://www.cooperativa.cl/noticias/pais/politica/2026/10/18/actualidad/",
+                "snippet": "Actualidad política, elecciones y gobierno de Chile hoy.",
+                "source_domain": "cooperativa.cl",
+            }]
+        if "site:latercera.com" in lowered:
+            return [{
+                "title": "Política y Congreso en Chile — La Tercera",
+                "url": "https://www.latercera.com/politica/noticia/chile-politica-hoy/",
+                "snippet": "Información política de Chile, Congreso y gobierno hoy.",
+                "source_domain": "latercera.com",
+            }]
+        return []
+
+    for name in list(orchestrator.providers):
+        orchestrator.providers[name] = provider
+    for name in list(orchestrator.fallback_providers):
+        orchestrator.fallback_providers[name] = provider
+
+    result = asyncio.run(
+        orchestrator.search("política Chile hoy últimas noticias", fresh=True)
+    )
+
+    domains = {item["source_domain"] for item in result["results"]}
+    assert result["ok"] is True, result
+    assert len(domains) >= 3, result
+    assert {"biobiochile.cl", "cooperativa.cl", "latercera.com"} <= domains
+    assert any("site:biobiochile.cl" in query.casefold() for query in seen)
+    assert any("site:cooperativa.cl" in query.casefold() for query in seen)
+    assert any("site:latercera.com" in query.casefold() for query in seen)
 
 
 def test_academic_ai_research_intent_fans_out_to_independent_domains():

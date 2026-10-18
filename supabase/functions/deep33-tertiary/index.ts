@@ -3749,7 +3749,79 @@ async function edgeSearch(
       typeof source.final_url === "string" &&
       source.final_url.length > 10
     );
-    if (!readable.length) return null;
+    if (!readable.length) {
+      // A live search can still carry useful, independently sourced evidence when
+      // publishers block automated page readers. Degrade only for realtime
+      // queries and only after the normal relevance/freshness filter has accepted
+      // at least two detailed snippets from distinct editorial domains.
+      const snippetFallback = realtime
+        ? filtered
+            .map((item) => {
+              const url = String(item.url || "").trim();
+              const title = String(item.title || "").trim();
+              const snippet = String(item.snippet || "").trim();
+              let urlDomain = "";
+              try {
+                urlDomain = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+              } catch {
+                urlDomain = "";
+              }
+              const editorialDomain = String(
+                item.source_domain || item.publisher_domain || urlDomain,
+              ).toLowerCase().replace(/^www\./, "");
+              return {
+                ...item,
+                title,
+                url,
+                snippet,
+                source_domain: editorialDomain,
+                provider: String(item.provider || candidatePayload.provider || "unknown"),
+              };
+            })
+            .filter((item) =>
+              item.url.startsWith("http") &&
+              item.title.length >= 8 &&
+              item.snippet.length >= 80 &&
+              item.source_domain.length > 3
+            )
+        : [];
+      const snippetDomains = new Set(snippetFallback.map((item) => item.source_domain));
+      if (snippetFallback.length < 2 || snippetDomains.size < 2) return null;
+
+      const diversifiedSnippets: Array<Record<string, unknown>> = [];
+      const usedDomains = new Set<string>();
+      for (const item of snippetFallback) {
+        if (usedDomains.has(item.source_domain)) continue;
+        usedDomains.add(item.source_domain);
+        diversifiedSnippets.push(item);
+        if (diversifiedSnippets.length >= MAX_WEB_SEARCH_RESULTS) break;
+      }
+      const providers = edgeProvidersForResults(diversifiedSnippets);
+      return {
+        ...candidatePayload,
+        ok: true,
+        status: "degraded",
+        degraded: true,
+        snippet_fallback: true,
+        query: q,
+        realtime: true,
+        fresh_request: true,
+        retrieved_at: new Date().toISOString(),
+        engine: String(candidatePayload.engine || "DEEP33 Search Engine"),
+        engine_version: String(candidatePayload.engine_version || "1.3.0"),
+        provider_independent: true,
+        providers,
+        provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+        results: diversifiedSnippets,
+        sources: diversifiedSnippets,
+        verification: edgeSearchVerification(diversifiedSnippets, providers),
+        domains_used: usedDomains.size,
+        extracted_text_chars: 0,
+        fetched_pages: [],
+        navigation: { attempted_pages: navigation.attempted, fetched_pages: 0 },
+        fallback_path: fallbackPath + "-snippet-fallback",
+      };
+    }
 
     const results = readable.map((source) => {
       const original = filtered.find((item) => String(item.url || "") === source.url) || {};
