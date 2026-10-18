@@ -324,7 +324,9 @@ def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pa
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert 'async function auditSearch(sessionId: string, userAuthorization = "")' in source
-        assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, true)" in source
+        assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, false)" in source
+        assert "edgeSearch(candidates[index], sessionId, userAuthorization, true, false)" in source
+        assert "sufficientSearchCoverage" in source
         assert 'const safeSearch = auditSearch(auditSession, req.headers.get("authorization") || "");' in source
         assert "requireExtractedEvidence = false" in source
         assert "const verifyCandidatePayload = async (" in source
