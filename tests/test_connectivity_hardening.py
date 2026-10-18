@@ -157,7 +157,9 @@ def test_edge_realtime_search_does_not_require_generic_geography_words_in_every_
 def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert "async function probeInternetConnectivity()" in source
-    assert "async function auditSearch(sessionId: string)" in source
+    assert 'async function auditSearch(sessionId: string, userAuthorization = "")' in source
+    assert "edgeSearch(candidates[index], sessionId, userAuthorization, false, true)" in source
+    assert 'const safeSearch = auditSearch(auditSession, req.headers.get("authorization") || "");' in source
     assert 'INTERNET: internetOk ? "PASS" : "FAIL"' in source
     assert 'DNS: dnsOk ? "PASS" : "FAIL"' in source
     assert 'SEARCH: searchOk ? "PASS" : "FAIL"' in source
