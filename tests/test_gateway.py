@@ -726,3 +726,33 @@ def test_stream_small_test_budget_remains_exact() -> None:
     )
     assert gateway._stream_visible_budget(0, 2) == pytest.approx(0.08)
     assert gateway._stream_visible_budget(1, 2) == pytest.approx(0.08)
+
+def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monkeypatch) -> None:
+    import json
+
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
+        {
+            "name": "forbidden-gemma",
+            "url": "https://fallback.example.com/chat",
+            "health_url": "https://fallback.example.com/models",
+            "api_key": "",
+            "model": "google/gemma-4-26b-a4b-it",
+        }
+    ]))
+
+    config = GatewayConfig.from_env()
+
+    assert len(config.providers) == 2
+    assert config.providers[0].name == "kilo-dots-fallback"
+    assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
+    fallback = config.providers[1]
+    assert fallback.name == "kilo-laguna-fallback"
+    assert fallback.model == "poolside/laguna-s-2.1:free"
+    assert fallback.url == config.providers[0].url
+    assert fallback.health_url == config.providers[0].health_url
+    assert all("gemma-4" not in item.model.casefold() for item in config.providers)
