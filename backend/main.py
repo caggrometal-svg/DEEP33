@@ -1313,6 +1313,7 @@ WEB_TRIGGER_TERMS = (
     "fecha","fechas","día","hora","ahora mismo","en este momento",
     "última","últimos","últimas","noticia","noticias","fuentes","verifica","verificar",
     "comprueba","comprobar","precio","cotización","investiga","investigación","evidencia","contrasta","contrastar","analiza","fact-check","fact check",
+    "documentación oficial","documentacion oficial","official documentation","official docs",
 )
 
 MAX_WEB_TOOL_ROUNDS = max(1, min(4, int(os.getenv("DEEP33_WEB_MAX_TOOL_ROUNDS", "2"))))

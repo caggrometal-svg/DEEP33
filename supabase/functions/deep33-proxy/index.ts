@@ -109,6 +109,7 @@ async function buildNavigatedWebEvidence(
   userAuthorization = "",
   excludedUrls: Set<string> = new Set<string>(),
   excludedDomains: Set<string> = new Set<string>(),
+  queryOverride = "",
 ): Promise<{
   sources: NavigatedWebSource[];
   attempted: number;
@@ -118,6 +119,12 @@ async function buildNavigatedWebEvidence(
   readable_domains: string[];
 }> {
   const navigationStarted = performance.now();
+  const navigationQuery = queryOverride.trim() || String(search.query ?? search.original_query ?? search.q ?? "");
+  const chileCurrentNewsQuery =
+    edgeCurrentNewsQuery(navigationQuery) &&
+    /\b(?:chile|chileno|chilena)\b/i.test(navigationQuery);
+  const explicitChilePageContext = /\b(?:chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña\s+del\s+mar|concepci[oó]n|biob[ií]o|araucan[ií]a|temuco|antofagasta|arica|iquique|puerto\s+montt|punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|copiap[oó]|calama|las\s+condes|ñuñoa|providencia|maip[uú]|puente\s+alto|la\s+moneda|senapred|sernageomin|carabineros\s+de\s+chile|congreso\s+nacional\s+de\s+chile|banco\s+central\s+de\s+chile|fiscal[ií]a\s+nacional\s+de\s+chile|ministerio\s+p[uú]blico\s+de\s+chile)\b/i;
+
   const sources: NavigatedWebSource[] = Array.isArray(search.results)
     ? search.results
         .filter((item): item is Record<string, unknown> =>
@@ -237,6 +244,11 @@ async function buildNavigatedWebEvidence(
         const body = await readJson(response);
         const pageText = typeof body.text === "string" ? body.text.trim() : "";
         if (body.ok !== true || pageText.length < 40) return null;
+
+        if (chileCurrentNewsQuery) {
+          const chilePageEvidence = (String(source.title || "") + " " + pageText).toLowerCase();
+          if (!explicitChilePageContext.test(chilePageEvidence)) return null;
+        }
 
         const finalUrl = typeof body.final_url === "string"
           ? body.final_url.slice(0, 2000)
@@ -399,7 +411,7 @@ function buildWebSearchQuery(query: string): string {
     // preserve the actual topic. A generic "noticias de Chile hoy" query caused
     // unrelated Mexico/history results to be accepted as if they answered the user.
     const chileTopicMatch = query.match(
-      /\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b/i,
+      /\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)(?:\s+actuales?)?\s+(?:(?:de|en)\s+)?Chile)\b/i,
     );
     const chileTopic = chileTopicMatch?.[1]?.replace(/\s+/g, " ").trim();
     return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";
@@ -2691,7 +2703,7 @@ async function probeInternetConnectivity(): Promise<Record<string, unknown>> {
   };
 }
 
-async function auditSearch(sessionId: string): Promise<Record<string, unknown>> {
+async function auditSearch(sessionId: string, userAuthorization = ""): Promise<Record<string, unknown>> {
   const candidates = [
     "noticias recientes en Chile",
     "últimas noticias de Chile hoy",
@@ -2700,7 +2712,7 @@ async function auditSearch(sessionId: string): Promise<Record<string, unknown>> 
   let last: Record<string, unknown> = { ok: false, results: [] };
   for (let index = 0; index < candidates.length; index++) {
     try {
-      const result = await edgeSearch(candidates[index], sessionId);
+      const result = await edgeSearch(candidates[index], sessionId, userAuthorization, false, true);
       const results = Array.isArray(result.results) ? result.results : [];
       if (result.ok === true && results.length > 0) {
         return { ...result, audit_query: candidates[index], audit_attempts: index + 1 };
@@ -3299,7 +3311,7 @@ function edgeFilterSearchResults(
   if (chileNewsIntent) {
     const explicitChileContext =
       /\b(?:chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña\s+del\s+mar|concepci[oó]n|biob[ií]o|araucan[ií]a|temuco|antofagasta|arica|iquique|puerto\s+montt|punta\s+arenas|la\s+serena|coquimbo|rancagua|talca|chill[aá]n|copiap[oó]|calama|las\s+condes|ñuñoa|providencia|maip[uú]|puente\s+alto|la\s+moneda|senapred|sernageomin|carabineros\s+de\s+chile|congreso\s+nacional\s+de\s+chile|banco\s+central\s+de\s+chile|fiscal[ií]a\s+nacional\s+de\s+chile|ministerio\s+p[uú]blico\s+de\s+chile)\b/i;
-    return liveItems.filter((item) => {
+    const strictResults = liveItems.filter((item) => {
       try {
         const parsed = new URL(String(item.url || ""));
         const host = parsed.hostname.toLowerCase();
@@ -3324,6 +3336,26 @@ function edgeFilterSearchResults(
           publisherHost.endsWith(".cl") &&
           /(?:^|\/)(?:nacional|chile|pais|pol[ií]tica)(?:\/|$)/i.test(path);
         return mentionsChileContext || ChileanNationalSection;
+      } catch {
+        return false;
+      }
+    });
+    if (strictResults.length > 0) return strictResults;
+
+    // Search snippets can be too sparse to prove Chile relevance before navigation.
+    // Do not turn that into a false empty result: retain article-shaped Chilean
+    // candidates so the navigation/fetch stage can read the page and verify it.
+    return liveItems.filter((item) => {
+      try {
+        const parsed = new URL(String(item.url || ""));
+        const path = parsed.pathname.toLowerCase();
+        const title = String(item.title || "").trim();
+        if (title.length < 8 || path === "/") return false;
+        if (/\/(?:search|shopping|products?|product|store|shop)(?:\/|$)/i.test(path)) return false;
+        if (/^\/(?:noticias|news|mundo|world|ultimas-noticias|latest-news)\/?$/.test(path)) return false;
+        // Hostname and snippets are insufficient proof. Fetch candidates across domains,
+        // then require Chilean context in the extracted page text above.
+        return true;
       } catch {
         return false;
       }
@@ -3692,6 +3724,7 @@ async function edgeSearch(
   sessionId = "deep33-edge-search",
   userAuthorization = "",
   railwayOnly = false,
+  requireExtractedEvidence = false,
 ): Promise<Record<string, unknown>> {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
@@ -3711,6 +3744,100 @@ async function edgeSearch(
       providers: Array.isArray(result.providers) ? result.providers : [],
       request_scope: sessionId.slice(0, 128),
     }));
+  };
+
+
+  // Verified search endpoints (and connectivity audit) must not pass candidate URLs
+  // as evidence. Read original pages and return success only when extracted text exists.
+  const verifyCandidatePayload = async (
+    candidatePayload: Record<string, unknown>,
+    fallbackPath: string,
+  ): Promise<Record<string, unknown> | null> => {
+    if (!userAuthorization.startsWith("Bearer ")) return null;
+    const candidateItems = Array.isArray(candidatePayload.results)
+      ? candidatePayload.results.filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === "object" && item.url),
+        )
+      : [];
+    const realtime = candidatePayload.realtime === true || edgeRealtimeQuery(q);
+    const filtered = edgeFilterSearchResults(q, candidateItems, realtime).slice(0, MAX_WEB_SEARCH_RESULTS);
+    if (!filtered.length) return null;
+
+    const navigation = await buildNavigatedWebEvidence(
+      { ...candidatePayload, results: filtered },
+      sessionId,
+      userAuthorization,
+      new Set<string>(),
+      new Set<string>(),
+      buildWebSearchQuery(q),
+    );
+    const readable = navigation.sources.filter((source) =>
+      typeof source.page_text === "string" &&
+      source.page_text.trim().length >= 80 &&
+      typeof source.final_url === "string" &&
+      source.final_url.length > 10
+    );
+    if (!readable.length) return null;
+
+    const results = readable.map((source) => {
+      const original = filtered.find((item) => String(item.url || "") === source.url) || {};
+      const finalUrl = String(source.final_url || source.url);
+      let domain = "";
+      try {
+        domain = new URL(finalUrl).hostname.toLowerCase().replace(/^www\./, "");
+      } catch {
+        domain = "";
+      }
+      const pageText = String(source.page_text || "").trim();
+      return {
+        title: String(source.title || original.title || finalUrl).slice(0, 300),
+        url: finalUrl.slice(0, 2000),
+        ...(finalUrl !== source.url ? { original_url: String(source.url).slice(0, 2000) } : {}),
+        snippet: pageText.slice(0, 1200),
+        text: pageText.slice(0, 2200),
+        text_chars: pageText.length,
+        source_domain: domain || String(original.source_domain || ""),
+        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "railway"),
+        retrieved_at: String(source.retrieved_at || new Date().toISOString()),
+      };
+    }).filter((item) => item.source_domain && item.text_chars >= 80);
+    if (!results.length) return null;
+
+    const providers = edgeProvidersForResults(results);
+    const domains = [...new Set(results.map((item) => item.source_domain))];
+    const extractedTextChars = results.reduce((sum, item) => sum + item.text_chars, 0);
+    const retrievedAt = new Date().toISOString();
+    const fetchedPages = results.map((item) => ({
+      title: item.title,
+      url: item.url,
+      provider: item.provider,
+      text: item.text,
+      text_chars: item.text_chars,
+      retrieved_at: item.retrieved_at,
+    }));
+    return {
+      ...candidatePayload,
+      ok: true,
+      status: results.length >= 2 ? "success" : "partial",
+      degraded: results.length < 2,
+      query: q,
+      realtime,
+      fresh_request: true,
+      retrieved_at: retrievedAt,
+      engine: String(candidatePayload.engine || "DEEP33 Search Engine"),
+      engine_version: String(candidatePayload.engine_version || "1.3.0"),
+      provider_independent: true,
+      providers,
+      provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+      results,
+      sources: results,
+      verification: edgeSearchVerification(results, providers),
+      domains_used: domains.length,
+      extracted_text_chars: extractedTextChars,
+      fetched_pages: fetchedPages,
+      navigation: { attempted_pages: navigation.attempted, fetched_pages: results.length },
+      fallback_path: fallbackPath,
+    };
   };
 
   // Search public Edge providers first. Recovery mode skips them and queries
@@ -3735,13 +3862,24 @@ async function edgeSearch(
     Array.isArray(direct.results) &&
     direct.results.length > 0
   ) {
-    logSearchStage("success", "edge-direct", direct);
-    return direct;
+    if (!requireExtractedEvidence) {
+      logSearchStage("success", "edge-direct", direct);
+      return direct;
+    }
+    const verified = await verifyCandidatePayload(direct, "edge-direct-page-recovery");
+    if (verified) {
+      logSearchStage("success", "edge-direct-page-recovery", verified);
+      return verified;
+    }
+    logSearchStage("degraded", "edge-direct-page-recovery-empty", direct);
   }
 
   if (!userAuthorization.startsWith("Bearer ")) {
-    logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "edge-direct", direct);
-    return direct;
+    const unavailable = requireExtractedEvidence
+      ? { ...direct, ok: false, results: [], sources: [], error: "SOURCE_VERIFICATION_AUTH_REQUIRED" }
+      : direct;
+    logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "edge-direct", unavailable);
+    return unavailable;
   }
 
   try {
@@ -3758,7 +3896,7 @@ async function edgeSearch(
       signal: AbortSignal.timeout(Math.min(6500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
     });
     const data = await readJson(res);
-    if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
+    if (res.ok && Array.isArray(data.results) && data.results.length > 0) {
       const realtime = data.realtime === true || edgeRealtimeQuery(q);
       const filtered = edgeFilterSearchResults(
         q,
@@ -3766,23 +3904,53 @@ async function edgeSearch(
         realtime,
       ).slice(0, MAX_WEB_SEARCH_RESULTS);
       if (filtered.length > 0) {
-        const providers = edgeProvidersForResults(filtered);
-        const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
-        const response = {
-          ...data,
-          ok: true,
-          providers,
-          provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
-          results: publicResults,
-          sources: publicResults,
-          verification: edgeSearchVerification(filtered, providers),
-          fallback_path: "railway",
-        };
-        logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response);
-        return response;
+        if (requireExtractedEvidence) {
+          const verified = await verifyCandidatePayload(
+            { ...data, results: filtered },
+            "railway-page-recovery",
+          );
+          if (verified) {
+            logSearchStage("success", "railway-page-recovery", verified);
+            return verified;
+          }
+        } else if (data.ok === true) {
+          const providers = edgeProvidersForResults(filtered);
+          const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
+          const response = {
+            ...data,
+            ok: true,
+            providers,
+            provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+            results: publicResults,
+            sources: publicResults,
+            verification: edgeSearchVerification(filtered, providers),
+            fallback_path: "railway",
+          };
+          logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response);
+          return response;
+        } else if (!requireExtractedEvidence) {
+          // Keep candidate URLs available to chat so its navigation phase can read
+          // alternative pages. This remains ok:false until actual page text is fetched.
+          const providers = edgeProvidersForResults(filtered);
+          const publicResults = filtered.map(({ provider: _provider, domain: _domain, ...result }) => result);
+          const candidatePayload = {
+            ...data,
+            ok: false,
+            providers,
+            provider: providers.length === 1 ? providers[0] : providers.length > 1 ? "multi" : null,
+            results: publicResults,
+            sources: publicResults,
+            verification: edgeSearchVerification(filtered, providers),
+            fallback_path: "railway-candidates",
+          };
+          logSearchStage("degraded", railwayOnly ? "railway-recovery" : "railway-candidate-recovery", candidatePayload);
+          return candidatePayload;
+        }
       }
     }
-    const unavailable = { ...direct, fallback_path: "railway" };
+    const unavailable = requireExtractedEvidence
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "railway", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "railway" };
     logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "railway-fallback", unavailable);
     return unavailable;
   } catch (error) {
@@ -3792,7 +3960,9 @@ async function edgeSearch(
       error: error instanceof Error ? error.name : "UNKNOWN",
       request_scope: sessionId.slice(0, 128),
     }));
-    const unavailable = { ...direct, fallback_path: "railway" };
+    const unavailable = requireExtractedEvidence
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "railway", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "railway" };
     logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "railway-fallback", unavailable);
     return unavailable;
   }
@@ -3900,7 +4070,7 @@ Deno.serve(async (req) => {
       const started = performance.now();
       const auditSession = sessionId || "deep33-audit";
 
-      const safeSearch = auditSearch(auditSession);
+      const safeSearch = auditSearch(auditSession, req.headers.get("authorization") || "");
       const safeMemory = probeMemory(auditSession, memoryProfileId).catch(() => ({
         ok: false,
         status: "FAIL",
@@ -4004,6 +4174,9 @@ Deno.serve(async (req) => {
           search,
           sessionId,
           userAuthorization,
+          new Set<string>(),
+          new Set<string>(),
+          buildWebSearchQuery(query),
         );
         const isReadableSource = (source: NavigatedWebSource) =>
           typeof source.page_text === "string" &&
@@ -4048,13 +4221,14 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if (recoverySearch.ok === true && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "railway-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
               userAuthorization,
               excludedUrls,
               excludedDomains,
+              buildWebSearchQuery(query),
             );
             const merged = new Map<string, NavigatedWebSource>();
             const mergedDomains = new Set<string>();
@@ -4550,6 +4724,9 @@ Deno.serve(async (req) => {
           search,
           sessionId,
           userAuthorization,
+          new Set<string>(),
+          new Set<string>(),
+          buildWebSearchQuery(searchQuery),
         );
         const isReadableSource = (source: NavigatedWebSource) =>
           typeof source.page_text === "string" &&
@@ -4594,13 +4771,14 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if (recoverySearch.ok === true && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "railway-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
               userAuthorization,
               excludedUrls,
               excludedDomains,
+              buildWebSearchQuery(searchQuery),
             );
             const merged = new Map<string, NavigatedWebSource>();
             const mergedDomains = new Set<string>();
@@ -4911,6 +5089,8 @@ return json({
         query,
         sessionId,
         req.headers.get("authorization") || "",
+        false,
+        true,
       );
       return json(result, result.ok ? 200 : 503);
     }
