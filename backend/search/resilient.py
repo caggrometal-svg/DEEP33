@@ -1177,7 +1177,6 @@ class WebOrchestrator:
         )
         if (
             needs_recovery
-            and not chile_political_news_intent
             and recovery_query.casefold() != provider_query.casefold()
             and deadline > loop.time()
         ):
@@ -1191,9 +1190,19 @@ class WebOrchestrator:
                 for provider in self.providers
             }
             pending_recovery = set(recovery_tasks)
+            recovery_deadline = deadline
+            if chile_political_news_intent:
+                # Keep part of the tail available for publisher-scoped political
+                # recovery. A broad recovery query may corroborate providers, but
+                # must not consume the entire live-search budget.
+                remaining_budget = max(0.0, deadline - loop.time())
+                recovery_deadline = min(
+                    deadline,
+                    loop.time() + max(0.05, remaining_budget * 0.35),
+                )
             try:
                 while pending_recovery:
-                    remaining = deadline - loop.time()
+                    remaining = recovery_deadline - loop.time()
                     if remaining <= 0:
                         break
                     done, pending_recovery = await asyncio.wait(
