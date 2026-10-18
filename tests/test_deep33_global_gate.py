@@ -904,3 +904,15 @@ def test_web_query_emits_visible_progress_before_waiting_for_live_evidence() -> 
     )
     evidence_wait = source.index("await prefetch_search_task", visible_progress)
     assert search_status < visible_progress < evidence_wait
+
+def test_official_documentation_queries_force_live_web_search() -> None:
+    import backend.main as main
+
+    prompts = [
+        "¿Qué dice la documentación oficial de asyncio?",
+        "Busca la documentación oficial de Python",
+        "Where is the official asyncio documentation?",
+        "Consulta el manual oficial de FastAPI",
+    ]
+    for prompt in prompts:
+        assert main.should_force_web([{"role": "user", "content": prompt}]), prompt
