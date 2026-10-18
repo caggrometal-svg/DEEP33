@@ -4,14 +4,17 @@ on:
   push:
     branches: [main, fix/cert-green-live-search-161026]
     paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".python-version"
       - "backend/**"
       - "tools/**"
+      - "api/**"
+      - "supabase/**"
       - ".github/workflows/deep33-railway-production-gate.yml"
       - "backend/requirements.txt"
-      - "supabase/functions/deep33-proxy/**"
-      - "supabase/functions/deep33-tertiary/**"
+      - "requirements.txt"
       - "tests/test_edge_tertiary_idempotency_contract.py"
-      - "supabase/functions/deep33-hybrid-search/**"
   workflow_dispatch:
     inputs:
       require_live:

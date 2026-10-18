@@ -1127,3 +1127,17 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
         assert completion_state["assistant_text"].startswith("No pude completar la síntesis")
 
     asyncio.run(exercise())
+
+
+def test_chile_current_events_query_gets_broad_news_recovery():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "principales acontecimientos actuales en Chile hoy"
+    recovery = WebOrchestrator._recovery_query(query).casefold()
+
+    assert recovery != query.casefold()
+    assert "chile" in recovery
+    assert "noticias" in recovery
+    assert any(term in recovery for term in ("sociedad", "economía", "seguridad", "ciencia"))
+    # General-web recovery stays broad; source restrictions are not baked into it.
+    assert "site:" not in recovery
