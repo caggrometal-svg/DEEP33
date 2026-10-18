@@ -1106,6 +1106,62 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
 
 
 
+def test_chile_political_news_fans_out_in_primary_wave():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.08,
+        global_budget_seconds=0.5,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    seen = []
+
+    async def provider(query, _timeout, _limit):
+        seen.append(query)
+        lowered = query.casefold()
+        if "site:biobiochile.cl" in lowered:
+            return [{
+                "title": "Política Chile hoy — BioBioChile",
+                "url": "https://www.biobiochile.cl/noticias/nacional/chile/2026/10/18/politica.shtml",
+                "snippet": "Noticias de política, gobierno y Congreso en Chile hoy.",
+                "source_domain": "biobiochile.cl",
+            }]
+        if "site:cooperativa.cl" in lowered:
+            return [{
+                "title": "Actualidad política de Chile — Cooperativa",
+                "url": "https://www.cooperativa.cl/noticias/pais/politica/2026/10/18/actualidad/",
+                "snippet": "Actualidad política, elecciones y gobierno de Chile hoy.",
+                "source_domain": "cooperativa.cl",
+            }]
+        if "site:latercera.com" in lowered:
+            return [{
+                "title": "Política y Congreso en Chile — La Tercera",
+                "url": "https://www.latercera.com/politica/noticia/chile-politica-hoy/",
+                "snippet": "Información política de Chile, Congreso y gobierno hoy.",
+                "source_domain": "latercera.com",
+            }]
+        return []
+
+    for name in list(orchestrator.providers):
+        orchestrator.providers[name] = provider
+    for name in list(orchestrator.fallback_providers):
+        orchestrator.fallback_providers[name] = provider
+
+    result = asyncio.run(
+        orchestrator.search("política Chile hoy últimas noticias", fresh=True)
+    )
+
+    domains = {item["source_domain"] for item in result["results"]}
+    assert result["ok"] is True, result
+    assert len(domains) >= 3, result
+    assert {"biobiochile.cl", "cooperativa.cl", "latercera.com"} <= domains
+    assert any("site:biobiochile.cl" in query.casefold() for query in seen)
+    assert any("site:cooperativa.cl" in query.casefold() for query in seen)
+    assert any("site:latercera.com" in query.casefold() for query in seen)
+
+
 def test_academic_ai_research_intent_fans_out_to_independent_domains():
     from backend.search.resilient import WebOrchestrator
 
