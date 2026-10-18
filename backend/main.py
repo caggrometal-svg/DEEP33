@@ -3427,6 +3427,10 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             provider_meta.get("model", "unknown"),
             len(text_value),
         )
+        # A provider that returned visible but incorrect text is reachable; this
+        # is a semantic diagnostic failure, not a transport failure. Do not mask it
+        # by asking a second path for the sentinel.
+        return "FAIL", data, text_value
     except (asyncio.TimeoutError, GatewayTimeoutError):
         last_timeout = True
         logger.warning(
