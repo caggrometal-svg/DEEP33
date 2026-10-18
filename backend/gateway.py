@@ -831,6 +831,76 @@ class AIGateway:
             prefer_ttft=True,
         )
 
+    async def diagnostic_stream_inference(
+        self,
+        *,
+        request_id: str | None = None,
+        deadline: float | None = None,
+    ) -> dict:
+        """Probe the production streaming path when non-stream diagnostics fail."""
+        local_deadline = time.monotonic() + 8.0
+        effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
+        payload = {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Reply with exactly this token and no other text: "
+                        "DEEP33_DIAGNOSTIC_OK"
+                    ),
+                },
+                {"role": "user", "content": "DEEP33_DIAGNOSTIC_OK"},
+            ],
+            "max_tokens": 128,
+            "temperature": 0.0,
+        }
+        collected = bytearray()
+        async for chunk in self.stream(
+            payload,
+            request_id=request_id,
+            idempotency_key=f"diagnostic-stream-{request_id or uuid4_short()}",
+            deadline=effective_deadline,
+        ):
+            collected.extend(chunk)
+
+        text = self._stream_text_content(bytes(collected)).strip()
+        if not text:
+            raise GatewayInvalidResponseError
+
+        model: str | None = None
+        for line in bytes(collected).splitlines():
+            if not line.startswith(b"data:"):
+                continue
+            raw = line[5:].strip()
+            if not raw or raw == b"[DONE]":
+                continue
+            try:
+                event = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(event, dict) and isinstance(event.get("model"), str):
+                model = event["model"].strip() or model
+                if model:
+                    break
+        if not model:
+            model = next(
+                (provider.model for provider in self.config.providers if provider.model),
+                "streaming-model",
+            )
+
+        return {
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop",
+            }],
+            "_deep33_gateway": {
+                "provider": "stream-diagnostic",
+                "model": model,
+            },
+        }
+
     async def stream(
         self,
         payload: dict,
