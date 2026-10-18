@@ -3189,13 +3189,15 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     break
 
         has_snippet_evidence = bool(snippet_fallback_results or supplemental_snippet_results)
-        if has_snippet_evidence:
-            snippet_domains = {
+        # domains_used remains the count of pages actually fetched/extracted.
+        # Search-snippet diversity is represented by verification/source_domain,
+        # so callers can distinguish navigated pages from degraded live evidence.
+        if has_snippet_evidence and not has_extracted_content:
+            domains_used = len({
                 str(item.get("source_domain") or "")
-                for item in [*snippet_fallback_results, *supplemental_snippet_results]
+                for item in snippet_fallback_results
                 if str(item.get("source_domain") or "")
-            }
-            domains_used = len(fetched_domains | snippet_domains)
+            })
 
         final_ok = search_ok and (has_extracted_content or has_snippet_evidence)
         if not search_ok or (not has_extracted_content and not has_snippet_evidence):
