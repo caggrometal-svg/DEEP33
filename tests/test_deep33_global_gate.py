@@ -388,6 +388,9 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
     import backend.main as main
     from fastapi.testclient import TestClient
 
+    fetch_timeouts: list[float] = []
+    direct_timeouts: list[float | None] = []
+
     async def allow(_request, _session_id):
         return None
 
@@ -407,7 +410,9 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
             "verification": {"distinct_domains": 1},
         }
 
-    async def fake_fetch(url: str, **_kwargs):
+    async def fake_fetch(url: str, **kwargs):
+        fetch_timeouts.append(float(kwargs["timeout_seconds"]))
+        direct_timeouts.append(kwargs.get("direct_timeout_seconds"))
         text = "REAL_EXTRACTED_PAGE_TEXT " + ("Contenido real de la página original. " * 12)
         return {
             "ok": True,
@@ -441,6 +446,12 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
     assert payload["fetched_pages"]
     assert len(payload["fetched_pages"][0]["text"]) >= 80
     assert "REAL_EXTRACTED_PAGE_TEXT" in payload["fetched_pages"][0]["text"]
+    # The route must leave enough total time for a bounded Reader fallback,
+    # while keeping the direct request short so it cannot starve the fallback.
+    assert fetch_timeouts
+    assert all(3.3 <= timeout <= 4.0 for timeout in fetch_timeouts)
+    assert direct_timeouts
+    assert all(timeout == 0.85 for timeout in direct_timeouts)
 
 
 def test_web_search_fails_closed_when_search_or_extraction_is_not_valid(monkeypatch, caplog):

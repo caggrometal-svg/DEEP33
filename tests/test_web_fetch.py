@@ -374,11 +374,13 @@ def test_extraction_removes_common_chrome_noise() -> None:
     assert "All Rights Reserved" not in text
 
 
-def test_transient_direct_fetch_error_is_retryable_but_policy_error_is_not() -> None:
+def test_transient_http_fetch_error_is_retryable_but_timeout_uses_reader() -> None:
     from tools.web_fetch import WebFetchError, _retryable_direct_fetch_error
 
-    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_TIMEOUT"))
-    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_NETWORK_ERROR"))
+    # Timeouts/network failures should release the shared budget to Reader instead
+    # of repeating the same slow direct request.
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_TIMEOUT"))
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_NETWORK_ERROR"))
     assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_429"))
     assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_503"))
     assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_403"))
@@ -395,7 +397,7 @@ def test_reader_pipeline_retries_one_transient_direct_get(monkeypatch) -> None:
     async def direct(**kwargs):
         calls["direct"] += 1
         if calls["direct"] == 1:
-            raise web_fetch.WebFetchError("WEB_FETCH_TIMEOUT")
+            raise web_fetch.WebFetchError("WEB_FETCH_HTTP_503")
         return {
             "ok": True,
             "url": url,
@@ -421,3 +423,69 @@ def test_reader_pipeline_retries_one_transient_direct_get(monkeypatch) -> None:
     assert result["ok"] is True
     assert calls["direct"] == 2
     assert "Recovered factual article evidence" in result["text"]
+
+def test_direct_timeout_transfers_to_reader_without_retrying(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    url = "https://news.example.cl/slow-current-report"
+    article_body = (
+        "Reader extracted current reporting with the article facts, dates, "
+        "relevant organizations, context, and statements needed to verify the story. "
+    ) * 3
+    reader_content = (
+        "Title: Current report\n"
+        f"URL Source: {url}\n"
+        "Markdown Content:\n"
+        + article_body
+    ).encode()
+
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda candidate: candidate)
+    direct_timeouts: list[float] = []
+
+    async def direct_timeout(**kwargs):
+        direct_timeouts.append(float(kwargs["timeout_seconds"]))
+        raise web_fetch.WebFetchError("WEB_FETCH_TIMEOUT")
+
+    class ReaderResponse:
+        status_code = 200
+        headers = {"content-type": "text/plain; charset=utf-8"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self):
+            yield reader_content
+
+    class ReaderClient:
+        def stream(self, method, reader_url, **kwargs):
+            assert method == "GET"
+            assert reader_url == f"https://r.jina.ai/{url}"
+            assert kwargs["follow_redirects"] is False
+            return ReaderResponse()
+
+    async def reader_client():
+        return ReaderClient()
+
+    monkeypatch.setattr(web_fetch, "_fetch_page_uncached", direct_timeout)
+    monkeypatch.setattr(web_fetch, "_fetch_http_client", reader_client)
+    web_fetch._FETCH_CACHE.clear()
+    web_fetch._FETCH_INFLIGHT.clear()
+
+    result = asyncio.run(
+        web_fetch.fetch_page(
+            url,
+            timeout_seconds=3.3,
+            fresh=True,
+        )
+    )
+
+    assert len(direct_timeouts) == 1
+    assert abs(direct_timeouts[0] - 0.825) < 0.001
+    assert result["ok"] is True
+    assert result["reader_fallback"] == "jina_reader"
+    assert "Reader extracted current reporting" in result["text"]
+    assert len(result["text"]) > 80

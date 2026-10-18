@@ -180,9 +180,9 @@ async function buildNavigatedWebEvidence(
   const attemptedDomains = new Set<string>();
   let attempted = 0;
   const batchSize = 4;
-  // Railway /v1/web/fetch is internally bounded to 2.5s. Give the caller
-  // transport headroom so a graceful timeout/result arrives instead of aborting
-  // at the same instant and producing Railway HTTP 499.
+  // Railway /v1/web/fetch is bounded to about 3.3s, with a 4s caller deadline.
+  // The extra headroom lets the backend return extracted text or a graceful
+  // timeout result instead of aborting the request and producing HTTP 499.
   const sourceReadTimeoutMs = 4000;
   const candidateLimit = Math.min(orderedSources.length, MAX_WEB_NAVIGATION_CANDIDATES);
 
@@ -3755,7 +3755,7 @@ async function edgeSearch(
         "X-DEEP33-Session-Id": sessionId,
       },
       redirect: "error",
-      signal: AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
+      signal: AbortSignal.timeout(Math.min(6500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
     });
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {

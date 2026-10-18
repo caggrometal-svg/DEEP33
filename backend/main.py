@@ -1678,6 +1678,7 @@ async def _fetch_web_source(
     *,
     request_id: str,
     timeout_seconds: float,
+    direct_timeout_seconds: float | None = None,
 ) -> dict[str, Any] | None:
     """Fetch and extract one original publisher URL; snippets are never fetch evidence."""
     url = str(source.get("url") or "").strip()
@@ -1784,7 +1785,8 @@ async def _fetch_web_source(
     try:
         result = await fetch_page(
             url,
-            timeout_seconds=min(2.2, timeout_seconds) if original_host == "news.google.com" and urlparse(url).hostname != "news.google.com" else timeout_seconds,
+            timeout_seconds=timeout_seconds,
+            direct_timeout_seconds=direct_timeout_seconds,
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,
@@ -2961,9 +2963,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             fetch_candidates.append(source)
             if len(fetch_candidates) >= max_fetch_candidates:
                 break
+        # Reserve time for the Reader after a fast direct attempt. The former
+        # 1.2s cap cancelled the shared deadline before any usable page text arrived.
+        # Candidates run concurrently; bound the whole per-page fetch at 3.3–4.0s.
         fetch_timeout = max(
-            0.8,
-            min(1.2, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5"))),
+            3.3,
+            min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
         )
         fetch_results = await asyncio.gather(
             *(
@@ -2971,6 +2976,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     source,
                     request_id=request_id,
                     timeout_seconds=fetch_timeout,
+                    direct_timeout_seconds=0.85,
                 )
                 for source in fetch_candidates
             ),
@@ -3167,9 +3173,15 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
             text="",
         )
     try:
+        # The Supabase Edge caller has a 4s per-source deadline. Keep this
+        # backend endpoint below it and reserve time for the Reader fallback.
         result = await fetch_page(
             url,
-            timeout_seconds=max(6.0, min(7.0, float(os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "6.5")))),
+            timeout_seconds=max(
+                3.3,
+                min(4.0, float(os.getenv("WEB_FETCH_EDGE_TIMEOUT_SECONDS", "3.3"))),
+            ),
+            direct_timeout_seconds=0.85,
             max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
             max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
             fresh=True,

@@ -49,7 +49,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_sha="$(git log -1 --format=%H -- Dockerfile .dockerignore .python-version backend tools supabase api)"
+          # -m includes the first-parent diff of merge commits. Without it,
+          # path-limited git log skips a merge SHA and can compare Railway's merged
+          # build to the pre-merge runtime commit forever.
+          expected_sha="$(git log --first-parent -m -1 --format=%H -- Dockerfile .dockerignore .python-version backend tools supabase api)"
           test -n "$expected_sha" || { echo "RAILWAY_EXPECTED_SHA_RESOLUTION_FAIL"; exit 1; }
           ready=0
           for attempt in $(seq 1 36); do

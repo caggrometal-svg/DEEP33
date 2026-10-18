@@ -680,7 +680,8 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
-        assert kwargs["timeout_seconds"] <= 1.2
+        assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
+        assert kwargs["direct_timeout_seconds"] == 0.85
         return {
             "title": source["title"],
             "url": source["url"],
@@ -739,3 +740,44 @@ def test_editorial_domain_dedup_normalizes_www_prefix():
         for item in selected
     }
     assert domains == {"emol.com", "cooperativa.cl"}
+
+def test_web_fetch_endpoint_reserves_reader_budget_under_edge_deadline(monkeypatch):
+    calls = []
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_fetch(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Current publisher article",
+            "text": "EXTRACTED_PAGE_TEXT " + ("Verified publisher article text. " * 8),
+            "retrieved_at": "2026-10-18T06:00:00+00:00",
+            "redirects": 0,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+
+    response = client.get(
+        "/v1/web/fetch",
+        params={"url": "https://publisher.example/current-article"},
+        headers={
+            "X-DEEP33-Session-Id": "fetch-reader-budget-test",
+            "X-Request-ID": "fetch-reader-budget-test",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["status"] == "success"
+    assert payload["text_chars"] >= 80
+    assert "EXTRACTED_PAGE_TEXT" in payload["text"]
+    assert len(calls) == 1
+    assert 3.3 <= calls[0]["timeout_seconds"] <= 4.0
+    assert calls[0]["direct_timeout_seconds"] == 0.85
