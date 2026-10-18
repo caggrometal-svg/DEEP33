@@ -3185,7 +3185,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "source_domain": domain,
                 })
                 extracted_result_domains.add(domain)
-                if len(resolved_results) + len(supplemental_snippet_results) >= min(5, max(3, self_limit if False else 5)):
+                if len(resolved_results) + len(supplemental_snippet_results) >= 5:
                     break
 
         has_snippet_evidence = bool(snippet_fallback_results or supplemental_snippet_results)
