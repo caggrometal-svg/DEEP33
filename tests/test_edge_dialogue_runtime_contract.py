@@ -177,7 +177,7 @@ def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
         assert 'const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
         assert "await fetch(railwaySearchUrl" in search
         assert '"Authorization": userAuthorization' in search
-        assert "AbortSignal.timeout(Math.min(6500, EDGE_INTERNAL_FETCH_TIMEOUT_MS))" in search
+        assert "AbortSignal.timeout(Math.max(6500, Math.min(8000, EDGE_INTERNAL_FETCH_TIMEOUT_MS)))" in search
         assert 'fallback_path: "railway"' in search
         assert 'logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response)' in search
         assert "if (!UPSTREAM" not in search
