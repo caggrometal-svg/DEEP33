@@ -149,6 +149,25 @@ class GatewayConfig:
             and _provider_url_is_secure(provider.health_url)
             and "gemma-4" not in provider.model.casefold()
         )
+        # Production telemetry showed Dots3 sending transport/reasoning frames
+        # without visible assistant text; with only that provider configured,
+        # the stream exhausted its first-visible budget and had no failover.
+        # Keep the existing Kilo endpoint and add a zero-cost Kilo model only
+        # when Dots3 would otherwise be the sole admissible provider.
+        if (
+            len(secure_providers) == 1
+            and "dots-studio/dots-3-note-preview" in secure_providers[0].model.casefold()
+        ):
+            dots_provider = secure_providers[0]
+            secure_providers += (
+                GatewayProvider(
+                    name="kilo-laguna-fallback",
+                    url=dots_provider.url,
+                    health_url=dots_provider.health_url,
+                    api_key=dots_provider.api_key,
+                    model="poolside/laguna-s-2.1:free",
+                ),
+            )
         return cls(
             providers=secure_providers,
             timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
