@@ -345,6 +345,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
 
         realtime = [
             "¿Qué pasó hoy en Chile?",
+            "¿Qué dice la documentación oficial de asyncio?",
             "Dame las últimas noticias de política Chile",
             "¿Cuál es el precio actual del dólar?",
             "¿Cómo está el clima hoy en Santiago?",

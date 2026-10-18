@@ -273,12 +273,17 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
     topic_pattern = re.compile(
         r"\b((?:(?:principales?|más\s+importantes|mayores?|recientes?|actuales?)\s+)?"
         r"(?:acontecimientos?|eventos?|noticias?|hechos?|sucesos?)"
-        r"(?:\s+actuales?)?\s+(?:de\s+)?Chile)\b",
+        r"(?:\s+actuales?)?\s+(?:(?:de|en)\s+)?Chile)\b",
         re.IGNORECASE,
     )
     match = topic_pattern.search(prompt)
     assert match is not None
     assert re.sub(r"\s+", " ", match.group(1)).strip().lower() == "principales acontecimientos de chile"
+
+    prompt_with_en = "Busca los principales acontecimientos actuales en Chile hoy."
+    en_match = topic_pattern.search(prompt_with_en)
+    assert en_match is not None
+    assert re.sub(r"\s+", " ", en_match.group(1)).strip().lower() == "principales acontecimientos actuales en chile"
 
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
@@ -287,6 +292,7 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         query_builder = source[query_start:query_end]
         assert "const chileTopicMatch = query.match(" in query_builder
         assert 'return chileTopic ? chileTopic + " hoy" : "noticias de Chile hoy";' in query_builder
+        assert "(?:(?:de|en)\\s+)?Chile" in query_builder
 
         filter_start = source.index("function edgeFilterSearchResults(")
         filter_end = source.index("function edgeProvidersForResults(", filter_start)
@@ -294,6 +300,20 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert "const chileNewsIntent = currentNews &&" in result_filter
         assert "const mentionsChileContext = explicitChileContext.test(articleEvidence);" in result_filter
         assert "return mentionsChileContext || ChileanNationalSection;" in result_filter
+        assert "const strictResults = liveItems.filter((item) => {" in result_filter
+        assert "if (strictResults.length > 0) return strictResults;" in result_filter
+
+        navigation_start = source.index("async function buildNavigatedWebEvidence(")
+        navigation_end = source.find("\nasync function readJson(", navigation_start + 1)
+        if navigation_end < 0:
+            navigation_end = source.find("\nconst EDGE_AI_REQUIRES_AUTH", navigation_start + 1)
+        assert navigation_end > navigation_start
+        navigation = source[navigation_start:navigation_end]
+        assert "queryOverride = " in navigation
+        assert "const chileCurrentNewsQuery =" in navigation
+        assert "if (!explicitChilePageContext.test(chilePageEvidence)) return null;" in navigation
+        assert "buildWebSearchQuery(query)," in source
+        assert "buildWebSearchQuery(searchQuery)," in source
         # A publisher hosted on .cl is not, by itself, accepted as local-news evidence.
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
