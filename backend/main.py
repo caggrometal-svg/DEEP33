@@ -3118,10 +3118,45 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for page in fetched_pages
         )
         has_extracted_content = extracted_text_chars >= 80 and domains_used > 0
-        final_ok = search_ok and has_extracted_content
-        if not search_ok or not has_extracted_content:
+
+        # Live search providers can return relevant, timestamped publisher snippets
+        # even when every publisher blocks or times out full-page extraction. Preserve
+        # those results as explicitly degraded search evidence instead of converting a
+        # successful realtime discovery into an empty 503. This never claims that the
+        # underlying page was fetched: callers can distinguish evidence_type and
+        # fetched=false from fully extracted pages.
+        snippet_fallback_results: list[dict[str, Any]] = []
+        if search_ok and is_realtime_query(q) and not has_extracted_content:
+            for item in candidate_sources:
+                snippet = str(item.get("snippet") or "").strip()
+                url = str(item.get("url") or "").strip()
+                domain = str(
+                    item.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().removeprefix("www.")
+                if not url.startswith("https://") or not domain or len(snippet) < 24:
+                    continue
+                snippet_fallback_results.append({
+                    **item,
+                    "evidence_type": "search_snippet",
+                    "fetched": False,
+                    "source_domain": domain,
+                })
+                if len(snippet_fallback_results) >= 5:
+                    break
+
+        has_snippet_evidence = bool(snippet_fallback_results)
+        if has_snippet_evidence and not has_extracted_content:
+            domains_used = len({
+                str(item.get("source_domain") or "")
+                for item in snippet_fallback_results
+                if str(item.get("source_domain") or "")
+            })
+
+        final_ok = search_ok and (has_extracted_content or has_snippet_evidence)
+        if not search_ok or (not has_extracted_content and not has_snippet_evidence):
             status = "failed"
-        elif fetch_failures:
+        elif not has_extracted_content or fetch_failures:
             status = "degraded"
         else:
             status = "success"
@@ -3141,14 +3176,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 "none",
                 result.get("winner_provider") or result.get("provider") or "unknown",
             )
-        elif not has_extracted_content:
+        elif not has_extracted_content and not has_snippet_evidence:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
+        elif has_snippet_evidence and not has_extracted_content:
+            errors.append("PAGE_EXTRACTION_UNAVAILABLE_USING_SEARCH_SNIPPETS")
 
         response_payload = dict(result)
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
-        response_payload["results"] = resolved_results
-        response_payload["sources"] = resolved_results
+        public_results = resolved_results if has_extracted_content else snippet_fallback_results
+        response_payload["results"] = public_results
+        response_payload["sources"] = public_results
         response_payload.update({
             "ok": final_ok,
             "status": status,
