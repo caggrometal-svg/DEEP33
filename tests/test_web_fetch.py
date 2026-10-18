@@ -374,11 +374,13 @@ def test_extraction_removes_common_chrome_noise() -> None:
     assert "All Rights Reserved" not in text
 
 
-def test_transient_direct_fetch_error_is_retryable_but_policy_error_is_not() -> None:
+def test_transient_http_fetch_error_is_retryable_but_timeout_uses_reader() -> None:
     from tools.web_fetch import WebFetchError, _retryable_direct_fetch_error
 
-    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_TIMEOUT"))
-    assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_NETWORK_ERROR"))
+    # Timeouts/network failures should release the shared budget to Reader instead
+    # of repeating the same slow direct request.
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_TIMEOUT"))
+    assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_NETWORK_ERROR"))
     assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_429"))
     assert _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_503"))
     assert not _retryable_direct_fetch_error(WebFetchError("WEB_FETCH_HTTP_403"))
@@ -395,7 +397,7 @@ def test_reader_pipeline_retries_one_transient_direct_get(monkeypatch) -> None:
     async def direct(**kwargs):
         calls["direct"] += 1
         if calls["direct"] == 1:
-            raise web_fetch.WebFetchError("WEB_FETCH_TIMEOUT")
+            raise web_fetch.WebFetchError("WEB_FETCH_HTTP_503")
         return {
             "ok": True,
             "url": url,
