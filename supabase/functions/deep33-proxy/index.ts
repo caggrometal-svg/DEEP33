@@ -2706,7 +2706,7 @@ async function probeInternetConnectivity(): Promise<Record<string, unknown>> {
 async function auditSearch(sessionId: string, userAuthorization = ""): Promise<Record<string, unknown>> {
   const candidates = [
     "principales acontecimientos actuales en Chile hoy",
-    "noticias recientes Chile actualidad economía política sociedad",
+    "noticias recientes en Chile",
     "últimas noticias de Chile hoy",
   ];
   let last: Record<string, unknown> = { ok: false, results: [] };
