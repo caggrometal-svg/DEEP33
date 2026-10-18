@@ -987,6 +987,21 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
     assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
 
 
+def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for function_name in ("deep33-proxy", "deep33-tertiary"):
+        source = (
+            root / "supabase" / "functions" / function_name / "index.ts"
+        ).read_text(encoding="utf-8")
+        assert "snippet_fallback: true" in source
+        assert "snippetFallback.length < 2 || snippetDomains.size < 2" in source
+        assert "item.snippet.length >= 80" in source
+        assert 'status: "degraded"' in source
+        assert 'fallbackPath + "-snippet-fallback"' in source
+
+
 def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable() -> None:
     from pathlib import Path
 
