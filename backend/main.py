@@ -2980,8 +2980,26 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in ranked_sources
             if item["relevance_score"] >= minimum_relevance_score
         ]
+        # WebOrchestrator has already ranked/deduplicated these sources against the
+        # untouched user query. A second heuristic score can under-rate synonym-rich
+        # product/current queries (for example "smartphone actual especificaciones")
+        # even when the orchestrator selected real result URLs. If every selected
+        # source falls below this endpoint-only threshold, keep them as *fetch
+        # candidates only*. They still become public evidence only after a real page
+        # is successfully fetched and extracted below.
+        candidate_sources = relevant_sources
+        if search_ok and ranked_sources and not candidate_sources:
+            candidate_sources = ranked_sources
+            logger.warning(
+                "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
+                "threshold=%.3f max_score=%.3f",
+                request_id,
+                len(candidate_sources),
+                minimum_relevance_score,
+                max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
+            )
         ordered_sources = sorted(
-            relevant_sources,
+            candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
         )
         max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
