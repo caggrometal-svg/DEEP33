@@ -401,9 +401,9 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
             "providers_attempted": ["test-search"],
             "results": [
                 {
-                    "title": "Fuente original",
+                    "title": "Documento original con fuente verificable",
                     "url": "https://publisher.example/article",
-                    "snippet": "Snippet solamente; no cuenta como extracción real.",
+                    "snippet": "Documento original sobre el tema solicitado; este snippet por sí solo no cuenta como extracción real.",
                     "provider": "test-search",
                 },
             ],
@@ -465,9 +465,9 @@ def test_web_search_fails_closed_when_search_or_extraction_is_not_valid(monkeypa
         if _query == "no-domain":
             return {"ok": True, "results": [], "sources": [], "verification": {"distinct_domains": 0}}
         source = {
-            "title": "Resultado",
+            "title": f"Resultado de búsqueda {_query}",
             "url": f"https://publisher.example/{_query}",
-            "snippet": "Snippet largo que no debe confundirse con texto extraído. " * 4,
+            "snippet": f"Página original relacionada con la consulta {_query}. " * 4,
             "provider": "test-provider",
         }
         return {
