@@ -342,6 +342,23 @@ class WebOrchestrator:
             return "university artificial intelligence research paper academic study arXiv"
         if smartphone_intent:
             return "smartphone phone specifications comparison reviews current models"
+        chile_current_events_intent = (
+            "chile" in lowered
+            and is_realtime_query(cleaned)
+            and any(term in lowered for term in (
+                "acontecimiento", "acontecimientos", "evento", "eventos",
+                "hecho", "hechos", "suceso", "sucesos",
+                "qué está pasando", "que esta pasando", "qué pasa", "que pasa",
+                "what is happening", "current events",
+            ))
+        )
+        if chile_current_events_intent:
+            # Generic "current events in Chile" wording is semantically news-like,
+            # but several public indexes treat the literal phrase as a country
+            # reference query and return tourism/banking pages. Normalize the
+            # provider-side query to current-news vocabulary while preserving the
+            # original user query for ranking.
+            return "Chile noticias hoy actualidad acontecimientos recientes"
         if is_realtime_query(cleaned):
             return cleaned
         government_site_intent = any(
@@ -545,10 +562,7 @@ class WebOrchestrator:
                 # primary engines then repeated a narrow query and recovery could
                 # collapse to country-only tokens. Broaden discovery across topics
                 # and providers without restricting results to named sites.
-                return (
-                    "Chile últimas noticias hoy acontecimientos recientes sociedad "
-                    "economía seguridad ciencia tecnología cultura deportes"
-                )
+                return "Chile noticias hoy actualidad acontecimientos recientes"
             return "Chile últimas noticias hoy"
         if news_intent and compact:
             return f"{compact} latest news today"
