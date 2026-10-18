@@ -872,13 +872,21 @@ class WebOrchestrator:
             # Probe several independent Chilean newsrooms in the primary wave so
             # the normal rank/dedupe stage can return >=3 editorial domains.
             political_primary_queries = (
+                # Prefer direct-web engines for publisher-specific recovery. Google
+                # News can preserve editorial provenance but its opaque RSS wrapper
+                # is not sufficient when the publisher URL must be fetched.
+                ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
             tasks.update({
