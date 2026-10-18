@@ -852,7 +852,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
     body = response.json()
     assert body["ok"] is True
     assert body["domains_used"] == 1
-    assert body["fetched_pages"][0]["domain"] == "emol.com"
+    assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
     assert fetched == [wrapper]
     assert all(
         "banmedica" not in item["url"].casefold()
