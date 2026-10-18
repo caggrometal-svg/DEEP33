@@ -3727,7 +3727,7 @@ async function edgeSearch(
         "X-DEEP33-Session-Id": sessionId,
       },
       redirect: "error",
-      signal: AbortSignal.timeout(Math.min(3500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
+      signal: AbortSignal.timeout(Math.min(6500, EDGE_INTERNAL_FETCH_TIMEOUT_MS)),
     });
     const data = await readJson(res);
     if (res.ok && data.ok === true && Array.isArray(data.results) && data.results.length > 0) {
