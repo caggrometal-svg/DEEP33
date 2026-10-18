@@ -149,16 +149,23 @@ class GatewayConfig:
             and _provider_url_is_secure(provider.health_url)
             and "gemma-4" not in provider.model.casefold()
         )
-        # Production telemetry showed Dots3 sending transport/reasoning frames
-        # without visible assistant text; with only that provider configured,
-        # the stream exhausted its first-visible budget and had no failover.
-        # Keep the existing Kilo endpoint and add a zero-cost Kilo model only
-        # when Dots3 would otherwise be the sole admissible provider.
-        if (
-            len(secure_providers) == 1
-            and "dots-studio/dots-3-note-preview" in secure_providers[0].model.casefold()
-        ):
-            dots_provider = secure_providers[0]
+        # Production telemetry showed Dots3 emitting transport/reasoning frames
+        # before visible assistant text. Always keep a text-oriented free Kilo
+        # fallback after the configured chain, unless that exact model is already
+        # present. Existing configured fallbacks remain in their original order.
+        dots_provider = next(
+            (
+                provider
+                for provider in secure_providers
+                if "dots-studio/dots-3-note-preview" in provider.model.casefold()
+            ),
+            None,
+        )
+        has_laguna_fallback = any(
+            "poolside/laguna-s-2.1" in provider.model.casefold()
+            for provider in secure_providers
+        )
+        if dots_provider is not None and not has_laguna_fallback:
             secure_providers += (
                 GatewayProvider(
                     name="kilo-laguna-fallback",

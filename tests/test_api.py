@@ -600,18 +600,18 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "ok": True,
             "results": [
                 {
-                    "title": "Gobierno y Congreso acuerdan agenda política",
+                    "title": "Últimas noticias de política en Chile hoy: Gobierno y Congreso",
                     "url": wrapper,
                     "source_domain": "www.emol.com",
                     "provider": "google_news",
-                    "snippet": "Gobierno y Congreso avanzan en una agenda política nacional.",
+                    "snippet": "Últimas noticias de política en Chile hoy: Gobierno y Congreso avanzan en la agenda nacional.",
                 },
                 {
-                    "title": "Senado debate nueva reforma",
+                    "title": "Noticias de política de Chile hoy: Senado debate nueva reforma",
                     "url": cooperativa,
                     "source_domain": "www.cooperativa.cl",
                     "provider": "bing",
-                    "snippet": "El Senado inició el debate de una reforma del Gobierno.",
+                    "snippet": "Últimas noticias políticas de Chile hoy: el Senado inició el debate de una reforma del Gobierno.",
                 },
             ],
             "sources": [],
@@ -671,9 +671,9 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         return {
             "ok": True,
             "results": [
-                {"title": "Wrapper", "url": wrapper, "source_domain": "emol.com", "provider": "google_news"},
-                {"title": "Direct A", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing"},
-                {"title": "Direct B", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo"},
+                {"title": "Últimas noticias de Chile hoy: política", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Últimas noticias de Chile hoy y actualidad nacional."},
+                {"title": "Noticias de Chile hoy: informe nacional", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Últimas noticias e información actual de Chile hoy."},
+                {"title": "Actualidad nacional de Chile hoy", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy con la actualidad nacional."},
             ],
             "errors": [],
         }
@@ -781,3 +781,80 @@ def test_web_fetch_endpoint_reserves_reader_budget_under_edge_deadline(monkeypat
     assert len(calls) == 1
     assert 3.3 <= calls[0]["timeout_seconds"] <= 4.0
     assert calls[0]["direct_timeout_seconds"] == 0.85
+
+def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(monkeypatch):
+    wrapper = "https://news.google.com/rss/articles/relevant-current-news"
+    irrelevant_direct = "https://www.banmedica.cl/sucursal-virtual"
+    irrelevant_login = "https://login.isaprebanmedica.cl/login"
+    fetched = []
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "results": [
+                {
+                    "title": "Sucursal virtual Banmédica",
+                    "url": irrelevant_direct,
+                    "source_domain": "banmedica.cl",
+                    "provider": "bing",
+                    "snippet": "Ingresa a tu cuenta de salud y consulta tus servicios.",
+                },
+                {
+                    "title": "Login Isapre Banmédica",
+                    "url": irrelevant_login,
+                    "source_domain": "login.isaprebanmedica.cl",
+                    "provider": "bing",
+                    "snippet": "Acceso a consultas, cuenta y servicios.",
+                },
+                {
+                    "title": "Últimas noticias de Chile hoy: política y actualidad",
+                    "url": wrapper,
+                    "source_domain": "emol.com",
+                    "provider": "google_news",
+                    "snippet": "Últimas noticias de Chile hoy con cobertura de política y actualidad nacional.",
+                },
+            ],
+            "sources": [],
+            "errors": [],
+            "providers": ["bing", "google_news"],
+            "providers_attempted": ["bing", "google_news"],
+            "winner_provider": "multi",
+        }
+
+    async def fake_fetch_source(source, **kwargs):
+        fetched.append(source["url"])
+        assert source["url"] == wrapper
+        assert source["source_domain"] == "emol.com"
+        return {
+            "title": source["title"],
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/18/noticia.html",
+            "text": "Texto editorial de noticias de Chile hoy. " * 10,
+            "provider": source["provider"],
+            "domain": "emol.com",
+            "retrieved_at": "2026-10-18T06:00:00+00:00",
+            "text_chars": 390,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
+
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "últimas noticias de Chile hoy"},
+        headers={"X-DEEP33-Session-Id": "relevance-filter-test"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["domains_used"] == 1
+    assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
+    assert fetched == [wrapper]
+    assert all(
+        "banmedica" not in item["url"].casefold()
+        for item in body["results"]
+    )
