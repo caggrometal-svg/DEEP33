@@ -1289,7 +1289,7 @@ def test_web_search_endpoint_fetches_orchestrator_selected_sources_when_secondar
         "type": "http",
         "method": "GET",
         "path": "/v1/web/search",
-        "headers": [],
+        "headers": [(b"x-deep33-session-id", b"test-web-fetch-fallback")],
         "query_string": b"",
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
