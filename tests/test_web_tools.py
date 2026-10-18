@@ -1136,9 +1136,9 @@ def test_chile_current_events_query_gets_broad_news_recovery():
     recovery = WebOrchestrator._recovery_query(query).casefold()
 
     assert recovery != query.casefold()
+    assert recovery == "chile noticias hoy actualidad acontecimientos recientes"
     assert "chile" in recovery
     assert "noticias" in recovery
-    assert any(term in recovery for term in ("sociedad", "economía", "seguridad", "ciencia"))
     # General-web recovery stays broad; source restrictions are not baked into it.
     assert "site:" not in recovery
 
