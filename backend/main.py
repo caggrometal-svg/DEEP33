@@ -3398,23 +3398,70 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
 
 
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
-    # A provider read-timeout is ambiguous: the upstream may have accepted the
-    # diagnostic request while the HTTP response timed out. Diagnostics are
-    # side-effect free, so retry with a fresh diagnostic request id before
-    # declaring the production model unavailable.
+    # Prefer the deterministic non-stream completion probe for compatibility,
+    # then verify the actual production streaming path if a provider rejects,
+    # times out, or returns an empty non-stream completion.
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     last_timeout = False
 
-    for attempt in range(2):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
+    diagnostic_id = f"{request_id}-diag-1"
+    try:
+        remaining = max(0.1, deadline - time.monotonic())
+        data = await asyncio.wait_for(
+            gateway.diagnostic_inference(
+                request_id=diagnostic_id,
+                deadline=deadline,
+            ),
+            timeout=remaining,
+        )
+        result = normalized_generation(data, DEFAULT_PERSONALITY)
+        text_value = str(result.get("text") or "").strip()
+        if "DEEP33_DIAGNOSTIC_OK" in text_value:
+            return "PASS", data, text_value
+        provider_meta = data.get("_deep33_gateway") or {}
+        logger.warning(
+            "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
+            request_id,
+            diagnostic_id,
+            provider_meta.get("provider", "unknown"),
+            provider_meta.get("model", "unknown"),
+            len(text_value),
+        )
+    except (asyncio.TimeoutError, GatewayTimeoutError):
+        last_timeout = True
+        logger.warning(
+            "inference_check_timeout request_id=%s diagnostic_id=%s attempt=1",
+            request_id,
+            diagnostic_id,
+        )
+    except GatewayInvalidResponseError:
+        logger.warning(
+            "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=1",
+            request_id,
+            diagnostic_id,
+        )
+    except (GatewayHTTPError, HTTPException) as exc:
+        logger.warning(
+            "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
+            request_id,
+            diagnostic_id,
+            type(exc).__name__,
+        )
+    except Exception as exc:
+        logger.warning(
+            "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
+            request_id,
+            diagnostic_id,
+            type(exc).__name__,
+        )
 
-        diagnostic_id = f"{request_id}-diag-{attempt + 1}"
+    if deadline > time.monotonic():
+        stream_id = f"{request_id}-stream-diag"
         try:
+            remaining = max(0.1, deadline - time.monotonic())
             data = await asyncio.wait_for(
-                gateway.diagnostic_inference(
-                    request_id=diagnostic_id,
+                gateway.diagnostic_stream_inference(
+                    request_id=stream_id,
                     deadline=deadline,
                 ),
                 timeout=remaining,
@@ -3423,53 +3470,33 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             text_value = str(result.get("text") or "").strip()
             if "DEEP33_DIAGNOSTIC_OK" in text_value:
                 return "PASS", data, text_value
-
-            provider_meta = data.get("_deep33_gateway") or {}
             logger.warning(
-                "inference_check_invalid_text request_id=%s diagnostic_id=%s provider=%s model=%s text_chars=%s",
+                "inference_stream_check_invalid_text request_id=%s diagnostic_id=%s text_chars=%s",
                 request_id,
-                diagnostic_id,
-                provider_meta.get("provider", "unknown"),
-                provider_meta.get("model", "unknown"),
+                stream_id,
                 len(text_value),
             )
-            if attempt == 0 and time.monotonic() + 0.15 < deadline:
-                await asyncio.sleep(0.15)
-                continue
-            return "FAIL", data, text_value
-        except GatewayTimeoutError:
+        except (asyncio.TimeoutError, GatewayTimeoutError):
             last_timeout = True
             logger.warning(
-                "inference_check_timeout request_id=%s diagnostic_id=%s attempt=%s",
+                "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
                 request_id,
-                diagnostic_id,
-                attempt + 1,
+                stream_id,
             )
-            if attempt == 0 and time.monotonic() + 1.0 < deadline:
-                await asyncio.sleep(1.0)
-                continue
-            break
-        except GatewayInvalidResponseError:
+        except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
             logger.warning(
-                "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
+                "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
-                diagnostic_id,
-                attempt + 1,
-            )
-            if attempt == 0 and time.monotonic() + 0.25 < deadline:
-                await asyncio.sleep(0.25)
-                continue
-            return "FAIL", None, None
-        except (GatewayHTTPError, HTTPException):
-            return "FAIL", None, None
-        except Exception as exc:
-            logger.warning(
-                "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
-                request_id,
-                diagnostic_id,
+                stream_id,
                 type(exc).__name__,
             )
-            return "FAIL", None, None
+        except Exception as exc:
+            logger.warning(
+                "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
+                request_id,
+                stream_id,
+                type(exc).__name__,
+            )
 
     return ("TIMEOUT" if last_timeout else "FAIL"), None, None
 
