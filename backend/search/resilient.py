@@ -86,6 +86,37 @@ def _has_who_dengue_item(items: list[dict]) -> bool:
 
 _CHILE_TECH_COMPANY_HOSTS = ("sonda.com", "entel.cl", "wom.cl", "movistar.cl")
 
+_CHILE_ECONOMY_NAVIGATION_CANDIDATES = (
+    {
+        "title": "Diario Financiero — Últimas noticias económicas de Chile",
+        "url": "https://www.df.cl/ultimas-noticias",
+        "snippet": "Portada directa de últimas noticias económicas, mercados y empresas de Chile.",
+        "source_domain": "df.cl",
+        "provider": "publisher_navigation_fallback",
+    },
+    {
+        "title": "Pulso — Economía, mercados y empresas",
+        "url": "https://www.latercera.com/pulso/",
+        "snippet": "Sección económica de La Tercera con información de mercados, empresas y economía chilena.",
+        "source_domain": "latercera.com",
+        "provider": "publisher_navigation_fallback",
+    },
+    {
+        "title": "Emol Economía — Actualidad económica",
+        "url": "https://www.emol.com/noticias/Economia/",
+        "snippet": "Sección de economía de Emol con actualidad económica y financiera de Chile.",
+        "source_domain": "emol.com",
+        "provider": "publisher_navigation_fallback",
+    },
+    {
+        "title": "Banco Central de Chile — Información económica",
+        "url": "https://www.bcentral.cl/",
+        "snippet": "Sitio oficial del Banco Central de Chile con información económica, estadísticas y publicaciones.",
+        "source_domain": "bcentral.cl",
+        "provider": "official_navigation_fallback",
+    },
+)
+
 _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES = (
     {
         "title": "SONDA — servicios de TI y transformación digital",
@@ -1682,6 +1713,46 @@ class WebOrchestrator:
                     len(_CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES),
                     len(selected),
                     len(selected_domains_after_portal_fallback),
+                )
+
+        if chile_economic_news_intent:
+            # Public indexes can expose a publisher only through an opaque
+            # Google News wrapper. Preserve direct publisher/category URLs as
+            # navigation candidates so the downstream fetcher extracts real
+            # page text before synthesis. These entries are never treated as
+            # evidence until a live fetch succeeds.
+            direct_economy_hosts = {"df.cl", "latercera.com", "emol.com", "bcentral.cl"}
+            readable_direct = []
+            seen_direct_hosts: set[str] = set()
+            for item in selected:
+                url = str(item.get("url") or "").strip()
+                parsed = urlparse(url)
+                host = str(
+                    item.get("source_domain") or parsed.hostname or ""
+                ).casefold().rstrip(".").removeprefix("www.")
+                if (
+                    url.startswith("https://")
+                    and host in direct_economy_hosts
+                    and parsed.hostname
+                    and parsed.hostname.casefold() != "news.google.com"
+                    and host not in seen_direct_hosts
+                ):
+                    readable_direct.append(item)
+                    seen_direct_hosts.add(host)
+            for candidate in _CHILE_ECONOMY_NAVIGATION_CANDIDATES:
+                if len(readable_direct) >= self.max_results:
+                    break
+                host = str(candidate.get("source_domain") or "").casefold().removeprefix("www.")
+                if host in seen_direct_hosts:
+                    continue
+                readable_direct.append(dict(candidate))
+                seen_direct_hosts.add(host)
+            if len(readable_direct) >= min(3, self.max_results):
+                selected = readable_direct[: self.max_results]
+                logger.warning(
+                    "web_search_chile_economy_navigation_fallback selected_count=%d distinct_domains=%d",
+                    len(selected),
+                    len(seen_direct_hosts),
                 )
 
         if commercial_technology_site_intent:
