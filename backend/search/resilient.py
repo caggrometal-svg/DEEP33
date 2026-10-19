@@ -1591,6 +1591,55 @@ class WebOrchestrator:
                 recovered_providers,
             )
 
+        if chile_economic_news_intent and merged:
+            # Search providers may discover several real publisher domains while
+            # strict ranking retains only an opaque Google News wrapper. Preserve
+            # independently discovered *direct* newsroom URLs that are still
+            # economically relevant. No URL or evidence is synthesized here.
+            economy_publishers = {
+                "df.cl", "latercera.com", "emol.com", "meganoticias.cl",
+                "24horas.cl", "biobiochile.cl", "cooperativa.cl",
+                "chvnoticias.cl", "cnnchile.com",
+            }
+            economy_direct: list[dict] = []
+            economy_domains: set[str] = set()
+            for item in [*selected, *merged]:
+                if len(economy_direct) >= self.max_results:
+                    break
+                url = str(item.get("url") or "").strip()
+                parsed = urlparse(url)
+                url_host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+                source_host = str(item.get("source_domain") or url_host).casefold().rstrip(".").removeprefix("www.")
+                if (
+                    not url.startswith("https://")
+                    or not url_host
+                    or url_host == "news.google.com"
+                    or source_host in economy_domains
+                    or not any(
+                        source_host == domain or source_host.endswith("." + domain)
+                        for domain in economy_publishers
+                    )
+                ):
+                    continue
+                story = f"{item.get('title', '')} {item.get('snippet', '')}"
+                if re.search(
+                    r"\b(?:econom[ií]\w*|mercad\w*|finanz\w*|empresa\w*|"
+                    r"inversi[oó]n\w*|inflaci[oó]n\w*|ipc\b|d[oó]lar\w*|"
+                    r"empleo\w*|desempleo\w*|pib\b|banco central|tasa\w*)\b",
+                    story,
+                    re.IGNORECASE,
+                ) is None:
+                    continue
+                economy_direct.append(item)
+                economy_domains.add(source_host)
+            if len(economy_direct) >= min(3, self.max_results):
+                selected = economy_direct[: self.max_results]
+                logger.info(
+                    "web_search_chile_economy_direct_diversity selected_count=%d distinct_domains=%d",
+                    len(selected),
+                    len(economy_domains),
+                )
+
         minimum_coverage = min(3, self.max_results)
         selected_domains = {
             str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
