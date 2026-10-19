@@ -1177,10 +1177,6 @@ class WebOrchestrator:
         )
         if (
             needs_recovery
-            # Chile political live-news already fans out publisher-scoped queries
-            # in the primary wave and again in the bounded diversity tail. Do not
-            # spend that remaining budget on a generic recovery query first.
-            and not chile_political_news_intent
             and recovery_query.casefold() != provider_query.casefold()
             and deadline > loop.time()
         ):
@@ -1202,7 +1198,9 @@ class WebOrchestrator:
                 remaining_budget = max(0.0, deadline - loop.time())
                 recovery_deadline = min(
                     deadline,
-                    loop.time() + max(0.05, remaining_budget * 0.35),
+                    # Keep generic corroboration bounded; the publisher-scoped
+                    # political diversity tail needs most of the remaining budget.
+                    loop.time() + max(0.05, remaining_budget * 0.15),
                 )
             try:
                 while pending_recovery:
