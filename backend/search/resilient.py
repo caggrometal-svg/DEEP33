@@ -942,9 +942,11 @@ class WebOrchestrator:
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
@@ -952,6 +954,7 @@ class WebOrchestrator:
                 ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
             tasks.update({
                 asyncio.create_task(
@@ -1358,14 +1361,17 @@ class WebOrchestrator:
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
             political_tasks = {
                 asyncio.create_task(
