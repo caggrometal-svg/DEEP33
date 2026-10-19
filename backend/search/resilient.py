@@ -1724,46 +1724,6 @@ class WebOrchestrator:
                     len(selected_domains_after_portal_fallback),
                 )
 
-        if chile_economic_news_intent:
-            # Public indexes can expose a publisher only through an opaque
-            # Google News wrapper. Preserve direct publisher/category URLs as
-            # navigation candidates so the downstream fetcher extracts real
-            # page text before synthesis. These entries are never treated as
-            # evidence until a live fetch succeeds.
-            direct_economy_hosts = {"df.cl", "latercera.com", "emol.com", "bcentral.cl"}
-            readable_direct = []
-            seen_direct_hosts: set[str] = set()
-            for item in selected:
-                url = str(item.get("url") or "").strip()
-                parsed = urlparse(url)
-                host = str(
-                    item.get("source_domain") or parsed.hostname or ""
-                ).casefold().rstrip(".").removeprefix("www.")
-                if (
-                    url.startswith("https://")
-                    and host in direct_economy_hosts
-                    and parsed.hostname
-                    and parsed.hostname.casefold() != "news.google.com"
-                    and host not in seen_direct_hosts
-                ):
-                    readable_direct.append(item)
-                    seen_direct_hosts.add(host)
-            for candidate in _CHILE_ECONOMY_NAVIGATION_CANDIDATES:
-                if len(readable_direct) >= self.max_results:
-                    break
-                host = str(candidate.get("source_domain") or "").casefold().removeprefix("www.")
-                if host in seen_direct_hosts:
-                    continue
-                readable_direct.append(dict(candidate))
-                seen_direct_hosts.add(host)
-            if len(readable_direct) >= min(3, self.max_results):
-                selected = readable_direct[: self.max_results]
-                logger.warning(
-                    "web_search_chile_economy_navigation_fallback selected_count=%d distinct_domains=%d",
-                    len(selected),
-                    len(seen_direct_hosts),
-                )
-
         if commercial_technology_site_intent:
             selected_company_hosts = {
                 str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
