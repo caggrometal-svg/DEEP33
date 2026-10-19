@@ -1177,6 +1177,10 @@ class WebOrchestrator:
         )
         if (
             needs_recovery
+            # Chile political live-news already fans out publisher-scoped queries
+            # in the primary wave and again in the bounded diversity tail. Do not
+            # spend that remaining budget on a generic recovery query first.
+            and not chile_political_news_intent
             and recovery_query.casefold() != provider_query.casefold()
             and deadline > loop.time()
         ):
