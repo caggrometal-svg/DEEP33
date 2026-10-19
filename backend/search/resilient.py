@@ -812,6 +812,14 @@ class WebOrchestrator:
                 "current events", "what is happening",
             ))
         )
+        chile_general_news_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "latest news", "news",
+            ))
+        )
         chile_weather_intent = (
             "chile" in lowered_cleaned
             and is_realtime_query(cleaned)
@@ -891,6 +899,31 @@ class WebOrchestrator:
                     name="search:google-news-ai",
                 )
             )
+
+        if (
+            chile_general_news_intent
+            and not chile_current_events_intent
+            and not chile_political_news_intent
+            and not chile_economic_news_intent
+        ):
+            # The production connectivity audit uses a generic Chile-news query.
+            # Fan out independent Chilean publishers immediately so one Google
+            # News feed cannot leave SEARCH degraded despite valid snippets.
+            general_news_queries = (
+                ("google_news", "BioBioChile Chile últimas noticias hoy"),
+                ("bing", "Cooperativa Chile últimas noticias hoy"),
+                ("google", "La Tercera Chile últimas noticias hoy"),
+                ("yahoo", "24Horas Chile últimas noticias hoy"),
+                ("google_news", "Emol Chile últimas noticias hoy"),
+                ("bing", "CNN Chile últimas noticias hoy"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-general-news:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(general_news_queries)
+            })
 
         if chile_current_events_intent:
             # Generic current-events queries can collapse to one search index and
