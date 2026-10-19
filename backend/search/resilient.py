@@ -820,6 +820,13 @@ class WebOrchestrator:
                 "weather", "forecast",
             ))
         )
+        official_influenza_info_intent = (
+            any(term in lowered_cleaned for term in ("influenza", "gripe", "flu"))
+            and any(term in lowered_cleaned for term in (
+                "oficial", "official", "información", "informacion", "guidance",
+                "guía", "guia", "medicina", "medical", "salud", "health",
+            ))
+        )
         chile_political_news_intent = (
             "chile" in lowered_cleaned
             and is_realtime_query(cleaned)
@@ -928,6 +935,26 @@ class WebOrchestrator:
                     name=f"search:chile-weather:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(weather_queries)
+            })
+
+        if official_influenza_info_intent:
+            # Official health pages can block one crawler or expose PDF-only
+            # results. Discover multiple public-health authorities through
+            # independent indexes so the fetcher has alternative HTML sources.
+            influenza_queries = (
+                ("google", "site:who.int influenza flu fact sheet official health"),
+                ("bing", "site:who.int influenza flu official health guidance"),
+                ("google", "site:paho.org influenza flu official health"),
+                ("bing", "site:paho.org influenza flu official health"),
+                ("google", "site:cdc.gov/flu influenza treatment official"),
+                ("duckduckgo", "site:cdc.gov/flu influenza official health"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:official-influenza:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(influenza_queries)
             })
 
         if chile_political_news_intent:
