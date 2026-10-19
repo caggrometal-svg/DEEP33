@@ -3806,7 +3806,11 @@ async function edgeSearch(
             .filter((item) =>
               item.url.startsWith("http") &&
               item.title.length >= 8 &&
-              item.snippet.length >= 80 &&
+              // Two independent editorial domains are already required below.
+              // Accept compact live-news snippets when publisher pages block
+              // automated readers; title + snippet must still carry useful text.
+              (item.snippet.length >= 80 || item.snippet.length >= 40 ||
+                (item.title.length + item.snippet.length) >= 90) &&
               item.source_domain.length > 3
             )
         : [];

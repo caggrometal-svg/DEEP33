@@ -1198,7 +1198,9 @@ class WebOrchestrator:
                 remaining_budget = max(0.0, deadline - loop.time())
                 recovery_deadline = min(
                     deadline,
-                    loop.time() + max(0.05, remaining_budget * 0.35),
+                    # Keep generic corroboration bounded; the publisher-scoped
+                    # political diversity tail needs most of the remaining budget.
+                    loop.time() + max(0.05, remaining_budget * 0.15),
                 )
             try:
                 while pending_recovery:
