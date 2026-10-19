@@ -84,6 +84,33 @@ def _has_who_dengue_item(items: list[dict]) -> bool:
     return any(_is_who_dengue_item(item) for item in items)
 
 
+def _is_direct_chile_economy_item(item: dict) -> bool:
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    url_host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+    source_host = str(item.get("source_domain") or url_host).casefold().rstrip(".").removeprefix("www.")
+    allowed = (
+        "df.cl", "latercera.com", "emol.com", "meganoticias.cl",
+        "24horas.cl", "biobiochile.cl", "cooperativa.cl",
+        "chvnoticias.cl", "cnnchile.com",
+    )
+    if (
+        not url.startswith("https://")
+        or not url_host
+        or url_host == "news.google.com"
+        or not any(source_host == domain or source_host.endswith("." + domain) for domain in allowed)
+    ):
+        return False
+    story = f"{item.get('title', '')} {item.get('snippet', '')}"
+    return re.search(
+        r"\b(?:econom[ií]\w*|mercad\w*|finanz\w*|empresa\w*|"
+        r"inversi[oó]n\w*|inflaci[oó]n\w*|ipc\b|d[oó]lar\w*|"
+        r"empleo\w*|desempleo\w*|pib\b|banco central|tasa\w*)\b",
+        story,
+        re.IGNORECASE,
+    ) is not None
+
+
 _CHILE_TECH_COMPANY_HOSTS = ("sonda.com", "entel.cl", "wom.cl", "movistar.cl")
 
 _CHILE_ECONOMY_NAVIGATION_CANDIDATES = (
@@ -1165,6 +1192,11 @@ class WebOrchestrator:
                         not academic_ai_research_intent
                         or len(distinct_domains) >= min(3, self.max_results)
                     )
+                    and (
+                        not chile_economic_news_intent
+                        or sum(_is_direct_chile_economy_item(item) for item in selected_now)
+                        >= min(3, self.max_results)
+                    )
                 )
                 if (
                     enough_sources
@@ -1610,25 +1642,7 @@ class WebOrchestrator:
                 parsed = urlparse(url)
                 url_host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
                 source_host = str(item.get("source_domain") or url_host).casefold().rstrip(".").removeprefix("www.")
-                if (
-                    not url.startswith("https://")
-                    or not url_host
-                    or url_host == "news.google.com"
-                    or source_host in economy_domains
-                    or not any(
-                        source_host == domain or source_host.endswith("." + domain)
-                        for domain in economy_publishers
-                    )
-                ):
-                    continue
-                story = f"{item.get('title', '')} {item.get('snippet', '')}"
-                if re.search(
-                    r"\b(?:econom[ií]\w*|mercad\w*|finanz\w*|empresa\w*|"
-                    r"inversi[oó]n\w*|inflaci[oó]n\w*|ipc\b|d[oó]lar\w*|"
-                    r"empleo\w*|desempleo\w*|pib\b|banco central|tasa\w*)\b",
-                    story,
-                    re.IGNORECASE,
-                ) is None:
+                if source_host in economy_domains or not _is_direct_chile_economy_item(item):
                     continue
                 economy_direct.append(item)
                 economy_domains.add(source_host)
