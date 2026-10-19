@@ -946,6 +946,17 @@ class WebOrchestrator:
                 ("bing", "site:biobiochile.cl economía Chile noticias hoy"),
                 ("yahoo", "site:cooperativa.cl economía Chile noticias hoy"),
                 ("google", "site:chvnoticias.cl economía Chile noticias hoy"),
+                # Brand-name queries recover direct newsroom URLs when public
+                # indexes ignore or mishandle site: filters.
+                ("duckduckgo", "24Horas economía Chile mercados empresas hoy"),
+                ("duckduckgo", "BioBioChile economía Chile mercados empresas hoy"),
+                ("duckduckgo", "Cooperativa economía Chile mercados empresas hoy"),
+                ("duckduckgo", "CNN Chile economía mercados empresas hoy"),
+                ("bing", "24Horas economía Chile mercados empresas hoy"),
+                ("bing", "BioBioChile economía Chile mercados empresas hoy"),
+                ("bing", "Pulso La Tercera economía Chile mercados empresas hoy"),
+                ("google", "Cooperativa economía Chile mercados empresas hoy"),
+                ("google", "CHV Noticias economía Chile mercados empresas hoy"),
             )
             tasks.update({
                 asyncio.create_task(
