@@ -865,6 +865,12 @@ class WebOrchestrator:
                 ("bing", "site:df.cl Chile economía mercados noticias"),
                 ("bing", "site:latercera.com/pulso Chile economía mercados"),
                 ("bing", "site:bcentral.cl Chile economía mercado informe"),
+                # Direct-web fallbacks reduce dependence on opaque Google News RSS
+                # wrappers and give the fetch/extractor real publisher URLs.
+                ("yahoo", "site:df.cl Chile economía mercados noticias hoy"),
+                ("yahoo", "site:latercera.com/pulso Chile economía mercados hoy"),
+                ("yahoo", "site:emol.com/economia Chile economía mercados hoy"),
+                ("google", "site:bcentral.cl Chile economía mercado informe"),
             )
             tasks.update({
                 asyncio.create_task(
