@@ -865,6 +865,14 @@ class WebOrchestrator:
                 ("bing", "site:df.cl Chile economía mercados noticias"),
                 ("bing", "site:latercera.com/pulso Chile economía mercados"),
                 ("bing", "site:bcentral.cl Chile economía mercado informe"),
+                # Broader publisher-name fallbacks avoid a false-success result
+                # when site-restricted SERPs return hotel/portal noise or only
+                # opaque Google News wrapper URLs.
+                ("google_news", "Diario Financiero Chile economía mercados noticias hoy"),
+                ("google_news", "Pulso La Tercera Chile economía mercados noticias hoy"),
+                ("google_news", "Emol Economía Chile mercados noticias hoy"),
+                ("bing", "Banco Central Chile economía mercados informe hoy"),
+                ("bing", "Diario Financiero Chile economía mercados noticias hoy"),
             )
             tasks.update({
                 asyncio.create_task(
