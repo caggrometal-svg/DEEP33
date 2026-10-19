@@ -812,6 +812,14 @@ class WebOrchestrator:
                 "current events", "what is happening",
             ))
         )
+        chile_general_news_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "latest news", "news",
+            ))
+        )
         chile_weather_intent = (
             "chile" in lowered_cleaned
             and is_realtime_query(cleaned)
@@ -890,6 +898,31 @@ class WebOrchestrator:
                 )
             )
 
+        if (
+            chile_general_news_intent
+            and not chile_current_events_intent
+            and not chile_political_news_intent
+            and not chile_economic_news_intent
+        ):
+            # The production connectivity audit uses a generic Chile-news query.
+            # Fan out independent Chilean publishers immediately so one provider
+            # cannot leave SEARCH degraded despite valid results.
+            general_news_queries = (
+                ("google_news", "BioBioChile Chile últimas noticias hoy"),
+                ("bing", "Cooperativa Chile últimas noticias hoy"),
+                ("google", "La Tercera Chile últimas noticias hoy"),
+                ("yahoo", "24Horas Chile últimas noticias hoy"),
+                ("google_news", "Emol Chile últimas noticias hoy"),
+                ("bing", "CNN Chile últimas noticias hoy"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-general-news:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(general_news_queries)
+            })
+
         if chile_current_events_intent:
             # Generic current-events queries can collapse to one search index and
             # two publishers. Discover independent Chilean newsrooms in parallel;
@@ -952,6 +985,12 @@ class WebOrchestrator:
                 ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "BioBioChile Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "Cooperativa Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "24Horas Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "CNN Chile política gobierno Congreso noticias hoy"),
+                ("bing", "CNN Chile política gobierno Congreso noticias hoy"),
+                ("bing", "Meganoticias Chile política gobierno Congreso noticias hoy"),
             )
             tasks.update({
                 asyncio.create_task(
