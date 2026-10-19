@@ -946,6 +946,16 @@ class WebOrchestrator:
                 ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                # Site-restricted public SERPs can intermittently return only two
+                # usable editorial domains. Add publisher-name discovery through
+                # Google News/Bing so the live gate has independent alternatives
+                # without synthesizing evidence or changing final ranking.
+                ("google_news", "BioBioChile Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "Cooperativa Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "24Horas Chile política gobierno Congreso noticias hoy"),
+                ("google_news", "CNN Chile política gobierno Congreso noticias hoy"),
+                ("bing", "CNN Chile política gobierno Congreso noticias hoy"),
+                ("bing", "Meganoticias Chile política gobierno Congreso noticias hoy"),
             )
             tasks.update({
                 asyncio.create_task(
