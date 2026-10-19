@@ -802,6 +802,24 @@ class WebOrchestrator:
                 "noticia", "noticias", "hoy", "actualidad", "latest", "news",
             ))
         )
+        chile_current_events_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "acontecimiento", "acontecimientos", "evento", "eventos",
+                "hecho", "hechos", "suceso", "sucesos",
+                "qué está pasando", "que esta pasando", "qué pasa", "que pasa",
+                "current events", "what is happening",
+            ))
+        )
+        chile_weather_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "clima", "tiempo", "temperatura", "pronóstico", "pronostico",
+                "weather", "forecast",
+            ))
+        )
         chile_political_news_intent = (
             "chile" in lowered_cleaned
             and is_realtime_query(cleaned)
@@ -865,6 +883,46 @@ class WebOrchestrator:
                     name="search:google-news-ai",
                 )
             )
+
+        if chile_current_events_intent:
+            # Generic current-events queries can collapse to one search index and
+            # two publishers. Discover independent Chilean newsrooms in parallel;
+            # final ranking still uses the untouched user query.
+            current_events_queries = (
+                ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
+                ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
+                ("google", "site:latercera.com Chile noticias hoy actualidad"),
+                ("yahoo", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("google_news", "site:emol.com Chile noticias hoy actualidad"),
+                ("bing", "site:cnnchile.com Chile noticias hoy actualidad"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-current-events:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(current_events_queries)
+            })
+
+        if chile_weather_intent:
+            # Weather SERPs frequently return two commercial forecast domains.
+            # Probe independent forecast/meteorological sites through real search
+            # providers so the normal ranker can satisfy multidomain coverage.
+            weather_queries = (
+                ("google", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
+                ("bing", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
+                ("google", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
+                ("yahoo", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
+                ("bing", "site:meteoblue.com Santiago Chile weather forecast temperature"),
+                ("yahoo", "site:accuweather.com Santiago Chile weather forecast temperature"),
+            )
+            tasks.update({
+                asyncio.create_task(
+                    self._bounded_call_provider(provider, targeted_query),
+                    name=f"search:chile-weather:{provider}:{index}",
+                )
+                for index, (provider, targeted_query) in enumerate(weather_queries)
+            })
 
         if chile_political_news_intent:
             # Do not postpone Chile political source diversity until the recovery
