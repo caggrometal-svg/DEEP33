@@ -910,6 +910,15 @@ class WebOrchestrator:
                 ("yahoo", "site:latercera.com/pulso Chile economía mercados hoy"),
                 ("yahoo", "site:emol.com/economia Chile economía mercados hoy"),
                 ("google", "site:bcentral.cl Chile economía mercado informe"),
+                # Prefer direct article/category URLs from newsrooms that are
+                # readable by the production fetcher; this avoids opaque Google
+                # News wrappers and publisher homepages that reject extraction.
+                ("google", "site:meganoticias.cl economía Chile noticias hoy"),
+                ("bing", "site:meganoticias.cl economía Chile noticias hoy"),
+                ("google", "site:24horas.cl economía Chile noticias hoy"),
+                ("bing", "site:biobiochile.cl economía Chile noticias hoy"),
+                ("yahoo", "site:cooperativa.cl economía Chile noticias hoy"),
+                ("google", "site:chvnoticias.cl economía Chile noticias hoy"),
             )
             tasks.update({
                 asyncio.create_task(
