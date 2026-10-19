@@ -1028,6 +1028,14 @@ class WebOrchestrator:
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                # These publishers have already produced fetchable pages in the
+                # live production gate. Keep them in the primary wave so a slow
+                # recovery tail cannot leave political coverage at two domains.
+                ("google", "site:meganoticias.cl política Chile gobierno Congreso hoy"),
+                ("bing", "site:meganoticias.cl política Chile gobierno Congreso hoy"),
+                ("google", "site:chilenoticias.cl politica Chile gobierno Congreso hoy"),
+                ("bing", "site:chilenoticias.cl politica Chile gobierno Congreso hoy"),
+                ("google", "site:elpais.com/chile politica Chile gobierno Congreso hoy"),
             )
             tasks.update({
                 asyncio.create_task(
