@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import html
+import inspect
 import os
 import re
 import time
@@ -1153,11 +1154,18 @@ async def search_web(
         # budget and returned zero candidates before slower providers completed.
         if isinstance(orchestrator, WebOrchestrator):
             full_budget = max(1.0, min(5.0, float(timeout_seconds)))
-            result = await orchestrator.search(
-                cleaned,
-                fresh=fresh,
-                budget_seconds=full_budget,
-            )
+            search_parameters = inspect.signature(orchestrator.search).parameters
+            if "budget_seconds" in search_parameters:
+                result = await orchestrator.search(
+                    cleaned,
+                    fresh=fresh,
+                    budget_seconds=full_budget,
+                )
+            else:
+                # Tests and injected adapters may deliberately expose the older
+                # narrow signature. Preserve compatibility without losing budget
+                # propagation on the production WebOrchestrator implementation.
+                result = await orchestrator.search(cleaned, fresh=fresh)
         else:
             # Preserve the narrow legacy call contract for injected adapters that
             # expose only search(query, fresh=...), without widening that contract.
