@@ -1294,6 +1294,52 @@ def test_authoritative_navigation_resolver_short_circuits_noisy_serp(monkeypatch
     assert {item["source_domain"] for item in result["results"]} >= {"docs.python.org", "python.org"}
 
 
+def test_search_web_propagates_non_fast_budget_to_orchestrator(monkeypatch):
+    from tools import web_search
+
+    seen = {}
+
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False, budget_seconds=None):
+            seen["query"] = query
+            seen["fresh"] = fresh
+            seen["budget_seconds"] = budget_seconds
+            return {
+                "ok": True,
+                "results": [{
+                    "title": "Example result",
+                    "url": "https://example.com/article",
+                    "snippet": "Relevant example result.",
+                    "source_domain": "example.com",
+                    "provider": "fake",
+                }],
+                "sources": [],
+                "providers": ["fake"],
+                "providers_attempted": ["fake"],
+                "errors": [],
+            }
+
+    monkeypatch.setattr(
+        "backend.search.resilient.get_web_orchestrator",
+        lambda _limit: FakeOrchestrator(),
+    )
+    monkeypatch.setattr(
+        "backend.search.resilient.WebOrchestrator",
+        FakeOrchestrator,
+    )
+
+    result = asyncio.run(web_search.search_web(
+        "current example topic",
+        timeout_seconds=4.75,
+        max_results=5,
+        fresh=True,
+    ))
+
+    assert result["ok"] is True
+    assert seen["fresh"] is True
+    assert seen["budget_seconds"] == 4.75
+
+
 def test_wikipedia_asyncio_authoritative_resolver_preserves_independent_reference() -> None:
     from tools.web_search import _authoritative_navigation_results
 
