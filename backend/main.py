@@ -2901,7 +2901,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     try:
         result = await search_web(
             q,
-            timeout_seconds=min(2.05, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            timeout_seconds=max(3.0, min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")))),
             max_results=_web_search_result_limit(
                 q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
             ),
