@@ -1147,9 +1147,21 @@ async def search_web(
             budget_seconds=fast_budget,
         )
     else:
-        # Preserve the narrow legacy call contract for injected adapters that
-        # expose only search(query, fresh=...), without widening that contract.
-        result = await orchestrator.search(cleaned, fresh=fresh)
+        # Honor the caller's search budget on the production orchestrator. The
+        # previous path ignored timeout_seconds entirely, so /v1/web/search could
+        # request 5 seconds while the orchestrator still used its shorter default
+        # budget and returned zero candidates before slower providers completed.
+        if isinstance(orchestrator, WebOrchestrator):
+            full_budget = max(1.0, min(5.0, float(timeout_seconds)))
+            result = await orchestrator.search(
+                cleaned,
+                fresh=fresh,
+                budget_seconds=full_budget,
+            )
+        else:
+            # Preserve the narrow legacy call contract for injected adapters that
+            # expose only search(query, fresh=...), without widening that contract.
+            result = await orchestrator.search(cleaned, fresh=fresh)
     if not result.get("ok"):
         from backend.weather import fetch_named_location_weather, is_weather_query
         if is_weather_query(cleaned):
