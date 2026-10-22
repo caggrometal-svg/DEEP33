@@ -79,7 +79,13 @@ def test_render_shared_record_keeps_its_generation_payload() -> None:
     assert output["request_id"] == "request-render"
     assert output["latency_ms"] == 523
     assert output["result"]["text"] == "Respuesta render"
-    assert output["sources"] == []
+    assert output["sources"] == [{
+        "title": "https://example.invalid",
+        "url": "https://example.invalid",
+        "snippet": "",
+        "provider": "unknown",
+    }]
+    assert output["web_navigation"] is False
 
 
 def test_empty_cross_route_response_is_rejected() -> None:

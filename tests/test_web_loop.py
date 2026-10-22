@@ -88,6 +88,63 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
     assert sources[0]["url"] == "https://example.com/"
     assert calls == {"gateway": 1, "search": 1, "fetch": 1}
 
+def test_generation_output_preserves_verified_web_sources() -> None:
+    source = {
+        "title": "Official current information",
+        "url": "https://example.com/current",
+        "snippet": "Current facts from an external page.",
+        "provider": "bing",
+    }
+    output = {
+        "request_id": "web-source-contract",
+        "result": {"role": "assistant", "text": "Respuesta basada en evidencia."},
+        "response": {
+            "model": "test",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Respuesta basada en evidencia."},
+            }],
+        },
+        "sources": [source],
+        "web_navigation": True,
+    }
+
+    sanitized = main.sanitize_generation_output(output)
+
+    assert sanitized["sources"] == [source]
+    assert sanitized["web_navigation"] is True
+
+
+def test_generation_output_does_not_claim_web_navigation_without_https_sources() -> None:
+    output = {
+        "result": {"role": "assistant", "text": "Respuesta sin fuente."},
+        "sources": [{"title": "Unsafe source", "url": "http://example.com/current"}],
+        "web_navigation": True,
+    }
+
+    sanitized = main.sanitize_generation_output(output)
+
+    assert sanitized["sources"] == []
+    assert sanitized["web_navigation"] is False
+
+
+def test_generation_response_exposes_sources_returned_by_web_tool_loop() -> None:
+    import inspect
+
+    source = inspect.getsource(main.generate)
+    assert '"sources": sources' in source
+    assert '"web_navigation": bool(sources)' in source
+
+
+def test_vercel_deployment_sha_precedes_manual_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "")
+    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "vercel-immutable-sha")
+    monkeypatch.setenv("DEEP33_GIT_SHA", "stale-manual-sha")
+
+    assert main._resolve_git_sha() == "vercel-immutable-sha"
+
+
 def test_source_metadata_never_leaks_into_final_text() -> None:
     final = main.sanitize_assistant_text(
         "Respuesta sintetizada.\n\nFuentes consultadas:\n1. [Example](https://example.com/)\n2. https://example.org/",
@@ -143,7 +200,7 @@ def test_sanitize_assistant_text_removes_provider_citation_markup() -> None:
     assert sanitize_assistant_text(text, []) == "DEEP33 entrega la conclusión."
 
 
-def test_sanitize_generation_output_clears_source_metadata() -> None:
+def test_sanitize_generation_output_preserves_safe_source_metadata() -> None:
     from backend.main import sanitize_generation_output
 
     output = {
@@ -161,10 +218,20 @@ def test_sanitize_generation_output_clears_source_metadata() -> None:
                 }
             ]
         },
-        "sources": [{"title": "Example", "url": "https://example.com"}],
+        "sources": [
+            {"title": "Example", "url": "https://example.com"},
+            {"title": "Unsafe", "url": "http://unsafe.example"},
+        ],
+        "web_navigation": True,
     }
     sanitized = sanitize_generation_output(output)
-    assert sanitized["sources"] == []
+    assert sanitized["sources"] == [{
+        "title": "Example",
+        "url": "https://example.com",
+        "snippet": "",
+        "provider": "unknown",
+    }]
+    assert sanitized["web_navigation"] is True
     assert "cite" not in sanitized["result"]["text"]
     assert "example.com" not in sanitized["response"]["choices"][0]["message"]["content"]
 
@@ -493,3 +560,50 @@ def test_web_grounding_contract_forbids_model_memory_gap_filling() -> None:
     assert "Never fill an evidence gap from model memory" in prompt
     assert "Fetched-page text outranks search snippets" in prompt
     assert "conflict" in prompt.lower()
+
+
+def test_google_news_wrapper_resolves_to_publisher_before_search_rescue(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"fetch": 0, "search": 0}
+    wrapper_url = "https://news.google.com/rss/articles/example?oc=5"
+    publisher_url = "https://www.biobiochile.cl/noticias/chile/region-metropolitana/2026/10/22/example.shtml"
+    article_text = "Información publicada por el medio. " * 8
+
+    async def fake_fetch(url: str, **kwargs):
+        calls["fetch"] += 1
+        assert url == wrapper_url
+        return {
+            "ok": True,
+            "url": wrapper_url,
+            "final_url": publisher_url,
+            "title": "Información actual de Chile",
+            "text": article_text,
+            "retrieved_at": "2026-10-22T12:00:00+00:00",
+        }
+
+    async def unexpected_search(*args, **kwargs):
+        calls["search"] += 1
+        raise AssertionError("A direct publisher redirect should not need search rescue")
+
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "search_web", unexpected_search)
+
+    result = asyncio.run(
+        main._fetch_web_source(
+            {
+                "title": "Información actual de Chile",
+                "url": wrapper_url,
+                "snippet": "Descripción breve del artículo publicado hoy.",
+                "provider": "google_news",
+                "source_domain": "biobiochile.cl",
+            },
+            request_id="google-news-redirect-test",
+            timeout_seconds=3.3,
+            direct_timeout_seconds=0.85,
+        )
+    )
+
+    assert result is not None
+    assert result["url"] == publisher_url
+    assert result["domain"] == "biobiochile.cl"
+    assert result["text_chars"] >= 80
+    assert calls == {"fetch": 1, "search": 0}

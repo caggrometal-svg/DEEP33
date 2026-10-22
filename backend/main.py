@@ -57,6 +57,11 @@ def _resolve_git_sha() -> str:
     runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
     if runtime:
         return runtime
+    # Vercel exposes the immutable source revision as a system environment variable.
+    # Read it before the manual override so stale configuration cannot mask a new deploy.
+    vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
+    if vercel_sha:
+        return vercel_sha
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
@@ -70,7 +75,11 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = (
+    os.getenv("RENDER_GIT_BRANCH", "").strip()
+    or os.getenv("VERCEL_GIT_COMMIT_REF", "").strip()
+    or "main"
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
@@ -1706,6 +1715,70 @@ async def _fetch_web_source(
         and not publisher_host.endswith(".google.com")
     ):
         try:
+            # Resolve the Google News redirect itself before spending the remaining
+            # time budget on secondary searches. fetch_page enforces public-host and
+            # redirect validation; only accept text from the declared publisher host.
+            try:
+                redirected = await fetch_page(
+                    url,
+                    timeout_seconds=min(2.0, max(1.4, timeout_seconds)),
+                    direct_timeout_seconds=0.65,
+                    max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
+                    max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
+                    fresh=True,
+                )
+                redirected_url = str(
+                    redirected.get("final_url") or redirected.get("url") or ""
+                ).strip() if isinstance(redirected, dict) else ""
+                redirected_host = (
+                    urlparse(redirected_url).hostname or ""
+                ).casefold().removeprefix("www.")
+                redirected_text = str(
+                    redirected.get("text") or ""
+                ).strip() if isinstance(redirected, dict) else ""
+                publisher_matches = bool(
+                    publisher_host
+                    and (
+                        redirected_host == publisher_host
+                        or redirected_host.endswith("." + publisher_host)
+                    )
+                )
+                if (
+                    isinstance(redirected, dict)
+                    and redirected.get("ok") is True
+                    and redirected_url.startswith("https://")
+                    and redirected_host
+                    and redirected_host != "news.google.com"
+                    and not redirected_host.endswith(".google.com")
+                    and publisher_matches
+                    and len(redirected_text) >= 80
+                ):
+                    logger.info(
+                        "web_evidence_google_news_redirect_resolved request_id=%s publisher=%s domain=%s text_chars=%s",
+                        request_id or "unknown",
+                        publisher_host,
+                        redirected_host,
+                        len(redirected_text),
+                    )
+                    return {
+                        "title": str(redirected.get("title") or source.get("title") or redirected_url)[:300],
+                        "url": redirected_url[:2000],
+                        "text": redirected_text[:5000],
+                        "provider": provider,
+                        "domain": redirected_host,
+                        "retrieved_at": redirected.get("retrieved_at"),
+                        "text_chars": len(redirected_text),
+                    }
+            except asyncio.CancelledError:
+                raise
+            except Exception as redirect_error:
+                logger.info(
+                    "web_evidence_google_news_direct_redirect_miss request_id=%s publisher=%s error=%s",
+                    request_id or "unknown",
+                    publisher_host,
+                    type(redirect_error).__name__,
+                )
+
             raw_title = str(source.get("title") or "").strip()
             # Site-qualified exact-title searches are fragile across free engines.
             # Search the publisher name plus the article title, then strictly accept
@@ -2557,7 +2630,35 @@ def sanitize_generation_output(output: dict) -> dict:
             message = choices[0].get("message")
             if isinstance(message, dict) and isinstance(message.get("content"), str):
                 message["content"] = sanitize_assistant_text(message["content"])
-    output["sources"] = []
+    raw_sources = output.get("sources")
+    sanitized_sources: list[dict[str, str]] = []
+    seen_source_urls: set[str] = set()
+    if isinstance(raw_sources, list):
+        for source in raw_sources[:8]:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url") or "").strip()
+            parsed = urlparse(url)
+            if (
+                parsed.scheme.lower() != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                continue
+            if url in seen_source_urls:
+                continue
+            seen_source_urls.add(url)
+            sanitized_sources.append({
+                "title": str(source.get("title") or url)[:300],
+                "url": url[:2000],
+                "snippet": str(source.get("snippet") or "")[:1000],
+                "provider": str(source.get("provider") or "unknown")[:80],
+            })
+    output["sources"] = sanitized_sources
+    # The client relies on this contract to reject hallucinated current answers.
+    # A navigation claim is valid only when at least one HTTPS source is returned.
+    output["web_navigation"] = bool(output.get("web_navigation")) and bool(sanitized_sources)
     return output
 
 
@@ -2605,8 +2706,8 @@ def normalize_shared_generation_output(
                 "finish_reason": "stop",
             }],
         },
-        "sources": [],
-        "web_navigation": False,
+        "sources": output.get("sources") if isinstance(output.get("sources"), list) else [],
+        "web_navigation": bool(output.get("web_navigation")),
     }
     return sanitize_generation_output(normalized)
 
@@ -2660,7 +2761,11 @@ async def liveness() -> dict:
         "version": APP_VERSION,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": (
+            os.getenv("RENDER_INSTANCE_ID", "").strip()
+            or os.getenv("VERCEL_DEPLOYMENT_ID", "").strip()
+            or "local"
+        ),
         "timestamp": utc_now(),
     }
 
@@ -2674,7 +2779,11 @@ async def health() -> dict:
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "git_branch": GIT_BRANCH,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": (
+            os.getenv("RENDER_INSTANCE_ID", "").strip()
+            or os.getenv("VERCEL_DEPLOYMENT_ID", "").strip()
+            or "local"
+        ),
         "timestamp": utc_now(),
     }
 
@@ -4165,9 +4274,10 @@ async def generate(
             "latency_ms": elapsed_ms,
             "result": result,
             "response": data,
-            "sources": [],
-            "web_navigation": False,
+            "sources": sources,
+            "web_navigation": bool(sources),
         }
+        output = sanitize_generation_output(output)
         cache_put(session_id, idempotency_key, request_hash, output)
         if record.get("_storage") == "local":
             local_idempotency_complete(

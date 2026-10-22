@@ -67,4 +67,29 @@ class Deep33FailoverTest {
         assertTrue("Unexpected tertiary failover text: $response", result?.optString("text").orEmpty().isNotBlank())
     }
 
+    @Test
+    fun primarySecondaryAndVercelDownFallsBackToRender() {
+        val sessionId = "android-quaternary-" + UUID.randomUUID()
+        val messages = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Return only this exact token: DEEP33_QUATERNARY_E2E_OK")
+        )
+        val deadPrimary = "https://127.0.0.1:65531"
+        val deadSecondary = "https://127.0.0.1:65532"
+        val deadVercel = "https://deep33-vercel-down.invalid"
+        val render = BuildConfig.DEEP33_QUATERNARY_URL
+        assertTrue("Quaternary Render endpoint missing", render.isNotBlank())
+
+        val response = Deep33Api.generate(
+            messages = messages,
+            sessionId = sessionId,
+            personality = "NEUTRO",
+            endpointOverride = listOf(deadPrimary, deadSecondary, deadVercel, render)
+        )
+        val result = response.optJSONObject("result")
+        assertTrue("Unexpected quaternary failover result: $response", result != null)
+        assertTrue("Unexpected quaternary role: $response", result?.optString("role") == "assistant")
+        assertTrue("Unexpected quaternary text: $response", result?.optString("text").orEmpty().isNotBlank())
+    }
+
 }
