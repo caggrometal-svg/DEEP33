@@ -136,6 +136,15 @@ def test_generation_response_exposes_sources_returned_by_web_tool_loop() -> None
     assert '"web_navigation": bool(sources)' in source
 
 
+def test_vercel_deployment_sha_precedes_manual_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "")
+    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "vercel-immutable-sha")
+    monkeypatch.setenv("DEEP33_GIT_SHA", "stale-manual-sha")
+
+    assert main._resolve_git_sha() == "vercel-immutable-sha"
+
+
 def test_source_metadata_never_leaks_into_final_text() -> None:
     final = main.sanitize_assistant_text(
         "Respuesta sintetizada.\n\nFuentes consultadas:\n1. [Example](https://example.com/)\n2. https://example.org/",
