@@ -57,6 +57,11 @@ def _resolve_git_sha() -> str:
     runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
     if runtime:
         return runtime
+    # Vercel exposes the immutable source revision as a system environment variable.
+    # Read it before the manual override so stale configuration cannot mask a new deploy.
+    vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
+    if vercel_sha:
+        return vercel_sha
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
@@ -70,7 +75,11 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = (
+    os.getenv("RENDER_GIT_BRANCH", "").strip()
+    or os.getenv("VERCEL_GIT_COMMIT_REF", "").strip()
+    or "main"
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
@@ -2688,7 +2697,11 @@ async def liveness() -> dict:
         "version": APP_VERSION,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": (
+            os.getenv("RENDER_INSTANCE_ID", "").strip()
+            or os.getenv("VERCEL_DEPLOYMENT_ID", "").strip()
+            or "local"
+        ),
         "timestamp": utc_now(),
     }
 
