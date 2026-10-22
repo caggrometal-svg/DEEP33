@@ -185,6 +185,8 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Verify authenticated live search on Vercel fallback
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -euo pipefail
           if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
@@ -196,6 +198,13 @@ jobs:
           fi
           export VERCEL_BACKEND_URL
           echo "VERCEL_TEST_TARGET=${VERCEL_BACKEND_URL}"
+          vercel_protection_headers=()
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            vercel_protection_headers=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+          elif [ "${GITHUB_EVENT_NAME}" != "push" ] || [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "VERCEL_PREVIEW_PROTECTION_BYPASS_SECRET_MISSING"
+            exit 1
+          fi
           token=""
           for attempt in $(seq 1 3); do
             profile_id="ci-vercel-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-${attempt}"
@@ -231,7 +240,15 @@ jobs:
             test "${deployed}" = "1" || { echo "VERCEL_EXACT_COMMIT_NOT_LIVE"; exit 1; }
             health="$(cat /tmp/vercel-health.json)"
           else
-            health="$(curl -sS --connect-timeout 8 --max-time 25 "${VERCEL_BACKEND_URL}/health")"
+            health_status="$(curl -sS --connect-timeout 8 --max-time 25 \
+              "${vercel_protection_headers[@]}" \
+              -o /tmp/vercel-health.json -w '%{http_code}' \
+              "${VERCEL_BACKEND_URL}/health" || true)"
+            if [ "${health_status}" != "200" ]; then
+              echo "VERCEL_HEALTH_HTTP_FAIL http=${health_status} content_type=$(file -b --mime-type /tmp/vercel-health.json 2>/dev/null || echo unknown)"
+              exit 1
+            fi
+            health="$(cat /tmp/vercel-health.json)"
           fi
           printf '%s\n' "${health}" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"' >/dev/null
           echo "VERCEL_HEALTH_PASS"
@@ -243,6 +260,7 @@ jobs:
             -H "Authorization: Bearer ${token}" \
             -H "X-DEEP33-Session-Id: ${session_id}" \
             -H "X-Request-ID: vercel-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            "${vercel_protection_headers[@]}" \
             --get "${VERCEL_BACKEND_URL}/v1/web/search" \
             --data-urlencode "q=${query}" || true)"
           if [ "${search_status}" != "200" ] || ! jq -e \
@@ -267,6 +285,7 @@ jobs:
               -H "X-Request-ID: vercel-generation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
               -H "X-Idempotency-Key: vercel-generation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
               -H "Content-Type: application/json" \
+              "${vercel_protection_headers[@]}" \
               --data-binary @/tmp/vercel-generate-request.json \
               "${VERCEL_BACKEND_URL}/v1/ai/generate" || true)"
             if [ "${generation_status}" != "200" ] || ! jq -e \
