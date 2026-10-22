@@ -204,7 +204,24 @@ jobs:
           token="$(jq -r '.access_token // empty' /tmp/vercel-auth.json)"
           test -n "${token}" || { echo "VERCEL_AUTH_TOKEN_MISSING"; exit 1; }
 
-          health="$(curl -sS --connect-timeout 8 --max-time 25 "${VERCEL_BACKEND_URL}/health")"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            deployed=0
+            for attempt in $(seq 1 30); do
+              health_status="$(curl -sS --connect-timeout 8 --max-time 25 -o /tmp/vercel-health.json -w '%{http_code}' "${VERCEL_BACKEND_URL}/health" || true)"
+              live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-health.json 2>/dev/null || true)"
+              live_status="$(jq -r '.status // empty' /tmp/vercel-health.json 2>/dev/null || true)"
+              echo "VERCEL_DEPLOY_ATTEMPT=${attempt} http=${health_status} live_sha=${live_sha} expected_sha=${GITHUB_SHA} status=${live_status}"
+              if [ "${health_status}" = "200" ] && [ "${live_status}" = "PASS" ] && [ "${live_sha}" = "${GITHUB_SHA}" ]; then
+                deployed=1
+                break
+              fi
+              sleep 10
+            done
+            test "${deployed}" = "1" || { echo "VERCEL_EXACT_COMMIT_NOT_LIVE"; exit 1; }
+            health="$(cat /tmp/vercel-health.json)"
+          else
+            health="$(curl -sS --connect-timeout 8 --max-time 25 "${VERCEL_BACKEND_URL}/health")"
+          fi
           printf '%s\n' "${health}" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"' >/dev/null
           echo "VERCEL_HEALTH_PASS"
 
@@ -226,6 +243,31 @@ jobs:
           fi
           jq -c '{ok, realtime, fresh_request, engine, engine_version, retrieved_at, providers, verification, domains_used, extracted_text_chars, fetched_pages: (.fetched_pages | length), sources: (.sources | length)}' /tmp/vercel-search.json
           echo "VERCEL_AUTHENTICATED_REALTIME_SEARCH_PASS"
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            cat > /tmp/vercel-generate-request.json <<'JSON'
+          {"messages":[{"role":"user","content":"Busca información actual sobre la comuna de Las Condes en Chile y responde brevemente con fuentes verificadas."}],"personality":"NEUTRO"}
+          JSON
+            generation_status="$(curl -sS --connect-timeout 8 --max-time 150 \
+              -o /tmp/vercel-generation.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${token}" \
+              -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+              -H "X-DEEP33-Session-Id: ${session_id}" \
+              -H "X-Request-ID: vercel-generation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              -H "X-Idempotency-Key: vercel-generation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/vercel-generate-request.json \
+              "${VERCEL_BACKEND_URL}/v1/ai/generate" || true)"
+            if [ "${generation_status}" != "200" ] || ! jq -e \
+              '.web_navigation==true and (.sources | length)>=1 and ((.result.text // "") | length)>=60 and all(.sources[]; (.url | startswith("https://")))' \
+              /tmp/vercel-generation.json >/dev/null 2>&1; then
+              echo "VERCEL_SOURCE_BACKED_GENERATION_FAIL http=${generation_status}"
+              jq -c '{request_id, latency_ms, web_navigation, sources: (.sources | length), result: {text_chars: ((.result.text // "") | length), model: .result.model}, error: .detail}' /tmp/vercel-generation.json 2>/dev/null || true
+              exit 1
+            fi
+            jq -c '{request_id, latency_ms, web_navigation, sources: [.sources[] | {title, url, provider}], result: {text_chars: (.result.text | length), model: .result.model}}' /tmp/vercel-generation.json
+            echo "VERCEL_SOURCE_BACKED_GENERATION_PASS"
+          fi
 
       - name: Android lint and build
         run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
