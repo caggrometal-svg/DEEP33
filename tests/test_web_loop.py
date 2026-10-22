@@ -200,7 +200,7 @@ def test_sanitize_assistant_text_removes_provider_citation_markup() -> None:
     assert sanitize_assistant_text(text, []) == "DEEP33 entrega la conclusión."
 
 
-def test_sanitize_generation_output_clears_source_metadata() -> None:
+def test_sanitize_generation_output_preserves_safe_source_metadata() -> None:
     from backend.main import sanitize_generation_output
 
     output = {
@@ -218,10 +218,20 @@ def test_sanitize_generation_output_clears_source_metadata() -> None:
                 }
             ]
         },
-        "sources": [{"title": "Example", "url": "https://example.com"}],
+        "sources": [
+            {"title": "Example", "url": "https://example.com"},
+            {"title": "Unsafe", "url": "http://unsafe.example"},
+        ],
+        "web_navigation": True,
     }
     sanitized = sanitize_generation_output(output)
-    assert sanitized["sources"] == []
+    assert sanitized["sources"] == [{
+        "title": "Example",
+        "url": "https://example.com",
+        "snippet": "",
+        "provider": "unknown",
+    }]
+    assert sanitized["web_navigation"] is True
     assert "cite" not in sanitized["result"]["text"]
     assert "example.com" not in sanitized["response"]["choices"][0]["message"]["content"]
 
