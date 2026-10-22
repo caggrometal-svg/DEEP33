@@ -39,7 +39,9 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
 
 def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
     source = read("android/app/build.gradle.kts")
+    assert '"https://deep33-backend.vercel.app"' in source
     assert '"https://deep33-backend.onrender.com"' in source
+    assert '"DEEP33_QUATERNARY_URL"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
     assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
     assert 'Transport contract is immutable by build environment' in source
@@ -87,6 +89,7 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
 
 def test_transport_workflows_keep_canonical_endpoint_set() -> None:
     expected = {
+        "https://deep33-backend.vercel.app",
         "https://deep33-backend.onrender.com",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
