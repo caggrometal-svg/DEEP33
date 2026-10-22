@@ -65,7 +65,7 @@ android {
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
-    // Render backend as final transport fallback.
+    // Vercel FastAPI web-aware fallback, Render kept as final legacy fallback.
     // Transport contract is immutable by build environment. The three URLs below are
     // the only DEEP33 application routes; CI may repeat them for verification, but may
     // never replace them silently.
@@ -73,17 +73,20 @@ android {
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
     val canonicalSecondaryUrl =
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"
-    val canonicalTertiaryUrl = "https://deep33-backend.onrender.com"
+    val canonicalTertiaryUrl = "https://deep33-backend.vercel.app"
+    val canonicalQuaternaryUrl = "https://deep33-backend.onrender.com"
 
     val suppliedEndpoints = listOf(
         "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
         "DEEP33_SECONDARY_URL" to System.getenv("DEEP33_SECONDARY_URL")?.trim().orEmpty(),
         "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
+        "DEEP33_QUATERNARY_URL" to System.getenv("DEEP33_QUATERNARY_URL")?.trim().orEmpty(),
     )
     val canonicalEndpoints = listOf(
         canonicalPrimaryUrl,
         canonicalSecondaryUrl,
         canonicalTertiaryUrl,
+        canonicalQuaternaryUrl,
     )
     val endpointByName = canonicalEndpoints.withIndex().associate { (index, value) ->
         suppliedEndpoints[index].first to value
@@ -105,11 +108,13 @@ android {
     val primaryUrl = canonicalPrimaryUrl
     val secondaryUrl = canonicalSecondaryUrl
     val tertiaryUrl = canonicalTertiaryUrl
+    val quaternaryUrl = canonicalQuaternaryUrl
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
+        buildConfigField("String", "DEEP33_QUATERNARY_URL", quoteBuildConfig(quaternaryUrl))
     }
 
     compileOptions {
