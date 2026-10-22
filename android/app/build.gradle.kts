@@ -66,7 +66,7 @@ android {
 
     // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
     // Vercel FastAPI web-aware fallback, Render kept as final legacy fallback.
-    // Transport contract is immutable by build environment. The three URLs below are
+    // Transport contract is immutable by build environment. The four URLs below are
     // the only DEEP33 application routes; CI may repeat them for verification, but may
     // never replace them silently.
     val canonicalPrimaryUrl =
