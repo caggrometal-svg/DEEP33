@@ -88,6 +88,54 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
     assert sources[0]["url"] == "https://example.com/"
     assert calls == {"gateway": 1, "search": 1, "fetch": 1}
 
+def test_generation_output_preserves_verified_web_sources() -> None:
+    source = {
+        "title": "Official current information",
+        "url": "https://example.com/current",
+        "snippet": "Current facts from an external page.",
+        "provider": "bing",
+    }
+    output = {
+        "request_id": "web-source-contract",
+        "result": {"role": "assistant", "text": "Respuesta basada en evidencia."},
+        "response": {
+            "model": "test",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Respuesta basada en evidencia."},
+            }],
+        },
+        "sources": [source],
+        "web_navigation": True,
+    }
+
+    sanitized = main.sanitize_generation_output(output)
+
+    assert sanitized["sources"] == [source]
+    assert sanitized["web_navigation"] is True
+
+
+def test_generation_output_does_not_claim_web_navigation_without_https_sources() -> None:
+    output = {
+        "result": {"role": "assistant", "text": "Respuesta sin fuente."},
+        "sources": [{"title": "Unsafe source", "url": "http://example.com/current"}],
+        "web_navigation": True,
+    }
+
+    sanitized = main.sanitize_generation_output(output)
+
+    assert sanitized["sources"] == []
+    assert sanitized["web_navigation"] is False
+
+
+def test_generation_response_exposes_sources_returned_by_web_tool_loop() -> None:
+    import inspect
+
+    source = inspect.getsource(main.generate)
+    assert '"sources": sources' in source
+    assert '"web_navigation": bool(sources)' in source
+
+
 def test_source_metadata_never_leaks_into_final_text() -> None:
     final = main.sanitize_assistant_text(
         "Respuesta sintetizada.\n\nFuentes consultadas:\n1. [Example](https://example.com/)\n2. https://example.org/",
