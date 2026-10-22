@@ -204,7 +204,7 @@ jobs:
               -X POST "${SUPABASE_URL}/functions/v1/deep33-auth" \
               -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
               -H "content-type: application/json" \
-              -d "{\\"action\\":\\"session\\",\\"memory_profile_id\\":\\"${profile_id}\\"}" || true)"
+              -d "{\"action\":\"session\",\"memory_profile_id\":\"${profile_id}\"}" || true)"
             if [ "${auth_status}" = "200" ] && jq -e '.access_token | strings | length > 0' /tmp/vercel-auth.json >/dev/null 2>&1; then
               token="$(jq -r '.access_token' /tmp/vercel-auth.json)"
               break
