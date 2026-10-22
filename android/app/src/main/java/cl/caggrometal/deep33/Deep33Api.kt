@@ -118,6 +118,7 @@ object Deep33Api {
         BuildConfig.DEEP33_PRIMARY_URL,
         BuildConfig.DEEP33_SECONDARY_URL,
         BuildConfig.DEEP33_TERTIARY_URL,
+        BuildConfig.DEEP33_QUATERNARY_URL,
     ).mapNotNull(::validateEndpoint).distinct()
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
