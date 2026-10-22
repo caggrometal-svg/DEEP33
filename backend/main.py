@@ -1715,6 +1715,70 @@ async def _fetch_web_source(
         and not publisher_host.endswith(".google.com")
     ):
         try:
+            # Resolve the Google News redirect itself before spending the remaining
+            # time budget on secondary searches. fetch_page enforces public-host and
+            # redirect validation; only accept text from the declared publisher host.
+            try:
+                redirected = await fetch_page(
+                    url,
+                    timeout_seconds=min(2.0, max(1.4, timeout_seconds)),
+                    direct_timeout_seconds=0.65,
+                    max_redirects=min(3, int(os.getenv("WEB_FETCH_MAX_REDIRECTS", "3"))),
+                    max_text_chars=min(50_000, int(os.getenv("WEB_FETCH_MAX_TEXT_CHARS", "50000"))),
+                    fresh=True,
+                )
+                redirected_url = str(
+                    redirected.get("final_url") or redirected.get("url") or ""
+                ).strip() if isinstance(redirected, dict) else ""
+                redirected_host = (
+                    urlparse(redirected_url).hostname or ""
+                ).casefold().removeprefix("www.")
+                redirected_text = str(
+                    redirected.get("text") or ""
+                ).strip() if isinstance(redirected, dict) else ""
+                publisher_matches = bool(
+                    publisher_host
+                    and (
+                        redirected_host == publisher_host
+                        or redirected_host.endswith("." + publisher_host)
+                    )
+                )
+                if (
+                    isinstance(redirected, dict)
+                    and redirected.get("ok") is True
+                    and redirected_url.startswith("https://")
+                    and redirected_host
+                    and redirected_host != "news.google.com"
+                    and not redirected_host.endswith(".google.com")
+                    and publisher_matches
+                    and len(redirected_text) >= 80
+                ):
+                    logger.info(
+                        "web_evidence_google_news_redirect_resolved request_id=%s publisher=%s domain=%s text_chars=%s",
+                        request_id or "unknown",
+                        publisher_host,
+                        redirected_host,
+                        len(redirected_text),
+                    )
+                    return {
+                        "title": str(redirected.get("title") or source.get("title") or redirected_url)[:300],
+                        "url": redirected_url[:2000],
+                        "text": redirected_text[:5000],
+                        "provider": provider,
+                        "domain": redirected_host,
+                        "retrieved_at": redirected.get("retrieved_at"),
+                        "text_chars": len(redirected_text),
+                    }
+            except asyncio.CancelledError:
+                raise
+            except Exception as redirect_error:
+                logger.info(
+                    "web_evidence_google_news_direct_redirect_miss request_id=%s publisher=%s error=%s",
+                    request_id or "unknown",
+                    publisher_host,
+                    type(redirect_error).__name__,
+                )
+
             raw_title = str(source.get("title") or "").strip()
             # Site-qualified exact-title searches are fragile across free engines.
             # Search the publisher name plus the article title, then strictly accept
