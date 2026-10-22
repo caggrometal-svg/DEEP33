@@ -185,10 +185,17 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Verify authenticated live search on Vercel fallback
-        env:
-          VERCEL_BACKEND_URL: https://deep33-backend.vercel.app
         run: |
           set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            VERCEL_BACKEND_URL="https://deep33-backend.vercel.app"
+          else
+            branch_name="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+            branch_slug="$(printf '%s' "${branch_name}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+            VERCEL_BACKEND_URL="https://deep33-backend-git-${branch_slug}-iac33.vercel.app"
+          fi
+          export VERCEL_BACKEND_URL
+          echo "VERCEL_TEST_TARGET=${VERCEL_BACKEND_URL}"
           profile_id="ci-vercel-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}"
           auth_status="$(curl -sS --connect-timeout 8 --max-time 30 \
             -o /tmp/vercel-auth.json -w '%{http_code}' \
