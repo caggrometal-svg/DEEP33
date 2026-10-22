@@ -560,3 +560,50 @@ def test_web_grounding_contract_forbids_model_memory_gap_filling() -> None:
     assert "Never fill an evidence gap from model memory" in prompt
     assert "Fetched-page text outranks search snippets" in prompt
     assert "conflict" in prompt.lower()
+
+
+def test_google_news_wrapper_resolves_to_publisher_before_search_rescue(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"fetch": 0, "search": 0}
+    wrapper_url = "https://news.google.com/rss/articles/example?oc=5"
+    publisher_url = "https://www.biobiochile.cl/noticias/chile/region-metropolitana/2026/10/22/example.shtml"
+    article_text = "Información publicada por el medio. " * 8
+
+    async def fake_fetch(url: str, **kwargs):
+        calls["fetch"] += 1
+        assert url == wrapper_url
+        return {
+            "ok": True,
+            "url": wrapper_url,
+            "final_url": publisher_url,
+            "title": "Información actual de Chile",
+            "text": article_text,
+            "retrieved_at": "2026-10-22T12:00:00+00:00",
+        }
+
+    async def unexpected_search(*args, **kwargs):
+        calls["search"] += 1
+        raise AssertionError("A direct publisher redirect should not need search rescue")
+
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+    monkeypatch.setattr(main, "search_web", unexpected_search)
+
+    result = asyncio.run(
+        main._fetch_web_source(
+            {
+                "title": "Información actual de Chile",
+                "url": wrapper_url,
+                "snippet": "Descripción breve del artículo publicado hoy.",
+                "provider": "google_news",
+                "source_domain": "biobiochile.cl",
+            },
+            request_id="google-news-redirect-test",
+            timeout_seconds=3.3,
+            direct_timeout_seconds=0.85,
+        )
+    )
+
+    assert result is not None
+    assert result["url"] == publisher_url
+    assert result["domain"] == "biobiochile.cl"
+    assert result["text_chars"] >= 80
+    assert calls == {"fetch": 1, "search": 0}
