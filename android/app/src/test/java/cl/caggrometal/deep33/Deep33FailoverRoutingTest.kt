@@ -24,10 +24,18 @@ class Deep33FailoverRoutingTest {
     }
 
     @Test
-    fun tertiaryEndpointUsesCanonicalRenderFallback() {
+    fun tertiaryEndpointUsesVercelFastApiFallback() {
+        assertEquals(
+            "https://deep33-backend.vercel.app",
+            BuildConfig.DEEP33_TERTIARY_URL.trim()
+        )
+    }
+
+    @Test
+    fun quaternaryEndpointPreservesRenderAsFinalFallback() {
         assertEquals(
             "https://deep33-backend.onrender.com",
-            BuildConfig.DEEP33_TERTIARY_URL.trim()
+            BuildConfig.DEEP33_QUATERNARY_URL.trim()
         )
     }
 }
