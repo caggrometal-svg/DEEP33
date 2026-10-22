@@ -196,22 +196,26 @@ jobs:
           fi
           export VERCEL_BACKEND_URL
           echo "VERCEL_TEST_TARGET=${VERCEL_BACKEND_URL}"
-          profile_id="ci-vercel-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}"
-          auth_status="$(curl -sS --connect-timeout 8 --max-time 30 \
-            -o /tmp/vercel-auth.json -w '%{http_code}' \
-            -X POST "${SUPABASE_URL}/functions/v1/deep33-auth" \
-            -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
-            -H "content-type: application/json" \
-            -d "{\"action\":\"session\",\"memory_profile_id\":\"${profile_id}\"}" || true)"
-          if [ "${auth_status}" != "200" ]; then
-            echo "VERCEL_AUTH_SESSION_FAIL http=${auth_status}"
-            jq -c '{error: (.error // "unknown")}' /tmp/vercel-auth.json 2>/dev/null || true
-            exit 1
-          fi
-          token="$(jq -r '.access_token // empty' /tmp/vercel-auth.json)"
-          test -n "${token}" || { echo "VERCEL_AUTH_TOKEN_MISSING"; exit 1; }
-
-          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+          token=""
+          for attempt in $(seq 1 3); do
+            profile_id="ci-vercel-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${SECONDS}-${attempt}"
+            auth_status="$(curl -sS --connect-timeout 8 --max-time 30 \
+              -o /tmp/vercel-auth.json -w '%{http_code}' \
+              -X POST "${SUPABASE_URL}/functions/v1/deep33-auth" \
+              -H "apikey: ${SUPABASE_PUBLISHABLE_KEY}" \
+              -H "content-type: application/json" \
+              -d "{\\"action\\":\\"session\\",\\"memory_profile_id\\":\\"${profile_id}\\"}" || true)"
+            if [ "${auth_status}" = "200" ] && jq -e '.access_token | strings | length > 0' /tmp/vercel-auth.json >/dev/null 2>&1; then
+              token="$(jq -r '.access_token' /tmp/vercel-auth.json)"
+              break
+            fi
+            response_type="$(file -b --mime-type /tmp/vercel-auth.json 2>/dev/null || echo unknown)"
+            response_bytes="$(wc -c < /tmp/vercel-auth.json 2>/dev/null || echo 0)"
+            echo "VERCEL_AUTH_SESSION_RETRY attempt=${attempt} http=${auth_status} content_type=${response_type} bytes=${response_bytes}"
+            sleep 2
+          done
+          test -n "${token}" || { echo "VERCEL_AUTH_SESSION_FAIL retries_exhausted"; exit 1; }
+                    if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             deployed=0
             for attempt in $(seq 1 30); do
               health_status="$(curl -sS --connect-timeout 8 --max-time 25 -o /tmp/vercel-health.json -w '%{http_code}' "${VERCEL_BACKEND_URL}/health" || true)"
