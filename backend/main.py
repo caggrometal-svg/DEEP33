@@ -2715,7 +2715,11 @@ async def health() -> dict:
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "git_branch": GIT_BRANCH,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": (
+            os.getenv("RENDER_INSTANCE_ID", "").strip()
+            or os.getenv("VERCEL_DEPLOYMENT_ID", "").strip()
+            or "local"
+        ),
         "timestamp": utc_now(),
     }
 
