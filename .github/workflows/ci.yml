@@ -238,7 +238,7 @@ jobs:
             '.ok==true and .realtime==true and .fresh_request==true and .engine=="DEEP33 Search Engine" and .engine_version=="1.4.0" and (.verification.relevant_results // 0)>=1 and (.sources | length)>=1 and (.retrieved_at | strings | length)>10' \
             /tmp/vercel-search.json >/dev/null 2>&1; then
             echo "VERCEL_AUTHENTICATED_REALTIME_SEARCH_FAIL http=${search_status}"
-            jq -c '{ok, status, realtime, fresh_request, engine, engine_version, verification, domains_used, extracted_text_chars, errors}' /tmp/vercel-search.json 2>/dev/null || true
+            jq -c '{detail, error, ok, status, realtime, fresh_request, engine, engine_version, verification, domains_used, extracted_text_chars, errors}' /tmp/vercel-search.json 2>/dev/null || true
             exit 1
           fi
           jq -c '{ok, realtime, fresh_request, engine, engine_version, retrieved_at, providers, verification, domains_used, extracted_text_chars, fetched_pages: (.fetched_pages | length), sources: (.sources | length)}' /tmp/vercel-search.json
