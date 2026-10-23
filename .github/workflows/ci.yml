@@ -186,6 +186,60 @@ jobs:
       - name: Android lint and build
         run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
+      - name: Publish Vercel-validation APK
+        if: ${{ success() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DEEP33-vercel-validation-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  vercel_realtime_search:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' }}
+    needs: [backend_unit, android_validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      VERCEL_URL: https://deep33-backend.vercel.app
+    steps:
+      - name: Create authenticated Vercel validation session
+        run: |
+          set -euo pipefail
+          token=''
+          for attempt in $(seq 1 5); do
+            profile_id="ci-vercel-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${attempt}"
+            session_id="ci-vercel-session-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -o "$RUNNER_TEMP/deep33-vercel-auth.json" -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/deep33-auth" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "content-type: application/json" -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            if [ "$status" = "200" ]; then
+              token="$(jq -r '.access_token // empty' "$RUNNER_TEMP/deep33-vercel-auth.json")"
+              if [ -n "$token" ]; then break; fi
+            fi
+            echo "VERCEL_AUTH_RETRY attempt=$attempt http=$status"
+            [ "$attempt" -lt 5 ] && sleep 3
+          done
+          test -n "$token" || { echo "VERCEL_AUTH_SESSION_FAIL"; jq -c '{error:(.error // .message // "unknown")}' "$RUNNER_TEMP/deep33-vercel-auth.json" 2>/dev/null || true; exit 1; }
+          echo "::add-mask::$token"
+          echo "DEEP33_VERCEL_TEST_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "DEEP33_VERCEL_TEST_SESSION_ID=$session_id" >> "$GITHUB_ENV"
+      - name: Verify live Vercel search and page extraction
+        run: |
+          set -euo pipefail
+          status_code="000"
+          for attempt in $(seq 1 4); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
+            if [ "$status_code" = "200" ] && jq -e '.ok == true and .realtime == true and ((.results // []) | length) >= 1 and ((.fetched_pages // []) | length) >= 1 and (.domains_used // 0) >= 1 and (.extracted_text_chars // 0) >= 80' "$RUNNER_TEMP/deep33-vercel-search.json" >/dev/null 2>&1; then
+              jq -c '{ok,status,realtime,provider,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),first_result:((.results // [])[0] // {} | {title,url,source_domain})}' "$RUNNER_TEMP/deep33-vercel-search.json"
+              echo "VERCEL_REALTIME_SEARCH_AND_EXTRACTION_PASS"
+              exit 0
+            fi
+            echo "VERCEL_REALTIME_SEARCH_NOT_READY attempt=$attempt http=$status_code"
+            jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-search.json" 2>/dev/null || true
+            [ "$attempt" -lt 4 ] && sleep 5
+          done
+          echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
+          exit 1
+
   performance_gate:
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
@@ -679,7 +733,7 @@ jobs:
   android_e2e:
     # Run connectivity E2E even when production_gate fails: it supplies independent
     # diagnostics. Only the Android build and change-scope prerequisites are required.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
