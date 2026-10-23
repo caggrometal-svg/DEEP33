@@ -206,8 +206,7 @@ object Deep33Api {
             requestId,
             idempotencyKey,
             endpointOverride,
-            acceptResponse = semanticAcceptance,
-            returnLastRejectedResponse = requireWebEvidence
+            acceptResponse = semanticAcceptance
         )
     }
 
@@ -560,7 +559,6 @@ object Deep33Api {
     ): JSONObject {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
-        var lastRejectedResponse: JSONObject? = null
 
         for (endpoint in normalizedEndpoints(endpointOverride)) {
             var attempt = 0
@@ -625,7 +623,6 @@ object Deep33Api {
                     // as unusable so the next failover endpoint can serve the
                     // current remote memory store.
                     if (acceptResponse != null && !acceptResponse(json)) {
-                        lastRejectedResponse = json
                         lastError = Deep33ApiException(
                             Deep33ApiException.Kind.BAD_RESPONSE,
                             code
@@ -676,9 +673,9 @@ object Deep33Api {
             }
         }
 
-        if (returnLastRejectedResponse && lastRejectedResponse != null) {
-            return lastRejectedResponse
-        }
+        // A response that failed semantic validation is never returned to the UI.
+        // Exhaust the configured failover endpoints first; if all reject it, surface
+        // BAD_RESPONSE so the caller can recover instead of rendering invalid data.
         throw lastError ?: Deep33ApiException(Deep33ApiException.Kind.NETWORK)
     }
 }
