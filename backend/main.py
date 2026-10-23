@@ -4488,7 +4488,7 @@ async def chat(request: ChatRequest, http_request: Request, response: Response) 
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Idempotency-Key"] = idempotency_key
     response.headers["X-DEEP33-Personality"] = output["result"]["personality"]
-    return output
+    return attach_verified_source_links(output)
 
 
 @app.get("/v1/memory/context")
