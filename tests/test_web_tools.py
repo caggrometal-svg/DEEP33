@@ -1377,3 +1377,32 @@ def test_web_search_endpoint_fetches_orchestrator_selected_sources_when_secondar
     assert result["domains_used"] == 2
     assert len(result["results"]) == 2
     assert result["extracted_text_chars"] >= 160
+
+def test_realtime_provider_query_compacts_long_spanish_instructions() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    query = (
+        "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. "
+        "Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+    )
+    provider_query = WebOrchestrator._provider_query(query).casefold()
+
+    assert len(provider_query.split()) <= 10
+    assert "python" in provider_query
+    assert "versión" in provider_query or "version" in provider_query
+    assert "official" in provider_query
+    assert "contrasta" not in provider_query
+    assert "recuperadas" not in provider_query
+    assert "enlaces" not in provider_query
+
+
+def test_realtime_provider_query_preserves_country_when_compacting() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    query = "Busca en Internet el valor actual del dólar en Chile y cita fuentes oficiales."
+    provider_query = WebOrchestrator._provider_query(query).casefold()
+
+    assert "chile" in provider_query
+    assert "dólar" in provider_query or "dolar" in provider_query
+    assert len(provider_query.split()) <= 10
+
