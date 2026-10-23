@@ -28,6 +28,31 @@ def test_disabled_memory_is_noop():
     assert client.enabled is False
 
 
+def test_publishable_supabase_key_enables_memory_client(monkeypatch):
+    for name in (
+        "DEEP33_MEMORY_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+
+    client = MemoryClient()
+
+    assert client.enabled is True
+    assert client.function_url == "https://project.supabase.co/functions/v1/deep33-memory"
+    assert client.api_key == "sb_publishable_test"
+
+
+def test_service_role_key_precedes_publishable_key(monkeypatch):
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service_role_test")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon_test")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+
+    assert MemoryClient._configured_api_key() == "service_role_test"
+
+
 def test_memory_client_success():
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
