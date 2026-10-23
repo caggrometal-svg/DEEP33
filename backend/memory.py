@@ -36,11 +36,7 @@ class MemoryClient:
         self._explicit_function_url = function_url is not None
         self._explicit_api_key = api_key is not None
         self.function_url = configured_url
-        self.api_key = (
-            api_key
-            if api_key is not None
-            else os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
-        ).strip()
+        self.api_key = api_key.strip() if api_key is not None else self._configured_api_key()
         self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
         self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
         self.context_cache_ttl_seconds = max(
@@ -67,6 +63,20 @@ class MemoryClient:
             await self._http_client.aclose()
             self._http_client = None
 
+    @staticmethod
+    def _configured_api_key() -> str:
+        # New Supabase projects commonly expose a publishable API key rather than
+        # the legacy anon-key name. Keep privileged keys first when configured.
+        for name in (
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_PUBLISHABLE_KEY",
+        ):
+            value = os.getenv(name, "").strip()
+            if value:
+                return value
+        return ""
+
     def _refresh_config(self) -> None:
         if not self._explicit_function_url:
             configured_url = os.getenv("DEEP33_MEMORY_URL", "").strip().rstrip("/")
@@ -77,10 +87,7 @@ class MemoryClient:
             self.function_url = configured_url
 
         if not self._explicit_api_key:
-            self.api_key = os.getenv(
-                "SUPABASE_SERVICE_ROLE_KEY",
-                os.getenv("SUPABASE_ANON_KEY", ""),
-            ).strip()
+            self.api_key = self._configured_api_key()
 
     @property
     def enabled(self) -> bool:
