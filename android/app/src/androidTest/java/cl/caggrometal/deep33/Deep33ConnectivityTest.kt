@@ -64,16 +64,30 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun edgeHealthIsPass() {
+    fun primaryHealthMatchesCanonicalBackendContract() {
         val json = Deep33Api.get("/health", sessionId)
-        assertTrue("edge health: " + json, json.optString("status") == "PASS")
-        assertTrue("edge service: " + json, json.optString("service") == "DEEP33 Edge Gateway")
-        assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
-        assertTrue("edge transport: " + json, json.optString("transport") == "https")
-        assertTrue(
-            "edge failover support: " + json,
-            json.optBoolean("failover_supported", false)
-        )
+        assertTrue("backend health: " + json, json.optString("status") == "PASS")
+
+        when (json.optString("service")) {
+            "DEEP33 Backend" -> {
+                // Vercel is the canonical Android endpoint; it reports the FastAPI
+                // backend contract, not the older Supabase edge-gateway contract.
+                assertTrue("backend version missing: " + json, json.optString("version").isNotBlank())
+                assertTrue("backend build id missing: " + json, json.optString("build_id").isNotBlank())
+                assertTrue("backend timestamp missing: " + json, json.optString("timestamp").isNotBlank())
+            }
+            "DEEP33 Edge Gateway" -> {
+                // Keep compatibility with the Supabase edge endpoint when failover
+                // selected it after the canonical Vercel endpoint was unavailable.
+                assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
+                assertTrue("edge transport: " + json, json.optString("transport") == "https")
+                assertTrue(
+                    "edge failover support: " + json,
+                    json.optBoolean("failover_supported", false)
+                )
+            }
+            else -> assertTrue("unexpected backend health contract: " + json, false)
+        }
     }
 
     @Test
