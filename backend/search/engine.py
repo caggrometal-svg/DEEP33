@@ -66,7 +66,7 @@ _REALTIME_QUERY_FILLERS = {
     "busca", "buscar", "buscando", "una", "uno", "un",
     "publicada", "publicado", "publicadas", "publicados",
     "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
-    "oficialmente", "más", "mas",
+    "oficialmente", "más", "mas", "cuál", "cual", "cuáles", "cuales",
     "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
     "oficial", "oficiales", "fiable", "fiables", "verificada", "verificado",
     "titular", "titulares", "fecha", "resumen", "breve", "enlace", "enlaces",
