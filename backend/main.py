@@ -2125,7 +2125,28 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
         ),
     })
-    return working, list(sources.values()), evidence_fragments, compact_web_evidence
+    # Expose URLs that actually contributed fetched text. Only use result snippets
+    # as a fallback when the realtime evidence policy explicitly accepted them.
+    source_links: dict[str, dict[str, Any]] = {}
+    for item in compact_fetched_pages:
+        url = str(item.get("url") or "").strip()
+        if url:
+            source_links[url] = {
+                "title": str(item.get("title") or url),
+                "url": url,
+                "provider": str(item.get("provider") or "web_fetch"),
+            }
+    if snippet_fallback_used:
+        for item in snippet_evidence:
+            url = str(item.get("url") or "").strip()
+            if url and url not in source_links:
+                source_links[url] = {
+                    "title": str(item.get("title") or url),
+                    "url": url,
+                    "snippet": str(item.get("snippet") or ""),
+                    "provider": str(item.get("provider") or "web_search"),
+                }
+    return working, safe_web_sources(list(source_links.values())), evidence_fragments, compact_web_evidence
 
 
 async def run_web_tool_loop(
