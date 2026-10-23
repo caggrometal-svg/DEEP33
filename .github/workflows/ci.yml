@@ -801,9 +801,10 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    # Run connectivity E2E even when production_gate fails: it supplies independent
-    # diagnostics. Only the Android build and change-scope prerequisites are required.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    # This E2E exercises the canonical deployed backend. Run it after production
+    # deployment (or on explicit dispatch); pull requests use build, instrumentation,
+    # and the dedicated live Vercel search check without confusing old prod with branch code.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
