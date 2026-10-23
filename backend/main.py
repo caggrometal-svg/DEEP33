@@ -2120,7 +2120,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "For realtime requests, never infer that nothing is happening merely because evidence is weak, sparse, or missing; "
             "only state that no relevant current event was found when the current search evidence actually supports that conclusion. "
             "For date/time questions, obey the authoritative runtime clock in DEEP33's system context. "
-            "Do not copy, paste, mirror source phrasing, reproduce paragraphs, or add source links/citations to the user's answer.\n"
+            "Write an original synthesis grounded in the retrieved evidence. Include direct Markdown links to the relevant source URLs supplied in the evidence, preferably 2-4 independent domains. Use the newest publication or retrieval dates available, distinguish confirmed facts from uncertainty, and never state a current fact that the evidence does not support. Do not copy source phrasing or reproduce paragraphs.\n"
             + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
         ),
     })
