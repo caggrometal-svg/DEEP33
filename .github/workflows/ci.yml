@@ -196,7 +196,7 @@ jobs:
           retention-days: 14
 
   vercel_realtime_search:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' }}
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026') || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -239,6 +239,43 @@ jobs:
           done
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
           exit 1
+      - name: Verify natural-language Spanish query stays on topic (production only)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          query="Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+          status_code="000"
+          for attempt in $(seq 1 8); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 \
+              -o "$RUNNER_TEMP/deep33-vercel-spanish-search.json" -w "%{http_code}" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              -H "Cache-Control: no-cache" \
+              --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=$query" || true)"
+            if [ "$status_code" = "200" ] && jq -e '
+              .ok == true and .realtime == true and
+              ((.results // []) | length) >= 2 and
+              ((.fetched_pages // []) | length) >= 2 and
+              (.domains_used // 0) >= 2 and
+              (.extracted_text_chars // 0) >= 80 and
+              ((([.results[]? | ((.title // "") + " " + (.url // "") + " " + (.snippet // ""))] | join(" ")) | ascii_downcase) | test("python"))
+            ' "$RUNNER_TEMP/deep33-vercel-spanish-search.json" >/dev/null 2>&1; then
+              jq -c '{
+                ok,status,realtime,providers,domains_used,extracted_text_chars,
+                results:([.results[]? | {title,url,source_domain}][0:5]),
+                fetched_pages_count:((.fetched_pages // [])|length)
+              }' "$RUNNER_TEMP/deep33-vercel-spanish-search.json"
+              echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_PASS"
+              exit 0
+            fi
+            echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_RETRY attempt=$attempt http=$status_code"
+            jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-spanish-search.json" 2>/dev/null || true
+            [ "$attempt" -lt 8 ] && sleep 5
+          done
+          echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_FAIL http=$status_code"
+          exit 1
+
       - name: Verify current Chilean dollar through Android streaming endpoint
         shell: bash
         run: |
