@@ -2557,7 +2557,35 @@ def sanitize_generation_output(output: dict) -> dict:
             message = choices[0].get("message")
             if isinstance(message, dict) and isinstance(message.get("content"), str):
                 message["content"] = sanitize_assistant_text(message["content"])
-    output["sources"] = []
+    raw_sources = output.get("sources")
+    sanitized_sources: list[dict[str, str]] = []
+    seen_source_urls: set[str] = set()
+    if isinstance(raw_sources, list):
+        for source in raw_sources[:8]:
+            if not isinstance(source, dict):
+                continue
+            url = str(source.get("url") or "").strip()
+            parsed = urlparse(url)
+            if (
+                parsed.scheme.lower() != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+            ):
+                continue
+            if url in seen_source_urls:
+                continue
+            seen_source_urls.add(url)
+            sanitized_sources.append({
+                "title": str(source.get("title") or url)[:300],
+                "url": url[:2000],
+                "snippet": str(source.get("snippet") or "")[:1000],
+                "provider": str(source.get("provider") or "unknown")[:80],
+            })
+    output["sources"] = sanitized_sources
+    # Android uses this contract to reject ungrounded current answers.
+    # Never claim web navigation unless at least one safe HTTPS source survives.
+    output["web_navigation"] = bool(output.get("web_navigation")) and bool(sanitized_sources)
     return output
 
 
@@ -2605,8 +2633,8 @@ def normalize_shared_generation_output(
                 "finish_reason": "stop",
             }],
         },
-        "sources": [],
-        "web_navigation": False,
+        "sources": output.get("sources") if isinstance(output.get("sources"), list) else [],
+        "web_navigation": bool(output.get("web_navigation")),
     }
     return sanitize_generation_output(normalized)
 
@@ -4165,9 +4193,10 @@ async def generate(
             "latency_ms": elapsed_ms,
             "result": result,
             "response": data,
-            "sources": [],
-            "web_navigation": False,
+            "sources": sources,
+            "web_navigation": bool(sources),
         }
+        output = sanitize_generation_output(output)
         cache_put(session_id, idempotency_key, request_hash, output)
         if record.get("_storage") == "local":
             local_idempotency_complete(
