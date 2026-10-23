@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -417,7 +417,28 @@ class WebOrchestrator:
             # original user query for ranking.
             return "Chile noticias hoy actualidad acontecimientos recientes"
         if is_realtime_query(cleaned):
-            return cleaned
+            # Realtime questions must retain their topical entities, not their
+            # full conversational instructions. The raw Spanish prompt often
+            # causes search providers to return a completely different topic.
+            normalized_lookup = _normalise_lookup_query(cleaned)
+            realtime_tokens = list(dict.fromkeys(_topic_tokens(normalized_lookup)))
+            if "chile" in lowered and "chile" not in {token.casefold() for token in realtime_tokens}:
+                realtime_tokens.append("Chile")
+            if any(term in lowered for term in ("oficial", "official", "sitio oficial", "documentación oficial")):
+                if "official" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("official")
+            if any(term in lowered for term in (
+                "hoy", "ahora", "actual", "actualmente", "último", "última",
+                "últimos", "últimas", "reciente", "recientes", "latest", "current",
+                "today", "right now", "en vivo",
+            )):
+                # Search providers need a freshness cue, but it should not
+                # outweigh the actual topic or location.
+                if "latest" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("latest")
+            if 2 <= len(realtime_tokens) <= 10:
+                return " ".join(realtime_tokens)
+            return normalized_lookup or cleaned
         government_site_intent = any(
             term in lowered
             for term in (
