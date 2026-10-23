@@ -67,7 +67,7 @@ android {
     // Canonical DEEP33 transport order at runtime: Vercel first for the active
     // backend test, then the existing Supabase Edge routes and Render as final fallback.
     // The existing service URLs and their order relative to each other are preserved.
-    // Platform endpoints are immutable by build environment; overrides cannot replace them.
+    // Transport contract is immutable by build environment; overrides cannot replace it.
     val canonicalVercelUrl = "https://deep33-backend.vercel.app"
     val canonicalPrimaryUrl =
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
