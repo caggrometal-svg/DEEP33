@@ -183,9 +183,9 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
             [
                 {"role": "system", "content": "Server-side web evidence"},
             ],
-            [{"title": "Example", "url": "https://example.com"}],
+            [{"title": "Trusted evidence", "url": "https://trusted.example.org/page/"}],
             ["evidence"],
-            [{"title": "Example", "url": "https://example.com", "snippet": "evidence"}],
+            [{"title": "Trusted evidence", "url": "https://trusted.example.org/page/", "snippet": "evidence"}],
         )
 
     monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
@@ -214,6 +214,8 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
     assert response.status_code == 200
     assert "Respuesta propia de DEEP33." in body
     assert "example.com" not in body
+    assert "https://trusted.example.org/page/" in body
+    assert "Fuentes consultadas:" in body
     assert "turn1search1" not in body
     assert "Fuentes:" not in body
 
