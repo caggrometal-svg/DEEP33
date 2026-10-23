@@ -1356,3 +1356,61 @@ def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
     domains = {item["source_domain"] for item in results}
     assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
     assert len(domains) >= 3
+
+def test_known_reference_query_uses_general_web_search_fanout(monkeypatch):
+    import backend.search.resilient as resilient
+    from backend.search.resilient import WebOrchestrator
+    from tools import web_search
+
+    calls = []
+
+    class FakeOrchestrator(WebOrchestrator):
+        async def search(self, query, *, fresh=False, budget_seconds=None):
+            calls.append(query)
+            return {
+                "ok": True,
+                "status": "OK",
+                "query": query,
+                "realtime": False,
+                "providers": ["bing", "google"],
+                "provider": "bing",
+                "winner_provider": "bing",
+                "results": [
+                    {
+                        "title": "Asyncio general web result",
+                        "url": "https://example.org/asyncio",
+                        "snippet": "Independent general-web result for the requested topic.",
+                        "source_domain": "example.org",
+                    }
+                ],
+                "sources": [],
+                "verification": {
+                    "level": "multi-provider",
+                    "distinct_domains": 1,
+                    "distinct_providers": 2,
+                    "relevant_results": 1,
+                },
+                "errors": [],
+            }
+
+    orchestrator = FakeOrchestrator(max_results=5)
+    monkeypatch.setattr(
+        resilient,
+        "get_web_orchestrator",
+        lambda _max_results: orchestrator,
+    )
+
+    result = asyncio.run(
+        web_search.search_web(
+            "python asyncio official documentation",
+            timeout_seconds=2.0,
+            max_results=5,
+            fresh=True,
+        )
+    )
+
+    assert calls == ["python asyncio official documentation"]
+    assert result["providers"] == ["bing", "google"]
+    assert result["results"][0]["url"] == "https://example.org/asyncio"
+    assert result["fresh_request"] is True
+
