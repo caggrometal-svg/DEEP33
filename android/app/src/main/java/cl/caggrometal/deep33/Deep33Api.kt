@@ -76,7 +76,7 @@ object Deep33Api {
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
-    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 12_000
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
