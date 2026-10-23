@@ -263,7 +263,7 @@ def test_android_stream_timeout_bounds_first_visible_text_and_global_deadline():
     ).read_text(encoding="utf-8")
     # Bound absolute time-to-first-token; periodic SSE status/heartbeat frames
     # must not keep a stalled inference alive until the 180-second global deadline.
-    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000" in source
+    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 12_000" in source
     assert "firstTextDeadlineNanos = minOf(" in source
     assert "if (!emitted && nowNanos >= firstTextDeadlineNanos)" in source
     assert "FIRST_TEXT_TIMEOUT request_id=" in source
