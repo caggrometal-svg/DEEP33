@@ -86,7 +86,11 @@ android {
         canonicalSecondaryUrl,
         canonicalTertiaryUrl,
     )
-    val endpointByName = canonicalEndpoints.withIndex().associate { (index, value) ->
+    val endpointByName = listOf(
+        canonicalPrimaryUrl,
+        canonicalSecondaryUrl,
+        canonicalTertiaryUrl,
+    ).withIndex().associate { (index, value) ->
         suppliedEndpoints[index].first to value
     }
     val unexpectedOverrides = suppliedEndpoints.filter { (name, value) ->
