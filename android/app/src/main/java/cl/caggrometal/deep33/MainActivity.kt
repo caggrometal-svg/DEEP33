@@ -2969,7 +2969,8 @@ class MainActivity : Activity() {
     private fun renderMarkdown(view: TextView, markdown: String, isAssistant: Boolean = false) {
         view.text = MarkdownRenderer.render(
             markdown,
-            suppressAssistantSources = isAssistant
+            suppressAssistantSources = isAssistant &&
+                !markdown.contains("Fuentes consultadas:", ignoreCase = true)
         )
         view.movementMethod = LinkMovementMethod.getInstance()
     }
