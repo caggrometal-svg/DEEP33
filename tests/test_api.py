@@ -860,3 +860,60 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
         "banmedica" not in item["url"].casefold()
         for item in body["results"]
     )
+
+def test_memory_routes_scope_reads_and_writes_to_authenticated_owner(monkeypatch) -> None:
+    seen: list[tuple[str, str]] = []
+
+    class CapturingMemory(FakeMemory):
+        async def context(self, session_id: str, memory_profile_id=None, access_token=None) -> dict:
+            seen.append(("context", session_id))
+            return {"session": {"session_id": session_id}, "messages": [], "memories": []}
+
+        async def sync(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("sync", session_id))
+            return {"ok": True}
+
+        async def remember(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("remember", session_id))
+            return {"ok": True}
+
+        async def set_preferences(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("preferences", session_id))
+            return {"ok": True}
+
+    async def authenticate_as_test_owner(request, *_args, **_kwargs):
+        request.state.user_id = "owner-a"
+        return None
+
+    monkeypatch.setattr(main, "memory", CapturingMemory())
+    monkeypatch.setattr(main, "enforce_client_controls", authenticate_as_test_owner)
+
+    headers = {"X-DEEP33-Session-Id": "session-a"}
+    context = client.get("/v1/memory/context", headers=headers)
+    sync = client.post(
+        "/v1/memory/sync",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "scope regression"}]},
+    )
+    remember = client.post(
+        "/v1/memory/remember",
+        headers=headers,
+        json={"kind": "fact", "content": "scope regression"},
+    )
+    preferences = client.put(
+        "/v1/memory/preferences",
+        headers=headers,
+        json={"personality": "NEUTRO", "preferences": {}},
+    )
+
+    assert context.status_code == 200, context.text
+    assert sync.status_code == 200, sync.text
+    assert remember.status_code == 200, remember.text
+    assert preferences.status_code == 200, preferences.text
+    assert seen == [
+        ("context", "owner-a:session-a"),
+        ("sync", "owner-a:session-a"),
+        ("remember", "owner-a:session-a"),
+        ("preferences", "owner-a:session-a"),
+    ]
+
