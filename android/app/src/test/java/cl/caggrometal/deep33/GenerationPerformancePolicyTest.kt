@@ -41,6 +41,18 @@ class GenerationPerformancePolicyTest {
     }
 
     @Test
+    fun semanticBadResponseRemainsFailoverableForIdempotentPost() {
+        assertTrue(
+            Deep33FailoverPolicy.canFailover(
+                method = "POST",
+                requestBodyStarted = true,
+                error = Deep33ApiException.Kind.BAD_RESPONSE,
+                idempotentRequest = true
+            )
+        )
+    }
+
+    @Test
     fun failoverPolicyRemainsIdempotentForPost() {
         assertTrue(
             Deep33FailoverPolicy.canFailover(
