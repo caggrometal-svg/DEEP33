@@ -239,7 +239,40 @@ jobs:
           done
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
           exit 1
-
+      - name: Verify current Chilean dollar through Android streaming endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/deep33-vercel-finance.sse"
+          headers="$RUNNER_TEMP/deep33-vercel-finance.headers"
+          set +e
+          status_code="$(curl -sS --no-buffer --connect-timeout 10 --max-time 45 \
+            -D "$headers" -o "$body" -w "%{http_code}" \
+            -X POST "$VERCEL_URL/v1/chat/stream" \
+            -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+            -H "X-Request-ID: ci-vercel-finance-$GITHUB_RUN_ID" \
+            -H "X-Idempotency-Key: ci-vercel-finance-$GITHUB_RUN_ID" \
+            -H "X-DEEP33-Personality: NEUTRO" \
+            -H "x-deep33-skip-web-tools: true" \
+            -H "Accept: text/event-stream" \
+            -H "Content-Type: application/json" \
+            --data '{"messages":[{"role":"user","content":"Valor del dólar en Chile hoy"}],"personality":"NEUTRO"}')"
+          curl_rc=$?
+          set -e
+          echo "VERCEL_FINANCE_STREAM http=$status_code curl_exit=$curl_rc"
+          if [ "$curl_rc" -ne 0 ] || [ "$status_code" != "200" ]; then
+            tail -c 2500 "$body" 2>/dev/null || true
+            exit 1
+          fi
+          if ! grep -qi "pesos chilenos" "$body"; then
+            echo "VERCEL_FINANCE_STREAM_MISSING_VERIFIED_QUOTE"
+            tail -c 4000 "$body"
+            exit 1
+          fi
+          echo "VERCEL_FINANCE_STREAM_PASS verified_quote_present"
+          
   performance_gate:
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
