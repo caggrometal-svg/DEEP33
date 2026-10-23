@@ -115,6 +115,7 @@ object Deep33Api {
     }
 
     private fun canonicalEndpoints(): List<String> = listOf(
+        BuildConfig.DEEP33_VERCEL_URL,
         BuildConfig.DEEP33_PRIMARY_URL,
         BuildConfig.DEEP33_SECONDARY_URL,
         BuildConfig.DEEP33_TERTIARY_URL,
