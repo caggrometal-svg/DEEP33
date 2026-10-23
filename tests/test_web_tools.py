@@ -916,7 +916,9 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     )
 
     assert working
-    assert len(sources) == len(urls)
+    # Source links must identify pages that supplied readable text, not blocked pages.
+    assert {item["url"] for item in sources} == {urls[3], urls[4], urls[5]}
+    assert not any(item["url"] in set(urls[:3]) for item in sources)
     assert set(attempted) == {urls[0], urls[1], urls[3], urls[4], urls[5]}
     assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
