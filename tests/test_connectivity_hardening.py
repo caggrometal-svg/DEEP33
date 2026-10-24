@@ -524,3 +524,22 @@ def test_primary_edge_silent_internal_provider_fails_fast_without_empty_success(
     assert "if (emitted) {" in source
     assert "EDGE_AI_RETRY_COUNT = 0;" in source
 
+def test_every_apk_artifact_workflow_requires_the_current_main_certification() -> None:
+    paths = (
+        ".github/workflows/android-certified-apk.yml",
+        ".github/workflows/android-delivery-apk.yml",
+        ".github/workflows/android-current-apk.yml",
+        ".github/workflows/android-debug-apk.yml",
+        ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-package.yml",
+    )
+    for path in paths:
+        source = read(path)
+        assert "production-pass" in source, path
+        assert "git fetch origin refs/heads/main:refs/remotes/origin/main --force" in source, path
+        assert 'main_head="$(git rev-parse refs/remotes/origin/main^{commit})"' in source, path
+        assert 'test "$certified" = "$current" && test "$certified" = "$main_head"' in source, path
+        # The only APK artifacts distributed as current/certified must come from
+        # a successful main release gate, not from a direct push to main.
+        assert "branches: [main]" not in source, path
+
