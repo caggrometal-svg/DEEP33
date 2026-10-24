@@ -1,0 +1,75 @@
+name: Hostless DEEP33 deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_hostless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HOSTLESS_TOKEN: ${{ secrets.HOSTLESS_TOKEN }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      DEEP33_CLIENT_AUTH_TOKEN: ${{ secrets.DEEP33_CLIENT_AUTH_TOKEN }}
+    steps:
+      - name: Checkout Hostless branch
+        uses: actions/checkout@v4
+
+      - name: Require Hostless token
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${HOSTLESS_TOKEN:-}" || {
+            echo "::error::Missing GitHub Actions secret HOSTLESS_TOKEN"
+            exit 1
+          }
+
+      - name: Install Hostless CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://hostless.cloud/install.sh | bash
+          hostless --version
+
+      - name: Create or link Hostless app
+        shell: bash
+        run: |
+          set -euo pipefail
+          # First try to create the app directly from this Git checkout.
+          # If it already exists, continue and deploy it.
+          hostless create app deep33 --yes --wait || true
+
+      - name: Configure DEEP33 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostless env set DEEP33_WEB_TOOLS_ENABLED=true --app deep33
+          hostless env set WEB_SEARCH_PROVIDER=auto --app deep33
+          hostless env set WEB_SEARCH_FALLBACK_DDG=true --app deep33
+          hostless env set WEB_SEARCH_BING_ENABLED=true --app deep33
+          hostless env set NETWORK_CHECK_URL=https://www.google.com/generate_204 --app deep33
+          hostless env set AI_GATEWAY_PROVIDER=kilo --app deep33
+          hostless env set AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions --app deep33
+          hostless env set AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models --app deep33
+          hostless env set AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free --app deep33
+
+          if [ -n "${AI_GATEWAY_API_KEY:-}" ]; then
+            hostless env set AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY" --app deep33
+          fi
+          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
+            hostless env set SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" --app deep33
+          fi
+          if [ -n "${DEEP33_CLIENT_AUTH_TOKEN:-}" ]; then
+            hostless env set DEEP33_CLIENT_AUTH_TOKEN="$DEEP33_CLIENT_AUTH_TOKEN" --app deep33
+          fi
+
+      - name: Deploy DEEP33
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostless deploy --wait --app deep33
+          hostless info app deep33
