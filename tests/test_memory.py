@@ -194,7 +194,8 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
             assert response.status_code == 200
             body = response.json()
             assert body["ok"] is True
-            assert body["session_id"] == "memory-test-session"
+            assert body["session_id"].endswith(":memory-test-session")
+            assert body["session_id"] != "memory-test-session"
             assert body["saved"] == 2
         finally:
             main.memory = original
