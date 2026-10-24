@@ -60,7 +60,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          hostless env set             DEEP33_WEB_TOOLS_ENABLED=true             WEB_SEARCH_PROVIDER=auto             WEB_SEARCH_FALLBACK_DDG=true             WEB_SEARCH_BING_ENABLED=true             NETWORK_CHECK_URL=https://www.google.com/generate_204             AI_GATEWAY_PROVIDER=kilo             AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions             AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models             AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free             --app deep33
+          hostless env set \
+            DEEP33_WEB_TOOLS_ENABLED=true \
+            WEB_SEARCH_PROVIDER=auto \
+            WEB_SEARCH_FALLBACK_DDG=true \
+            WEB_SEARCH_BING_ENABLED=true \
+            NETWORK_CHECK_URL=https://www.google.com/generate_204 \
+            AI_GATEWAY_PROVIDER=kilo \
+            AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions \
+            AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models \
+            AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free \
+            SUPABASE_URL=https://opocgzydeknuchtrqzfa.supabase.co \
+            SUPABASE_PUBLISHABLE_KEY=sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA \
+            DEEP33_AUTH_SUPABASE_URL=https://opocgzydeknuchtrqzfa.supabase.co \
+            DEEP33_AUTH_API_KEY=sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA \
+            DEEP33_MEMORY_URL=https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-memory \
+            --app deep33
 
           if [ -n "${AI_GATEWAY_API_KEY:-}" ]; then
             hostless env set AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY" --app deep33
