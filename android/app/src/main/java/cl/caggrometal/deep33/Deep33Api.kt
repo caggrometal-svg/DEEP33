@@ -151,8 +151,11 @@ object Deep33Api {
     // disconnect the wrong generation when a stale lifecycle callback arrives.
     private val activeStreamConnections = ConcurrentHashMap<String, HttpsURLConnection>()
 
-    fun get(path: String, sessionId: String): JSONObject =
-        request("GET", path, null, sessionId)
+    fun get(
+        path: String,
+        sessionId: String,
+        endpointOverride: List<String>? = null,
+    ): JSONObject = request("GET", path, null, sessionId, endpointOverride = endpointOverride)
 
     fun getFast(path: String, sessionId: String): JSONObject =
         request(
