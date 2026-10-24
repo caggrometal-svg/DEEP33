@@ -107,6 +107,51 @@ class Deep33ConnectivityTest {
     }
 
     @Test
+    fun vercelPrimaryLiveSearchExtractsMultipleSourcesWithoutFailover() {
+        val query = "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val requestStartedAt = System.nanoTime()
+        val json = Deep33Api.get(
+            "/v1/web/search?q=" + encodedQuery,
+            sessionId,
+            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+
+        assertTrue("Vercel live search was not successful: " + json, json.optBoolean("ok", false))
+        assertTrue("Vercel live search was not realtime: " + json, json.optBoolean("realtime", false))
+        val results = json.optJSONArray("results") ?: JSONArray()
+        val pages = json.optJSONArray("fetched_pages") ?: JSONArray()
+        val domainsUsed = json.optInt("domains_used", 0)
+        val extractedChars = json.optInt("extracted_text_chars", 0)
+        assertTrue("Vercel search returned fewer than two results: " + json, results.length() >= 2)
+        assertTrue("Vercel search extracted fewer than two pages: " + json, pages.length() >= 2)
+        assertTrue("Vercel search used fewer than two domains: " + json, domainsUsed >= 2)
+        assertTrue("Vercel extraction was too short: " + json, extractedChars >= 80)
+
+        val summaries = buildString {
+            for (index in 0 until results.length()) {
+                val item = results.optJSONObject(index) ?: continue
+                append(' ')
+                append(item.optString("title"))
+                append(' ')
+                append(item.optString("url"))
+                append(' ')
+                append(item.optString("snippet"))
+            }
+        }
+        assertTrue(
+            "Vercel results were not relevant to the Python query: " + json,
+            summaries.contains("python", ignoreCase = true)
+        )
+        assertTrue("Vercel search exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
+        println(
+            "ANDROID_VERCEL_LIVE_SEARCH_PASS results=${results.length()} pages=${pages.length()} " +
+                "domains=${domainsUsed} extracted_chars=${extractedChars} total_ms=${elapsedMs}"
+        )
+    }
+
+    @Test
     fun diagnosticsAreOnline() {
         val json = Deep33Api.get("/v1/ai/diagnostics", sessionId)
         assertTrue(json.optBoolean("online", false))
