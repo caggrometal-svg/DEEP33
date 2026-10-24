@@ -1,5 +1,5 @@
 concurrency:
-  group: deep33-ci-v6-${{ github.ref }}
+  group: deep33-ci-v7-${{ github.ref }}
   cancel-in-progress: true
 
 name: DEEP33 CI
@@ -275,9 +275,18 @@ jobs:
           done
           test "$matched" = "1" || { echo "VERCEL_DEPLOYED_SHA_MATCH_FAIL"; exit 1; }
 
+      - name: Mint fresh OIDC token for live Vercel search
+        id: vercel_search_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
       - name: Verify live Vercel search and page extraction
         env:
-          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_search_oidc.outputs.token }}
         run: |
           set -euo pipefail
           status_code="000"
@@ -298,9 +307,18 @@ jobs:
           done
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
           exit 1
+      - name: Mint fresh OIDC token for Spanish live-search check
+        id: vercel_spanish_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
       - name: Verify natural-language Spanish query stays on topic (PR and production)
         env:
-          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_spanish_oidc.outputs.token }}
         run: |
           set -euo pipefail
           query="Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
@@ -337,9 +355,18 @@ jobs:
           echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_FAIL http=$status_code"
           exit 1
 
+      - name: Mint fresh OIDC token for finance-stream check
+        id: vercel_finance_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
       - name: Verify current Chilean dollar through Android streaming endpoint
         env:
-          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_finance_oidc.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -982,22 +1009,12 @@ jobs:
           test -e /dev/kvm
           ls -l /dev/kvm
 
-      - name: Mint short-lived OIDC token for protected Vercel Android E2E
-        id: vercel_e2e_oidc
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
-        with:
-          script: |
-            const token = await core.getIDToken();
-            core.setSecret(token);
-            core.setOutput("token", token);
 
       - name: Android real connectivity E2E — attempt 1
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "1"
@@ -1030,7 +1047,6 @@ jobs:
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "2"
@@ -1063,7 +1079,6 @@ jobs:
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "3"
