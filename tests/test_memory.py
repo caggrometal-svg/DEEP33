@@ -364,4 +364,3 @@ def test_authenticated_context_bypasses_process_local_stale_cache():
 
     asyncio.run(exercise())
     assert calls == 1
-\n
