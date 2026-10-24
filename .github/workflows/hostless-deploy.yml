@@ -102,7 +102,7 @@ jobs:
           for attempt in $(seq 1 8); do
             response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nHTTP_STATUS:%{http_code}' "$url" || true)"
             status="${response##*HTTP_STATUS:}"
-            body="${response%\n'HTTP_STATUS:*}"
+            body="${response%HTTP_STATUS:*}"
             if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ready == true and .memory_configured == true and .memory_ready == true and .gateway.gateway == "PASS" and .network.internet_available == true' >/dev/null 2>&1; then
               printf '%s\n' "$body" | jq '{status,ready,memory_configured,memory_ready,gateway:.gateway.gateway,internet:.network.internet_available,git_sha,build_id}'
               exit 0
