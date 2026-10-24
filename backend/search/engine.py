@@ -66,6 +66,7 @@ _REALTIME_QUERY_FILLERS = {
     "busca", "buscar", "buscando", "una", "uno", "un",
     "publicada", "publicado", "publicadas", "publicados",
     "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
+    "oficialmente", "más", "mas", "cuál", "cual", "cuáles", "cuales",
     "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
     "oficial", "oficiales", "fiable", "fiables", "verificada", "verificado",
     "titular", "titulares", "fecha", "resumen", "breve", "enlace", "enlaces",
@@ -198,7 +199,8 @@ def _normalise_lookup_query(query: str) -> str:
     # Trim instruction clauses even when the prompt is longer than provider limits.
     instruction_clause = (
         r"(?<=[.!?;:])\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
-        r"incluye|resume|cita|describe|presenta|informa|muestra|señala|"
+        r"incluye|resume|cita|cite|describe|presenta|informa|muestra|señala|"
+        r"contrasta|contrastar|compare|compara|comparar|"
         r"no inventes|no afirmes|no supongas|responde en|responde una sola vez|"
         r"usa\s+(?:una\s+)?fuentes?\s+(?:real|reales|actualizada|actualizado|oficial|fiable|verificada)|"
         r"use\s+(?:a\s+)?(?:real|current|official)\s+source|"

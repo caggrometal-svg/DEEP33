@@ -1,5 +1,5 @@
 concurrency:
-  group: deep33-ci-${{ github.ref }}
+  group: deep33-ci-v7-${{ github.ref }}
   cancel-in-progress: true
 
 name: DEEP33 CI
@@ -186,6 +186,306 @@ jobs:
       - name: Android lint and build
         run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
+      - name: Publish Vercel-validation APK
+        if: ${{ success() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: DEEP33-vercel-validation-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  vercel_realtime_search:
+    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026') || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    needs: [backend_unit, android_validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+    steps:
+      - name: Create authenticated Vercel validation session
+        run: |
+          set -euo pipefail
+          token=''
+          for attempt in $(seq 1 5); do
+            profile_id="ci-vercel-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}-${attempt}"
+            session_id="ci-vercel-session-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            status="$(curl -sS --connect-timeout 8 --max-time 30 -o "$RUNNER_TEMP/deep33-vercel-auth.json" -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/deep33-auth" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "content-type: application/json" -d "{\"action\":\"session\",\"memory_profile_id\":\"$profile_id\"}" || true)"
+            if [ "$status" = "200" ]; then
+              token="$(jq -r '.access_token // empty' "$RUNNER_TEMP/deep33-vercel-auth.json")"
+              if [ -n "$token" ]; then break; fi
+            fi
+            echo "VERCEL_AUTH_RETRY attempt=$attempt http=$status"
+            [ "$attempt" -lt 5 ] && sleep 3
+          done
+          test -n "$token" || { echo "VERCEL_AUTH_SESSION_FAIL"; jq -c '{error:(.error // .message // "unknown")}' "$RUNNER_TEMP/deep33-vercel-auth.json" 2>/dev/null || true; exit 1; }
+          echo "::add-mask::$token"
+          echo "DEEP33_VERCEL_TEST_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "DEEP33_VERCEL_TEST_SESSION_ID=$session_id" >> "$GITHUB_ENV"
+
+      - name: Mint short-lived GitHub OIDC token for protected Vercel preview
+        id: vercel_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+
+      - name: Verify deployed Vercel SHA matches the tested commit
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
+          EXPECTED_VERCEL_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          headers=()
+          if [ -n "${VERCEL_TRUSTED_OIDC_TOKEN:-}" ]; then
+            headers+=(-H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN")
+          fi
+          matched=0
+          for attempt in $(seq 1 12); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 30 \
+              -D "$RUNNER_TEMP/deep33-vercel-health.headers" -o "$RUNNER_TEMP/deep33-vercel-health.json" -w "%{http_code}" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              "${headers[@]}" "$VERCEL_URL/health" || true)"
+            if [ "$status_code" = "200" ] && jq -e --arg expected "$EXPECTED_VERCEL_SHA" '
+              .status == "PASS" and
+              (.git_sha | type == "string") and
+              ((.git_sha | ascii_downcase) == ($expected | ascii_downcase)) and
+              (.build_id | type == "string" and length > 0)
+            ' "$RUNNER_TEMP/deep33-vercel-health.json" >/dev/null 2>&1; then
+              jq -c '{status,service,git_sha,build_id,git_branch}' "$RUNNER_TEMP/deep33-vercel-health.json"
+              echo "VERCEL_DEPLOYED_SHA_MATCH_PASS expected=$EXPECTED_VERCEL_SHA"
+              matched=1
+              break
+            fi
+            echo "VERCEL_DEPLOYED_SHA_MISMATCH attempt=$attempt http=$status_code expected=$EXPECTED_VERCEL_SHA"
+            jq -c '{status,service,git_sha,build_id,git_branch}' "$RUNNER_TEMP/deep33-vercel-health.json" 2>/dev/null || true
+            location="$(awk 'tolower($0) ~ /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-health.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
+            content_type="$(awk 'tolower($0) ~ /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-health.headers" 2>/dev/null | tail -n 1)"
+            [ -n "$location" ] && echo "VERCEL_HEALTH_REDIRECT_LOCATION_SAFE=$location"
+            [ -n "$content_type" ] && echo "VERCEL_HEALTH_RESPONSE_CONTENT_TYPE=$content_type"
+            [ "$attempt" -lt 12 ] && sleep 5
+          done
+          test "$matched" = "1" || { echo "VERCEL_DEPLOYED_SHA_MATCH_FAIL"; exit 1; }
+
+      - name: Mint fresh OIDC token for live Vercel search
+        id: vercel_search_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+      - name: Verify live Vercel search and page extraction
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_search_oidc.outputs.token }}
+        run: |
+          set -euo pipefail
+          status_code="000"
+          for attempt in $(seq 1 4); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -D "$RUNNER_TEMP/deep33-vercel-search.headers" -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
+            if [ "$status_code" = "200" ] && jq -e '.ok == true and .realtime == true and ((.results // []) | length) >= 1 and ((.fetched_pages // []) | length) >= 1 and (.domains_used // 0) >= 1 and (.extracted_text_chars // 0) >= 80' "$RUNNER_TEMP/deep33-vercel-search.json" >/dev/null 2>&1; then
+              jq -c '{ok,status,realtime,provider,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),first_result:((.results // [])[0] // {} | {title,url,source_domain})}' "$RUNNER_TEMP/deep33-vercel-search.json"
+              echo "VERCEL_REALTIME_SEARCH_AND_EXTRACTION_PASS"
+              exit 0
+            fi
+            echo "VERCEL_REALTIME_SEARCH_NOT_READY attempt=$attempt http=$status_code"
+            jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-search.json" 2>/dev/null || true
+            location="$(awk 'tolower($0) ~ /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
+            content_type="$(awk 'tolower($0) ~ /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1)"
+            [ -n "$location" ] && echo "VERCEL_REDIRECT_LOCATION_SAFE=$location"
+            [ -n "$content_type" ] && echo "VERCEL_RESPONSE_CONTENT_TYPE=$content_type"
+            [ "$attempt" -lt 4 ] && sleep 5
+          done
+          echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
+          exit 1
+      - name: Mint fresh OIDC token for Spanish live-search check
+        id: vercel_spanish_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+      - name: Verify natural-language Spanish query stays on topic (PR and production)
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_spanish_oidc.outputs.token }}
+        run: |
+          set -euo pipefail
+          query="Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+          status_code="000"
+          for attempt in $(seq 1 8); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 \
+              -o "$RUNNER_TEMP/deep33-vercel-spanish-search.json" -w "%{http_code}" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
+              -H "Cache-Control: no-cache" \
+              --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=$query" || true)"
+            if [ "$status_code" = "200" ] && jq -e '
+              .ok == true and .realtime == true and
+              ((.results // []) | length) >= 2 and
+              ((.fetched_pages // []) | length) >= 2 and
+              (.domains_used // 0) >= 2 and
+              (.extracted_text_chars // 0) >= 80 and
+              ((([.results[]? | ((.title // "") + " " + (.url // "") + " " + (.snippet // ""))] | join(" ")) | ascii_downcase) | test("python"))
+            ' "$RUNNER_TEMP/deep33-vercel-spanish-search.json" >/dev/null 2>&1; then
+              jq -c '{
+                ok,status,realtime,providers,domains_used,extracted_text_chars,
+                results:([.results[]? | {title,url,source_domain}][0:5]),
+                fetched_pages_count:((.fetched_pages // [])|length)
+              }' "$RUNNER_TEMP/deep33-vercel-spanish-search.json"
+              echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_PASS"
+              exit 0
+            fi
+            echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_RETRY attempt=$attempt http=$status_code"
+            jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-spanish-search.json" 2>/dev/null || true
+            [ "$attempt" -lt 8 ] && sleep 5
+          done
+          echo "VERCEL_SPANISH_REALTIME_TOPIC_SEARCH_FAIL http=$status_code"
+          exit 1
+
+      - name: Mint fresh OIDC token for finance-stream check
+        id: vercel_finance_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+      - name: Verify current Chilean dollar through Android streaming endpoint
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_finance_oidc.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/deep33-vercel-finance.sse"
+          headers="$RUNNER_TEMP/deep33-vercel-finance.headers"
+          set +e
+          status_code="$(curl -sS --no-buffer --connect-timeout 10 --max-time 45 \
+            -D "$headers" -o "$body" -w "%{http_code}" \
+            -X POST "$VERCEL_URL/v1/chat/stream" \
+            -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+            -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+            -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+            -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
+            -H "X-Request-ID: ci-vercel-finance-$GITHUB_RUN_ID" \
+            -H "X-Idempotency-Key: ci-vercel-finance-$GITHUB_RUN_ID" \
+            -H "X-DEEP33-Personality: NEUTRO" \
+            -H "x-deep33-skip-web-tools: true" \
+            -H "Accept: text/event-stream" \
+            -H "Content-Type: application/json" \
+            --data '{"messages":[{"role":"user","content":"Valor del dólar en Chile hoy"}],"personality":"NEUTRO"}')"
+          curl_rc=$?
+          set -e
+          echo "VERCEL_FINANCE_STREAM http=$status_code curl_exit=$curl_rc"
+          if [ "$curl_rc" -ne 0 ] || [ "$status_code" != "200" ]; then
+            tail -c 2500 "$body" 2>/dev/null || true
+            exit 1
+          fi
+          python - "$body" <<'PY'
+          import json
+          import re
+          import sys
+          from datetime import datetime, timezone
+          from urllib.parse import urlparse
+
+          raw = open(sys.argv[1], encoding="utf-8").read()
+          chunks = []
+          for block in re.split(r"\r?\n\r?\n", raw):
+              data_lines = [
+                  line[5:].strip()
+                  for line in block.splitlines()
+                  if line.startswith("data:")
+              ]
+              if not data_lines:
+                  continue
+              payload = "\n".join(data_lines)
+              if payload == "[DONE]":
+                  continue
+              try:
+                  item = json.loads(payload)
+              except (json.JSONDecodeError, TypeError):
+                  continue
+              choices = item.get("choices") or []
+              if choices:
+                  delta = (choices[0].get("delta") or {}).get("content")
+                  if isinstance(delta, str):
+                      chunks.append(delta)
+
+          answer = "".join(chunks)
+          print("VERCEL_FINANCE_ANSWER=" + answer.replace("\n", " ")[:1800])
+          if not answer.strip():
+              raise SystemExit("VERCEL_FINANCE_STREAM_EMPTY_TEXT")
+
+          source = re.search(
+              r"Fuentes consultadas:\s*-?\s*[^:\r\n]+:\s*(https://[^\s)]+)",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          if not source:
+              raise SystemExit("VERCEL_FINANCE_STREAM_SOURCE_MISSING")
+          source_url = source.group(1).rstrip(".,")
+          host = (urlparse(source_url).hostname or "").lower()
+          yahoo = "Yahoo Finance (USD/CLP)" in answer and host == "query1.finance.yahoo.com"
+          official = "MiIndicador.cl (official fallback)" in answer and host == "mindicador.cl"
+          if not (yahoo or official):
+              raise SystemExit("VERCEL_FINANCE_STREAM_SOURCE_UNEXPECTED")
+
+          market = re.search(
+              r"1 dólar estadounidense = ([0-9.]+(?:,[0-9]{1,2})?) pesos chilenos\.\s*"
+              r"Hora de mercado reportada:\s*([^\s]+)",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          daily = re.search(
+              r"El dólar observado informado por .+? es ([0-9.]+(?:,[0-9]{1,2})?) "
+              r"pesos chilenos por dólar para la fecha (\d{4}-\d{2}-\d{2})",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          if market:
+              value_text, timestamp_text = market.groups()
+              quote_time = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+              age_seconds = (datetime.now(timezone.utc) - quote_time.astimezone(timezone.utc)).total_seconds()
+              if age_seconds < -300 or age_seconds > 36 * 3600:
+                  raise SystemExit("VERCEL_FINANCE_STREAM_MARKET_QUOTE_STALE")
+          elif daily:
+              value_text, date_text = daily.groups()
+              quote_date = datetime.fromisoformat(date_text).date()
+              age_days = (datetime.now(timezone.utc).date() - quote_date).days
+              if age_days < -1 or age_days > 3:
+                  raise SystemExit("VERCEL_FINANCE_STREAM_DAILY_QUOTE_STALE")
+          else:
+              raise SystemExit("VERCEL_FINANCE_STREAM_NUMERIC_QUOTE_MISSING")
+
+          normalized = (
+              value_text.replace(".", "").replace(",", ".")
+              if "," in value_text
+              else value_text.replace(".", "")
+          )
+          value = float(normalized)
+          if not 50 <= value <= 10000:
+              raise SystemExit("VERCEL_FINANCE_STREAM_VALUE_OUT_OF_RANGE")
+
+          print(
+              "VERCEL_FINANCE_STREAM_PASS "
+              f"provider={'Yahoo Finance' if yahoo else 'MiIndicador.cl'} "
+              f"value={value_text} source={source_url}"
+          )
+          PY
+          
   performance_gate:
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
@@ -677,14 +977,17 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    # Run connectivity E2E even when production_gate fails: it supplies independent
-    # diagnostics. Only the Android build and change-scope prerequisites are required.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    # On a PR, run the real Android app against that PR's protected Vercel preview
+    # using a short-lived GitHub OIDC token; on main, test the public production alias.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
+      id-token: write
+    env:
+      DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -706,10 +1009,12 @@ jobs:
           test -e /dev/kvm
           ls -l /dev/kvm
 
+
       - name: Android real connectivity E2E — attempt 1
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "1"
@@ -741,6 +1046,7 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "2"
@@ -772,6 +1078,7 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "3"
@@ -948,7 +1255,7 @@ jobs:
 
 
   release_gate:
-    needs: [change_scope, backend_unit, production_realtime_search, android_validation, performance_gate, android_feature_instrumentation, production_gate, android_e2e, recovery_gate]
+    needs: [change_scope, backend_unit, production_realtime_search, vercel_realtime_search, android_validation, performance_gate, android_feature_instrumentation, production_gate, android_e2e, recovery_gate]
     # Run on every main push; fail explicitly when a required gate did not pass.
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
@@ -964,6 +1271,7 @@ jobs:
           DEEP33_CHANGE_SCOPE_RESULT: ${{ needs.change_scope.result }}
           DEEP33_BACKEND_UNIT_RESULT: ${{ needs.backend_unit.result }}
           DEEP33_REALTIME_SEARCH_RESULT: ${{ needs.production_realtime_search.result }}
+          DEEP33_VERCEL_REALTIME_RESULT: ${{ needs.vercel_realtime_search.result }}
           DEEP33_ANDROID_VALIDATION_RESULT: ${{ needs.android_validation.result }}
           DEEP33_PERFORMANCE_GATE_RESULT: ${{ needs.performance_gate.result }}
           DEEP33_ANDROID_FEATURE_RESULT: ${{ needs.android_feature_instrumentation.result }}
@@ -976,6 +1284,7 @@ jobs:
             "$DEEP33_CHANGE_SCOPE_RESULT"
             "$DEEP33_BACKEND_UNIT_RESULT"
             "$DEEP33_REALTIME_SEARCH_RESULT"
+            "$DEEP33_VERCEL_REALTIME_RESULT"
             "$DEEP33_ANDROID_VALIDATION_RESULT"
             "$DEEP33_PERFORMANCE_GATE_RESULT"
             "$DEEP33_ANDROID_FEATURE_RESULT"
@@ -983,8 +1292,8 @@ jobs:
             "$DEEP33_ANDROID_E2E_RESULT"
             "$DEEP33_RECOVERY_GATE_RESULT"
           )
-          if [[ "${results[*]}" != "success success success success success success success success success" ]]; then
-            echo "DEEP33_RELEASE_BLOCKED change_scope=$DEEP33_CHANGE_SCOPE_RESULT backend_unit=$DEEP33_BACKEND_UNIT_RESULT realtime_search=$DEEP33_REALTIME_SEARCH_RESULT android_validation=$DEEP33_ANDROID_VALIDATION_RESULT performance_gate=$DEEP33_PERFORMANCE_GATE_RESULT android_feature_instrumentation=$DEEP33_ANDROID_FEATURE_RESULT production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
+          if [[ "${results[*]}" != "success success success success success success success success success success" ]]; then
+            echo "DEEP33_RELEASE_BLOCKED change_scope=$DEEP33_CHANGE_SCOPE_RESULT backend_unit=$DEEP33_BACKEND_UNIT_RESULT realtime_search=$DEEP33_REALTIME_SEARCH_RESULT vercel_realtime_search=$DEEP33_VERCEL_REALTIME_RESULT android_validation=$DEEP33_ANDROID_VALIDATION_RESULT performance_gate=$DEEP33_PERFORMANCE_GATE_RESULT android_feature_instrumentation=$DEEP33_ANDROID_FEATURE_RESULT production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
             exit 1
           fi
           echo "DEEP33_RELEASE_PRECONDITIONS_PASS $GITHUB_SHA"

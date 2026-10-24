@@ -26,11 +26,20 @@ class Deep33ConnectivityTest {
         // Configure the per-profile auth manager so all production endpoints receive a JWT.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         Deep33Api.configureAuth(context)
+        val args = InstrumentationRegistry.getArguments()
+        val e2eUrl = args.getString("deep33_e2e_vercel_url").orEmpty().trim()
+        if (e2eUrl.isNotBlank()) {
+            val oidcToken = args.getString("deep33_e2e_vercel_oidc_token")
+            Deep33Api.configureE2EBackend(e2eUrl, oidcToken)
+            println("ANDROID_E2E_BACKEND_CONFIGURED host=" + java.net.URL(e2eUrl).host)
+        }
     }
 
     @Test
     fun allFailoverEndpointHostsResolveInsideAndroid() {
         val urls = listOf(
+            Deep33Api.e2eEndpointUrl(),
+            BuildConfig.DEEP33_VERCEL_URL,
             BuildConfig.DEEP33_PRIMARY_URL,
             BuildConfig.DEEP33_SECONDARY_URL,
             BuildConfig.DEEP33_TERTIARY_URL
@@ -64,15 +73,91 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun edgeHealthIsPass() {
+    fun vercelPrimaryHealthIsVerifiedWithoutFailover() {
+        val json = Deep33Api.get(
+            "/health",
+            sessionId,
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+        )
+        assertTrue("Vercel health: " + json, json.optString("status") == "PASS")
+        assertTrue("Vercel service was not directly reached: " + json, json.optString("service") == "DEEP33 Backend")
+        assertTrue("Vercel version missing: " + json, json.optString("version").isNotBlank())
+        assertTrue("Vercel build id missing: " + json, json.optString("build_id").isNotBlank())
+        assertTrue("Vercel timestamp missing: " + json, json.optString("timestamp").isNotBlank())
+        println("ANDROID_VERCEL_DIRECT_HEALTH_PASS service=${json.optString("service")} build_id=${json.optString("build_id")}")
+    }
+
+    @Test
+    fun primaryHealthMatchesCanonicalBackendContract() {
         val json = Deep33Api.get("/health", sessionId)
-        assertTrue("edge health: " + json, json.optString("status") == "PASS")
-        assertTrue("edge service: " + json, json.optString("service") == "DEEP33 Edge Gateway")
-        assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
-        assertTrue("edge transport: " + json, json.optString("transport") == "https")
+        assertTrue("backend health: " + json, json.optString("status") == "PASS")
+
+        when (json.optString("service")) {
+            "DEEP33 Backend" -> {
+                // Vercel is the canonical Android endpoint; it reports the FastAPI
+                // backend contract, not the older Supabase edge-gateway contract.
+                assertTrue("backend version missing: " + json, json.optString("version").isNotBlank())
+                assertTrue("backend build id missing: " + json, json.optString("build_id").isNotBlank())
+                assertTrue("backend timestamp missing: " + json, json.optString("timestamp").isNotBlank())
+            }
+            "DEEP33 Edge Gateway" -> {
+                // Keep compatibility with the Supabase edge endpoint when failover
+                // selected it after the canonical Vercel endpoint was unavailable.
+                assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
+                assertTrue("edge transport: " + json, json.optString("transport") == "https")
+                assertTrue(
+                    "edge failover support: " + json,
+                    json.optBoolean("failover_supported", false)
+                )
+            }
+            else -> assertTrue("unexpected backend health contract: " + json, false)
+        }
+    }
+
+    @Test
+    fun vercelPrimaryLiveSearchExtractsMultipleSourcesWithoutFailover() {
+        val query = "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+        val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+        val requestStartedAt = System.nanoTime()
+        val json = Deep33Api.get(
+            "/v1/web/search?q=" + encodedQuery,
+            sessionId,
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+
+        assertTrue("Vercel live search was not successful: " + json, json.optBoolean("ok", false))
+        assertTrue("Vercel live search was not realtime: " + json, json.optBoolean("realtime", false))
+        val results = json.optJSONArray("results") ?: JSONArray()
+        val pages = json.optJSONArray("fetched_pages") ?: JSONArray()
+        val domainsUsed = json.optInt("domains_used", 0)
+        val extractedChars = json.optInt("extracted_text_chars", 0)
+        val providers = json.optJSONArray("providers") ?: JSONArray()
+        assertTrue("Vercel search used fewer than two independent providers: " + json, providers.length() >= 2)
+        assertTrue("Vercel search returned fewer than two results: " + json, results.length() >= 2)
+        assertTrue("Vercel search extracted fewer than two pages: " + json, pages.length() >= 2)
+        assertTrue("Vercel search used fewer than two domains: " + json, domainsUsed >= 2)
+        assertTrue("Vercel extraction was too short: " + json, extractedChars >= 80)
+
+        val summaries = buildString {
+            for (index in 0 until results.length()) {
+                val item = results.optJSONObject(index) ?: continue
+                append(' ')
+                append(item.optString("title"))
+                append(' ')
+                append(item.optString("url"))
+                append(' ')
+                append(item.optString("snippet"))
+            }
+        }
         assertTrue(
-            "edge failover support: " + json,
-            json.optBoolean("failover_supported", false)
+            "Vercel results were not relevant to the Python query: " + json,
+            summaries.contains("python", ignoreCase = true)
+        )
+        assertTrue("Vercel search exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
+        println(
+            "ANDROID_VERCEL_LIVE_SEARCH_PASS results=${results.length()} pages=${pages.length()} " +
+                "domains=${domainsUsed} extracted_chars=${extractedChars} total_ms=${elapsedMs}"
         )
     }
 
@@ -106,6 +191,56 @@ class Deep33ConnectivityTest {
     }
 
     @Test
+    fun realAndroidTransportFallsBackFromProtectedVercelPreviewToLivePrimary() {
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Respond with one short sentence confirming backend connectivity.")
+        )
+        val requestId = UUID.randomUUID().toString()
+        val startedAt = System.nanoTime()
+        val body = Deep33Api.generate(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            endpointOverride = listOf(
+                Deep33Api.e2eEndpointUrl(),
+                BuildConfig.DEEP33_PRIMARY_URL
+            )
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        assertGenerationEnvelope(body, "vercel-preview-fallback-to-primary")
+        assertTrue("Vercel-to-primary failover exceeded 180 seconds: ${elapsedMs}ms", elapsedMs < 180_000)
+        println(
+            "ANDROID_REAL_VERCEL_FALLBACK_PASS preview_first=true primary_fallback=available total_ms=${elapsedMs}"
+        )
+    }
+
+    @Test
+    fun realAndroidTransportFailsOverFromUnavailableFirstEndpointToLiveBackend() {
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Respond with one short sentence confirming backend connectivity.")
+        )
+        val requestId = UUID.randomUUID().toString()
+        val requestStartedAt = System.nanoTime()
+        val body = Deep33Api.generate(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            endpointOverride = listOf(
+                "https://deep33-e2e-unreachable.invalid",
+                BuildConfig.DEEP33_PRIMARY_URL
+            )
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+        assertGenerationEnvelope(body, "real-failover")
+        assertTrue("real failover exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
+        println("ANDROID_REAL_FAILOVER_PASS unreachable_primary=confirmed live_fallback=confirmed total_ms=${elapsedMs}")
+    }
+
+    @Test
     fun repeatedCurrentWebQuestionsUseSearchSourcesAndMemory() {
         if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
 
@@ -119,7 +254,13 @@ class Deep33ConnectivityTest {
             val payload = JSONArray().put(
                 JSONObject().put("role", "user").put("content", prompt)
             )
+            val requestStartedAt = System.nanoTime()
             val body = Deep33Api.generate(payload, sessionId)
+            val generationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+            assertTrue(
+                "current-web round ${index + 1} exceeded the 180-second generation deadline: ${generationMs}ms",
+                generationMs < 180_000
+            )
             assertGenerationEnvelope(body, "current-web-round-${index + 1}")
             assertTrue(
                 "web navigation was not used in round ${index + 1}: $body",
@@ -148,7 +289,7 @@ class Deep33ConnectivityTest {
                 "current web round ${index + 1} was not persisted in memory",
                 persisted
             )
-            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()}")
+            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()} total_ms=${generationMs}")
         }
     }
 
@@ -159,11 +300,27 @@ class Deep33ConnectivityTest {
                 .put("content", "Provide a brief streaming connectivity response for Android E2E certification.")
         )
         val combined = StringBuilder()
+        val streamStartedAt = System.nanoTime()
+        var firstTextMs: Long? = null
         val result = Deep33Api.stream(
             payload,
             sessionId,
-            onText = { combined.append(it) }
+            onText = {
+                if (firstTextMs == null) {
+                    firstTextMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - streamStartedAt)
+                }
+                combined.append(it)
+            }
         )
+        val totalStreamMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - streamStartedAt)
+        val measuredFirstTextMs = firstTextMs
+            ?: throw AssertionError("stream callback emitted no first visible text")
+        assertTrue(
+            "first visible text exceeded the 12-second deadline: ${measuredFirstTextMs}ms",
+            measuredFirstTextMs < 12_000
+        )
+        assertTrue("stream exceeded the 180-second deadline: ${totalStreamMs}ms", totalStreamMs < 180_000)
+        println("ANDROID_STREAM_TIMING ttft_ms=${measuredFirstTextMs} total_ms=${totalStreamMs}")
         assertTrue("stream result is empty: " + result, combined.toString().isNotBlank())
         assertTrue("stream callback result mismatch", result == combined.toString())
 
@@ -186,6 +343,78 @@ class Deep33ConnectivityTest {
         assertTrue("duplicated complete streaming response: " + normalized, !duplicatedHalf)
         assertTrue("duplicated fallback streaming response: " + normalized, !repeatedFallback)
         println("ANDROID_DUPLICATES=0")
+    }
+
+    @Test
+    fun vercelFinanceStreamReturnsCurrentSourceBackedChileanDollar() {
+        val query = "Valor del dólar en Chile hoy. Indica el valor en pesos chilenos, fecha u hora de la cotización y la fuente."
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user").put("content", query)
+        )
+        val requestId = UUID.randomUUID().toString()
+        val startedAt = System.nanoTime()
+        val answer = StringBuilder()
+        var firstTextMs: Long? = null
+
+        val result = Deep33Api.stream(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            onText = { chunk ->
+                if (firstTextMs == null) {
+                    firstTextMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                }
+                answer.append(chunk)
+            },
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+        )
+        val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        val text = result.trim()
+        assertTrue("Vercel finance stream returned no answer", text.isNotBlank())
+        assertTrue("Vercel finance stream exceeded 12-second first-text deadline: ${firstTextMs}ms", (firstTextMs ?: Long.MAX_VALUE) < 12_000)
+        assertTrue("Vercel finance stream exceeded 180-second deadline: ${totalMs}ms", totalMs < 180_000)
+        assertTrue("Current quote lacks Chilean peso units: " + text, text.contains("pesos chilenos", ignoreCase = true))
+
+        val quoteMatch = Regex(
+            "(?i)(?:=|es)\\s*([0-9][0-9.,]*)\\s*pesos chilenos"
+        ).find(text) ?: throw AssertionError("Current quote number is missing: " + text)
+        val quoteRaw = quoteMatch.groupValues[1]
+        val normalizedQuote = when {
+            quoteRaw.contains(",") -> quoteRaw.replace(".", "").replace(",", ".")
+            quoteRaw.count { it == '.' } > 1 -> quoteRaw.replace(".", "")
+            quoteRaw.contains(".") && quoteRaw.substringAfterLast(".").length == 3 -> quoteRaw.replace(".", "")
+            else -> quoteRaw
+        }
+        val quoteValue = normalizedQuote.toDoubleOrNull()
+            ?: throw AssertionError("Quote could not be parsed: " + quoteRaw)
+        assertTrue("Quote outside plausible CLP-per-USD bounds: " + quoteRaw, quoteValue in 50.0..10_000.0)
+
+        val urls = Regex("https://[^\\s)]+")
+            .findAll(text)
+            .map { it.value.trimEnd('.', ',', ';') }
+            .distinct()
+            .toList()
+        val domains = urls.mapNotNull { url ->
+            runCatching { java.net.URL(url).host.lowercase() }.getOrNull()
+        }.toSet()
+        assertTrue("Current quote has no HTTPS source URL: " + text, urls.isNotEmpty())
+        val hasStructuredFinanceProvider = domains.any {
+            it == "query1.finance.yahoo.com" || it == "mindicador.cl"
+        }
+        assertTrue(
+            "Quote source was not verified by the finance provider or multiple independent web domains: " + text,
+            hasStructuredFinanceProvider || domains.size >= 2
+        )
+        assertTrue(
+            "Quote does not contain market timestamp or observation date: " + text,
+            Regex("\\b20\\d{2}-\\d{2}-\\d{2}\\b").containsMatchIn(text) ||
+                text.contains("Hora de mercado reportada", ignoreCase = true)
+        )
+        println(
+            "ANDROID_VERCEL_FINANCE_STREAM_PASS quote=${quoteRaw} domains=${domains.size} " +
+                "ttft_ms=${firstTextMs} total_ms=${totalMs}"
+        )
     }
 
     private fun get(path: String): JSONObject =

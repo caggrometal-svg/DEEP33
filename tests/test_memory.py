@@ -28,6 +28,31 @@ def test_disabled_memory_is_noop():
     assert client.enabled is False
 
 
+def test_publishable_supabase_key_enables_memory_client(monkeypatch):
+    for name in (
+        "DEEP33_MEMORY_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+
+    client = MemoryClient()
+
+    assert client.enabled is True
+    assert client.function_url == "https://project.supabase.co/functions/v1/deep33-memory"
+    assert client.api_key == "sb_publishable_test"
+
+
+def test_service_role_key_precedes_publishable_key(monkeypatch):
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service_role_test")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon_test")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+
+    assert MemoryClient._configured_api_key() == "service_role_test"
+
+
 def test_memory_client_success():
     transport = httpx.MockTransport(
         lambda request: httpx.Response(
@@ -169,7 +194,8 @@ def test_memory_sync_endpoint_bridges_android_to_memory_client():
             assert response.status_code == 200
             body = response.json()
             assert body["ok"] is True
-            assert body["session_id"] == "memory-test-session"
+            assert body["session_id"].endswith(":memory-test-session")
+            assert body["session_id"] != "memory-test-session"
             assert body["saved"] == 2
         finally:
             main.memory = original
@@ -288,3 +314,53 @@ def test_streaming_generation_passes_verified_user_token_to_memory_context() -> 
 
     assert "memory_profile_id," in context_call
     assert "access_token=access_token," in context_call
+
+def test_authenticated_context_bypasses_process_local_stale_cache():
+    import json
+
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        assert request.url.path.endswith("/function")
+        assert request.headers.get("authorization") == "Bearer verified-user-jwt"
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "messages": [
+                    {"role": "user", "content": "latest persisted turn"},
+                ],
+            },
+        )
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 1)
+        cache_key = ("user-uuid:session", "user-uuid")
+        stale = {
+            "ok": True,
+            "messages": [
+                {"role": "user", "content": "stale cached turn"},
+            ],
+        }
+        client._context_cache[cache_key] = (float("inf"), stale)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(1),
+        )
+        try:
+            result = await client.context(
+                "user-uuid:session",
+                memory_profile_id="user-uuid",
+                access_token="verified-user-jwt",
+            )
+            assert result["messages"][0]["content"] == "latest persisted turn"
+            # Authenticated reads neither consume nor refresh another worker's
+            # process-local cache entry: they always fetch source-of-truth state.
+            assert client._context_cache[cache_key][1] == stale
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert calls == 1

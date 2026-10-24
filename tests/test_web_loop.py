@@ -499,3 +499,63 @@ def test_web_grounding_contract_forbids_model_memory_gap_filling() -> None:
     assert "Never fill an evidence gap from model memory" in prompt
     assert "Fetched-page text outranks search snippets" in prompt
     assert "conflict" in prompt.lower()
+
+def test_verified_source_citations_include_only_public_https_domains() -> None:
+    sources = [
+        {"title": "Python release notes", "url": "https://www.python.org/downloads/release/python-3151/"},
+        {"title": "Python package index", "url": "https://pypi.org/project/python/"},
+        {"title": "duplicate same host", "url": "https://python.org/downloads/release/python-3151/"},
+        {"title": "insecure source", "url": "http://evil.example/info"},
+        {"title": "private address", "url": "https://127.0.0.1/admin"},
+        {"title": "search redirect", "url": "https://news.google.com/rss/articles/xyz"},
+    ]
+
+    safe = main.safe_web_sources(sources)
+    rendered = main.format_source_citations(sources)
+
+    assert [item["url"] for item in safe] == [
+        "https://www.python.org/downloads/release/python-3151/",
+        "https://pypi.org/project/python/",
+    ]
+    assert "[Python release notes](https://www.python.org/downloads/release/python-3151/)" in rendered
+    assert "[Python package index](https://pypi.org/project/python/)" in rendered
+    assert "evil.example" not in rendered
+    assert "127.0.0.1" not in rendered
+    assert "news.google.com" not in rendered
+
+
+def test_json_answer_attaches_verified_sources_after_strict_sanitization() -> None:
+    output = {
+        "result": {
+            "role": "assistant",
+            "text": "La versión fue confirmada. [enlace falso](https://evil.example/).",
+        },
+        "response": {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "La versión fue confirmada. https://evil.example/",
+                }
+            }]
+        },
+        "sources": [{
+            "title": "Python official release",
+            "url": "https://www.python.org/downloads/release/python-3151/",
+        }],
+        "web_navigation": True,
+    }
+
+    actual = main.attach_verified_source_links(output)
+
+    assert "https://www.python.org/downloads/release/python-3151/" in actual["result"]["text"]
+    assert "https://www.python.org/downloads/release/python-3151/" in actual["response"]["choices"][0]["message"]["content"]
+    assert "evil.example" not in actual["result"]["text"]
+    assert "evil.example" not in actual["response"]["choices"][0]["message"]["content"]
+    assert actual["web_navigation"] is True
+
+
+def test_verified_sources_are_not_emitted_as_links_without_safe_urls() -> None:
+    assert main.format_source_citations([
+        {"title": "unsafe", "url": "http://example.com/"}
+    ]) == ""
+

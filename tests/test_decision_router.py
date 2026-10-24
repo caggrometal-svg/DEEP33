@@ -52,6 +52,24 @@ def test_validation_rejects_incomplete_finance_data():
 
 
 
+def test_validation_rejects_inverted_usd_clp_quote():
+    evidence = Evidence(
+        ok=True,
+        route=DecisionRoute.FINANCE,
+        provider="Yahoo Finance (USD/CLP)",
+        source_url="https://query1.finance.yahoo.com/v8/finance/chart/CLP=X",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        data={
+            "value": 0.001,
+            "market_timestamp": datetime.now(timezone.utc).isoformat(),
+            "unit": "CLP/USD",
+        },
+    )
+    validated = __import__("asyncio").run(validate_evidence(evidence))
+    assert validated.ok is False
+    assert validated.error == "FINANCE_VALUE_OUT_OF_RANGE"
+
+
 def test_forecast_weather_evidence_validates_and_formats_the_forecast_day():
     forecast_date = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
     evidence = Evidence(
@@ -96,3 +114,5 @@ def test_finance_answer_uses_the_validated_value_verbatim():
     assert validated.ok is True
     answer = format_structured_answer("¿A cuánto está el dólar?", validated)
     assert "965,50 pesos chilenos" in answer
+    assert "Fuentes consultadas:" in answer
+    assert "https://query1.finance.yahoo.com/v8/finance/chart/CLP=X" in answer

@@ -36,11 +36,7 @@ class MemoryClient:
         self._explicit_function_url = function_url is not None
         self._explicit_api_key = api_key is not None
         self.function_url = configured_url
-        self.api_key = (
-            api_key
-            if api_key is not None
-            else os.getenv("SUPABASE_SERVICE_ROLE_KEY", os.getenv("SUPABASE_ANON_KEY", ""))
-        ).strip()
+        self.api_key = api_key.strip() if api_key is not None else self._configured_api_key()
         self.timeout_seconds = max(2.0, float(timeout_seconds if timeout_seconds is not None else os.getenv("MEMORY_TIMEOUT_SECONDS", "6")))
         self.max_retries = max(0, min(2, int(os.getenv("MEMORY_MAX_RETRIES", "1"))))
         self.context_cache_ttl_seconds = max(
@@ -67,6 +63,20 @@ class MemoryClient:
             await self._http_client.aclose()
             self._http_client = None
 
+    @staticmethod
+    def _configured_api_key() -> str:
+        # New Supabase projects commonly expose a publishable API key rather than
+        # the legacy anon-key name. Keep privileged keys first when configured.
+        for name in (
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_ANON_KEY",
+            "SUPABASE_PUBLISHABLE_KEY",
+        ):
+            value = os.getenv(name, "").strip()
+            if value:
+                return value
+        return ""
+
     def _refresh_config(self) -> None:
         if not self._explicit_function_url:
             configured_url = os.getenv("DEEP33_MEMORY_URL", "").strip().rstrip("/")
@@ -77,10 +87,7 @@ class MemoryClient:
             self.function_url = configured_url
 
         if not self._explicit_api_key:
-            self.api_key = os.getenv(
-                "SUPABASE_SERVICE_ROLE_KEY",
-                os.getenv("SUPABASE_ANON_KEY", ""),
-            ).strip()
+            self.api_key = self._configured_api_key()
 
     @property
     def enabled(self) -> bool:
@@ -190,19 +197,27 @@ class MemoryClient:
         access_token: str | None = None,
     ) -> dict:
         key = (session_id, memory_profile_id or "")
-        now = time.monotonic()
-        cached = self._context_cache.get(key)
-        if cached and cached[0] > now:
-            return json.loads(json.dumps(cached[1], ensure_ascii=False))
+
+        # Authenticated chat requests must observe the latest persisted turn.
+        # This client cache is process-local: Vercel/serverless workers do not share
+        # invalidations, so another worker can keep serving stale history after sync.
+        # Do not read from or write to the local cache when a verified user JWT is
+        # available. Legacy/internal requests keep the short cache for health paths.
+        if not access_token:
+            now = time.monotonic()
+            cached = self._context_cache.get(key)
+            if cached and cached[0] > now:
+                return json.loads(json.dumps(cached[1], ensure_ascii=False))
 
         result = await self._call(
             "context", session_id, memory_profile_id=memory_profile_id,
             access_token=access_token,
         )
-        self._context_cache[key] = (
-            time.monotonic() + self.context_cache_ttl_seconds,
-            json.loads(json.dumps(result, ensure_ascii=False)),
-        )
+        if not access_token:
+            self._context_cache[key] = (
+                time.monotonic() + self.context_cache_ttl_seconds,
+                json.loads(json.dumps(result, ensure_ascii=False)),
+            )
         return result
 
     async def sync(

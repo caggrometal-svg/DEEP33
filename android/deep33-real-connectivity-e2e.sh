@@ -29,10 +29,17 @@ adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
 echo "=== ENDPOINT PREFLIGHT ==="
+: "${DEEP33_E2E_VERCEL_URL:=https://deep33-backend.vercel.app}"
 : "${DEEP33_PRIMARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy}"
 : "${DEEP33_SECONDARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary}"
 : "${DEEP33_TERTIARY_URL:=https://deep33-backend.onrender.com}"
-urls=("${DEEP33_PRIMARY_URL}")
+if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]] && {
+  [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ];
+}; then
+  echo "ANDROID_E2E_OIDC_REQUEST_UNAVAILABLE"
+  exit 2
+fi
+urls=("$DEEP33_E2E_VERCEL_URL" "${DEEP33_PRIMARY_URL}")
 [ -n "${DEEP33_SECONDARY_URL}" ] && urls+=("${DEEP33_SECONDARY_URL}")
 [ -n "${DEEP33_TERTIARY_URL}" ] && urls+=("${DEEP33_TERTIARY_URL}")
 for url in "${urls[@]}"; do
@@ -53,7 +60,22 @@ test -n "$TEST_APK"
 adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
+if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]]; then
+  oidc_request_url="$ACTIONS_ID_TOKEN_REQUEST_URL"
+  separator='?'
+  [[ "$oidc_request_url" == *\?* ]] && separator='&'
+  oidc_request_url="${oidc_request_url}${separator}audience=https%3A%2F%2Fgithub.com%2Fcaggrometal-svg"
+  oidc_response="$(curl -fsS --connect-timeout 10 --max-time 20 \
+    -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+    "$oidc_request_url")"
+  DEEP33_E2E_VERCEL_OIDC_TOKEN="$(printf '%s' "$oidc_response" | jq -er '.value')"
+  echo "::add-mask::$DEEP33_E2E_VERCEL_OIDC_TOKEN"
+fi
 INSTRUMENTATION_ARGS=(-w -r)
+INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_url "$DEEP33_E2E_VERCEL_URL")
+if [ -n "${DEEP33_E2E_VERCEL_OIDC_TOKEN:-}" ]; then
+  INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_oidc_token "$DEEP33_E2E_VERCEL_OIDC_TOKEN")
+fi
 if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
   INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
   echo "INSTRUMENTATION_CLASS_FILTER=${DEEP33_INSTRUMENTATION_CLASS}"

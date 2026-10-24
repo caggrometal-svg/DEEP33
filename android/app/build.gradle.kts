@@ -64,11 +64,11 @@ android {
     fun quoteBuildConfig(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    // Canonical DEEP33 transport order: Edge primary, independent Edge failover,
-    // Render backend as final transport fallback.
-    // Transport contract is immutable by build environment. The three URLs below are
-    // the only DEEP33 application routes; CI may repeat them for verification, but may
-    // never replace them silently.
+    // Canonical DEEP33 transport order at runtime: Vercel first for the active
+    // backend test, then the existing Supabase Edge routes and Render as final fallback.
+    // The existing service URLs and their order relative to each other are preserved.
+    // Transport contract is immutable by build environment; overrides cannot replace it.
+    val canonicalVercelUrl = "https://deep33-backend.vercel.app"
     val canonicalPrimaryUrl =
         "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"
     val canonicalSecondaryUrl =
@@ -81,11 +81,16 @@ android {
         "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
     )
     val canonicalEndpoints = listOf(
+        canonicalVercelUrl,
         canonicalPrimaryUrl,
         canonicalSecondaryUrl,
         canonicalTertiaryUrl,
     )
-    val endpointByName = canonicalEndpoints.withIndex().associate { (index, value) ->
+    val endpointByName = listOf(
+        canonicalPrimaryUrl,
+        canonicalSecondaryUrl,
+        canonicalTertiaryUrl,
+    ).withIndex().associate { (index, value) ->
         suppliedEndpoints[index].first to value
     }
     val unexpectedOverrides = suppliedEndpoints.filter { (name, value) ->
@@ -107,6 +112,7 @@ android {
     val tertiaryUrl = canonicalTertiaryUrl
 
     buildTypes.all {
+        buildConfigField("String", "DEEP33_VERCEL_URL", quoteBuildConfig(canonicalVercelUrl))
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))

@@ -73,10 +73,12 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin refs/tags/production-pass --force
+          git fetch origin refs/heads/main:refs/remotes/origin/main --force
           certified="$(git rev-parse refs/tags/production-pass^{commit})"
           current="$(git rev-parse HEAD)"
-          test "$certified" = "$current" || {
-            echo "RELEASE_BLOCKED certified=$certified current=$current"
+          main_head="$(git rev-parse refs/remotes/origin/main^{commit})"
+          test "$certified" = "$current" && test "$certified" = "$main_head" || {
+            echo "RELEASE_BLOCKED certified=$certified current=$current main=$main_head"
             exit 1
           }
           echo "RELEASE_CERTIFIED $certified"

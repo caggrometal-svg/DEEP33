@@ -268,18 +268,18 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "needs.android_validation.result == 'success'" in recovery
     assert (
         "needs: [change_scope, backend_unit, production_realtime_search, "
-        "android_validation, performance_gate, android_feature_instrumentation, "
-        "production_gate, android_e2e, recovery_gate]"
+        "vercel_realtime_search, android_validation, performance_gate, "
+        "android_feature_instrumentation, production_gate, android_e2e, recovery_gate]"
     ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
     for gate in (
-        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "ANDROID_VALIDATION",
-        "PERFORMANCE_GATE", "ANDROID_FEATURE", "PRODUCTION_GATE",
-        "ANDROID_E2E", "RECOVERY_GATE",
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "VERCEL_REALTIME",
+        "ANDROID_VALIDATION", "PERFORMANCE_GATE", "ANDROID_FEATURE",
+        "PRODUCTION_GATE", "ANDROID_E2E", "RECOVERY_GATE",
     ):
         assert f"DEEP33_{gate}_RESULT" in release
-    assert '"success success success success success success success success success"' in release
+    assert '"success success success success success success success success success success"' in release
 
 def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
@@ -523,4 +523,23 @@ def test_primary_edge_silent_internal_provider_fails_fast_without_empty_success(
     assert 'if (!fullText.trim()) throw new Error("EDGE_AI_EMPTY_RESPONSE");' in source
     assert "if (emitted) {" in source
     assert "EDGE_AI_RETRY_COUNT = 0;" in source
+
+def test_every_apk_artifact_workflow_requires_the_current_main_certification() -> None:
+    paths = (
+        ".github/workflows/android-certified-apk.yml",
+        ".github/workflows/android-delivery-apk.yml",
+        ".github/workflows/android-current-apk.yml",
+        ".github/workflows/android-debug-apk.yml",
+        ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-package.yml",
+    )
+    for path in paths:
+        source = read(path)
+        assert "production-pass" in source, path
+        assert "git fetch origin refs/heads/main:refs/remotes/origin/main --force" in source, path
+        assert 'main_head="$(git rev-parse refs/remotes/origin/main^{commit})"' in source, path
+        assert 'test "$certified" = "$current" && test "$certified" = "$main_head"' in source, path
+        # The only APK artifacts distributed as current/certified must come from
+        # a successful main release gate, not from a direct push to main.
+        assert "branches: [main]" not in source, path
 
