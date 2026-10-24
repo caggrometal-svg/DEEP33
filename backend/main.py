@@ -50,8 +50,12 @@ from backend.decision_router import DecisionRoute, classify_query, format_struct
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
-    # Prefer the deployment platform's immutable revision identifier. A manually
-    # configured DEEP33_GIT_SHA can become stale after a subsequent Railway deploy.
+    # Prefer Vercel's immutable source revision for the currently active Vercel
+    # backend. This value is what CI compares with the exact tested commit.
+    vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
+    if vercel_sha:
+        return vercel_sha
+    # Preserve revision reporting for the existing non-Vercel fallback runtimes.
     railway_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
     if railway_sha:
         return railway_sha
