@@ -26,11 +26,19 @@ class Deep33ConnectivityTest {
         // Configure the per-profile auth manager so all production endpoints receive a JWT.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         Deep33Api.configureAuth(context)
+        val args = InstrumentationRegistry.getArguments()
+        val e2eUrl = args.getString("deep33_e2e_vercel_url").orEmpty().trim()
+        if (e2eUrl.isNotBlank()) {
+            val oidcToken = args.getString("deep33_e2e_vercel_oidc_token")
+            Deep33Api.configureE2EBackend(e2eUrl, oidcToken)
+            println("ANDROID_E2E_BACKEND_CONFIGURED host=" + java.net.URL(e2eUrl).host)
+        }
     }
 
     @Test
     fun allFailoverEndpointHostsResolveInsideAndroid() {
         val urls = listOf(
+            Deep33Api.e2eEndpointUrl(),
             BuildConfig.DEEP33_VERCEL_URL,
             BuildConfig.DEEP33_PRIMARY_URL,
             BuildConfig.DEEP33_SECONDARY_URL,
@@ -69,7 +77,7 @@ class Deep33ConnectivityTest {
         val json = Deep33Api.get(
             "/health",
             sessionId,
-            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
         )
         assertTrue("Vercel health: " + json, json.optString("status") == "PASS")
         assertTrue("Vercel service was not directly reached: " + json, json.optString("service") == "DEEP33 Backend")
@@ -114,7 +122,7 @@ class Deep33ConnectivityTest {
         val json = Deep33Api.get(
             "/v1/web/search?q=" + encodedQuery,
             sessionId,
-            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
         )
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
 
@@ -333,7 +341,7 @@ class Deep33ConnectivityTest {
                 }
                 answer.append(chunk)
             },
-            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
         )
         val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
         val text = result.trim()
