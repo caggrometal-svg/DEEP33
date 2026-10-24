@@ -58,9 +58,46 @@ object Deep33FailoverPolicy {
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     @Volatile private var authContext: Context? = null
+    @Volatile private var e2eBackendUrl: String? = null
+    @Volatile private var e2eVercelOidcToken: String? = null
 
     fun configureAuth(context: Context) {
         authContext = context.applicationContext
+    }
+
+    /**
+     * Routes a debug/instrumentation run to the exact tested Vercel deployment.
+     * The preview OIDC token is supplied at test runtime; it is never compiled into
+     * BuildConfig and this method cannot affect a release build.
+     */
+    fun configureE2EBackend(baseUrl: String, oidcToken: String? = null) {
+        check(BuildConfig.DEBUG) { "E2E backend override is debug-only" }
+        val endpoint = validateEndpoint(baseUrl)
+            ?: throw IllegalArgumentException("Invalid E2E backend URL")
+        val host = URI(endpoint).host.orEmpty().lowercase()
+        val isCanonicalProduction = host == "deep33-backend.vercel.app"
+        val isDEEP33Preview = host.endsWith(".vercel.app") &&
+            host.contains("deep33-backend-git-fix-vercel-android-route-221026")
+        require(isCanonicalProduction || isDEEP33Preview) {
+            "E2E backend must be the canonical DEEP33 Vercel production or approved PR preview"
+        }
+        val token = oidcToken?.trim().orEmpty()
+        require(isCanonicalProduction || token.isNotBlank()) {
+            "Protected Vercel preview requires a short-lived OIDC token"
+        }
+        e2eBackendUrl = endpoint
+        e2eVercelOidcToken = token.ifBlank { null }
+    }
+
+    fun e2eEndpointUrl(): String =
+        if (BuildConfig.DEBUG) e2eBackendUrl ?: BuildConfig.DEEP33_VERCEL_URL
+        else BuildConfig.DEEP33_VERCEL_URL
+
+    private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
+        if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
+        e2eVercelOidcToken?.takeIf { it.isNotBlank() }?.let {
+            connection.setRequestProperty("x-vercel-trusted-oidc-idp-token", it)
+        }
     }
 
     private fun authorizationToken(forceRefresh: Boolean = false): String? {
@@ -123,7 +160,10 @@ object Deep33Api {
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val canonical = canonicalEndpoints()
-        if (overrides == null) return canonical
+        if (overrides == null) {
+            if (BuildConfig.DEBUG) e2eBackendUrl?.let { return listOf(it) }
+            return canonical
+        }
 
         // Production/release transport can never be redirected to an arbitrary HTTPS host.
         // Debug instrumentation may inject only isolated loopback/.invalid endpoints to
@@ -136,7 +176,8 @@ object Deep33Api {
             .toList()
         if (requested.isEmpty() || requested.size != overrides.distinct().size) return emptyList()
 
-        val nonCanonical = requested.filter { it !in canonical }
+        val configuredE2EEndpoint = if (BuildConfig.DEBUG) e2eBackendUrl else null
+        val nonCanonical = requested.filter { it !in canonical && it != configuredE2EEndpoint }
         if (nonCanonical.isNotEmpty()) {
             if (!BuildConfig.DEBUG) return emptyList()
             if (nonCanonical.any { validateEndpoint(it, allowIsolatedTestEndpoint = true) == null }) {
@@ -356,6 +397,7 @@ object Deep33Api {
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
+                    applyE2EAccessHeader(connection, endpoint)
 
                     connection.connect()
                     requestBodyStarted = true
@@ -591,6 +633,7 @@ object Deep33Api {
                         ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
+                    applyE2EAccessHeader(connection, endpoint)
 
                     if (body != null) {
                         requestBodyStarted = true
