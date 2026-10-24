@@ -1,6 +1,17 @@
 name: Hostless DEEP33 deploy
 
 on:
+  push:
+    branches:
+      - deploy/hostless-android
+    paths:
+      - ".github/workflows/hostless-deploy.yml"
+      - "hostless.yaml"
+      - "Dockerfile"
+      - "backend/**"
+      - "tools/**"
+      - "api/**"
+      - "supabase/**"
   workflow_dispatch:
 
 permissions:
@@ -35,27 +46,21 @@ jobs:
           curl -fsSL https://hostless.cloud/install.sh | bash
           hostless --version
 
-      - name: Create or link Hostless app
+      - name: Create or reuse Hostless app
         shell: bash
         run: |
           set -euo pipefail
-          # First try to create the app directly from this Git checkout.
-          # If it already exists, continue and deploy it.
-          hostless create app deep33 --yes --wait || true
+          if ! hostless info app deep33 >/tmp/hostless-app.txt 2>&1; then
+            hostless create app deep33 --yes --wait
+          else
+            cat /tmp/hostless-app.txt
+          fi
 
       - name: Configure DEEP33 runtime
         shell: bash
         run: |
           set -euo pipefail
-          hostless env set DEEP33_WEB_TOOLS_ENABLED=true --app deep33
-          hostless env set WEB_SEARCH_PROVIDER=auto --app deep33
-          hostless env set WEB_SEARCH_FALLBACK_DDG=true --app deep33
-          hostless env set WEB_SEARCH_BING_ENABLED=true --app deep33
-          hostless env set NETWORK_CHECK_URL=https://www.google.com/generate_204 --app deep33
-          hostless env set AI_GATEWAY_PROVIDER=kilo --app deep33
-          hostless env set AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions --app deep33
-          hostless env set AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models --app deep33
-          hostless env set AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free --app deep33
+          hostless env set             DEEP33_WEB_TOOLS_ENABLED=true             WEB_SEARCH_PROVIDER=auto             WEB_SEARCH_FALLBACK_DDG=true             WEB_SEARCH_BING_ENABLED=true             NETWORK_CHECK_URL=https://www.google.com/generate_204             AI_GATEWAY_PROVIDER=kilo             AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions             AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models             AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free             --app deep33
 
           if [ -n "${AI_GATEWAY_API_KEY:-}" ]; then
             hostless env set AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY" --app deep33
