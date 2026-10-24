@@ -29,10 +29,15 @@ adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
 echo "=== ENDPOINT PREFLIGHT ==="
+: "${DEEP33_E2E_VERCEL_URL:=https://deep33-backend.vercel.app}"
 : "${DEEP33_PRIMARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy}"
 : "${DEEP33_SECONDARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary}"
 : "${DEEP33_TERTIARY_URL:=https://deep33-backend.onrender.com}"
-urls=("${DEEP33_PRIMARY_URL}")
+if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]] && [ -z "${DEEP33_E2E_VERCEL_OIDC_TOKEN:-}" ]; then
+  echo "ANDROID_E2E_PREVIEW_OIDC_TOKEN_MISSING"
+  exit 2
+fi
+urls=("$DEEP33_E2E_VERCEL_URL" "${DEEP33_PRIMARY_URL}")
 [ -n "${DEEP33_SECONDARY_URL}" ] && urls+=("${DEEP33_SECONDARY_URL}")
 [ -n "${DEEP33_TERTIARY_URL}" ] && urls+=("${DEEP33_TERTIARY_URL}")
 for url in "${urls[@]}"; do
@@ -54,6 +59,10 @@ adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
 INSTRUMENTATION_ARGS=(-w -r)
+INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_url "$DEEP33_E2E_VERCEL_URL")
+if [ -n "${DEEP33_E2E_VERCEL_OIDC_TOKEN:-}" ]; then
+  INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_oidc_token "$DEEP33_E2E_VERCEL_OIDC_TOKEN")
+fi
 if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
   INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
   echo "INSTRUMENTATION_CLASS_FILTER=${DEEP33_INSTRUMENTATION_CLASS}"
