@@ -1,5 +1,5 @@
 concurrency:
-  group: deep33-ci-v2-${{ github.ref }}
+  group: deep33-ci-v3-${{ github.ref }}
   cancel-in-progress: true
 
 name: DEEP33 CI
@@ -243,7 +243,7 @@ jobs:
           set -euo pipefail
           status_code="000"
           for attempt in $(seq 1 4); do
-            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -D "$RUNNER_TEMP/deep33-vercel-search.headers" -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
             if [ "$status_code" = "200" ] && jq -e '.ok == true and .realtime == true and ((.results // []) | length) >= 1 and ((.fetched_pages // []) | length) >= 1 and (.domains_used // 0) >= 1 and (.extracted_text_chars // 0) >= 80' "$RUNNER_TEMP/deep33-vercel-search.json" >/dev/null 2>&1; then
               jq -c '{ok,status,realtime,provider,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),first_result:((.results // [])[0] // {} | {title,url,source_domain})}' "$RUNNER_TEMP/deep33-vercel-search.json"
               echo "VERCEL_REALTIME_SEARCH_AND_EXTRACTION_PASS"
@@ -251,11 +251,15 @@ jobs:
             fi
             echo "VERCEL_REALTIME_SEARCH_NOT_READY attempt=$attempt http=$status_code"
             jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-search.json" 2>/dev/null || true
+            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
+            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1)"
+            [ -n "$location" ] && echo "VERCEL_REDIRECT_LOCATION_SAFE=$location"
+            [ -n "$content_type" ] && echo "VERCEL_RESPONSE_CONTENT_TYPE=$content_type"
             [ "$attempt" -lt 4 ] && sleep 5
           done
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
           exit 1
-      - name: Verify natural-language Spanish query stays on topic (production only)
+      - name: Verify natural-language Spanish query stays on topic (PR and production)
         env:
           VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
         run: |
