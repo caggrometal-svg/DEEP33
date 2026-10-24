@@ -18,10 +18,12 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin refs/tags/production-pass --force
+          git fetch origin refs/heads/main:refs/remotes/origin/main --force
           certified="$(git rev-parse refs/tags/production-pass^{commit})"
           current="$(git rev-parse HEAD)"
-          test "$certified" = "$current" || {
-            echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$current"
+          main_head="$(git rev-parse refs/remotes/origin/main^{commit})"
+          test "$certified" = "$current" && test "$certified" = "$main_head" || {
+            echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$current MAIN=$main_head"
             exit 1
           }
           echo "APK_BUILD_CERTIFIED_SHA=$certified"
