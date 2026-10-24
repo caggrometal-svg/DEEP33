@@ -200,6 +200,9 @@ jobs:
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    permissions:
+      contents: read
+      id-token: write
     env:
       VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
@@ -222,12 +225,25 @@ jobs:
           echo "::add-mask::$token"
           echo "DEEP33_VERCEL_TEST_TOKEN=$token" >> "$GITHUB_ENV"
           echo "DEEP33_VERCEL_TEST_SESSION_ID=$session_id" >> "$GITHUB_ENV"
+
+      - name: Mint short-lived GitHub OIDC token for protected Vercel preview
+        id: vercel_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+
       - name: Verify live Vercel search and page extraction
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
         run: |
           set -euo pipefail
           status_code="000"
           for attempt in $(seq 1 4); do
-            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-search.json" -w "%{http_code}" -H "apikey: $SUPABASE_PUBLISHABLE_KEY" -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" -H "Cache-Control: no-cache" --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=latest Python official documentation release" || true)"
             if [ "$status_code" = "200" ] && jq -e '.ok == true and .realtime == true and ((.results // []) | length) >= 1 and ((.fetched_pages // []) | length) >= 1 and (.domains_used // 0) >= 1 and (.extracted_text_chars // 0) >= 80' "$RUNNER_TEMP/deep33-vercel-search.json" >/dev/null 2>&1; then
               jq -c '{ok,status,realtime,provider,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),first_result:((.results // [])[0] // {} | {title,url,source_domain})}' "$RUNNER_TEMP/deep33-vercel-search.json"
               echo "VERCEL_REALTIME_SEARCH_AND_EXTRACTION_PASS"
@@ -240,7 +256,8 @@ jobs:
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
           exit 1
       - name: Verify natural-language Spanish query stays on topic (production only)
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
         run: |
           set -euo pipefail
           query="Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
@@ -251,6 +268,7 @@ jobs:
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
               -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
               -H "Cache-Control: no-cache" \
               --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=$query" || true)"
             if [ "$status_code" = "200" ] && jq -e '
@@ -277,6 +295,8 @@ jobs:
           exit 1
 
       - name: Verify current Chilean dollar through Android streaming endpoint
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -289,6 +309,7 @@ jobs:
             -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+            -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
             -H "X-Request-ID: ci-vercel-finance-$GITHUB_RUN_ID" \
             -H "X-Idempotency-Key: ci-vercel-finance-$GITHUB_RUN_ID" \
             -H "X-DEEP33-Personality: NEUTRO" \
@@ -886,10 +907,10 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    # This E2E exercises the canonical deployed backend. Run it after production
-    # deployment (or on explicit dispatch); pull requests use build, instrumentation,
-    # and the dedicated live Vercel search check without confusing old prod with branch code.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    # Run the real Android app against the canonical public Vercel backend on this
+    # PR as well as after main deployment; branch-specific backend behavior is gated
+    # separately by protected-preview live search and finance checks above.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
