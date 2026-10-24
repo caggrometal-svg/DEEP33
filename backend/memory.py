@@ -197,19 +197,27 @@ class MemoryClient:
         access_token: str | None = None,
     ) -> dict:
         key = (session_id, memory_profile_id or "")
-        now = time.monotonic()
-        cached = self._context_cache.get(key)
-        if cached and cached[0] > now:
-            return json.loads(json.dumps(cached[1], ensure_ascii=False))
+
+        # Authenticated chat requests must observe the latest persisted turn.
+        # This client cache is process-local: Vercel/serverless workers do not share
+        # invalidations, so another worker can keep serving stale history after sync.
+        # Do not read from or write to the local cache when a verified user JWT is
+        # available. Legacy/internal requests keep the short cache for health paths.
+        if not access_token:
+            now = time.monotonic()
+            cached = self._context_cache.get(key)
+            if cached and cached[0] > now:
+                return json.loads(json.dumps(cached[1], ensure_ascii=False))
 
         result = await self._call(
             "context", session_id, memory_profile_id=memory_profile_id,
             access_token=access_token,
         )
-        self._context_cache[key] = (
-            time.monotonic() + self.context_cache_ttl_seconds,
-            json.loads(json.dumps(result, ensure_ascii=False)),
-        )
+        if not access_token:
+            self._context_cache[key] = (
+                time.monotonic() + self.context_cache_ttl_seconds,
+                json.loads(json.dumps(result, ensure_ascii=False)),
+            )
         return result
 
     async def sync(
