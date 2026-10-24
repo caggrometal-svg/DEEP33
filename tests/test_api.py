@@ -898,7 +898,7 @@ def test_memory_routes_scope_reads_and_writes_to_authenticated_owner(monkeypatch
     remember = client.post(
         "/v1/memory/remember",
         headers=headers,
-        json={"kind": "fact", "content": "scope regression"},
+        json={"kind": "explicit", "content": "scope regression"},
     )
     preferences = client.put(
         "/v1/memory/preferences",
