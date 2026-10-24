@@ -115,7 +115,7 @@ class GatewayConfig:
                 "https://api.kilo.ai/api/gateway/models",
             ).strip(),
             api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
-            model=os.getenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free").strip(),
+            model=os.getenv("AI_GATEWAY_MODEL", "nvidia/nemotron-3.5-lightning:free").strip(),
         )
 
         providers = [primary]
