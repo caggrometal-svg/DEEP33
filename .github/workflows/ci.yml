@@ -911,15 +911,17 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    # Run the real Android app against the canonical public Vercel backend on this
-    # PR as well as after main deployment; branch-specific backend behavior is gated
-    # separately by protected-preview live search and finance checks above.
+    # On a PR, run the real Android app against that PR's protected Vercel preview
+    # using a short-lived GitHub OIDC token; on main, test the public production alias.
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
+      id-token: write
+    env:
+      DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -941,10 +943,22 @@ jobs:
           test -e /dev/kvm
           ls -l /dev/kvm
 
+      - name: Mint short-lived OIDC token for protected Vercel Android E2E
+        id: vercel_e2e_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+
       - name: Android real connectivity E2E — attempt 1
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
+          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "1"
@@ -976,6 +990,8 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
+          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "2"
@@ -1007,6 +1023,8 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
+          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
+          DEEP33_E2E_VERCEL_OIDC_TOKEN: ${{ steps.vercel_e2e_oidc.outputs.token }}
           DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
           DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "3"
