@@ -314,3 +314,54 @@ def test_streaming_generation_passes_verified_user_token_to_memory_context() -> 
 
     assert "memory_profile_id," in context_call
     assert "access_token=access_token," in context_call
+
+def test_authenticated_context_bypasses_process_local_stale_cache():
+    import json
+
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        assert request.url.path.endswith("/function")
+        assert request.headers.get("authorization") == "Bearer verified-user-jwt"
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "messages": [
+                    {"role": "user", "content": "latest persisted turn"},
+                ],
+            },
+        )
+
+    async def exercise():
+        client = MemoryClient("https://memory.test/function", "anon-api-key", 1)
+        cache_key = ("user-uuid:session", "user-uuid")
+        stale = {
+            "ok": True,
+            "messages": [
+                {"role": "user", "content": "stale cached turn"},
+            ],
+        }
+        client._context_cache[cache_key] = (float("inf"), stale)
+        client._http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            timeout=httpx.Timeout(1),
+        )
+        try:
+            result = await client.context(
+                "user-uuid:session",
+                memory_profile_id="user-uuid",
+                access_token="verified-user-jwt",
+            )
+            assert result["messages"][0]["content"] == "latest persisted turn"
+            # Authenticated reads neither consume nor refresh another worker's
+            # process-local cache entry: they always fetch source-of-truth state.
+            assert client._context_cache[cache_key][1] == stale
+        finally:
+            await client.close()
+
+    asyncio.run(exercise())
+    assert calls == 1
+\n
