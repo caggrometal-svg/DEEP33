@@ -312,7 +312,7 @@ jobs:
 
           raw = open(sys.argv[1], encoding="utf-8").read()
           chunks = []
-          for block in re.split(r"\\r?\\n\\r?\\n", raw):
+          for block in re.split(r"\r?\n\r?\n", raw):
               data_lines = [
                   line[5:].strip()
                   for line in block.splitlines()
@@ -320,7 +320,7 @@ jobs:
               ]
               if not data_lines:
                   continue
-              payload = "\\n".join(data_lines)
+              payload = "\n".join(data_lines)
               if payload == "[DONE]":
                   continue
               try:
@@ -334,12 +334,12 @@ jobs:
                       chunks.append(delta)
 
           answer = "".join(chunks)
-          print("VERCEL_FINANCE_ANSWER=" + answer.replace("\\n", " ")[:1800])
+          print("VERCEL_FINANCE_ANSWER=" + answer.replace("\n", " ")[:1800])
           if not answer.strip():
               raise SystemExit("VERCEL_FINANCE_STREAM_EMPTY_TEXT")
 
           source = re.search(
-              r"Fuentes consultadas:\\s*-?\\s*[^:\\r\\n]+:\\s*(https://[^\\s)]+)",
+              r"Fuentes consultadas:\s*-?\s*[^:\r\n]+:\s*(https://[^\s)]+)",
               answer,
               flags=re.IGNORECASE,
           )
@@ -353,14 +353,14 @@ jobs:
               raise SystemExit("VERCEL_FINANCE_STREAM_SOURCE_UNEXPECTED")
 
           market = re.search(
-              r"1 dólar estadounidense = ([0-9.]+(?:,[0-9]{1,2})?) pesos chilenos\\.\\s*"
-              r"Hora de mercado reportada:\\s*([^\\s]+)",
+              r"1 dólar estadounidense = ([0-9.]+(?:,[0-9]{1,2})?) pesos chilenos\.\s*"
+              r"Hora de mercado reportada:\s*([^\s]+)",
               answer,
               flags=re.IGNORECASE,
           )
           daily = re.search(
               r"El dólar observado informado por .+? es ([0-9.]+(?:,[0-9]{1,2})?) "
-              r"pesos chilenos por dólar para la fecha (\\d{4}-\\d{2}-\\d{2})",
+              r"pesos chilenos por dólar para la fecha (\d{4}-\d{2}-\d{2})",
               answer,
               flags=re.IGNORECASE,
           )
