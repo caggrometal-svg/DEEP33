@@ -302,7 +302,8 @@ object Deep33Api {
         memoryProfileId: String? = null,
         isCancelled: () -> Boolean = { false },
         onText: (String) -> Unit,
-        deadlineAtNanos: Long? = null
+        deadlineAtNanos: Long? = null,
+        endpointOverride: List<String>? = null
     ): String {
         val activePersonality = personality.trim().uppercase().let {
             if (it in setOf("AGRESIVO", "NEUTRO", "COMICO", "CONSPIRANOICO")) it else "NEUTRO"
@@ -310,7 +311,7 @@ object Deep33Api {
         val deadline = deadlineAtNanos ?: (System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L)
         var lastError: Deep33ApiException? = null
 
-        for (endpoint in normalizedEndpoints()) {
+        for (endpoint in normalizedEndpoints(endpointOverride)) {
             var attempt = 0
             var authRetryUsed = false
             while (attempt < ENDPOINT_ATTEMPTS) {
