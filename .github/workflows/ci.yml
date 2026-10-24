@@ -251,8 +251,8 @@ jobs:
             fi
             echo "VERCEL_REALTIME_SEARCH_NOT_READY attempt=$attempt http=$status_code"
             jq -c '{ok,status,code,errors,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-search.json" 2>/dev/null || true
-            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
-            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1)"
+            location="$(awk 'tolower($0) ~ /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
+            content_type="$(awk 'tolower($0) ~ /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-search.headers" 2>/dev/null | tail -n 1)"
             [ -n "$location" ] && echo "VERCEL_REDIRECT_LOCATION_SAFE=$location"
             [ -n "$content_type" ] && echo "VERCEL_RESPONSE_CONTENT_TYPE=$content_type"
             [ "$attempt" -lt 4 ] && sleep 5
