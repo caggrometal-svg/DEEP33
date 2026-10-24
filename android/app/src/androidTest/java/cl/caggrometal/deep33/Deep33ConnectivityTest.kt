@@ -31,6 +31,7 @@ class Deep33ConnectivityTest {
     @Test
     fun allFailoverEndpointHostsResolveInsideAndroid() {
         val urls = listOf(
+            BuildConfig.DEEP33_VERCEL_URL,
             BuildConfig.DEEP33_PRIMARY_URL,
             BuildConfig.DEEP33_SECONDARY_URL,
             BuildConfig.DEEP33_TERTIARY_URL
@@ -61,6 +62,21 @@ class Deep33ConnectivityTest {
                 resolved
             )
         }
+    }
+
+    @Test
+    fun vercelPrimaryHealthIsVerifiedWithoutFailover() {
+        val json = Deep33Api.get(
+            "/health",
+            sessionId,
+            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+        )
+        assertTrue("Vercel health: " + json, json.optString("status") == "PASS")
+        assertTrue("Vercel service was not directly reached: " + json, json.optString("service") == "DEEP33 Backend")
+        assertTrue("Vercel version missing: " + json, json.optString("version").isNotBlank())
+        assertTrue("Vercel build id missing: " + json, json.optString("build_id").isNotBlank())
+        assertTrue("Vercel timestamp missing: " + json, json.optString("timestamp").isNotBlank())
+        println("ANDROID_VERCEL_DIRECT_HEALTH_PASS service=${json.optString("service")} build_id=${json.optString("build_id")}")
     }
 
     @Test
@@ -133,7 +149,13 @@ class Deep33ConnectivityTest {
             val payload = JSONArray().put(
                 JSONObject().put("role", "user").put("content", prompt)
             )
+            val requestStartedAt = System.nanoTime()
             val body = Deep33Api.generate(payload, sessionId)
+            val generationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+            assertTrue(
+                "current-web round ${index + 1} exceeded the 180-second generation deadline: ${generationMs}ms",
+                generationMs < 180_000
+            )
             assertGenerationEnvelope(body, "current-web-round-${index + 1}")
             assertTrue(
                 "web navigation was not used in round ${index + 1}: $body",
@@ -162,7 +184,7 @@ class Deep33ConnectivityTest {
                 "current web round ${index + 1} was not persisted in memory",
                 persisted
             )
-            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()}")
+            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()} total_ms=${generationMs}")
         }
     }
 
@@ -173,11 +195,27 @@ class Deep33ConnectivityTest {
                 .put("content", "Provide a brief streaming connectivity response for Android E2E certification.")
         )
         val combined = StringBuilder()
+        val streamStartedAt = System.nanoTime()
+        var firstTextMs: Long? = null
         val result = Deep33Api.stream(
             payload,
             sessionId,
-            onText = { combined.append(it) }
+            onText = {
+                if (firstTextMs == null) {
+                    firstTextMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - streamStartedAt)
+                }
+                combined.append(it)
+            }
         )
+        val totalStreamMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - streamStartedAt)
+        val measuredFirstTextMs = firstTextMs
+            ?: throw AssertionError("stream callback emitted no first visible text")
+        assertTrue(
+            "first visible text exceeded the 12-second deadline: ${measuredFirstTextMs}ms",
+            measuredFirstTextMs < 12_000
+        )
+        assertTrue("stream exceeded the 180-second deadline: ${totalStreamMs}ms", totalStreamMs < 180_000)
+        println("ANDROID_STREAM_TIMING ttft_ms=${measuredFirstTextMs} total_ms=${totalStreamMs}")
         assertTrue("stream result is empty: " + result, combined.toString().isNotBlank())
         assertTrue("stream callback result mismatch", result == combined.toString())
 
