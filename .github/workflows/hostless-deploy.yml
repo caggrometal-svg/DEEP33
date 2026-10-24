@@ -1,0 +1,115 @@
+name: Hostless DEEP33 deploy
+
+on:
+  push:
+    branches:
+      - deploy/hostless-android
+    paths:
+      - ".github/workflows/hostless-deploy.yml"
+      - "hostless.yaml"
+      - "Dockerfile"
+      - "backend/**"
+      - "tools/**"
+      - "api/**"
+      - "supabase/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_hostless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HOSTLESS_TOKEN: ${{ secrets.HOSTLESS_TOKEN }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_jbH_3RA6brvmpzmyjmhwtw_knKY0PIT' }}
+      DEEP33_CLIENT_AUTH_TOKEN: ${{ secrets.DEEP33_CLIENT_AUTH_TOKEN }}
+    steps:
+      - name: Checkout Hostless branch
+        uses: actions/checkout@v4
+
+      - name: Require Hostless token
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${HOSTLESS_TOKEN:-}" || {
+            echo "::error::Missing GitHub Actions secret HOSTLESS_TOKEN"
+            exit 1
+          }
+
+      - name: Install Hostless CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://hostless.cloud/install.sh | bash
+          hostless --version
+
+      - name: Create or reuse Hostless app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! hostless info app deep33 >/tmp/hostless-app.txt 2>&1; then
+            hostless create app deep33 --yes --wait
+          else
+            cat /tmp/hostless-app.txt
+          fi
+
+      - name: Configure DEEP33 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostless env set \
+            DEEP33_WEB_TOOLS_ENABLED=true \
+            WEB_SEARCH_PROVIDER=auto \
+            WEB_SEARCH_FALLBACK_DDG=true \
+            WEB_SEARCH_BING_ENABLED=true \
+            NETWORK_CHECK_URL=https://www.google.com/generate_204 \
+            AI_GATEWAY_PROVIDER=kilo \
+            AI_GATEWAY_URL=https://api.kilo.ai/api/gateway/chat/completions \
+            AI_GATEWAY_HEALTH_URL=https://api.kilo.ai/api/gateway/models \
+            AI_GATEWAY_MODEL=dots-studio/dots-3-note-preview:free \
+            SUPABASE_URL=https://opocgzydeknuchtrqzfa.supabase.co \
+            SUPABASE_PUBLISHABLE_KEY=sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA \
+            DEEP33_AUTH_SUPABASE_URL=https://opocgzydeknuchtrqzfa.supabase.co \
+            DEEP33_AUTH_API_KEY=sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA \
+            DEEP33_MEMORY_URL=https://guqevsjbjyapqjjtutza.supabase.co/functions/v1/deep33-memory \
+            --app deep33
+
+          if [ -n "${AI_GATEWAY_API_KEY:-}" ]; then
+            hostless env set AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY" --app deep33
+          fi
+          if [ -n "${SUPABASE_ANON_KEY:-}" ]; then
+            hostless env set SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" --app deep33
+          fi
+          if [ -n "${DEEP33_CLIENT_AUTH_TOKEN:-}" ]; then
+            hostless env set DEEP33_CLIENT_AUTH_TOKEN="$DEEP33_CLIENT_AUTH_TOKEN" --app deep33
+          fi
+
+      - name: Deploy DEEP33
+        shell: bash
+        run: |
+          set -euo pipefail
+          hostless deploy --wait --app deep33
+          hostless info app deep33
+
+      - name: Verify live DEEP33 readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://deep33.hostless.app/ready"
+          for attempt in $(seq 1 8); do
+            response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nHTTP_STATUS:%{http_code}' "$url" || true)"
+            status="${response##*HTTP_STATUS:}"
+            body="${response%HTTP_STATUS:*}"
+            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ready == true and .memory_configured == true and .memory_ready == true and .gateway.gateway == "PASS" and .network.internet_available == true' >/dev/null 2>&1; then
+              printf '%s\n' "$body" | jq '{status,ready,memory_configured,memory_ready,gateway:.gateway.gateway,internet:.network.internet_available,git_sha,build_id}'
+              exit 0
+            fi
+            echo "DEEP33 readiness attempt $attempt/8: HTTP $status"
+            if [ -n "$body" ]; then printf '%s\n' "$body" | jq -c '{status,ready,memory_configured,memory_ready,gateway:.gateway.gateway,internet:.network.internet_available,detail,error}' 2>/dev/null || printf '%s\n' "$body"; fi
+            sleep 8
+          done
+          echo "::error::DEEP33 is deployed but readiness is not PASS."
+          exit 1
