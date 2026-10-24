@@ -236,6 +236,41 @@ jobs:
             core.setSecret(token);
             core.setOutput("token", token);
 
+      - name: Verify deployed Vercel SHA matches the tested commit
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
+          EXPECTED_VERCEL_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          headers=()
+          if [ -n "${VERCEL_TRUSTED_OIDC_TOKEN:-}" ]; then
+            headers+=(-H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN")
+          fi
+          matched=0
+          for attempt in $(seq 1 12); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 30 \
+              -o "$RUNNER_TEMP/deep33-vercel-health.json" -w "%{http_code}" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              "${headers[@]}" "$VERCEL_URL/health" || true)"
+            if [ "$status_code" = "200" ] && jq -e --arg expected "$EXPECTED_VERCEL_SHA" '
+              .status == "PASS" and
+              (.git_sha | type == "string") and
+              ((.git_sha | ascii_downcase) == ($expected | ascii_downcase)) and
+              (.build_id | type == "string" and length > 0)
+            ' "$RUNNER_TEMP/deep33-vercel-health.json" >/dev/null 2>&1; then
+              jq -c '{status,service,git_sha,build_id,git_branch}' "$RUNNER_TEMP/deep33-vercel-health.json"
+              echo "VERCEL_DEPLOYED_SHA_MATCH_PASS expected=$EXPECTED_VERCEL_SHA"
+              matched=1
+              break
+            fi
+            echo "VERCEL_DEPLOYED_SHA_MISMATCH attempt=$attempt http=$status_code expected=$EXPECTED_VERCEL_SHA"
+            jq -c '{status,service,git_sha,build_id,git_branch}' "$RUNNER_TEMP/deep33-vercel-health.json" 2>/dev/null || true
+            [ "$attempt" -lt 12 ] && sleep 5
+          done
+          test "$matched" = "1" || { echo "VERCEL_DEPLOYED_SHA_MATCH_FAIL"; exit 1; }
+
       - name: Verify live Vercel search and page extraction
         env:
           VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_oidc.outputs.token }}
