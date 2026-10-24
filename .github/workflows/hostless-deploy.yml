@@ -24,7 +24,7 @@ jobs:
     env:
       HOSTLESS_TOKEN: ${{ secrets.HOSTLESS_TOKEN }}
       AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
-      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_jbH_3RA6brvmpzmyjmhwtw_knKY0PIT' }}
       DEEP33_CLIENT_AUTH_TOKEN: ${{ secrets.DEEP33_CLIENT_AUTH_TOKEN }}
     steps:
       - name: Checkout Hostless branch
@@ -93,3 +93,23 @@ jobs:
           set -euo pipefail
           hostless deploy --wait --app deep33
           hostless info app deep33
+
+      - name: Verify live DEEP33 readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://deep33.hostless.app/ready"
+          for attempt in $(seq 1 8); do
+            response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nHTTP_STATUS:%{http_code}' "$url" || true)"
+            status="${response##*HTTP_STATUS:}"
+            body="${response%\n'HTTP_STATUS:*}"
+            if [ "$status" = "200" ] && printf '%s' "$body" | jq -e '.ready == true and .memory_configured == true and .memory_ready == true and .gateway.gateway == "PASS" and .network.internet_available == true' >/dev/null 2>&1; then
+              printf '%s\n' "$body" | jq '{status,ready,memory_configured,memory_ready,gateway:.gateway.gateway,internet:.network.internet_available,git_sha,build_id}'
+              exit 0
+            fi
+            echo "DEEP33 readiness attempt $attempt/8: HTTP $status"
+            if [ -n "$body" ]; then printf '%s\n' "$body" | jq -c '{status,ready,memory_configured,memory_ready,gateway:.gateway.gateway,internet:.network.internet_available,detail,error}' 2>/dev/null || printf '%s\n' "$body"; fi
+            sleep 8
+          done
+          echo "::error::DEEP33 is deployed but readiness is not PASS."
+          exit 1
