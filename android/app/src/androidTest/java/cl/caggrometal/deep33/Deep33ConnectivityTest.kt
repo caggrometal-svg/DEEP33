@@ -191,6 +191,32 @@ class Deep33ConnectivityTest {
     }
 
     @Test
+    fun realAndroidTransportFallsBackFromProtectedVercelPreviewToLivePrimary() {
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Respond with one short sentence confirming backend connectivity.")
+        )
+        val requestId = UUID.randomUUID().toString()
+        val startedAt = System.nanoTime()
+        val body = Deep33Api.generate(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            endpointOverride = listOf(
+                Deep33Api.e2eEndpointUrl(),
+                BuildConfig.DEEP33_PRIMARY_URL
+            )
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        assertGenerationEnvelope(body, "vercel-preview-fallback-to-primary")
+        assertTrue("Vercel-to-primary failover exceeded 180 seconds: ${elapsedMs}ms", elapsedMs < 180_000)
+        println(
+            "ANDROID_REAL_VERCEL_FALLBACK_PASS preview_first=true primary_fallback=available total_ms=${elapsedMs}"
+        )
+    }
+
+    @Test
     fun realAndroidTransportFailsOverFromUnavailableFirstEndpointToLiveBackend() {
         val payload = JSONArray().put(
             JSONObject().put("role", "user")

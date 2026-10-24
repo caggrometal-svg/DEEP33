@@ -161,7 +161,13 @@ object Deep33Api {
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val canonical = canonicalEndpoints()
         if (overrides == null) {
-            if (BuildConfig.DEBUG) e2eBackendUrl?.let { return listOf(it) }
+            if (BuildConfig.DEBUG) e2eBackendUrl?.let { selectedEndpoint ->
+                // Exercise the exact PR preview first, but retain the same real
+                // production fallback routes after it. Exclude the production Vercel
+                // alias so an old live deployment cannot mask a broken PR preview.
+                return (listOf(selectedEndpoint) +
+                    canonical.filter { it != BuildConfig.DEEP33_VERCEL_URL }).distinct()
+            }
             return canonical
         }
 
