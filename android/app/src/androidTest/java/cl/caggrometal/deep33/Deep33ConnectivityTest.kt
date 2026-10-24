@@ -124,6 +124,8 @@ class Deep33ConnectivityTest {
         val pages = json.optJSONArray("fetched_pages") ?: JSONArray()
         val domainsUsed = json.optInt("domains_used", 0)
         val extractedChars = json.optInt("extracted_text_chars", 0)
+        val providers = json.optJSONArray("providers") ?: JSONArray()
+        assertTrue("Vercel search used fewer than two independent providers: " + json, providers.length() >= 2)
         assertTrue("Vercel search returned fewer than two results: " + json, results.length() >= 2)
         assertTrue("Vercel search extracted fewer than two pages: " + json, pages.length() >= 2)
         assertTrue("Vercel search used fewer than two domains: " + json, domainsUsed >= 2)
@@ -307,6 +309,78 @@ class Deep33ConnectivityTest {
         assertTrue("duplicated complete streaming response: " + normalized, !duplicatedHalf)
         assertTrue("duplicated fallback streaming response: " + normalized, !repeatedFallback)
         println("ANDROID_DUPLICATES=0")
+    }
+
+    @Test
+    fun vercelFinanceStreamReturnsCurrentSourceBackedChileanDollar() {
+        val query = "Valor del dólar en Chile hoy. Indica el valor en pesos chilenos, fecha u hora de la cotización y la fuente."
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user").put("content", query)
+        )
+        val requestId = UUID.randomUUID().toString()
+        val startedAt = System.nanoTime()
+        val answer = StringBuilder()
+        var firstTextMs: Long? = null
+
+        val result = Deep33Api.stream(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            onText = { chunk ->
+                if (firstTextMs == null) {
+                    firstTextMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                }
+                answer.append(chunk)
+            },
+            endpointOverride = listOf(BuildConfig.DEEP33_VERCEL_URL)
+        )
+        val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+        val text = result.trim()
+        assertTrue("Vercel finance stream returned no answer", text.isNotBlank())
+        assertTrue("Vercel finance stream exceeded 12-second first-text deadline: ${firstTextMs}ms", (firstTextMs ?: Long.MAX_VALUE) < 12_000)
+        assertTrue("Vercel finance stream exceeded 180-second deadline: ${totalMs}ms", totalMs < 180_000)
+        assertTrue("Current quote lacks Chilean peso units: " + text, text.contains("pesos chilenos", ignoreCase = true))
+
+        val quoteMatch = Regex(
+            "(?i)(?:=|es)\\s*([0-9][0-9.,]*)\\s*pesos chilenos"
+        ).find(text) ?: throw AssertionError("Current quote number is missing: " + text)
+        val quoteRaw = quoteMatch.groupValues[1]
+        val normalizedQuote = when {
+            quoteRaw.contains(",") -> quoteRaw.replace(".", "").replace(",", ".")
+            quoteRaw.count { it == '.' } > 1 -> quoteRaw.replace(".", "")
+            quoteRaw.contains(".") && quoteRaw.substringAfterLast(".").length == 3 -> quoteRaw.replace(".", "")
+            else -> quoteRaw
+        }
+        val quoteValue = normalizedQuote.toDoubleOrNull()
+            ?: throw AssertionError("Quote could not be parsed: " + quoteRaw)
+        assertTrue("Quote outside plausible CLP-per-USD bounds: " + quoteRaw, quoteValue in 50.0..10_000.0)
+
+        val urls = Regex("https://[^\\s)]+")
+            .findAll(text)
+            .map { it.value.trimEnd('.', ',', ';') }
+            .distinct()
+            .toList()
+        val domains = urls.mapNotNull { url ->
+            runCatching { java.net.URL(url).host.lowercase() }.getOrNull()
+        }.toSet()
+        assertTrue("Current quote has no HTTPS source URL: " + text, urls.isNotEmpty())
+        val hasStructuredFinanceProvider = domains.any {
+            it == "query1.finance.yahoo.com" || it == "mindicador.cl"
+        }
+        assertTrue(
+            "Quote source was not verified by the finance provider or multiple independent web domains: " + text,
+            hasStructuredFinanceProvider || domains.size >= 2
+        )
+        assertTrue(
+            "Quote does not contain market timestamp or observation date: " + text,
+            Regex("\\b20\\d{2}-\\d{2}-\\d{2}\\b").containsMatchIn(text) ||
+                text.contains("Hora de mercado reportada", ignoreCase = true)
+        )
+        println(
+            "ANDROID_VERCEL_FINANCE_STREAM_PASS quote=${quoteRaw} domains=${domains.size} " +
+                "ttft_ms=${firstTextMs} total_ms=${totalMs}"
+        )
     }
 
     private fun get(path: String): JSONObject =
