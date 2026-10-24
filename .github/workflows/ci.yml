@@ -201,7 +201,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      VERCEL_URL: https://deep33-backend.vercel.app
+      VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - name: Create authenticated Vercel validation session
         run: |
@@ -303,12 +303,97 @@ jobs:
             tail -c 2500 "$body" 2>/dev/null || true
             exit 1
           fi
-          if ! grep -qi "pesos chilenos" "$body"; then
-            echo "VERCEL_FINANCE_STREAM_MISSING_VERIFIED_QUOTE"
-            tail -c 4000 "$body"
-            exit 1
-          fi
-          echo "VERCEL_FINANCE_STREAM_PASS verified_quote_present"
+          python - "$body" <<'PY'
+          import json
+          import re
+          import sys
+          from datetime import datetime, timezone
+          from urllib.parse import urlparse
+
+          raw = open(sys.argv[1], encoding="utf-8").read()
+          chunks = []
+          for block in re.split(r"\\r?\\n\\r?\\n", raw):
+              data_lines = [
+                  line[5:].strip()
+                  for line in block.splitlines()
+                  if line.startswith("data:")
+              ]
+              if not data_lines:
+                  continue
+              payload = "\\n".join(data_lines)
+              if payload == "[DONE]":
+                  continue
+              try:
+                  item = json.loads(payload)
+              except (json.JSONDecodeError, TypeError):
+                  continue
+              choices = item.get("choices") or []
+              if choices:
+                  delta = (choices[0].get("delta") or {}).get("content")
+                  if isinstance(delta, str):
+                      chunks.append(delta)
+
+          answer = "".join(chunks)
+          print("VERCEL_FINANCE_ANSWER=" + answer.replace("\\n", " ")[:1800])
+          if not answer.strip():
+              raise SystemExit("VERCEL_FINANCE_STREAM_EMPTY_TEXT")
+
+          source = re.search(
+              r"Fuentes consultadas:\\s*-?\\s*[^:\\r\\n]+:\\s*(https://[^\\s)]+)",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          if not source:
+              raise SystemExit("VERCEL_FINANCE_STREAM_SOURCE_MISSING")
+          source_url = source.group(1).rstrip(".,")
+          host = (urlparse(source_url).hostname or "").lower()
+          yahoo = "Yahoo Finance (USD/CLP)" in answer and host == "query1.finance.yahoo.com"
+          official = "MiIndicador.cl (official fallback)" in answer and host == "mindicador.cl"
+          if not (yahoo or official):
+              raise SystemExit("VERCEL_FINANCE_STREAM_SOURCE_UNEXPECTED")
+
+          market = re.search(
+              r"1 dólar estadounidense = ([0-9.]+(?:,[0-9]{1,2})?) pesos chilenos\\.\\s*"
+              r"Hora de mercado reportada:\\s*([^\\s]+)",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          daily = re.search(
+              r"El dólar observado informado por .+? es ([0-9.]+(?:,[0-9]{1,2})?) "
+              r"pesos chilenos por dólar para la fecha (\\d{4}-\\d{2}-\\d{2})",
+              answer,
+              flags=re.IGNORECASE,
+          )
+          if market:
+              value_text, timestamp_text = market.groups()
+              quote_time = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+              age_seconds = (datetime.now(timezone.utc) - quote_time.astimezone(timezone.utc)).total_seconds()
+              if age_seconds < -300 or age_seconds > 36 * 3600:
+                  raise SystemExit("VERCEL_FINANCE_STREAM_MARKET_QUOTE_STALE")
+          elif daily:
+              value_text, date_text = daily.groups()
+              quote_date = datetime.fromisoformat(date_text).date()
+              age_days = (datetime.now(timezone.utc).date() - quote_date).days
+              if age_days < -1 or age_days > 3:
+                  raise SystemExit("VERCEL_FINANCE_STREAM_DAILY_QUOTE_STALE")
+          else:
+              raise SystemExit("VERCEL_FINANCE_STREAM_NUMERIC_QUOTE_MISSING")
+
+          normalized = (
+              value_text.replace(".", "").replace(",", ".")
+              if "," in value_text
+              else value_text.replace(".", "")
+          )
+          value = float(normalized)
+          if not 50 <= value <= 10000:
+              raise SystemExit("VERCEL_FINANCE_STREAM_VALUE_OUT_OF_RANGE")
+
+          print(
+              "VERCEL_FINANCE_STREAM_PASS "
+              f"provider={'Yahoo Finance' if yahoo else 'MiIndicador.cl'} "
+              f"value={value_text} source={source_url}"
+          )
+          PY
           
   performance_gate:
     needs: [backend_unit, android_validation]
