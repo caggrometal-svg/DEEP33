@@ -249,7 +249,7 @@ jobs:
           matched=0
           for attempt in $(seq 1 12); do
             status_code="$(curl -sS --connect-timeout 10 --max-time 30 \
-              -o "$RUNNER_TEMP/deep33-vercel-health.json" -w "%{http_code}" \
+              -D "$RUNNER_TEMP/deep33-vercel-health.headers" -o "$RUNNER_TEMP/deep33-vercel-health.json" -w "%{http_code}" \
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
               -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
@@ -267,6 +267,10 @@ jobs:
             fi
             echo "VERCEL_DEPLOYED_SHA_MISMATCH attempt=$attempt http=$status_code expected=$EXPECTED_VERCEL_SHA"
             jq -c '{status,service,git_sha,build_id,git_branch}' "$RUNNER_TEMP/deep33-vercel-health.json" 2>/dev/null || true
+            location="$(awk 'tolower($0) ~ /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-health.headers" 2>/dev/null | tail -n 1 | sed 's/[?#].*$//')"
+            content_type="$(awk 'tolower($0) ~ /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$RUNNER_TEMP/deep33-vercel-health.headers" 2>/dev/null | tail -n 1)"
+            [ -n "$location" ] && echo "VERCEL_HEALTH_REDIRECT_LOCATION_SAFE=$location"
+            [ -n "$content_type" ] && echo "VERCEL_HEALTH_RESPONSE_CONTENT_TYPE=$content_type"
             [ "$attempt" -lt 12 ] && sleep 5
           done
           test "$matched" = "1" || { echo "VERCEL_DEPLOYED_SHA_MATCH_FAIL"; exit 1; }

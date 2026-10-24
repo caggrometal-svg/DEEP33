@@ -1,8 +1,6 @@
 name: DEEP33 Current APK
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +13,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 1
+
+      - name: Require certified production-pass SHA
+        run: |
+          set -euo pipefail
+          git fetch origin refs/tags/production-pass --force
+          certified="$(git rev-parse refs/tags/production-pass^{commit})"
+          current="$(git rev-parse HEAD)"
+          test "$certified" = "$current" || {
+            echo "APK_BUILD_BLOCKED_CERTIFIED=$certified CURRENT=$current"
+            exit 1
+          }
+          echo "APK_BUILD_CERTIFIED_SHA=$certified"
 
       - uses: actions/setup-java@v6
         with:
