@@ -443,7 +443,8 @@ async def validate_evidence(evidence: Evidence) -> Evidence:
             evidence.ok = False
             evidence.error = "FINANCE_VALIDATION_FAILED"
             return evidence
-        if value <= 0 or value > 1_000_000:
+        # This route reports CLP per USD; reject inverted-pair values and implausible quotes.
+        if value < 50 or value > 10_000:
             evidence.ok = False
             evidence.error = "FINANCE_VALUE_OUT_OF_RANGE"
             return evidence
@@ -555,11 +556,13 @@ def format_structured_answer(query: str, evidence: Evidence) -> str:
                 f"1 dólar estadounidense = {value} pesos chilenos. "
                 f"Hora de mercado reportada: {market_timestamp} (UTC). "
                 "La cotización puede tener retraso y no equivale necesariamente al precio que aplicará un banco o una casa de cambio."
+                f"\n\nFuentes consultadas:\n- {evidence.provider}: {evidence.source_url}"
             )
         return (
             f"El dólar observado informado por {evidence.provider} es "
             f"{value} pesos chilenos por dólar para la fecha {data['date']}. "
             "Es un indicador diario, no una cotización intradía en tiempo real."
+            f"\n\nFuentes consultadas:\n- {evidence.provider}: {evidence.source_url}"
         )
     if evidence.route == DecisionRoute.SEISMIC:
         return (
