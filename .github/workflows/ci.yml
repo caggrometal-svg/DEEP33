@@ -1,5 +1,5 @@
 concurrency:
-  group: deep33-ci-v3-${{ github.ref }}
+  group: deep33-ci-v4-${{ github.ref }}
   cancel-in-progress: true
 
 name: DEEP33 CI
