@@ -181,6 +181,30 @@ class Deep33ConnectivityTest {
     }
 
     @Test
+    fun realAndroidTransportFailsOverFromUnavailableFirstEndpointToLiveBackend() {
+        val payload = JSONArray().put(
+            JSONObject().put("role", "user")
+                .put("content", "Respond with one short sentence confirming backend connectivity.")
+        )
+        val requestId = UUID.randomUUID().toString()
+        val requestStartedAt = System.nanoTime()
+        val body = Deep33Api.generate(
+            messages = payload,
+            sessionId = sessionId,
+            requestId = requestId,
+            idempotencyKey = requestId,
+            endpointOverride = listOf(
+                "https://deep33-e2e-unreachable.invalid",
+                BuildConfig.DEEP33_PRIMARY_URL
+            )
+        )
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
+        assertGenerationEnvelope(body, "real-failover")
+        assertTrue("real failover exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
+        println("ANDROID_REAL_FAILOVER_PASS unreachable_primary=confirmed live_fallback=confirmed total_ms=${elapsedMs}")
+    }
+
+    @Test
     fun repeatedCurrentWebQuestionsUseSearchSourcesAndMemory() {
         if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
 
