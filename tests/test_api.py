@@ -916,8 +916,14 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
             "text_chars": 700,
         }
 
+    async def fake_recent_news_candidates(*_args, **_kwargs):
+        # This unit test isolates endpoint filtering from the separate live RSS
+        # recovery; never let a real external search alter the candidate pool.
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", fake_recent_news_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(
