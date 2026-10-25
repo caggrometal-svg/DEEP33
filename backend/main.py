@@ -3498,17 +3498,14 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and _is_generic_realtime_news_candidate(item)
             )
         ]
-        # Apply the lower lexical floor only when the source is a known newsroom.
-        # It must not let a fresh timestamp make an unrelated health portal look
-        # like a broad-current-news result.
-        if _is_broad_current_news_query(q):
-            for item in ranked_sources:
-                if _is_known_chile_editorial_news_domain(item):
-                    item["relevance_score"] = max(
-                        item["relevance_score"],
-                        min(0.22, configured_relevance_score),
-                    )
-        minimum_relevance_score = configured_relevance_score
+        # Broad news queries have no narrow topic anchor; lower the candidate
+        # floor slightly, but the shared final validator grants this relaxation
+        # only to recognized newsrooms after article identity/freshness checks.
+        minimum_relevance_score = (
+            min(0.22, configured_relevance_score)
+            if _is_broad_current_news_query(q)
+            else configured_relevance_score
+        )
         relevant_sources = [
             item
             for item in ranked_sources
