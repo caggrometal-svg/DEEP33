@@ -994,3 +994,120 @@ def test_memory_routes_scope_reads_and_writes_to_authenticated_owner(monkeypatch
         ("preferences", "owner-a:session-a"),
     ]
 
+
+
+def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monkeypatch):
+    from backend import main
+
+    now = datetime.now(timezone.utc).isoformat()
+    homepage = "https://chile.travel/en/"
+    evergreen = "https://dschile.cl/conoce-chile"
+    articles = [
+        {
+            "title": "Noticias de Chile hoy: Gobierno anuncia medidas económicas - Emol",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/gobierno-medidas.html",
+            "source_domain": "emol.com",
+            "provider": "bing",
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: Senado debate reforma - Cooperativa",
+            "url": "https://www.cooperativa.cl/noticias/pais/politica/2026/10/25/senado-reforma.html",
+            "source_domain": "cooperativa.cl",
+            "provider": "google_news",
+        },
+        {
+            "title": "Noticias de Chile hoy: Fiscalía investiga robo de cobre - BioBioChile",
+            "url": "https://www.biobiochile.cl/noticias/nacional/2026/10/25/fiscalia-cobre.shtml",
+            "source_domain": "biobiochile.cl",
+            "provider": "bing",
+        },
+    ]
+    results = [
+        {
+            "title": "Home - Chile Travel",
+            "url": homepage,
+            "source_domain": "chile.travel",
+            "provider": "bing",
+            "snippet": "Explore Chile, destinations, travel guides and places to visit.",
+            "published_at": now,
+        },
+        {
+            "title": "Conoce Chile - DSChile",
+            "url": evergreen,
+            "source_domain": "dschile.cl",
+            "provider": "google_news",
+            "snippet": "Información general sobre Chile, su territorio y destinos.",
+            "published_at": now,
+        },
+        *[
+            {
+                **article,
+                "snippet": (
+                    "Noticias de Chile hoy: " + article["title"]
+                    + ". Información reciente sobre el hecho en Chile."
+                ),
+                "published_at": now,
+            }
+            for article in articles
+        ],
+    ]
+    fetched = []
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "fresh_request": True,
+            "results": results,
+            "sources": [],
+            "providers": ["bing", "google_news"],
+            "providers_attempted": ["bing", "google_news"],
+            "errors": [],
+            "retrieved_at": now,
+        }
+
+    async def fake_fetch_source(source, **_kwargs):
+        url = source["url"]
+        fetched.append(url)
+        assert url not in {homepage, evergreen}, (
+            "Generic pages must be filtered before they consume fetch slots."
+        )
+        title = source["title"]
+        return {
+            "title": title,
+            "url": url,
+            "domain": source["source_domain"],
+            "provider": source["provider"],
+            "published_at": now,
+            "text": (
+                "Noticias de Chile hoy. " + title
+                + ". La publicación informa hechos recientes y detalles "
+                "verificables del acontecimiento en el país. "
+            ) * 8,
+            "text_chars": 900,
+            "title_from_page": True,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
+
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "noticias Chile hoy"},
+        headers={"X-DEEP33-Session-Id": "skip-generic-news-candidates"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True, body
+    assert body["status"] == "success"
+    assert body["domains_used"] == 3
+    assert set(fetched) == {article["url"] for article in articles}
+    assert {item["source_domain"] for item in body["results"]} == {
+        "emol.com", "cooperativa.cl", "biobiochile.cl"
+    }
+    assert homepage not in {item["url"] for item in body["results"]}
+    assert evergreen not in {item["url"] for item in body["results"]}
