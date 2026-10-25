@@ -198,7 +198,10 @@ def _is_chile_commercial_technology_item(item: dict) -> bool:
 _CHILE_GENERAL_NEWS_PUBLISHERS = {
     "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
     "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
-    "futuro.cl", "as.com", "clarin.com", "elpais.com",
+    "futuro.cl", "as.com", "elrancaguino.cl", "redgol.cl", "bolavip.com",
+    "meganoticias.cl", "t13.cl", "publimetro.cl", "theclinic.cl",
+    "elmostrador.cl", "lacuarta.com", "lun.com", "radioagricultura.cl",
+    "df.cl", "tvn.cl", "chilevision.cl",
 }
 
 
@@ -1754,11 +1757,7 @@ class WebOrchestrator:
                 ("google", "site:chilevision.cl/noticias Chile noticias hoy"),
                 ("duckduckgo", "site:t13.cl Chile noticias hoy"),
             )
-            generic_news_publishers = {
-                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
-                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
-                "futuro.cl", "as.com", "chilevision.cl", "t13.cl",
-            }
+            generic_news_publishers = set(_CHILE_GENERAL_NEWS_PUBLISHERS)
 
             def is_direct_chile_news_article(item: dict) -> bool:
                 url = str(item.get("url") or "").strip()
@@ -1784,6 +1783,15 @@ class WebOrchestrator:
                     "/page/en-vivo", "/en-vivo", "/envivo", "/live",
                     "/directo", "/minuto-a-minuto",
                 }:
+                    return False
+                section_segments = {
+                    "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+                    "sociedad", "politica", "política", "economia", "economía", "mundo",
+                    "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+                    "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+                    "portada", "tecnologia", "tecnología", "negocios", "vida",
+                }
+                if len(parts) <= 3 and all(part in section_segments for part in parts):
                     return False
                 # Category/section paths such as /noticias/chile and
                 # /page/en-vivo can look like article candidates in SERPs.
