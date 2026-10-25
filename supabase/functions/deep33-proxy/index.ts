@@ -4401,7 +4401,7 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "railway-candidates") && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "vercel-backend-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
@@ -4951,7 +4951,7 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "railway-candidates") && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "vercel-backend-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
