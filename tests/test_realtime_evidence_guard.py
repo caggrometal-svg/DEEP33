@@ -55,7 +55,7 @@ def test_recent_news_requires_valid_fresh_publication_timestamp():
     )
 
 
-def test_news_ranking_rejects_dictionary_junk_stale_and_undated_results():
+def test_news_ranking_rejects_lexical_and_known_stale_results_but_defers_undated_pages():
     query = "noticias recientes en Chile"
     ranked = rank_results(
         query,
@@ -90,9 +90,11 @@ def test_news_ranking_rejects_dictionary_junk_stale_and_undated_results():
         ],
         realtime=True,
     )
-    assert [item["url"] for item in ranked] == [
-        "https://news.example.cl/chile/medidas"
-    ]
+    urls = {item["url"] for item in ranked}
+    assert "https://news.example.cl/chile/medidas" in urls
+    assert "https://undated.example.cl/chile/noticias" in urls
+    assert "https://www.bab.la/dictionary/english-spanish/current" not in urls
+    assert "https://stale.example.cl/chile/archivo" not in urls
 
 
 
