@@ -231,9 +231,13 @@ def _is_broad_current_news_query(query: str) -> bool:
         "verifica", "verificar", "fuente", "fuentes", "varias", "independientes",
         "informacion", "información", "informar", "nacional", "nacionales",
         "del", "mas", "más", "que", "qué", "se", "esta", "está", "pasando",
-        "ocurre", "paso", "pasó", "está", "hay", "todo", "toda", "todos", "todas",
+        "ocurre", "paso", "pasó", "hay", "todo", "toda", "todos", "todas",
+        "lunes", "martes", "miércoles", "miercoles", "jueves", "viernes",
+        "sábado", "sabado", "domingo", "enero", "febrero", "marzo", "abril",
+        "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+        "noviembre", "diciembre", "dia", "día", "del", "fecha",
     }
-    return "chile" in tokens and not (tokens - generic)
+    return "chile" in tokens and not ({token for token in tokens - generic if not token.isdigit()})
 
 
 def _verified_realtime_news_published_at(
