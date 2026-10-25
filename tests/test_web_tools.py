@@ -1125,7 +1125,10 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "backend/main.py").read_text(encoding="utf-8")
-    assert 'max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))' in source
+    assert 'configured_fetch_candidates = max(' in source
+    assert 'max_fetch_candidates = (' in source
+    assert 'max(8, configured_fetch_candidates)' in source
+    assert 'else min(6, configured_fetch_candidates)' in source
     assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
     assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
 
