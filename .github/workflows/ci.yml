@@ -205,7 +205,15 @@ jobs:
       id-token: write
     env:
       VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
     steps:
+      - name: Require Vercel Preview Protection bypass secret
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_PROTECTION_BYPASS:-}" || {
+            echo "VERCEL_BYPASS_SECRET_MISSING: add repository Actions secret VERCEL_PROTECTION_BYPASS"
+            exit 1
+          }
       - name: Create authenticated Vercel validation session
         run: |
           set -euo pipefail
@@ -246,6 +254,7 @@ jobs:
           if [ -n "${VERCEL_TRUSTED_OIDC_TOKEN:-}" ]; then
             headers+=(-H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN")
           fi
+          headers+=(-H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS")
           matched=0
           for attempt in $(seq 1 12); do
             status_code="$(curl -sS --connect-timeout 10 --max-time 30 \
@@ -330,6 +339,7 @@ jobs:
               -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
               -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
               -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
+            -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
               -H "Cache-Control: no-cache" \
               --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=$query" || true)"
             if [ "$status_code" = "200" ] && jq -e '
@@ -380,6 +390,7 @@ jobs:
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
             -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
             -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
+            -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
             -H "X-Request-ID: ci-vercel-finance-$GITHUB_RUN_ID" \
             -H "X-Idempotency-Key: ci-vercel-finance-$GITHUB_RUN_ID" \
             -H "X-DEEP33-Personality: NEUTRO" \
