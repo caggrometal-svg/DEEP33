@@ -517,7 +517,9 @@ def test_search_web_fresh_mode_bypasses_cache(monkeypatch):
     asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
     asyncio.run(web_search_module.search_web("DEEP33 ahora", provider="auto", fresh=True))
 
-    assert calls["count"] == 2
+    # Realtime planning executes two fresh query variants per search. The second
+    # top-level call must execute them again instead of reading a cached response.
+    assert calls["count"] == 4
 
 
 def test_realtime_policy_detects_local_current_situation_as_news_intent():
