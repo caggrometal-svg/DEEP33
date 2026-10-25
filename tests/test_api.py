@@ -932,7 +932,8 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in body["errors"]
     assert body["domains_used"] == 1
     assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
-    assert set(fetched) == {irrelevant_direct, irrelevant_login, wrapper}
+    assert set(fetched) == {irrelevant_direct, wrapper}
+    assert irrelevant_login not in fetched
     assert all(
         "banmedica" not in item["url"].casefold()
         for item in body["results"]
