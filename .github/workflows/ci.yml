@@ -198,7 +198,7 @@ jobs:
           retention-days: 14
 
   vercel_realtime_search:
-    if: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' || github.event.pull_request.head.ref == 'fix/chat-realtime-news-evidence-quorum-251026')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -206,7 +206,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      VERCEL_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' && 'https://deep33-backend-git-fix-production-realtime-gates-251026-iac33.vercel.app' || github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+      VERCEL_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' && 'https://deep33-backend-git-fix-production-realtime-gates-251026-iac33.vercel.app' || github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/chat-realtime-news-evidence-quorum-251026' && 'https://deep33-backend-git-fix-chat-realtime-news-evidence-869f34-iac33.vercel.app' || github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
       VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
     steps:
       - name: Require Vercel Preview Protection bypass secret
