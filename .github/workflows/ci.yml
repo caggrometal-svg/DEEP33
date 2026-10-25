@@ -95,6 +95,7 @@ jobs:
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_CI_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "DEEP33_CI_SESSION_ID=ci-production-realtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
       - name: Verify PRIMARY realtime search
         run: |
           set -euo pipefail
@@ -106,6 +107,7 @@ jobs:
               -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "Authorization: Bearer $DEEP33_CI_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_CI_SESSION_ID" \
               --get "$PRIMARY_URL/v1/web/search" \
               --data-urlencode "q=$query" || true)"
             status_code="${response##*DEEP33_HTTP_STATUS:}"
