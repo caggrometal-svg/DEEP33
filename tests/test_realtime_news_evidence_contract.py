@@ -290,7 +290,7 @@ def test_broad_chile_news_accepts_moderately_relevant_real_article(monkeypatch):
             "La autoridad confirmó la medida y detalló su entrada en vigencia. "
         ) * 6,
     }
-    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.21)
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.23)
 
     assert main._is_publishable_realtime_news_source(query, source, page)
 
@@ -320,6 +320,6 @@ def test_topical_chile_news_does_not_get_broad_query_relevance_relaxation(monkey
             "La autoridad confirmó la medida y detalló su entrada en vigencia. "
         ) * 6,
     }
-    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.21)
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.23)
 
     assert not main._is_publishable_realtime_news_source(query, source, page)
