@@ -1271,6 +1271,9 @@ WEB_EVIDENCE_SYNTHESIS_PROMPT = (
     "When independent sources conflict, describe the conflict and avoid choosing a winner unless the evidence itself establishes one. "
     "Preserve numbers, dates, names, units, and causal qualifiers exactly enough to avoid semantic drift. "
     "Synthesize an original, direct answer and do not copy source phrasing or dump raw metadata. When the user requests sources, include concise source names or direct URLs present in retrieved evidence; never invent links or citations. "
+    "For current/recent news and recent-change requests, a source is admissible only when its publisher publication timestamp is present, parseable, and inside the freshness window validated by the backend. "
+    "A retrieval timestamp is not a publication timestamp. Missing, malformed, stale, or future-dated publication times are not evidence and must not be used to answer or included as support. "
+    "If no admissible source remains, state that current information could not be verified and do not substitute model memory or old background pages. "
     "For real-time requests, do not infer that nothing is happening merely because evidence is weak, sparse, or missing; only state that no relevant current event was found when the evidence supports that conclusion. "
     "For date/time questions, the runtime clock in DEEP33's system context is authoritative."
 )
