@@ -1571,11 +1571,17 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
         .casefold().rstrip(".").removeprefix("www.")
         for item in result["results"]
     }
+    # AS Chile uses chile.as.com as a subdomain; count its editorial parent
+    # domain (as.com) so the assertion measures outlet diversity, not DNS hosts.
+    editorial_domains = {
+        "as.com" if host.endswith(".as.com") else host
+        for host in domains
+    }
     assert result["ok"] is True, result
-    assert len(domains - {""}) >= 3, result["results"]
+    assert len(editorial_domains - {""}) >= 3, result["results"]
     assert len(set(result["providers"])) >= 2, result["providers"]
-    assert "futuro.cl" in (domains - {""}), result["results"]
-    assert len(domains - {""}) == len(result["results"]), result["results"]
+    assert "futuro.cl" in (editorial_domains - {""}), result["results"]
+    assert len(editorial_domains - {""}) == len(result["results"]), result["results"]
     allowed_chilean_outlets = {
         "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
         "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
