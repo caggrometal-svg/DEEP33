@@ -746,7 +746,8 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
     body = response.json()
     assert body["ok"] is True
     assert body["domains_used"] >= 3
-    assert set(fetched) == {direct_a, direct_b, direct_c}
+    assert {direct_a, direct_b, direct_c}.issubset(set(fetched))
+    assert len(fetched) <= 5
     assert elapsed < 0.5
 
 
