@@ -1739,7 +1739,7 @@ class WebOrchestrator:
                 recovered_providers,
             )
 
-        if chile_general_news_intent and loop.time() < deadline:
+        if chile_general_news_intent:
             # Generic Chilean news can be dominated by unrelated pages from broad
             # indexes. Discover real direct newsroom articles through scoped live
             # queries; the downstream fetcher still verifies article identity,
@@ -1885,13 +1885,21 @@ class WebOrchestrator:
                 if isinstance(item, dict) and is_direct_chile_news_article(item)
             } - {""}
             if len(initial_article_domains) < min(3, self.max_results):
-                general_news_tasks = {
-                    asyncio.create_task(
-                        self._bounded_call_provider(provider, targeted_query),
-                        name=f"search:chile-general-news:{provider}:{index}",
-                    )
-                    for index, (provider, targeted_query) in enumerate(general_news_source_queries)
-                }
+                # Define the candidate predicate even when the overall search
+                # deadline has already elapsed; the final selection pass below
+                # always reuses it. Only launch additional provider calls while
+                # there is still time left in the shared budget.
+                general_news_tasks = (
+                    {
+                        asyncio.create_task(
+                            self._bounded_call_provider(provider, targeted_query),
+                            name=f"search:chile-general-news:{provider}:{index}",
+                        )
+                        for index, (provider, targeted_query) in enumerate(general_news_source_queries)
+                    }
+                    if loop.time() < deadline
+                    else set()
+                )
                 pending_general_news = set(general_news_tasks)
                 try:
                     while pending_general_news:
