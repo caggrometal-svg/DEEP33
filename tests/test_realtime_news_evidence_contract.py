@@ -324,3 +324,32 @@ def test_topical_chile_news_does_not_get_broad_query_relevance_relaxation(monkey
     monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.23)
 
     assert not main._is_publishable_realtime_news_source(query, source, page)
+
+
+def test_current_news_rejects_nested_section_landing_with_fresh_timestamp():
+    now = datetime.now(timezone.utc).isoformat()
+    url = "https://chile.as.com/noticias/chile"
+    source = {
+        "title": "Noticias de Chile y el mundo - AS Chile",
+        "url": url,
+        "source_domain": "chile.as.com",
+        "provider": "bing",
+        "published_at": now,
+        "snippet": "Noticias de Chile y el mundo, actualidad nacional.",
+    }
+    page = _fetched_page(
+        published_at=None,
+        url=url,
+        title="Noticias de Chile y el mundo - AS Chile",
+    )
+    page["domain"] = "chile.as.com"
+    page["text"] = (
+        "Noticias de Chile y el mundo. Revisa actualidad nacional, noticias "
+        "de deportes, política, sociedad y economía en esta sección. "
+    ) * 10
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
