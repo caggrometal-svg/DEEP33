@@ -1133,3 +1133,33 @@ def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monke
     }
     assert homepage not in {item["url"] for item in body["results"]}
     assert evergreen not in {item["url"] for item in body["results"]}
+
+
+def test_broad_news_filter_skips_service_landings_and_betting_verticals() -> None:
+    query = "últimas noticias de Chile hoy"
+    candidates = [
+        {
+            "title": "Digital newspaper library",
+            "url": "https://kiosco.latercera.com/library",
+            "source_domain": "kiosco.latercera.com",
+        },
+        {
+            "title": "Cooperativa media kit",
+            "url": "https://mediakit.cooperativa.cl/nuestros-medios/radio-cooperativa/a-ultima-hora",
+            "source_domain": "mediakit.cooperativa.cl",
+        },
+        {
+            "title": "Universidad de Chile vs Everton betting predictions",
+            "url": "https://bolavip.com/cl/apuestas/pronosticos/universidad-de-chile-vs-everton",
+            "source_domain": "bolavip.com",
+        },
+    ]
+    for candidate in candidates:
+        assert main._is_generic_realtime_news_candidate(candidate, query) is True, candidate
+
+    real_article = {
+        "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
+        "url": "https://www.biobiochile.cl/noticias/nacional/region-de-ohiggins/2026/10/25/formalizan-a-detenidos.shtml",
+        "source_domain": "biobiochile.cl",
+    }
+    assert main._is_generic_realtime_news_candidate(real_article, query) is False
