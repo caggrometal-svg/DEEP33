@@ -123,3 +123,50 @@ def test_current_news_rejects_unresolved_google_news_wrapper():
         page,
     )
 
+
+
+
+def test_current_news_rejects_admin_template_even_with_fresh_wrapper_timestamp():
+    now = datetime.now(timezone.utc).isoformat()
+    wrapper = "https://news.google.com/rss/articles/opaque-emol-wrapper"
+    source = _news_source(
+        published_at=now,
+        url=wrapper,
+    )
+    source["title"] = (
+        "Formalizan a 60 detenidos por robo de cobre en El Teniente - Emol"
+    )
+    page = _fetched_page(
+        published_at=None,
+        url="https://neomedia.emol.com/admin/au_creatives/422/emol_template",
+        title="Emol - plantilla de publicidad",
+    )
+    page["text"] = ("Panel administrativo y plantilla publicitaria de Emol. " * 15)
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_current_news_does_not_inherit_timestamp_for_unmatched_redirect():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(
+        published_at=now,
+        url="https://news.google.com/rss/articles/opaque-article-wrapper",
+    )
+    source["title"] = (
+        "Formalizan a 60 detenidos por robo de cobre en El Teniente - Emol"
+    )
+    page = _fetched_page(
+        published_at=None,
+        url="https://www.emol.com/2026/10/25/promociones-y-publicidad.html",
+        title="Promociones y publicidad para clientes",
+    )
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
