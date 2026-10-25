@@ -1112,7 +1112,8 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
     result = asyncio.run(main.web_search_endpoint(request, q=query))
 
     assert any("t13.cl" in url for url in attempted)
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert "REALTIME_NEWS_QUORUM_NOT_MET" in result["errors"]
     assert result["domains_used"] == 1
     assert result["extracted_text_chars"] >= 80
     assert result["fetched_pages"][0]["url"].startswith("https://www.t13.cl/")
