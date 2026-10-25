@@ -228,7 +228,7 @@ def _is_direct_chile_news_article_candidate(item: dict) -> bool:
         "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
         "sociedad", "politica", "política", "economia", "economía", "mundo",
         "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
-        "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "regiones", "santiago", "santiago-de-chile", "valparaiso", "valparaíso", "concepcion", "concepción", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
         "portada", "tecnologia", "tecnología", "negocios", "vida",
     }
     if len(parts) <= 3 and all(part in section_segments for part in parts):
@@ -1788,7 +1788,7 @@ class WebOrchestrator:
                     "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
                     "sociedad", "politica", "política", "economia", "economía", "mundo",
                     "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
-                    "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+                    "regiones", "santiago", "santiago-de-chile", "valparaiso", "valparaíso", "concepcion", "concepción", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
                     "portada", "tecnologia", "tecnología", "negocios", "vida",
                 }
                 if len(parts) <= 3 and all(part in section_segments for part in parts):
@@ -2192,7 +2192,15 @@ class WebOrchestrator:
             candidates_by_domain: dict[str, list[dict]] = {}
             seen_domain_urls: set[tuple[str, str]] = set()
             for item in [*selected, *merged]:
-                if not _is_direct_chile_news_article_candidate(item):
+                # Reuse the exact predicate that built the recovery candidate set.
+                # A second near-duplicate validator was unexpectedly collapsing
+                # seven valid newsroom candidates to one or two at the final step.
+                direct_article = (
+                    is_direct_chile_news_article(item)
+                    if chile_general_news_intent
+                    else _is_direct_chile_news_article_candidate(item)
+                )
+                if not direct_article:
                     continue
                 url = str(item.get("url") or "").strip()
                 host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
