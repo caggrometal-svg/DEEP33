@@ -895,7 +895,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
         return {
             "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
             "url": "https://www.emol.com/noticias/Nacional/2026/10/18/noticia.html",
-            "text": "Formalizan a detenidos por robo de cobre en El Teniente, informa Emol. " * 10,
+            "text": "Noticias de Chile hoy: formalizan a detenidos por robo de cobre en El Teniente, informa Emol. " * 10,
             "provider": source["provider"],
             "domain": "emol.com",
             "retrieved_at": now,
