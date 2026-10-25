@@ -258,6 +258,28 @@ def _is_broad_current_news_query(query: str) -> bool:
     return "chile" in tokens and not ({token for token in tokens - generic if not token.isdigit()})
 
 
+_CHILE_EDITORIAL_NEWS_DOMAINS = {
+    "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+    "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+    "futuro.cl", "as.com", "elrancaguino.cl", "redgol.cl", "bolavip.com",
+    "meganoticias.cl", "t13.cl", "publimetro.cl", "theclinic.cl",
+    "elmostrador.cl", "lacuarta.com", "lun.com", "radioagricultura.cl",
+    "df.cl", "tvn.cl", "chilevision.cl",
+}
+
+
+def _is_known_chile_editorial_news_domain(source: dict[str, Any], page_url: str = "") -> bool:
+    """Allow broad-query relevance relaxation only for recognized editorial outlets."""
+    parsed_host = (urlparse(page_url or str(source.get("url") or "")).hostname or "")
+    host = parsed_host.casefold().rstrip(".").removeprefix("www.")
+    declared = str(source.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
+    return any(
+        candidate == domain or candidate.endswith("." + domain)
+        for candidate in (host, declared)
+        for domain in _CHILE_EDITORIAL_NEWS_DOMAINS
+    )
+
+
 def _verified_realtime_news_published_at(
     query: str,
     source: dict[str, Any],
@@ -339,9 +361,13 @@ def _is_publishable_realtime_news_source(
     # Broad country-level headlines have no narrow topic token for a lexical
     # ranker to match. Keep a small bounded floor for these queries only; article
     # identity, freshness, extracted text and editorial independence remain strict.
+    relax_broad_news_relevance = (
+        _is_broad_current_news_query(query)
+        and _is_known_chile_editorial_news_domain(source, page_url)
+    )
     minimum_relevance_score = (
         min(0.22, configured_relevance_score)
-        if _is_broad_current_news_query(query)
+        if relax_broad_news_relevance
         else configured_relevance_score
     )
     return score_result(query, relevance_item) >= minimum_relevance_score
@@ -3461,19 +3487,28 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             )
         except (TypeError, ValueError):
             configured_relevance_score = 0.28
-        minimum_relevance_score = (
-            min(0.22, configured_relevance_score)
-            if _is_broad_current_news_query(q)
-            else configured_relevance_score
-        )
         ranked_sources = [
-            {**item, "relevance_score": score_result(q, item)}
+            {
+                **item,
+                "relevance_score": score_result(q, item),
+            }
             for item in normalized_sources.values()
             if not (
                 news_quorum_required
                 and _is_generic_realtime_news_candidate(item)
             )
         ]
+        # Apply the lower lexical floor only when the source is a known newsroom.
+        # It must not let a fresh timestamp make an unrelated health portal look
+        # like a broad-current-news result.
+        if _is_broad_current_news_query(q):
+            for item in ranked_sources:
+                if _is_known_chile_editorial_news_domain(item):
+                    item["relevance_score"] = max(
+                        item["relevance_score"],
+                        min(0.22, configured_relevance_score),
+                    )
+        minimum_relevance_score = configured_relevance_score
         relevant_sources = [
             item
             for item in ranked_sources
