@@ -3559,7 +3559,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # candidates only*. They still become public evidence only after a real page
         # is successfully fetched and extracted below.
         candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
+        if (search_ok or news_quorum_required) and ranked_sources and not candidate_sources:
             candidate_sources = ranked_sources
             logger.warning(
                 "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
@@ -3575,7 +3575,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and news_quorum_required:
+        if news_quorum_required:
             candidate_domains = {
                 str(
                     item.get("source_domain")
