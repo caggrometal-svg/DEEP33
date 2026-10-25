@@ -1751,13 +1751,13 @@ class WebOrchestrator:
                 ("cl0q", "site:cooperativa.cl/noticias Chile actualidad hoy"),
                 ("google_news", "site:futuro.cl Chile noticias hoy"),
                 ("yahoo", "site:chile.as.com Chile noticias hoy"),
-                ("google", "site:clarin.com Chile noticias hoy"),
-                ("duckduckgo", "site:elpais.com Chile noticias hoy"),
+                ("google", "site:chilevision.cl/noticias Chile noticias hoy"),
+                ("duckduckgo", "site:t13.cl Chile noticias hoy"),
             )
             generic_news_publishers = {
                 "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
                 "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
-                "futuro.cl", "as.com", "clarin.com", "elpais.com",
+                "futuro.cl", "as.com", "chilevision.cl", "t13.cl",
             }
 
             def is_direct_chile_news_article(item: dict) -> bool:
@@ -1781,7 +1781,25 @@ class WebOrchestrator:
                     "/", "/noticias", "/actualidad", "/nacional", "/politica",
                     "/política", "/economia", "/mundo", "/lo-ultimo",
                     "/ultimas-noticias", "/ultimas-noticias-de-chile",
+                    "/page/en-vivo", "/en-vivo", "/envivo", "/live",
+                    "/directo", "/minuto-a-minuto",
                 }:
+                    return False
+                # Category/section paths such as /noticias/chile and
+                # /page/en-vivo can look like article candidates in SERPs.
+                # Exclude them before they satisfy the early diversity quorum
+                # and cause remaining publisher queries to be cancelled.
+                section_segments = {
+                    "noticias", "news", "actualidad", "nacional", "chile",
+                    "pais", "país", "sociedad", "politica", "política",
+                    "economia", "economía", "mundo", "deportes", "internacional",
+                    "futbol", "fútbol", "cultura", "region", "regiones",
+                    "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+                    "portada", "tecnologia", "tecnología", "negocios", "vida",
+                    "page", "en-vivo", "envivo", "live", "directo",
+                    "minuto-a-minuto",
+                }
+                if len(parts) <= 3 and parts and all(part in section_segments for part in parts):
                     return False
                 if any(
                     part in {
