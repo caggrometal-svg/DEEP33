@@ -221,6 +221,15 @@ def _is_direct_chile_news_article_candidate(item: dict) -> bool:
         "/ultimas-noticias-de-chile",
     }:
         return False
+    section_segments = {
+        "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+        "sociedad", "politica", "política", "economia", "economía", "mundo",
+        "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+        "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "portada", "tecnologia", "tecnología", "negocios", "vida",
+    }
+    if len(parts) <= 3 and all(part in section_segments for part in parts):
+        return False
     if any(part in {
         "admin", "login", "signin", "template", "category", "categories",
         "tag", "tags", "author", "authors", "publicidad", "portada",
