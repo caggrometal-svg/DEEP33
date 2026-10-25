@@ -2074,14 +2074,24 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "title": item.get("title"),
             "url": item.get("url"),
             "provider": item.get("provider"),
+            "published_at": item.get("published_at"),
             "text_chars": item.get("text_chars"),
             "text": str(item.get("text") or "")[:2200],
         }
         for item in fetched_pages[:5]
     ]
+    # Do not pass undated current-news candidates to the model through the
+    # raw SERP metadata channel after rejecting them in the evidence gate.
+    verified_search_results = [
+        item for item in compact_search_results
+        if (
+            not is_realtime_news_query(query)
+            or _is_recently_published(item, query)
+        )
+    ]
     evidence_fragments = [
         str(item.get("snippet") or "")
-        for item in compact_search_results
+        for item in (snippet_evidence if snippet_fallback_used else [])
         if str(item.get("snippet") or "").strip()
     ] + [
         str(item.get("text") or "")
@@ -2104,7 +2114,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
-        "search_results": compact_search_results,
+        "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
@@ -2114,7 +2124,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     compact_web_evidence = {
         "search_results": [
             {**item, "snippet": str(item.get("snippet") or "")[:300]}
-            for item in compact_search_results[:4]
+            for item in verified_search_results[:4]
         ],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
