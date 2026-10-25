@@ -502,15 +502,17 @@ _LEXICAL_PATH_MARKERS = (
     "/wordreference/", "/translation/",
 )
 _REALTIME_NEWS_SIGNALS = (
-    "noticia", "noticias", "última hora", "ultima hora", "actualidad",
-    "situación actual", "situacion actual", "qué pasó", "que paso",
-    "qué está pasando", "que esta pasando", "qué ocurre", "que ocurre",
+    "noticia", "noticias", " news", "news ", "breaking news", "breaking",
+    "última hora", "ultima hora", "actualidad", "situación actual", "situacion actual",
+    "qué pasó", "que paso", "qué está pasando", "que esta pasando", "qué ocurre", "que ocurre",
     "qué pasa", "que pasa", "noticias recientes", "noticia reciente",
     "últimos cambios", "ultimos cambios", "últimas novedades", "ultimas novedades",
     "cambios recientes", "actualización reciente", "actualizaciones recientes",
-    "breaking news", "latest news", "current events", "current affairs",
-    "release notes", "security advisory", "vulnerabilidades recientes",
+    "latest news", "current events", "current affairs", "release notes", "latest release",
+    "latest version", "security advisory", "vulnerabilidades recientes",
     "incidente reciente", "incidentes recientes", "en desarrollo",
+    "acontecimientos actuales", "acontecimiento actual", "eventos actuales", "eventos recientes",
+    "últimos acontecimientos", "ultimos acontecimientos", "hechos recientes",
 )
 _REALTIME_MARKERS = (
     "hoy", "ahora", "ahora mismo", "ayer", "actual", "actualmente",
