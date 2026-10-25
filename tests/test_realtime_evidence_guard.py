@@ -131,3 +131,19 @@ def test_fresh_page_fetch_skips_both_cache_reads_and_writes(monkeypatch):
         assert fetch_module._FETCH_INFLIGHT == {}
 
     asyncio.run(exercise())
+
+
+
+def test_fetch_extracts_publisher_date_from_meta_and_json_ld():
+    from tools.web_fetch import _extract_published_at
+
+    meta_html = b"""<!doctype html><html><head>
+    <meta property="article:published_time" content="2026-10-25T02:15:00Z">
+    <title>News story</title></head><body>Story</body></html>"""
+    assert _extract_published_at(meta_html, "text/html") == "2026-10-25T02:15:00Z"
+
+    jsonld_html = b"""<!doctype html><html><head>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@type":"NewsArticle","datePublished":"2026-10-25T01:45:00Z"}
+    </script></head><body>Article text</body></html>"""
+    assert _extract_published_at(jsonld_html, "text/html") == "2026-10-25T01:45:00Z"
