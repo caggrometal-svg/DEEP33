@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import base64
+from datetime import datetime, timezone
 import httpx
 import pytest
 from tools.web_fetch import SSRFBlockedError, validate_public_url
@@ -743,13 +744,13 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
             "title": "Chile: latest events and updates - Facebook",
             "url": "https://news.google.com/rss/articles/social-repost",
             "snippet": "Current news and updates from Chile",
-            "published_at": "2026-10-10T05:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile: latest news from ADN Radio",
             "url": "https://adnradio.cl/noticias/chile",
             "snippet": "Current events in Chile today",
-            "published_at": "2026-10-10T05:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
 
