@@ -3313,14 +3313,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             .casefold().removeprefix("www.")
             for item in direct_sources
         } - {""}
-        # When at least two direct publisher URLs exist, fetch those first and
-        # avoid spending the public Edge budget on opaque RSS wrappers. Retain
-        # wrapper resolution as a fallback for sparse result sets.
-        candidate_pool = (
-            direct_sources
-            if len(direct_editorial_domains) >= 2
-            else [*direct_sources, *wrapper_sources]
-        )
+        # Keep direct publisher URLs first, but retain wrapper candidates as a
+        # bounded fallback. A current-news quorum cannot be certified from two
+        # readable pages when the third editorial domain is behind a wrapper.
+        candidate_pool = [*direct_sources, *wrapper_sources]
         for source in candidate_pool:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
