@@ -1104,3 +1104,90 @@ def test_chile_commercial_site_fallback_returns_official_navigation_candidates_w
         assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
 
     asyncio.run(scenario())
+
+
+def test_realtime_ranking_rejects_lexical_translation_noise():
+    ranked = rank_results(
+        "noticias Chile hoy cambios recientes",
+        [
+            {
+                "title": "Chile - English translation and dictionary",
+                "url": "https://www.spanishdict.com/translate/chile",
+                "snippet": "Spanish-English translation, conjugation and grammar.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            },
+            {
+                "title": "Noticias de Chile hoy: cambios recientes",
+                "url": "https://news.example.cl/chile/cambios-recientes",
+                "snippet": "Actualidad y noticias de Chile con cambios recientes confirmados.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["source_domain"] for item in ranked] == ["news.example.cl"]
+
+
+def test_realtime_news_rejects_explicitly_stale_dated_result():
+    old = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    ranked = rank_results(
+        "últimas noticias de Chile hoy",
+        [
+            {
+                "title": "Últimas noticias de Chile hoy",
+                "url": "https://stale.example.cl/chile/noticias",
+                "snippet": "Noticias y actualidad de Chile.",
+                "published_at": old,
+            },
+            {
+                "title": "Noticias de Chile hoy",
+                "url": "https://fresh.example.cl/chile/noticias",
+                "snippet": "Últimas noticias y actualidad de Chile.",
+                "published_at": fresh,
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["source_domain"] for item in ranked] == ["fresh.example.cl"]
+
+
+def test_realtime_orchestrator_never_reads_or_writes_cache():
+    from backend.search.resilient import WebOrchestrator
+
+    calls = {"count": 0}
+
+    async def provider(query, timeout, limit):
+        calls["count"] += 1
+        return [
+            {
+                "title": "DEEP33 noticias actuales",
+                "url": f"https://news.example/item-{calls['count']}",
+                "snippet": "DEEP33 noticias actualidad hoy",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=0.3,
+            fallback_delay_seconds=0,
+            cache_ttl_seconds=120,
+        )
+        orchestrator.providers = {"bing": provider}
+        orchestrator.fallback_providers = {}
+        orchestrator.circuits = {"bing": orchestrator.circuits["bing"]}
+
+        first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        return first, second, orchestrator
+
+    first, second, orchestrator = asyncio.run(exercise())
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert calls["count"] == 2
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is False
+    assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
