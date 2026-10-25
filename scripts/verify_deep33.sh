@@ -159,7 +159,7 @@ echo "SEARCH=PASS web_navigation=true results>=1 fetched_pages>=1 sources>=1"
 # Verify the strict realtime-news contract against the exact protected Preview.
 # A generic web result must not satisfy this separate, live news-quorum gate.
 request_file news_quorum "$VERCEL_URL/v1/web/search" 75 \
-  --get --data-urlencode 'q=Busca en Internet las últimas noticias de Chile publicadas hoy; verifica tres artículos independientes'
+  --get --data-urlencode 'q=últimas noticias de Chile hoy'
 [ "$HTTP_CODE" = "200" ] || {
   show_redirect news_quorum
   cat "$TMP_DIR/news_quorum.body"
