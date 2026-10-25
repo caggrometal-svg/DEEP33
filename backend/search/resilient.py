@@ -1856,6 +1856,27 @@ class WebOrchestrator:
                     return False
                 return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
 
+            core_chile_publishers = {
+                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+            }
+
+            def editorial_publisher_host(item: dict) -> str:
+                parsed_host = (
+                    urlparse(str(item.get("url") or "")).hostname or ""
+                ).casefold().rstrip(".").removeprefix("www.")
+                declared = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
+                is_google_news_wrapper = parsed_host in {"news.google.com", "news.googleusercontent.com"}
+                host = (
+                    declared
+                    if is_google_news_wrapper or parsed_host == declared or parsed_host.endswith("." + declared)
+                    else parsed_host
+                )
+                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com", "chilevision.cl", "t13.cl"):
+                    if host == publisher or host.endswith("." + publisher):
+                        return publisher
+                return host
+
             # Only spend the publisher-scoped wave while fewer than three direct
             # editorial articles are discoverable; never manufacture fallback URLs.
             initial_article_domains = {
@@ -1942,27 +1963,6 @@ class WebOrchestrator:
             diverse_news: list[dict] = []
             diverse_news_domains: set[str] = set()
             candidate_items = [*selected, *merged]
-            core_chile_publishers = {
-                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
-                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
-            }
-
-            def editorial_publisher_host(item: dict) -> str:
-                parsed_host = (
-                    urlparse(str(item.get("url") or "")).hostname or ""
-                ).casefold().rstrip(".").removeprefix("www.")
-                declared = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
-                is_google_news_wrapper = parsed_host in {"news.google.com", "news.googleusercontent.com"}
-                host = (
-                    declared
-                    if is_google_news_wrapper or parsed_host == declared or parsed_host.endswith("." + declared)
-                    else parsed_host
-                )
-                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com", "chilevision.cl", "t13.cl"):
-                    if host == publisher or host.endswith("." + publisher):
-                        return publisher
-                return host
-
             # Prefer core Chilean newsroom articles when at least three independent
             # publishers provide direct article candidates. Use broader publishers
             # only when core newsrooms cannot supply the minimum domain count.
