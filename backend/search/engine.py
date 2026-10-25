@@ -608,15 +608,19 @@ def rank_results(
 ) -> list[dict]:
     realtime_news_query = is_realtime_news_query(query)
     if realtime_news_query:
-        # Current-news evidence is strict: lexical/reference portals and any
-        # candidate without a valid recent publisher timestamp are inadmissible.
-        results = [
-            candidate
-            for candidate in results
-            if isinstance(candidate, dict)
-            and not _is_lexical_reference_result(candidate)
-            and _is_recently_published(candidate, query)
-        ]
+        # Ranking is a candidate-discovery stage. Search indexes do not always
+        # expose publication time, so keep undated article candidates for the
+        # page-fetch validation stage. Reject lexical noise and any candidate
+        # whose *known* publisher timestamp is stale/future.
+        admissible: list[dict] = []
+        for candidate in results:
+            if not isinstance(candidate, dict) or _is_lexical_reference_result(candidate):
+                continue
+            published = _published_timestamp(candidate)
+            if published is not None and not _is_recently_published(candidate, query):
+                continue
+            admissible.append(candidate)
+        results = admissible
     query_tokens = _tokens(query)
     topic_tokens = _topic_tokens(query)
     topic_token_set = set(topic_tokens)
