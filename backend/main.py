@@ -107,6 +107,7 @@ def _realtime_news_path_is_generic(path: str) -> bool:
         "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
         "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
         "portada", "tecnologia", "tecnología", "negocios", "vida",
+        "page", "en-vivo", "envivo", "live", "directo", "minuto-a-minuto",
     }
     if len(parts) <= 3 and parts and all(part in section_segments for part in parts):
         return True
