@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 from backend import main
 
@@ -104,8 +105,8 @@ def test_web_fetch_is_mandatory_for_explicit_current_queries_even_with_snippets(
             "ok": True,
             "provider": "test-search",
             "results": [
-                {"title": "A", "url": "https://a.example/", "snippet": "A" * 140},
-                {"title": "B", "url": "https://b.example/", "snippet": "B" * 140},
+                {"title": "A", "url": "https://a.example/", "snippet": "A" * 140, "published_at": datetime.now(timezone.utc).isoformat()},
+                {"title": "B", "url": "https://b.example/", "snippet": "B" * 140, "published_at": datetime.now(timezone.utc).isoformat()},
             ],
         }
 
@@ -119,6 +120,7 @@ def test_web_fetch_is_mandatory_for_explicit_current_queries_even_with_snippets(
             "final_url": url,
             "title": "Original article",
             "text": "REAL_ORIGINAL_SOURCE_TEXT " + ("Useful extracted article content. " * 5),
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
 
     monkeypatch.setattr(main, "search_web", fake_search)
