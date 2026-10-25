@@ -247,9 +247,14 @@ def test_secondary_edge_idempotency_is_scoped_to_authenticated_owner() -> None:
 
 def test_production_e2e_requires_relevant_live_search_results() -> None:
     source = read(".github/workflows/production-e2e.yml")
-    assert '.checks.INTERNET=="PASS"' in source
-    assert '.checks.DNS=="PASS"' in source
-    assert source.count("(.search.verification.relevant_results // 0) >= 1") == 2
+    assert '.status=="PASS"' in source
+    assert '.edge=="PASS"' in source
+    assert '.internet=="PASS"' in source
+    assert '.upstream.ready==true' in source
+    assert '.search.ok==true' in source
+    assert '(.search.results|length)>=1' in source
+    assert '.checks.INTERNET=="PASS"' not in source
+    assert '.search.verification.relevant_results' not in source
 
 
 def test_secondary_memory_calls_send_internal_token() -> None:

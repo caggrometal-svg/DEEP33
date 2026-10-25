@@ -436,6 +436,15 @@ class WebOrchestrator:
                 # outweigh the actual topic or location.
                 if "latest" not in {token.casefold() for token in realtime_tokens}:
                     realtime_tokens.append("latest")
+            # Preserve requested release semantics in the provider query. These
+            # descriptors are excluded separately from topical relevance scoring,
+            # so "stable version" cannot make an unrelated product a false match.
+            if any(term in lowered for term in ("versión", "version", "versiones", "release", "releases")):
+                if "version" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("version")
+            if any(term in lowered for term in ("estable", "stable", "stability")):
+                if "stable" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("stable")
             if 2 <= len(realtime_tokens) <= 10:
                 return " ".join(realtime_tokens)
             return normalized_lookup or cleaned
