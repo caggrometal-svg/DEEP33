@@ -88,3 +88,38 @@ def test_current_news_rejects_timestamped_news_landing_page():
         source,
         page,
     )
+
+
+def test_current_news_rejects_recent_dated_landing_page():
+    now = datetime.now(timezone.utc).isoformat()
+    url = "https://www.clarin.com/ultimo-momento"
+    source = _news_source(published_at=now, url=url)
+    page = _fetched_page(
+        published_at=now,
+        url=url,
+        title="Últimas noticias de economía, Chile y el mundo",
+    )
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_current_news_rejects_unresolved_google_news_wrapper():
+    now = datetime.now(timezone.utc).isoformat()
+    url = "https://news.google.com/rss/articles/current-signed-wrapper"
+    source = _news_source(published_at=now, url=url)
+    page = _fetched_page(
+        published_at=now,
+        url=url,
+        title="Últimas noticias de Chile hoy",
+    )
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
