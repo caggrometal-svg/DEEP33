@@ -1405,3 +1405,108 @@ def test_spanish_python_release_query_rejects_off_topic_debian_page():
     assert rank_results(query, [unrelated], realtime=True) == []
     ranked = rank_results(query, [unrelated, relevant], realtime=True)
     assert [item["url"] for item in ranked] == [relevant["url"]]
+
+def test_generic_chile_news_search_recovers_direct_articles_from_multiple_publishers() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    base_result = {
+        "title": "Euro hoy en Chile: precio de la divisa",
+        "url": "https://www.clarin.com/economia/euro-hoy-chile_0_test.html",
+        "snippet": "Cotización del euro y otros datos financieros publicados hoy.",
+        "source_domain": "clarin.com",
+    }
+    newsroom_results = {
+        "biobiochile.cl": {
+            "title": "Formalizan a detenidos por robo de cobre en El Teniente hoy",
+            "url": "https://www.biobiochile.cl/noticias/nacional/chile/2026/10/25/formalizan-detenidos-robo-cobre.shtml",
+            "snippet": "La Fiscalía informó nuevos antecedentes de la investigación en Chile.",
+            "source_domain": "www.biobiochile.cl",
+        },
+        "cooperativa.cl": {
+            "title": "Congreso discute nuevas medidas nacionales para Chile",
+            "url": "https://cooperativa.cl/noticias/pais/actualidad/2026/10/25/congreso-discute-nuevas-medidas/",
+            "snippet": "El debate y las medidas anunciadas fueron reportadas por Cooperativa.",
+            "source_domain": "cooperativa.cl",
+        },
+        "latercera.com": {
+            "title": "Gobierno anuncia nuevas medidas de seguridad para Chile",
+            "url": "https://www.latercera.com/nacional/noticia/gobierno-anuncia-medidas-seguridad/ABCD1234/",
+            "snippet": "El Gobierno presentó medidas y explicó sus principales objetivos.",
+            "source_domain": "www.latercera.com",
+        },
+        "emol.com": {
+            "title": "Investigan nuevo incidente y detenciones en Chile este domingo",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/1234567/investigan-incidente-detenciones.html",
+            "snippet": "La investigación continúa con antecedentes confirmados por autoridades.",
+            "source_domain": "www.emol.com",
+        },
+        "24horas.cl": {
+            "title": "PDI investiga un caso policial ocurrido en Chile hoy",
+            "url": "https://www.24horas.cl/actualidad/nacional/2026/10/25/pdi-investiga-caso-policial",
+            "snippet": "La Policía de Investigaciones confirmó diligencias por el caso.",
+            "source_domain": "www.24horas.cl",
+        },
+        "adnradio.cl": {
+            "title": "Autoridades informan nuevas diligencias en Chile este domingo",
+            "url": "https://www.adnradio.cl/2026/10/25/autoridades-informan-diligencias-chile.html",
+            "snippet": "Las autoridades entregaron información actualizada sobre el procedimiento.",
+            "source_domain": "www.adnradio.cl",
+        },
+        "chvnoticias.cl": {
+            "title": "Nuevos antecedentes de un procedimiento policial en Chile",
+            "url": "https://www.chvnoticias.cl/nacional/antecedentes-procedimiento-policial-chile_20261025/",
+            "snippet": "El reporte incluye antecedentes y declaraciones sobre el procedimiento.",
+            "source_domain": "www.chvnoticias.cl",
+        },
+        "cnnchile.com": {
+            "title": "Chile anuncia cambios y entrega detalles de la nueva medida",
+            "url": "https://www.cnnchile.com/pais/chile-anuncia-cambios-nueva-medida_20261025/",
+            "snippet": "El anuncio incluye nuevos detalles confirmados por las autoridades.",
+            "source_domain": "www.cnnchile.com",
+        },
+    }
+    calls: list[tuple[str, str]] = []
+
+    def provider_for(name: str):
+        async def provider(query, _timeout, _limit):
+            calls.append((name, query))
+            folded = query.casefold()
+            for host, item in newsroom_results.items():
+                if f"site:{host}" in folded:
+                    return [dict(item)]
+            return [dict(base_result)]
+        return provider
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=1.2,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            name: provider_for(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
+        }
+        orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        return await orchestrator.search("últimas noticias de Chile hoy", fresh=True)
+
+    result = asyncio.run(exercise())
+    domains = {
+        str(item.get("source_domain") or urlparse(str(item.get("url") or "")).hostname or "")
+        .casefold().rstrip(".").removeprefix("www.")
+        for item in result["results"]
+    }
+    assert result["ok"] is True, result
+    assert len(domains - {""}) >= 3, result["results"]
+    assert len(set(result["providers"])) >= 2, result["providers"]
+    assert any("site:biobiochile.cl" in query for _, query in calls)
+    assert any("site:cooperativa.cl" in query for _, query in calls)
+    assert any("site:latercera.com" in query for _, query in calls)
+    assert all(
+        urlparse(item["url"]).scheme == "https"
+        and (urlparse(item["url"]).hostname or "").casefold().removeprefix("www.")
+        in newsroom_results
+        for item in result["results"]
+    )
+
