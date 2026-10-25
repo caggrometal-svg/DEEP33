@@ -256,7 +256,8 @@ def test_broad_chile_news_query_keeps_date_words_in_general_news_classification(
 
     query = (
         "¿Cuáles son las noticias más recientes de Chile publicadas hoy "
-        "domingo 25 de octubre de 2026? Busca en Internet y revisa varias fuentes."
+        "domingo 25 de octubre de 2026? Busca en Internet, verifica varias fuentes "
+        "y resume los hechos principales indicando de qué fuente proviene cada información."
     )
     assert main._is_broad_current_news_query(query) is True
     assert main._is_broad_current_news_query("noticias del dólar en Chile hoy") is False
