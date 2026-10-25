@@ -95,6 +95,7 @@ jobs:
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_CI_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "DEEP33_CI_SESSION_ID=ci-production-realtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
       - name: Verify PRIMARY realtime search
         run: |
           set -euo pipefail
@@ -106,6 +107,7 @@ jobs:
               -w '\nDEEP33_HTTP_STATUS:%{http_code}' \
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "Authorization: Bearer $DEEP33_CI_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_CI_SESSION_ID" \
               --get "$PRIMARY_URL/v1/web/search" \
               --data-urlencode "q=$query" || true)"
             status_code="${response##*DEEP33_HTTP_STATUS:}"
@@ -196,7 +198,7 @@ jobs:
           retention-days: 14
 
   vercel_realtime_search:
-    if: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026') || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -204,7 +206,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+      VERCEL_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' && 'https://deep33-backend-git-fix-production-realtime-gates-251026-iac33.vercel.app' || github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
       VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
     steps:
       - name: Require Vercel Preview Protection bypass secret
@@ -315,6 +317,50 @@ jobs:
             [ "$attempt" -lt 4 ] && sleep 5
           done
           echo "VERCEL_REALTIME_SEARCH_FAIL http=$status_code"
+          exit 1
+      - name: Mint fresh OIDC token for Chile realtime-news quorum
+        id: vercel_news_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+      - name: Verify fresh Chilean news has a three-domain quorum
+        env:
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_news_oidc.outputs.token }}
+        run: |
+          set -euo pipefail
+          status_code="000"
+          for attempt in $(seq 1 5); do
+            status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-chile-news.json" -w "%{http_code}" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
+              -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_TEST_SESSION_ID" \
+              -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
+              -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
+              -H "Cache-Control: no-cache" \
+              --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=últimas noticias de Chile hoy" || true)"
+            if [ "$status_code" = "200" ] && jq -e '
+              .ok == true and .realtime == true and .fresh_request == true and
+              ([.results[]? | select((.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article")] | length) >= 3 and
+              all(.results[]?; (.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article" and ((.url // "") | test("^https://"))) and
+              ([.results[]?.source_domain | select(type == "string" and length > 0)] | unique | length) >= 3 and
+              ([.providers[]? | select(type == "string" and length > 0 and . != "unknown" and . != "multi")] | unique | length) >= 2 and
+              ((.fetched_pages // []) | length) >= 3 and
+              (.domains_used // 0) >= 3 and
+              (.extracted_text_chars // 0) >= 240
+            ' "$RUNNER_TEMP/deep33-vercel-chile-news.json" >/dev/null 2>&1; then
+              jq -c '{ok,status,realtime,fresh_request,providers,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain,published_at}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-chile-news.json"
+              echo "VERCEL_CHILE_NEWS_THREE_DOMAIN_QUORUM_PASS"
+              exit 0
+            fi
+            echo "VERCEL_CHILE_NEWS_QUORUM_RETRY attempt=$attempt http=$status_code"
+            jq -c '{ok,status,code,errors,fresh_request,providers,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain,published_at}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-chile-news.json" 2>/dev/null || true
+            [ "$attempt" -lt 5 ] && sleep 5
+          done
+          echo "VERCEL_CHILE_NEWS_THREE_DOMAIN_QUORUM_FAIL http=$status_code"
           exit 1
       - name: Mint fresh OIDC token for Spanish live-search check
         id: vercel_spanish_oidc

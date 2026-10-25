@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
 
 from backend import main
 
@@ -611,7 +612,9 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
 
     wrapper = "https://news.google.com/rss/articles/opaque-token"
     direct = "https://www.emol.com/noticias/Nacional/2026/10/16/article.html"
-    cooperativa = "https://www.cooperativa.cl/noticias/pais/politica/article.html"
+    cooperativa = "https://www.cooperativa.cl/noticias/pais/politica/2026/10/25/article.html"
+    biobio = "https://www.biobiochile.cl/noticias/nacional/2026/10/25/article.shtml"
+    published_at = datetime.now(timezone.utc).isoformat()
 
     async def allow_controls(*_args, **_kwargs):
         return None
@@ -626,6 +629,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
                     "source_domain": "www.emol.com",
                     "provider": "google_news",
                     "snippet": "Últimas noticias de política en Chile hoy: Gobierno y Congreso avanzan en la agenda nacional.",
+                    "published_at": published_at,
                 },
                 {
                     "title": "Noticias de política de Chile hoy: Senado debate nueva reforma",
@@ -633,6 +637,15 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
                     "source_domain": "www.cooperativa.cl",
                     "provider": "bing",
                     "snippet": "Últimas noticias políticas de Chile hoy: el Senado inició el debate de una reforma del Gobierno.",
+                    "published_at": published_at,
+                },
+                {
+                    "title": "Actualidad de Chile hoy: BioBioChile informa nuevo acuerdo nacional",
+                    "url": biobio,
+                    "source_domain": "www.biobiochile.cl",
+                    "provider": "duckduckgo",
+                    "snippet": "Noticias de Chile hoy: BioBioChile informa un nuevo acuerdo nacional.",
+                    "published_at": published_at,
                 },
             ],
             "sources": [],
@@ -643,8 +656,8 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
         }
 
     async def fake_fetch_source(source, **_kwargs):
-        assert source.get("source_domain") in {"emol.com", "cooperativa.cl"}
-        url = direct if source["source_domain"] == "emol.com" else cooperativa
+        assert source.get("source_domain") in {"emol.com", "cooperativa.cl", "biobiochile.cl"}
+        url = direct if source["source_domain"] == "emol.com" else cooperativa if source["source_domain"] == "cooperativa.cl" else biobio
         return {
             "title": source["title"],
             "url": url,
@@ -652,6 +665,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T02:00:00+00:00",
+            "published_at": published_at,
             "text_chars": 360,
         }
 
@@ -667,10 +681,10 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
-    assert body["domains_used"] == 2
+    assert body["domains_used"] == 3
     assert body["results"][0]["url"] == direct
     assert body["results"][0]["original_url"] == wrapper
-    assert body["results"][0]["source_domain"] == "www.emol.com"
+    assert body["results"][0]["source_domain"] == "emol.com"
 
 
 
@@ -682,7 +696,9 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
     wrapper = "https://news.google.com/rss/articles/opaque-slow"
     direct_a = "https://www.cooperativa.cl/noticias/pais/a.html"
     direct_b = "https://www.biobiochile.cl/noticias/nacional/b.shtml"
+    direct_c = "https://www.t13.cl/noticia/politica/actualidad-chile-hoy"
     fetched = []
+    published_at = datetime.now(timezone.utc).isoformat()
 
     async def allow_controls(*_args, **_kwargs):
         return None
@@ -692,11 +708,13 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         return {
             "ok": True,
             "results": [
-                {"title": "Últimas noticias de Chile hoy: política", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Últimas noticias de Chile hoy y actualidad nacional."},
-                {"title": "Noticias de Chile hoy: informe nacional", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Últimas noticias e información actual de Chile hoy."},
-                {"title": "Actualidad nacional de Chile hoy", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy con la actualidad nacional."},
+                {"title": "Últimas noticias de Chile hoy: política", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Últimas noticias de Chile hoy y actualidad nacional.", "published_at": published_at},
+                {"title": "Noticias de Chile hoy: informe nacional", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Últimas noticias e información actual de Chile hoy.", "published_at": published_at},
+                {"title": "Actualidad nacional de Chile hoy", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy con la actualidad nacional.", "published_at": published_at},
+                {"title": "Noticias de Chile hoy: actualización nacional - T13", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy con novedades nacionales verificables.", "published_at": published_at},
             ],
             "errors": [],
+            "providers": ["google_news", "bing", "duckduckgo"],
         }
 
     async def fake_fetch_source(source, **kwargs):
@@ -710,6 +728,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T03:00:00+00:00",
+            "published_at": published_at,
             "text_chars": 280,
         }
 
@@ -727,8 +746,9 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
-    assert body["domains_used"] == 2
-    assert fetched == [direct_a, direct_b]
+    assert body["domains_used"] >= 3
+    assert {direct_a, direct_b, direct_c}.issubset(set(fetched))
+    assert len(fetched) <= 5
     assert elapsed < 0.5
 
 
@@ -856,6 +876,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
             "provider": source["provider"],
             "domain": "emol.com",
             "retrieved_at": "2026-10-18T06:00:00+00:00",
+            "published_at": datetime.now(timezone.utc).isoformat(),
             "text_chars": 390,
         }
 
@@ -871,7 +892,8 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["ok"] is True
+    assert body["ok"] is False
+    assert "REALTIME_NEWS_QUORUM_NOT_MET" in body["errors"]
     assert body["domains_used"] == 1
     assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
     assert fetched == [wrapper]
