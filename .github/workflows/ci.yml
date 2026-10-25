@@ -199,7 +199,7 @@ jobs:
 
   vercel_realtime_search:
     if: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' || github.event.pull_request.head.ref == 'fix/chat-realtime-news-evidence-quorum-251026')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-    needs: [backend_unit, android_validation]
+    needs: [backend_unit]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     permissions:
