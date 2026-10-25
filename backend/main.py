@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query
+from backend.search.engine import _is_recently_published, is_realtime_news_query, is_realtime_query
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -75,7 +75,7 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = os.getenv("VERCEL_GIT_COMMIT_REF", "main").strip() or "main"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
@@ -1271,6 +1271,9 @@ WEB_EVIDENCE_SYNTHESIS_PROMPT = (
     "When independent sources conflict, describe the conflict and avoid choosing a winner unless the evidence itself establishes one. "
     "Preserve numbers, dates, names, units, and causal qualifiers exactly enough to avoid semantic drift. "
     "Synthesize an original, direct answer and do not copy source phrasing or dump raw metadata. When the user requests sources, include concise source names or direct URLs present in retrieved evidence; never invent links or citations. "
+    "For current/recent news and recent-change requests, a source is admissible only when its publisher publication timestamp is present, parseable, and inside the freshness window validated by the backend. "
+    "A retrieval timestamp is not a publication timestamp. Missing, malformed, stale, or future-dated publication times are not evidence and must not be used to answer or included as support. "
+    "If no admissible source remains, state that current information could not be verified and do not substitute model memory or old background pages. "
     "For real-time requests, do not infer that nothing is happening merely because evidence is weak, sparse, or missing; only state that no relevant current event was found when the evidence supports that conclusion. "
     "For date/time questions, the runtime clock in DEEP33's system context is authoritative."
 )
@@ -1840,6 +1843,7 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
+        "published_at": result.get("published_at") or source.get("published_at"),
         "text_chars": len(page_text),
     }
 
@@ -1938,6 +1942,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         item for item in compact_search_results
         if str(item.get("url") or "").strip()
         and len(str(item.get("snippet") or "").strip()) >= 80
+        and (
+            not is_realtime_news_query(query)
+            or _is_recently_published(item, query)
+        )
     ]
     snippet_evidence_domains = {
         (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -2005,11 +2013,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             source: dict[str, Any],
             adaptive_timeout: float,
         ) -> dict[str, Any] | None:
-            return await _fetch_web_source(
+            page = await _fetch_web_source(
                 source,
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
+            if (
+                page is not None
+                and is_realtime_news_query(query)
+                and not _is_recently_published(page, query)
+            ):
+                logger.info(
+                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    request_id or "unknown",
+                    str(page.get("url") or source.get("url") or "")[:500],
+                )
+                return None
+            return page
 
         fetch_batch = await fetch_source_quorum(
             candidates,
@@ -2057,14 +2077,24 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "title": item.get("title"),
             "url": item.get("url"),
             "provider": item.get("provider"),
+            "published_at": item.get("published_at"),
             "text_chars": item.get("text_chars"),
             "text": str(item.get("text") or "")[:2200],
         }
         for item in fetched_pages[:5]
     ]
+    # Do not pass undated current-news candidates to the model through the
+    # raw SERP metadata channel after rejecting them in the evidence gate.
+    verified_search_results = [
+        item for item in compact_search_results
+        if (
+            not is_realtime_news_query(query)
+            or _is_recently_published(item, query)
+        )
+    ]
     evidence_fragments = [
         str(item.get("snippet") or "")
-        for item in compact_search_results
+        for item in (snippet_evidence if snippet_fallback_used else [])
         if str(item.get("snippet") or "").strip()
     ] + [
         str(item.get("text") or "")
@@ -2087,7 +2117,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
-        "search_results": compact_search_results,
+        "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
@@ -2097,7 +2127,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     compact_web_evidence = {
         "search_results": [
             {**item, "snippet": str(item.get("snippet") or "")[:300]}
-            for item in compact_search_results[:4]
+            for item in verified_search_results[:4]
         ],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
@@ -3188,6 +3218,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         fetched_pages: list[dict[str, Any]] = []
         fetch_failures: list[dict[str, str]] = []
         resolved_urls: dict[str, str] = {}
+        resolved_publication_dates: dict[str, str | None] = {}
         for source, fetched in zip(fetch_candidates, fetch_results):
             if isinstance(fetched, BaseException):
                 if isinstance(fetched, asyncio.CancelledError):
@@ -3213,11 +3244,21 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "reason": "FETCH_OR_EXTRACTION_FAILED",
                 })
                 continue
+            if is_realtime_news_query(q) and not _is_recently_published(fetched, q):
+                fetch_failures.append({
+                    "url": str(source.get("url") or ""),
+                    "provider": str(source.get("provider") or "unknown"),
+                    "reason": "PUBLICATION_DATE_UNVERIFIED_OR_STALE",
+                })
+                continue
             fetched_pages.append(fetched)
             original_source_url = str(source.get("url") or "").strip()
             resolved_source_url = str(fetched.get("url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
+                resolved_publication_dates[original_source_url] = (
+                    str(fetched.get("published_at") or source.get("published_at") or "").strip() or None
+                )
 
         # Surface verified direct publisher URLs to callers. Keep the wrapper in
         # original_url for diagnostics, but never make clients navigate a Google
@@ -3232,10 +3273,18 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             direct_url = resolved_urls.get(original_url)
             if not direct_url:
                 continue
+            verified_published_at = (
+                item.get("published_at") or resolved_publication_dates.get(original_url)
+            )
             if direct_url != original_url:
-                resolved_results.append({**item, "original_url": original_url, "url": direct_url})
+                resolved_results.append({
+                    **item,
+                    "original_url": original_url,
+                    "url": direct_url,
+                    "published_at": verified_published_at,
+                })
             else:
-                resolved_results.append(dict(item))
+                resolved_results.append({**item, "published_at": verified_published_at})
 
         fetched_domains = {
             str(page.get("domain") or "")
@@ -3265,6 +3314,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or (urlparse(url).hostname or "")
                 ).casefold().removeprefix("www.")
                 if not url.startswith("https://") or not domain or len(snippet) < 24:
+                    continue
+                if is_realtime_news_query(q) and not _is_recently_published(item, q):
                     continue
                 snippet_fallback_results.append({
                     **item,
@@ -3307,6 +3358,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or url in extracted_result_urls
                     or domain in extracted_result_domains
                 ):
+                    continue
+                if is_realtime_news_query(q) and not _is_recently_published(item, q):
                     continue
                 supplemental_snippet_results.append({
                     **item,

@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
 
 from backend import main
 
@@ -652,6 +653,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T02:00:00+00:00",
+            "published_at": datetime.now(timezone.utc).isoformat(),
             "text_chars": 360,
         }
 
@@ -710,6 +712,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T03:00:00+00:00",
+            "published_at": datetime.now(timezone.utc).isoformat(),
             "text_chars": 280,
         }
 
@@ -856,6 +859,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
             "provider": source["provider"],
             "domain": "emol.com",
             "retrieved_at": "2026-10-18T06:00:00+00:00",
+            "published_at": datetime.now(timezone.utc).isoformat(),
             "text_chars": 390,
         }
 

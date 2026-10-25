@@ -433,11 +433,13 @@ def test_realtime_economics_ranking_normalizes_cross_language_and_inflections():
                 "title": "Economía y mercados: últimas noticias",
                 "url": "https://economia.example/chile",
                 "snippet": "Finanzas, mercados y actividad económica en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Chile economy and financial markets",
                 "url": "https://markets.example/chile",
                 "snippet": "Current economic and market developments.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Football results",
@@ -532,6 +534,7 @@ def test_realtime_rank_drops_unrelated_current_results():
             "title": "Las Condes registra emergencia por lluvias",
             "url": "https://news.example/las-condes",
             "snippet": "Actualización de la situación en Las Condes.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Actualización de Windows",
@@ -560,6 +563,7 @@ def test_realtime_rank_rejects_country_only_match_for_named_locality():
             "title": "Aluvión afecta San Carlos de Apoquindo en Las Condes",
             "url": "https://news.example/las-condes-live",
             "snippet": "Emergencia local en Las Condes tras las lluvias.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
     ranked = rank_results(query, results, realtime=True)
@@ -572,6 +576,7 @@ def test_realtime_broad_country_news_does_not_require_a_country_anchor():
             "title": "Noticias de Chile hoy: autoridades anuncian nuevas medidas",
             "url": "https://news.example/chile-live",
             "snippet": "Actualización de última hora publicada hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Partido Republicano de Chile",
@@ -602,6 +607,7 @@ def test_realtime_world_news_does_not_overfit_to_literal_world_synonyms():
             "title": "International leaders meet for a new agreement",
             "url": "https://news.example/world",
             "snippet": "Últimas noticias internacionales publicadas hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
     ranked = rank_results("noticias mundiales", results, realtime=True)
@@ -645,6 +651,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live Tavily",
             "url": "https://tavily.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def fake_bing(query, timeout_seconds, max_results):
@@ -652,6 +659,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live Bing",
             "url": "https://bing.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def fake_ddg(query, timeout_seconds, max_results):
@@ -659,6 +667,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live DDG",
             "url": "https://ddg.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)
@@ -696,6 +705,7 @@ def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch
             "title": "Las Condes: alertas locales publicadas hoy",
             "url": "https://news.example/las-condes/alertas-hoy",
             "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def hanging_ddg(query, timeout_seconds, max_results):
@@ -732,6 +742,7 @@ def test_realtime_locality_anchor_can_be_found_in_destination_url_path():
                 "title": "Alertas locales publicadas hoy",
                 "url": "https://news.example/las-condes/alertas-hoy",
                 "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Actualización del sistema operativo",
@@ -756,6 +767,7 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
                     "title": "Alertas locales publicadas hoy",
                     "url": "https://news.example/las-condes/alertas-hoy",
                     "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 }
             ]
         return []
@@ -813,6 +825,7 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
             "title": "Chile anuncia nuevas medidas este sábado",
             "url": "https://news.example/chile/actualidad",
             "snippet": "Autoridades informaron hoy de nuevas medidas en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }],
         realtime=True,
     )
@@ -830,11 +843,13 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
                     "title": "Chile anuncia nuevas medidas",
                     "url": "https://news.example/chile-medidas",
                     "snippet": "Noticia actual publicada hoy en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 },
                 {
                     "title": "Gobierno de Chile informa nuevos cambios",
                     "url": "https://report.example/chile-cambios",
                     "snippet": "Actualización reciente de una fuente informativa.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 },
             ])],
             [],
@@ -865,6 +880,7 @@ def test_rank_results_normalizes_ai_and_technology_synonyms():
                 "title": "AI tech research news today",
                 "url": "https://example.org/ai-tech-research",
                 "snippet": "Research and analysis of AI technology.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             }
         ],
         realtime=True,

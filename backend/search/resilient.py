@@ -756,6 +756,8 @@ class WebOrchestrator:
     ) -> dict:
         """Coalesce identical concurrent searches, including concurrent fresh requests."""
         cleaned = " ".join(str(query or "").split()).strip()
+        # Current/time-sensitive questions must reach live providers on every request.
+        fresh = bool(fresh or is_realtime_query(cleaned))
         if not cleaned:
             return await self._search_uncached(cleaned, fresh=fresh, budget_seconds=budget_seconds)
 
@@ -813,6 +815,7 @@ class WebOrchestrator:
         budget_seconds: float | None = None,
     ) -> dict:
         cleaned = " ".join(str(query or "").split()).strip()
+        fresh = bool(fresh or is_realtime_query(cleaned))
         if not cleaned:
             return self._empty_payload(
                 query="",
@@ -1920,7 +1923,7 @@ class WebOrchestrator:
             results=selected,
             executed_query=provider_query,
         )
-        if selected:
+        if selected and not fresh:
             self.cache.put(cache_key, payload, self.cache_ttl_seconds)
         return payload
 

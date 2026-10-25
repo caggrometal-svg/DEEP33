@@ -650,12 +650,6 @@ class UniversalDecisionRouter:
                 query,
                 str(messages[-1] if messages else ""),
             )
-            cached = await self.cache.get(key)
-            if cached is not None:
-                validated = await validate_evidence(cached)
-                if validated.ok:
-                    return decision, validated
-
             data = weather
             if data is None and weather_resolver and messages is not None:
                 evidence = await self._singleflight(
@@ -663,8 +657,6 @@ class UniversalDecisionRouter:
                     lambda: self._weather_operation(messages, weather_resolver, weather_builder),
                 )
                 evidence = await validate_evidence(evidence)
-                if evidence.ok:
-                    await self.cache.put(key, evidence, decision.cache_ttl_seconds)
                 return decision, evidence
             if data is None:
                 return decision, Evidence(False, DecisionRoute.WEATHER, error="WEATHER_DATA_UNAVAILABLE")
@@ -678,18 +670,16 @@ class UniversalDecisionRouter:
                 data=data,
             )
             evidence = await validate_evidence(evidence)
-            if evidence.ok:
-                await self.cache.put(key, evidence, decision.cache_ttl_seconds)
             return decision, evidence
         if decision.route == DecisionRoute.SEISMIC:
             key = DecisionCache.key(DecisionRoute.SEISMIC, query, "usgs")
             return decision, await self._singleflight(
-                key, lambda: fetch_seismic(query, cache=self.cache)
+                key, lambda: fetch_seismic(query, cache=None)
             )
         if decision.route == DecisionRoute.FINANCE:
             key = DecisionCache.key(DecisionRoute.FINANCE, query, "mindicador")
             return decision, await self._singleflight(
-                key, lambda: fetch_finance(query, cache=self.cache)
+                key, lambda: fetch_finance(query, cache=None)
             )
         return decision, None
 
