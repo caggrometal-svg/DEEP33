@@ -81,6 +81,13 @@ NOISE_LINE_MARKERS = (
     "sign up for", "newsletter", "advertisement", "sponsored content",
     "enable notifications", "push notifications", "all rights reserved",
 )
+PUBLICATION_DATE_META_KEYS = {
+    "article:published_time", "og:published_time", "datepublished",
+    "date_published", "citation_publication_date", "parsely-pub-date",
+    "dc.date.issued", "pubdate", "publishdate", "published_time",
+    "date", "datecreated", "date_created", "article:modified_time",
+    "og:updated_time", "datemodified", "date_modified", "last-modified",
+}
 
 
 def _clean_extracted_text(value: str, *, max_chars: int) -> str:
@@ -128,6 +135,7 @@ class HTMLTextExtractor(HTMLParser):
         self.title_parts: list[str] = []
         self.meta_titles: dict[str, str] = {}
         self.meta_descriptions: dict[str, str] = {}
+        self.meta_publication_dates: dict[str, str] = {}
         self.jsonld_blocks: list[str] = []
         self._skip_depth = 0
         self._in_title = False
@@ -162,6 +170,8 @@ class HTMLTextExtractor(HTMLParser):
                 "article:description",
             }:
                 self.meta_descriptions.setdefault(key, value)
+            elif value and key in PUBLICATION_DATE_META_KEYS:
+                self.meta_publication_dates.setdefault(key, value)
             return
 
         if tag == "title":
@@ -234,6 +244,21 @@ class HTMLTextExtractor(HTMLParser):
             or self.meta_descriptions.get("article:description")
             or ""
         ).strip()
+
+    @property
+    def publication_date(self):
+        # Prefer editorial publication time over page-modified timestamps.
+        for key in (
+            "article:published_time", "og:published_time", "datepublished",
+            "date_published", "citation_publication_date", "parsely-pub-date",
+            "dc.date.issued", "pubdate", "publishdate", "published_time",
+            "date", "datecreated", "date_created", "article:modified_time",
+            "og:updated_time", "datemodified", "date_modified", "last-modified",
+        ):
+            value = self.meta_publication_dates.get(key)
+            if value:
+                return value.strip()
+        return ""
 
     @property
     def text(self):
@@ -332,6 +357,66 @@ def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
         descriptions[0][1] if descriptions else "",
         headlines[0][1] if headlines else "",
     )
+
+def _structured_article_publication_date(blocks: list[str]) -> str:
+    """Extract a publisher-declared JSON-LD date without substituting retrieval time."""
+    candidates: list[tuple[int, int, str]] = []
+
+    def visit(value) -> None:
+        if isinstance(value, list):
+            for child in value:
+                visit(child)
+            return
+        if not isinstance(value, dict):
+            return
+        raw_type = value.get("@type", [])
+        if isinstance(raw_type, str):
+            types = [raw_type]
+        elif isinstance(raw_type, list):
+            types = [str(item) for item in raw_type]
+        else:
+            types = []
+        article_priority = 0 if any("article" in item.casefold() for item in types) else 1
+        for field, field_priority in (
+            ("datePublished", 0), ("dateCreated", 1), ("dateModified", 2)
+        ):
+            raw = value.get(field)
+            if isinstance(raw, str) and raw.strip():
+                candidates.append((article_priority, field_priority, raw.strip()[:100]))
+        for key, child in value.items():
+            if key not in {"datePublished", "dateCreated", "dateModified"}:
+                visit(child)
+
+    for block in blocks:
+        try:
+            visit(json.loads(block))
+        except (TypeError, ValueError):
+            continue
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2] if candidates else ""
+
+
+def _extract_published_at(content: bytes, content_type: str) -> str | None:
+    """Read actual publication metadata from HTML/JSON, never retrieval timestamps."""
+    mime = content_type.split(";", 1)[0].strip().lower()
+    charset = "utf-8"
+    if "charset=" in content_type.lower():
+        charset = content_type.lower().split("charset=", 1)[1].split(";", 1)[0].strip() or charset
+    decoded = content.decode(charset, errors="replace")
+    if mime == "application/json":
+        structured = _structured_article_publication_date([decoded])
+        return structured or None
+    if mime not in {"text/html", "application/xhtml+xml"}:
+        return None
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+    return (
+        parser.publication_date
+        or _structured_article_publication_date(parser.jsonld_blocks)
+        or None
+    )
+
 
 def _is_public_ip(value):
     try: return ipaddress.ip_address(value).is_global
@@ -671,6 +756,7 @@ async def _fetch_page_uncached(
                 content=await _read_limited(response,_max_response_bytes())
             try:
                 title, text = _extract_text(content, content_type, max_text_chars)
+                published_at = _extract_published_at(content, content_type)
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
@@ -688,6 +774,7 @@ async def _fetch_page_uncached(
                 "bytes":len(content),
                 "redirects":len(redirects),
                 "retrieved_at":datetime.now(timezone.utc).isoformat(),
+                "published_at":published_at,
             }
         except httpx.TimeoutException as exc:
             raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
