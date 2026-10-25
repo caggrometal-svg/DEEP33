@@ -16,7 +16,8 @@ VERCEL_URL="${VERCEL_URL%/}"
 # Prevent sending either the Vercel bypass value or user-session bearer token
 # to arbitrary hosts. curl is intentionally not configured to follow redirects.
 case "$VERCEL_URL" in
-  https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app|https://deep33-backend-is5935p3w-iac33.vercel.app|https://deep33-backend.vercel.app) ;;
+  https://deep33-backend.vercel.app|https://deep33-backend-iac33.vercel.app|https://deep33-backend-git-main-iac33.vercel.app) ;;
+  https://deep33-backend-git-*-iac33.vercel.app) ;;
   *) fail "VERCEL_URL is not an approved DEEP33 Vercel URL" ;;
 esac
 
