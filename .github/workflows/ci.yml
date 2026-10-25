@@ -344,10 +344,12 @@ jobs:
               --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=últimas noticias de Chile hoy" || true)"
             if [ "$status_code" = "200" ] && jq -e '
               .ok == true and .realtime == true and .fresh_request == true and
-              ((.results // []) | length) >= 3 and
+              ([.results[]? | select((.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article")] | length) >= 3 and
+              all(.results[]?; (.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article" and ((.url // "") | test("^https://"))) and
+              ([.results[]?.source_domain | select(type == "string" and length > 0)] | unique | length) >= 3 and
+              ([.results[]?.provider | select(type == "string" and length > 0)] | unique | length) >= 2 and
               ((.fetched_pages // []) | length) >= 3 and
               (.domains_used // 0) >= 3 and
-              (((.providers // []) | unique) | length) >= 2 and
               (.extracted_text_chars // 0) >= 240
             ' "$RUNNER_TEMP/deep33-vercel-chile-news.json" >/dev/null 2>&1; then
               jq -c '{ok,status,realtime,fresh_request,providers,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain,published_at}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-chile-news.json"
