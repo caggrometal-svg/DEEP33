@@ -806,6 +806,24 @@ async def _google_news_search(query, timeout_seconds, max_results):
     return await _parse_bing_rss(response, max_results)
 
 
+async def search_recent_news_candidates(
+    query: str,
+    *,
+    timeout_seconds: float = 2.0,
+    max_results: int = 8,
+) -> list[dict]:
+    """Return dated recent-news candidates for realtime diversity recovery."""
+    cleaned = " ".join(str(query or "").split()).strip()
+    if not cleaned:
+        return []
+    limit = max(1, min(8, int(max_results)))
+    return await _google_news_search(
+        cleaned,
+        min(2.5, max(0.8, float(timeout_seconds))),
+        limit,
+    )
+
+
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
     client = await _search_http_client()
     html_error = None
