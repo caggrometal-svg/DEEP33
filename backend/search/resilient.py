@@ -195,6 +195,53 @@ def _is_chile_commercial_technology_item(item: dict) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in _CHILE_TECH_COMPANY_HOSTS)
 
 
+_CHILE_GENERAL_NEWS_PUBLISHERS = {
+    "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+    "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+}
+
+
+def _is_direct_chile_news_article_candidate(item: dict) -> bool:
+    """Keep direct article-like URLs from known Chilean newsrooms; never accept wrappers or landing pages."""
+    if not isinstance(item, dict):
+        return False
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if not any(host == domain or host.endswith("." + domain) for domain in _CHILE_GENERAL_NEWS_PUBLISHERS):
+        return False
+    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) < 2 or path in {
+        "/", "/noticias", "/actualidad", "/nacional", "/politica", "/política",
+        "/economia", "/mundo", "/lo-ultimo", "/ultimas-noticias",
+        "/ultimas-noticias-de-chile",
+    }:
+        return False
+    if any(part in {
+        "admin", "login", "signin", "template", "category", "categories",
+        "tag", "tags", "author", "authors", "publicidad", "portada",
+        "buscar", "buscador", "search",
+    } for part in parts):
+        return False
+    if parts[-1] in {
+        "noticias", "actualidad", "nacional", "politica", "política", "economia",
+        "mundo", "index.html", "index.shtml", "index.php", "home", "portada",
+        "politica.shtml", "nacional.shtml", "noticias.shtml",
+    }:
+        return False
+    title = " ".join(str(item.get("title") or "").casefold().split())
+    if not title or any(marker in title for marker in (
+        "inicio |", "inicio -", "home |", "home -", "portada |",
+        "últimas noticias de chile", "ultimas noticias de chile",
+        "noticias de chile y el mundo",
+    )):
+        return False
+    return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
+
+
 class TTLRUCache:
     def __init__(self, max_entries: int = CACHE_MAX_ENTRIES) -> None:
         self.max_entries = max(8, int(max_entries))
@@ -2065,6 +2112,78 @@ class WebOrchestrator:
                     len(navigation_candidates),
                     len(seen_company_hosts),
                 )
+
+        if chile_general_news_intent and merged:
+            # Run diversity selection after the optional Yahoo fallback and every
+            # other ranker pass. Otherwise a late fallback can collapse a valid
+            # three-publisher candidate set back to one newsroom immediately before
+            # it is returned to /v1/web/search.
+            candidates_by_domain: dict[str, list[dict]] = {}
+            seen_domain_urls: set[tuple[str, str]] = set()
+            for item in [*selected, *merged]:
+                if not _is_direct_chile_news_article_candidate(item):
+                    continue
+                url = str(item.get("url") or "").strip()
+                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                if not host:
+                    continue
+                canonical = (host, url)
+                if canonical in seen_domain_urls:
+                    continue
+                seen_domain_urls.add(canonical)
+                candidates_by_domain.setdefault(host, []).append(item)
+
+            diverse_final: list[dict] = []
+            diverse_final_domains: set[str] = set()
+            diverse_final_providers: set[str] = set()
+            # Choose a new publisher and, when possible, a different successful
+            # provider for each slot. Domain/provider metadata comes from actual
+            # search outcomes, not synthetic fallback records.
+            while len(diverse_final) < self.max_results:
+                next_item = None
+                for prefer_new_provider in (True, False):
+                    for host, items in candidates_by_domain.items():
+                        if host in diverse_final_domains:
+                            continue
+                        candidate = next((
+                            candidate for candidate in items
+                            if not prefer_new_provider
+                            or str(candidate.get("provider") or "").strip() not in diverse_final_providers
+                        ), None)
+                        if candidate is not None:
+                            next_item = candidate
+                            break
+                    if next_item is not None:
+                        break
+                if next_item is None:
+                    break
+                url = str(next_item.get("url") or "")
+                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                provider_name = str(next_item.get("provider") or "").strip()
+                if not host:
+                    break
+                diverse_final.append(next_item)
+                diverse_final_domains.add(host)
+                if provider_name:
+                    diverse_final_providers.add(provider_name)
+
+            if len(diverse_final_domains) >= min(3, self.max_results):
+                selected = diverse_final[: self.max_results]
+            logger.info(
+                "web_search_chile_general_news_final_selection selected_count=%d "
+                "distinct_domains=%d selected_providers=%d",
+                len(selected),
+                len({
+                    (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                    for item in selected
+                } - {""}),
+                len({
+                    str(item.get("provider") or "").strip()
+                    for item in selected
+                    if str(item.get("provider") or "").strip()
+                }),
+            )
 
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
