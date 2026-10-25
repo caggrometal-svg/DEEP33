@@ -39,7 +39,7 @@ from backend.memory import (
     merge_messages,
 )
 from tools.web_fetch import fetch_page
-from tools.web_search import search_web, web_search_status
+from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
 from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
@@ -3150,6 +3150,76 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 minimum_relevance_score,
                 max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
+
+        # The cross-provider orchestrator intentionally compresses candidates before
+        # this endpoint performs page reads. For realtime-news queries that can leave
+        # fewer than three editorial domains even though the recent-news feed contains
+        # additional dated publishers. Recover only dated, ranked news candidates and
+        # merge them by editorial domain; all normal lexical/staleness filters remain.
+        if search_ok and is_realtime_news_query(q):
+            candidate_domains = {
+                str(
+                    item.get("source_domain")
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                ).casefold().removeprefix("www.")
+                for item in candidate_sources
+                if str(item.get("url") or "").startswith("https://")
+            } - {""}
+            if len(candidate_domains) < 3:
+                try:
+                    rescue_query = (
+                        "Chile noticias hoy actualidad acontecimientos recientes"
+                        if "chile" in q.casefold()
+                        else q
+                    )
+                    recent_candidates = await search_recent_news_candidates(
+                        rescue_query,
+                        timeout_seconds=1.8,
+                        max_results=8,
+                    )
+                    for raw in recent_candidates:
+                        if not isinstance(raw, dict):
+                            continue
+                        published_at = raw.get("published_at")
+                        if not published_at or not _is_recently_published(raw, q):
+                            continue
+                        url = str(raw.get("url") or "").strip()
+                        domain = str(
+                            raw.get("source_domain")
+                            or (urlparse(url).hostname or "")
+                        ).casefold().removeprefix("www.")
+                        if not url.startswith("https://") or not domain:
+                            continue
+                        if any(
+                            str(existing.get("url") or "").strip() == url
+                            for existing in candidate_sources
+                        ):
+                            continue
+                        candidate = {
+                            "title": str(raw.get("title") or url)[:300],
+                            "url": url[:2000],
+                            "snippet": str(raw.get("snippet") or "")[:1000],
+                            "provider": "google_news",
+                            "source_domain": domain[:255],
+                            "published_at": published_at,
+                        }
+                        candidate["relevance_score"] = score_result(q, candidate)
+                        candidate_sources.append(candidate)
+                        candidate_domains.add(domain)
+                        if len(candidate_domains) >= 5:
+                            break
+                    logger.info(
+                        "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                        request_id,
+                        len(candidate_domains),
+                        len(candidate_sources),
+                    )
+                except Exception as rescue_exc:
+                    logger.warning(
+                        "web_search_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                        request_id,
+                        type(rescue_exc).__name__,
+                    )
         ordered_sources = sorted(
             candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
