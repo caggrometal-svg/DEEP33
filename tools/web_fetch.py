@@ -730,9 +730,11 @@ async def fetch_page(
         if cached and cached[0] > time.monotonic():
             return copy.deepcopy(cached[1])
 
-        inflight = _FETCH_INFLIGHT.get(cache_key)
-        if inflight is not None and not inflight.done():
-            return copy.deepcopy(await inflight)
+    # Coalesce only requests that overlap in time. This is not a stored cache
+    # entry and cannot make a later request reuse an old page response.
+    inflight = _FETCH_INFLIGHT.get(cache_key)
+    if inflight is not None and not inflight.done():
+        return copy.deepcopy(await inflight)
 
     task = asyncio.create_task(
         _fetch_with_total_budget(
@@ -745,18 +747,14 @@ async def fetch_page(
             user_agent=user_agent,
         )
     )
-    if fresh:
-        # Fresh requests bypass both cache reads and in-flight reuse and do not
-        # populate the local cache. This ensures temporal checks use a new fetch.
-        return copy.deepcopy(await task)
-
     _FETCH_INFLIGHT[cache_key] = task
     try:
         result = await task
-        _FETCH_CACHE[cache_key] = (
-            time.monotonic() + FETCH_CACHE_TTL_SECONDS,
-            copy.deepcopy(result),
-        )
+        if not fresh:
+            _FETCH_CACHE[cache_key] = (
+                time.monotonic() + FETCH_CACHE_TTL_SECONDS,
+                copy.deepcopy(result),
+            )
         return copy.deepcopy(result)
     finally:
         if _FETCH_INFLIGHT.get(cache_key) is task:
