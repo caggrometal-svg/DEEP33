@@ -1525,22 +1525,22 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
     mixed_results = [
         *bio_results,
         {
-            "title": "Dúo argentino vuelve a Chile con nuevo disco y fechas en Santiago",
-            "url": "https://www.futuro.cl/2026/10/duo-argentino-vuelve-a-chile-nuevo-disco-fechas-santiago/",
-            "snippet": "La banda anunció fechas en Chile y nuevas presentaciones durante octubre.",
-            "source_domain": "futuro.cl",
+            "title": "Congreso discute nuevas medidas nacionales para Chile",
+            "url": "https://cooperativa.cl/noticias/pais/actualidad/2026/10/25/congreso-discute-nuevas-medidas/",
+            "snippet": "El debate y las medidas anunciadas fueron reportadas por Cooperativa.",
+            "source_domain": "cooperativa.cl",
         },
         {
-            "title": "Chile noticias hoy: jugador analiza su etapa reciente en San Luis",
-            "url": "https://chile.as.com/futbol/jugador-analiza-etapa-reciente-san-luis-f202610-n/",
-            "snippet": "La entrevista aborda el fútbol chileno y la situación reciente del equipo.",
-            "source_domain": "chile.as.com",
+            "title": "Gobierno anuncia nuevas medidas de seguridad para Chile",
+            "url": "https://www.latercera.com/nacional/noticia/gobierno-anuncia-medidas-seguridad/ABCD1234/",
+            "snippet": "El Gobierno presentó medidas y explicó sus principales objetivos.",
+            "source_domain": "latercera.com",
         },
         {
-            "title": "Euro hoy en Chile: precio actual de la divisa y variación del mercado",
-            "url": "https://www.clarin.com/economia/2026/10/25/euro-hoy-en-chile-precio-divisa_0_test.html",
-            "snippet": "Cotización de la divisa y variación del euro en el mercado chileno.",
-            "source_domain": "clarin.com",
+            "title": "Investigan nuevo incidente y detenciones en Chile este domingo",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/1234567/investigan-incidente-detenciones.html",
+            "snippet": "La investigación continúa con antecedentes confirmados por autoridades.",
+            "source_domain": "emol.com",
         },
     ]
     calls: list[tuple[str, str]] = []
@@ -1580,7 +1580,7 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
     assert result["ok"] is True, result
     assert len(editorial_domains - {""}) >= 3, result["results"]
     assert len(set(result["providers"])) >= 2, result["providers"]
-    assert "futuro.cl" in (editorial_domains - {""}), result["results"]
+    assert {"cooperativa.cl", "latercera.com", "emol.com"} <= (editorial_domains - {""}), result["results"]
     assert len(editorial_domains - {""}) == len(result["results"]), result["results"]
     allowed_chilean_outlets = {
         "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
