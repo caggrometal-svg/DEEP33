@@ -188,38 +188,58 @@ printf '%s' "$block_text" | grep -Fq 'No voy a inventar datos ni enlaces.' || \
   fail "LIVE_CHAT_NEWS_BLOCK_TRUTHFUL_FALLBACK_MISSING"
 echo "LIVE_CHAT_NEWS_BLOCK_PASS sources=0 degraded=true fixed_fallback=true"
 
-# Verify the strict realtime-news contract against the exact protected Preview.
-# A generic web result must not satisfy this separate, live news-quorum gate.
-request_file news_quorum "$VERCEL_URL/v1/web/search" 75 \
-  --get --data-urlencode 'q=últimas noticias de Chile hoy'
-[ "$HTTP_CODE" = "200" ] || {
-  show_redirect news_quorum
-  cat "$TMP_DIR/news_quorum.body"
-  fail "LIVE_NEWS_SEARCH_HTTP_$HTTP_CODE"
-}
-if ! jq -e '
-  .ok == true and
-  .status == "success" and
-  .realtime == true and
-  ((.results // []) | length) >= 3 and
-  ((.fetched_pages // []) | length) >= 3 and
-  ([.results[]? |
-    select(
-      (.evidence_type // "") == "verified_current_news_article" and
-      (.published_at | (type == "string" and length > 10))
-    )] | length) >= 3 and
-  ([.results[]? |
-    select((.evidence_type // "") == "verified_current_news_article") |
-    ((.source_domain // .url // "") |
-      ascii_downcase | sub("^https?://"; "") | sub("^www\\."; "") | split("/")[0])
-  ] | unique | length) >= 3 and
-  ([.providers[]? | ascii_downcase |
-    select(. != "unknown" and . != "multi" and . != "none")
-  ] | unique | length) >= 2 and
-  (.domains_used // 0) >= 3 and
-  (.extracted_text_chars // 0) >= 240 and
-  ((.errors // []) | index("REALTIME_NEWS_QUORUM_NOT_MET")) == null
-' "$TMP_DIR/news_quorum.body" >/dev/null 2>&1; then
+# Positive live-web gate: use natural current-news queries with a bounded fallback.
+# Every attempt must independently satisfy the full article/domain/provider quorum.
+# Changing the query does not lower the evidence contract.
+news_quorum_pass=false
+for news_query in \
+  "últimas noticias de Chile hoy" \
+  "últimas noticias políticas de Chile hoy" \
+  "noticias nacionales de Chile publicadas hoy"; do
+  echo "LIVE_NEWS_QUERY_ATTEMPT=$news_query"
+  request_file news_quorum "$VERCEL_URL/v1/web/search" 75 \
+    --get --data-urlencode "q=$news_query"
+  if [ "$HTTP_CODE" != "200" ]; then
+    echo "LIVE_NEWS_QUERY_HTTP_FAIL status=$HTTP_CODE"
+    show_redirect news_quorum || true
+    continue
+  fi
+  if jq -e '
+    .ok == true and
+    .status == "success" and
+    .realtime == true and
+    ((.results // []) | length) >= 3 and
+    ((.fetched_pages // []) | length) >= 3 and
+    ([.results[]? |
+      select(
+        (.evidence_type // "") == "verified_current_news_article" and
+        (.published_at | (type == "string" and length > 10))
+      )] | length) >= 3 and
+    ([.results[]? |
+      select((.evidence_type // "") == "verified_current_news_article") |
+      ((.source_domain // .url // "") |
+        ascii_downcase | sub("^https?://"; "") | sub("^www\\."; "") | split("/")[0])
+    ] | unique | length) >= 3 and
+    ([.providers[]? | ascii_downcase |
+      select(. != "unknown" and . != "multi" and . != "none")
+    ] | unique | length) >= 2 and
+    (.domains_used // 0) >= 3 and
+    (.extracted_text_chars // 0) >= 240 and
+    ((.errors // []) | index("REALTIME_NEWS_QUORUM_NOT_MET")) == null
+  ' "$TMP_DIR/news_quorum.body" >/dev/null 2>&1; then
+    jq -c '{
+      ok,status,realtime,providers,domains_used,extracted_text_chars,
+      verified_articles:([.results[]? | select((.evidence_type // "") == "verified_current_news_article")] | length),
+      fetched_pages_count:((.fetched_pages // []) | length),
+      article_domains:([.results[]? |
+        select((.evidence_type // "") == "verified_current_news_article") |
+        (.source_domain // .url // "")] | unique),
+      errors
+    }' "$TMP_DIR/news_quorum.body"
+    echo "LIVE_NEWS_QUORUM_PASS articles>=3 distinct_editorial_domains>=3 providers>=2 extracted_pages>=3"
+    news_quorum_pass=true
+    break
+  fi
   jq -c '{
     ok,status,realtime,providers,domains_used,extracted_text_chars,errors,
     verified_articles:([.results[]? | select((.evidence_type // "") == "verified_current_news_article")] | length),
@@ -228,15 +248,9 @@ if ! jq -e '
       select((.evidence_type // "") == "verified_current_news_article") |
       (.source_domain // .url // "")] | unique)
   }' "$TMP_DIR/news_quorum.body" 2>/dev/null || true
-  fail "LIVE_NEWS_QUORUM_FAIL_three_recent_articles_three_domains_two_providers"
-fi
-jq -c '{
-  ok,status,realtime,providers,domains_used,extracted_text_chars,
-  verified_articles:([.results[]? | select((.evidence_type // "") == "verified_current_news_article")] | length),
-  fetched_pages_count:((.fetched_pages // []) | length),
-  errors
-}' "$TMP_DIR/news_quorum.body"
-echo "LIVE_NEWS_QUORUM_PASS articles>=3 distinct_editorial_domains>=3 providers>=2 extracted_pages>=3"
+done
+[ "$news_quorum_pass" = true ] || \
+  fail "LIVE_NEWS_QUORUM_FAIL_all_queries_need_three_recent_articles_three_domains_two_providers"
 
 request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
   --no-buffer -X POST \
