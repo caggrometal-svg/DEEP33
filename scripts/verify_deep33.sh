@@ -153,7 +153,14 @@ request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
 [ "$HTTP_CODE" = "200" ] || { show_redirect chat_stream; tail -c 3000 "$TMP_DIR/chat_stream.body" 2>/dev/null || true; fail "CHAT_STREAM_HTTP_$HTTP_CODE"; }
 grep -qi '^content-type:.*text/event-stream' "$TMP_DIR/chat_stream.headers" ||
   fail "CHAT_STREAM_CONTENT_TYPE_NOT_SSE"
-grep -Fq 'STREAM_PASS' "$TMP_DIR/chat_stream.body" || {
+# SSE chunks may split a word across multiple delta events (for example,
+# "STREAM" and "_PASS"). Parse each data payload and join token deltas before
+# asserting on the rendered assistant text.
+stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/chat_stream.body" |
+  jq -r 'fromjson? | .choices[]?.delta.content // empty' |
+  tr -d '\r\n')"
+printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
+  echo "CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$stream_text" | cut -c1-300)"
   tail -c 3000 "$TMP_DIR/chat_stream.body" 2>/dev/null || true
   fail "CHAT_STREAM_EMPTY_OR_EXPECTED_TEXT_MISSING"
 }
