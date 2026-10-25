@@ -84,19 +84,27 @@ logger = logging.getLogger("deep33")
 def _realtime_news_path_is_generic(path: str) -> bool:
     normalized = re.sub(r"/+", "/", str(path or "").casefold()).rstrip("/") or "/"
     landing_paths = {
-        "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
+        "/", "/en", "/es", "/en-us", "/es-cl", "/en-cl", "/cl",
+        "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
         "/latest-news", "/breaking-news", "/ultimo-momento",
+        "/conoce-chile", "/conoce-chile-1", "/travel-guide", "/guia-de-viaje",
+        "/about", "/about-us", "/quienes-somos", "/quiénes-somos",
+        "/contact", "/contacto", "/destinos", "/destinations",
     }
     if normalized in landing_paths:
+        return True
+    # A locale-only URL such as /en/ is still a site landing page.
+    parts = [part for part in normalized.strip("/").split("/") if part]
+    if len(parts) == 1 and re.fullmatch(r"(?:[a-z]{2}(?:-[a-z]{2})?)", parts[0]):
         return True
     blocked_segments = {
         "admin", "au_creatives", "template", "login", "signin", "search",
         "tag", "tags", "category", "categories", "author", "authors",
         "publicidad", "portada",
     }
-    return bool(set(normalized.strip("/").split("/")) & blocked_segments)
+    return bool(set(parts) & blocked_segments)
 
 
 def _realtime_news_title_tokens(value: Any) -> set[str]:
@@ -118,38 +126,42 @@ def _same_realtime_news_article(
     fetched_page: dict[str, Any],
     page_url: str,
 ) -> bool:
-    """Verify that the fetched publisher page represents the discovered article."""
+    """Verify article identity by the publisher page title, including direct URLs."""
     original_url = str(source.get("url") or "").strip()
     original = urlparse(original_url)
     resolved = urlparse(page_url)
     if not resolved.hostname or resolved.scheme.casefold() != "https":
+        return False
+    if fetched_page.get("title_from_page") is False:
+        return False
+
+    # URL equality alone does not prove that a page is an article: search indexes
+    # can timestamp homepages, destination guides and evergreen portal pages too.
+    # Require a substantive title match for both direct URLs and resolved wrappers.
+    source_tokens = _realtime_news_title_tokens(source.get("title"))
+    page_tokens = _realtime_news_title_tokens(fetched_page.get("title"))
+    if len(source_tokens) < 3 or len(page_tokens) < 3:
+        return False
+    shared = len(source_tokens & page_tokens)
+    if (
+        shared / max(1, len(source_tokens)) < 0.60
+        or shared / max(1, len(page_tokens)) < 0.50
+    ):
         return False
 
     original_host = (original.hostname or "").casefold().rstrip(".").removeprefix("www.")
     resolved_host = resolved.hostname.casefold().rstrip(".").removeprefix("www.")
     original_path = re.sub(r"/+", "/", original.path.casefold()).rstrip("/") or "/"
     resolved_path = re.sub(r"/+", "/", resolved.path.casefold()).rstrip("/") or "/"
-
-    # Identical publisher article URL/path is a direct identity match. Signed
-    # Google News URLs are wrappers, so they must be resolved by the article title.
+    # Matching publisher pages are accepted directly. A wrapper may resolve across
+    # hosts only when the fetched publisher title independently matches the SERP title.
     if (
         original.scheme.casefold() == "https"
         and original_host == resolved_host
         and original_path == resolved_path
     ):
         return True
-
-    if fetched_page.get("title_from_page") is False:
-        return False
-    source_tokens = _realtime_news_title_tokens(source.get("title"))
-    page_tokens = _realtime_news_title_tokens(fetched_page.get("title"))
-    if len(source_tokens) < 3 or len(page_tokens) < 3:
-        return False
-    shared = len(source_tokens & page_tokens)
-    return (
-        shared / max(1, len(source_tokens)) >= 0.60
-        and shared / max(1, len(page_tokens)) >= 0.50
-    )
+    return bool(source_tokens and page_tokens)
 
 
 def _editorial_domain(source: dict[str, Any], page_url: str) -> str:
@@ -232,15 +244,15 @@ def _is_publishable_realtime_news_source(
     if len(page_text) < 80:
         return False
 
-    title = str(fetched_page.get("title") or "").casefold()
+    title = " ".join(str(fetched_page.get("title") or "").casefold().split())
     if any(marker in title for marker in (
-        "capital, mapa, bandera, población",
-        "capital, map, flag",
-        "lugares imperdibles",
-        "guía de viaje",
-        "travel guide",
-        "plantilla administrativa",
-        "advertising template",
+        "home -", "home |", "inicio -", "inicio |", "conoce chile",
+        "discover chile", "about us", "who we are", "quienes somos",
+        "quiénes somos", "capital, mapa, bandera, población",
+        "capital, map, flag", "lugares imperdibles", "guía de viaje",
+        "guia de viaje", "travel guide", "información turística",
+        "informacion turistica", "destinos de chile", "plantilla administrativa",
+        "advertising template", "promociones y publicidad", "portal oficial",
     )):
         return False
 
