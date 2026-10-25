@@ -525,7 +525,7 @@ def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch)
             assert decoded_inner[2] == "TEST_ARTICLE_ID"
             assert decoded_inner[3] == 1792920000
             assert decoded_inner[4] == "signed-value"
-            body = ")]}'\\n\\n" + json.dumps(
+            body = ")]}'\n\n" + json.dumps(
                 [["wrb.fr", "Fbv4je", inner_response, None]]
             )
             return Response(200, body)
