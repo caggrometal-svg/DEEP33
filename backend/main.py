@@ -117,6 +117,9 @@ def _realtime_news_path_is_generic(path: str) -> bool:
         "publicidad", "portada", "en-vivo", "envivo", "live-blog",
         "liveblog", "live-updates", "live-update", "streaming",
         "sucursal-virtual", "oficina-virtual",
+        # Cooperativa's issue archive can carry a fresh RSS timestamp while the
+        # URL itself identifies a cached 2025 edition, not a current article.
+        "cache", "nroedic", "todas",
     }
     return bool(set(parts) & blocked_segments)
 
@@ -151,6 +154,8 @@ def _is_generic_realtime_news_candidate(source: dict[str, Any]) -> bool:
         "guia de viaje", "travel guide", "información turística",
         "informacion turistica", "destinos de chile", "plantilla administrativa",
         "advertising template", "promociones y publicidad", "portal oficial",
+        "todas las noticias del día", "todas las noticias del dia",
+        "edición del día", "edicion del dia", "número de edición", "numero de edicion",
     ))
 
 
