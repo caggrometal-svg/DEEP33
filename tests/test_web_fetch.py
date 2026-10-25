@@ -489,3 +489,81 @@ def test_direct_timeout_transfers_to_reader_without_retrying(monkeypatch) -> Non
     assert result["reader_fallback"] == "jina_reader"
     assert "Reader extracted current reporting" in result["text"]
     assert len(result["text"]) > 80
+
+
+def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/TEST_ARTICLE_ID?oc=5"
+    target = "https://www.emol.com/noticias/Nacional/2026/10/25/current-report.html"
+    inner_response = json.dumps(["garturlres", target])
+
+    class Response:
+        def __init__(self, status_code, text, headers=None):
+            self.status_code = status_code
+            self.text = text
+            self.headers = headers or {}
+
+    class Client:
+        async def get(self, url, **kwargs):
+            assert url == "https://news.google.com/rss/articles/TEST_ARTICLE_ID"
+            assert "CONSENT=PENDING+987" in kwargs["headers"]["Cookie"]
+            return Response(
+                200,
+                '<html><c-wiz><div data-n-a-sg="signed-value" data-n-a-ts="1792920000"></div></c-wiz></html>',
+            )
+
+        async def post(self, url, **kwargs):
+            assert url == "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+            assert kwargs["headers"]["X-Same-Domain"] == "1"
+            outer = json.loads(kwargs["data"]["f.req"])
+            rpc_name, encoded_inner = outer[0][0]
+            assert rpc_name == "Fbv4je"
+            decoded_inner = json.loads(encoded_inner)
+            assert decoded_inner[0] == "garturlreq"
+            assert decoded_inner[2] == "TEST_ARTICLE_ID"
+            assert decoded_inner[3] == 1792920000
+            assert decoded_inner[4] == "signed-value"
+            body = ")]}'\\n\\n" + json.dumps(
+                [["wrb.fr", "Fbv4je", inner_response, None]]
+            )
+            return Response(200, body)
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(web_fetch, "_fetch_http_client", client)
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda value: value)
+
+    resolved = asyncio.run(
+        web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
+    )
+    assert resolved == target
+
+
+def test_google_news_wrapper_decoder_fails_closed_without_signed_params(monkeypatch) -> None:
+    import asyncio
+    import pytest
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/OPAQUE_ID?oc=5"
+
+    class Response:
+        status_code = 200
+        text = "<html><body>Before you continue to Google</body></html>"
+        headers = {}
+
+    class Client:
+        async def get(self, url, **kwargs):
+            return Response()
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(web_fetch, "_fetch_http_client", client)
+
+    with pytest.raises(web_fetch.WebFetchError, match="GOOGLE_NEWS_WRAPPER_PARAMS_MISSING"):
+        asyncio.run(
+            web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
+        )
