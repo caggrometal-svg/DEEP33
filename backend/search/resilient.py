@@ -754,13 +754,14 @@ class WebOrchestrator:
         fresh: bool = False,
         budget_seconds: float | None = None,
     ) -> dict:
-        """Coalesce identical concurrent searches, including concurrent fresh requests."""
+        """Coalesce identical concurrent searches while realtime requests remain cache-free."""
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return await self._search_uncached(cleaned, fresh=fresh, budget_seconds=budget_seconds)
 
         cache_key = self._cache_key(cleaned)
-        if not fresh:
+        force_fresh = bool(fresh or is_realtime_query(cleaned))
+        if not force_fresh:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 cached["cache_hit"] = True
@@ -776,7 +777,7 @@ class WebOrchestrator:
             task = asyncio.create_task(
                 self._search_uncached(
                     cleaned,
-                    fresh=fresh,
+                    fresh=force_fresh,
                     budget_seconds=budget_seconds,
                 ),
                 name=f"search:singleflight:{cache_key[:12]}",
@@ -823,7 +824,8 @@ class WebOrchestrator:
             )
 
         cache_key = self._cache_key(cleaned)
-        if not fresh:
+        force_fresh = bool(fresh or is_realtime_query(cleaned))
+        if not force_fresh:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 cached["cache_hit"] = True
@@ -1920,7 +1922,7 @@ class WebOrchestrator:
             results=selected,
             executed_query=provider_query,
         )
-        if selected:
+        if selected and not force_fresh:
             self.cache.put(cache_key, payload, self.cache_ttl_seconds)
         return payload
 
