@@ -938,7 +938,10 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in body["errors"]
     assert body["domains_used"] == 1
     assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
-    assert set(fetched) == {irrelevant_direct, wrapper}
+    # The service portal is excluded before extraction; only the Google News
+    # wrapper is fetched and resolved to its original editorial article.
+    assert set(fetched) == {wrapper}
+    assert irrelevant_direct not in fetched
     assert irrelevant_login not in fetched
     assert all(
         "banmedica" not in item["url"].casefold()
