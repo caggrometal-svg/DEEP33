@@ -80,6 +80,74 @@ GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
 
+
+def _is_publishable_realtime_news_source(
+    query: str,
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+) -> bool:
+    """Accept current-news evidence only when a real page is fresh and query-relevant."""
+    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
+        return False
+
+    published_at = fetched_page.get("published_at") or source.get("published_at")
+    if not published_at or not _is_recently_published(
+        {**source, "published_at": published_at},
+        query,
+    ):
+        return False
+
+    page_url = str(
+        fetched_page.get("url")
+        or fetched_page.get("final_url")
+        or source.get("url")
+        or ""
+    ).strip()
+    parsed = urlparse(page_url)
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return False
+
+    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+    landing_paths = {
+        "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
+        "/noticias", "/chile", "/actualidad", "/politica", "/política",
+        "/economia", "/deportes", "/mundo", "/news", "/latest",
+        "/latest-news", "/breaking-news",
+    }
+    if path in landing_paths:
+        return False
+
+    page_text = str(fetched_page.get("text") or "").strip()
+    if len(page_text) < 80:
+        return False
+
+    title = str(fetched_page.get("title") or source.get("title") or "").casefold()
+    if any(marker in title for marker in (
+        "capital, mapa, bandera, población",
+        "capital, map, flag",
+        "lugares imperdibles",
+        "guía de viaje",
+        "travel guide",
+    )):
+        return False
+
+    relevance_item = {
+        **source,
+        "title": fetched_page.get("title") or source.get("title") or "",
+        "url": page_url,
+        "published_at": published_at,
+        "snippet": page_text[:2000],
+        "text": page_text[:2000],
+    }
+    try:
+        minimum_relevance_score = max(
+            0.18,
+            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+        )
+    except (TypeError, ValueError):
+        minimum_relevance_score = 0.28
+    return score_result(query, relevance_item) >= minimum_relevance_score
+
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
@@ -3285,6 +3353,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         fetched_pages: list[dict[str, Any]] = []
         fetch_failures: list[dict[str, str]] = []
         resolved_urls: dict[str, str] = {}
+        fetched_by_source_url: dict[str, dict[str, Any]] = {}
         for source, fetched in zip(fetch_candidates, fetch_results):
             if isinstance(fetched, BaseException):
                 if isinstance(fetched, asyncio.CancelledError):
@@ -3315,34 +3384,63 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             resolved_source_url = str(fetched.get("url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
+                fetched_by_source_url[original_source_url] = fetched
 
         # Surface verified direct publisher URLs to callers. Keep the wrapper in
         # original_url for diagnostics, but never make clients navigate a Google
         # News opaque URL after the backend already resolved and fetched its source.
         resolved_results: list[dict[str, Any]] = []
-        for item in list(result.get("results") or []):
+        valid_news_pages_by_url: dict[str, dict[str, Any]] = {}
+        # Use only candidates that actually entered the bounded fetch pipeline.
+        # This also preserves timestamped rescue candidates in the public result set.
+        for item in list(candidate_sources):
             if not isinstance(item, dict):
                 continue
             original_url = str(item.get("url") or "").strip()
-            # Return only URLs whose original pages were successfully extracted;
-            # raw snippets and unreadable/unrelated SERP entries are not evidence.
             direct_url = resolved_urls.get(original_url)
-            if not direct_url:
+            fetched_page = fetched_by_source_url.get(original_url)
+            # Raw snippets and unreadable/unrelated SERP entries are not evidence.
+            if not direct_url or not fetched_page:
                 continue
-            if direct_url != original_url:
+
+            if is_realtime_news_query(q):
+                if not _is_publishable_realtime_news_source(q, item, fetched_page):
+                    continue
+                published_at = fetched_page.get("published_at") or item.get("published_at")
+                page_domain = str(
+                    fetched_page.get("domain")
+                    or (urlparse(direct_url).hostname or "")
+                ).casefold().removeprefix("www.")
+                valid_news_pages_by_url[original_url] = fetched_page
+                resolved_results.append({
+                    **item,
+                    "original_url": original_url if direct_url != original_url else item.get("original_url"),
+                    "url": direct_url,
+                    "published_at": published_at,
+                    "source_domain": page_domain,
+                    "fetched": True,
+                    "evidence_type": "verified_current_news_article",
+                })
+            elif direct_url != original_url:
                 resolved_results.append({**item, "original_url": original_url, "url": direct_url})
             else:
                 resolved_results.append(dict(item))
 
+        evidence_fetched_pages = (
+            list(valid_news_pages_by_url.values())
+            if is_realtime_news_query(q)
+            else fetched_pages
+        )
         fetched_domains = {
-            str(page.get("domain") or "")
-            for page in fetched_pages
-            if str(page.get("domain") or "")
+            str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for page in evidence_fetched_pages
+            if str(page.get("domain") or page.get("url") or "")
         }
         domains_used = len(fetched_domains)
         extracted_text_chars = sum(
             len(str(page.get("text") or ""))
-            for page in fetched_pages
+            for page in evidence_fetched_pages
         )
         has_extracted_content = extracted_text_chars >= 80 and domains_used > 0
 
@@ -3353,7 +3451,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # underlying page was fetched: callers can distinguish evidence_type and
         # fetched=false from fully extracted pages.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not has_extracted_content:
+        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
             for item in candidate_sources:
                 snippet = str(item.get("snippet") or "").strip()
                 url = str(item.get("url") or "").strip()
@@ -3378,7 +3476,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # already-ranked live snippets from distinct domains. They are explicitly
         # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and has_extracted_content and len(resolved_results) < 3:
+        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
             extracted_result_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "")
                 .casefold().removeprefix("www.")
@@ -3426,8 +3524,34 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 if str(item.get("source_domain") or "")
             })
 
-        final_ok = search_ok and (has_extracted_content or has_snippet_evidence)
-        if not search_ok or (not has_extracted_content and not has_snippet_evidence):
+        valid_news_domains = {
+            (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            for item in resolved_results
+            if str(item.get("url") or "").startswith("https://")
+        }
+        valid_news_providers = {
+            str(item.get("provider") or "").casefold()
+            for item in resolved_results
+            if str(item.get("provider") or "").strip()
+        }
+        news_quorum_met = (
+            not is_realtime_news_query(q)
+            or (
+                len(resolved_results) >= 3
+                and len(valid_news_domains) >= 3
+                and len(valid_news_providers) >= 2
+            )
+        )
+        final_ok = (
+            search_ok
+            and (has_extracted_content or has_snippet_evidence)
+            and news_quorum_met
+        )
+        if (
+            not search_ok
+            or (not has_extracted_content and not has_snippet_evidence)
+            or not news_quorum_met
+        ):
             status = "failed"
         elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
             status = "degraded"
@@ -3435,6 +3559,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
+        if is_realtime_news_query(q) and not news_quorum_met:
+            errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
             errors.append("SEARCH_RESULT_NOT_OK")
         errors.extend(
@@ -3480,9 +3606,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "provider": page.get("provider"),
                     "text_chars": page.get("text_chars"),
                     "text": str(page.get("text") or "")[:2200],
+                    "published_at": page.get("published_at"),
                     "retrieved_at": page.get("retrieved_at"),
                 }
-                for page in fetched_pages
+                for page in evidence_fetched_pages
             ],
             "fetch_failures": fetch_failures,
             "errors": list(dict.fromkeys(str(item) for item in errors)),
