@@ -1020,7 +1020,7 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
         assert "if (!search.ok || sources.length < 1)" in source
-        assert 'fallback_path: "railway-recovery"' in source
+        assert 'fallback_path: "backend-recovery"' in source
         assert "async function buildNavigatedWebEvidence(" in source
 
 def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable(monkeypatch):
