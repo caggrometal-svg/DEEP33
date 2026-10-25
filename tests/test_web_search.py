@@ -1589,3 +1589,21 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
     }
     assert (editorial_domains - {""}) <= allowed_chilean_outlets, result["results"]
 
+
+
+def test_direct_chile_news_recovery_rejects_cached_cooperativa_issue_archive():
+    from backend.search.resilient import _is_direct_chile_news_article_candidate
+
+    archive = {
+        "title": "Todas las noticias del día | Cooperativa.cl",
+        "url": "https://www.cooperativa.cl/noticias/site/cache/nroedic/todas/20250609.html",
+        "source_domain": "cooperativa.cl",
+    }
+    article = {
+        "title": "Gobierno anuncia nuevas medidas para Chile hoy",
+        "url": "https://www.cooperativa.cl/noticias/pais/actualidad/2026/10/25/gobierno-anuncia-medidas/",
+        "source_domain": "cooperativa.cl",
+    }
+
+    assert not _is_direct_chile_news_article_candidate(archive)
+    assert _is_direct_chile_news_article_candidate(article)
