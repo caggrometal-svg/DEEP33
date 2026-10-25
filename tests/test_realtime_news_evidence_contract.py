@@ -353,3 +353,36 @@ def test_current_news_rejects_nested_section_landing_with_fresh_timestamp():
         source,
         page,
     )
+
+
+def test_current_news_rejects_cooperativa_cached_issue_archive_with_fresh_rss_date():
+    from backend import main
+
+    today = datetime.now(timezone.utc).isoformat()
+    url = "https://www.cooperativa.cl/noticias/site/cache/nroedic/todas/20250609.html"
+    source = {
+        "title": "Todas las noticias del día | Cooperativa.cl",
+        "url": url,
+        "source_domain": "cooperativa.cl",
+        "provider": "bing",
+        "published_at": today,
+        "snippet": "Todas las noticias del día de Cooperativa.cl.",
+    }
+    page = {
+        "title": "Todas las noticias del día | Cooperativa.cl",
+        "url": url,
+        "domain": "cooperativa.cl",
+        "published_at": None,
+        "title_from_page": True,
+        "text": (
+            "Todas las noticias del día. Edición anterior del archivo de "
+            "Cooperativa.cl con páginas y artículos antiguos del diario. "
+        ) * 12,
+    }
+
+    assert main._is_generic_realtime_news_candidate(source) is True
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
