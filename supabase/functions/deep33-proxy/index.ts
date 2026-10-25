@@ -187,7 +187,7 @@ async function buildNavigatedWebEvidence(
   const attemptedDomains = new Set<string>();
   let attempted = 0;
   const batchSize = 4;
-  // Railway /v1/web/fetch is bounded to about 3.3s, with a 4s caller deadline.
+  // The canonical backend /v1/web/fetch is bounded to a 4s caller deadline.
   // The extra headroom lets the backend return extracted text or a graceful
   // timeout result instead of aborting the request and producing HTTP 499.
   const sourceReadTimeoutMs = 4000;
@@ -320,9 +320,11 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Internal DEEP33 fallback: keep the public API unchanged. Try the canonical
-// Railway deployment first, then preserve the existing Render fallbacks as-is.
+// Route web search, page extraction, and the first internal backend fallback
+// through the canonical Vercel backend. Keep legacy hosts only as emergency
+// inference fallbacks; their deployments and configuration are not modified.
 const EDGE_AI_UPSTREAM_URLS = [
+  "https://deep33-backend.vercel.app",
   "https://iac33-fastapi-edge-production.up.railway.app",
   "https://deep33-backend.onrender.com",
   "https://deep33-api.onrender.com",
@@ -576,6 +578,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
   const names = [
+    "vercel-backend-primary",
     "railway-backend-fallback",
     "render-backend-fallback",
     "render-api-fallback",
@@ -2711,9 +2714,11 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
   ];
   let last: Record<string, unknown> = { ok: false, results: [] };
 
-  const sufficientSearchCoverage = (result: Record<string, unknown>): boolean => {
+  const metrics = (result: Record<string, unknown>) => {
     const results = Array.isArray(result.results)
-      ? result.results.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      ? result.results.filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === "object" && typeof (item as Record<string, unknown>).url === "string"),
+        )
       : [];
     const domains = new Set(results.map((item) => {
       const explicit = String(item.source_domain || "").toLowerCase().replace(/^www\./, "");
@@ -2724,30 +2729,101 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
         return "";
       }
     }).filter(Boolean));
-    const providers = new Set(
-      Array.isArray(result.providers)
-        ? result.providers.map((item) => String(item || "")).filter(Boolean)
-        : results.map((item) => String(item.provider || "")).filter(Boolean),
-    );
-    return result.ok === true && results.length >= 2 && domains.size >= 2 && providers.size >= 2;
+    const providers = new Set([
+      ...(Array.isArray(result.providers) ? result.providers.map((item) => String(item || "")) : []),
+      ...results.map((item) => String(item.provider || "")),
+    ].filter(Boolean));
+    return { results, domains, providers };
+  };
+
+  const sufficientSearchCoverage = (result: Record<string, unknown>): boolean => {
+    const evidence = metrics(result);
+    return result.ok === true &&
+      evidence.results.length >= 2 &&
+      evidence.domains.size >= 2 &&
+      evidence.providers.size >= 2;
+  };
+
+  const mergeSearchResults = (
+    primary: Record<string, unknown>,
+    recovery: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const seen = new Set<string>();
+    const combined: Record<string, unknown>[] = [];
+    for (const result of [primary, recovery]) {
+      const items = Array.isArray(result.results) ? result.results : [];
+      for (const item of items) {
+        if (!item || typeof item !== "object") continue;
+        const candidate = item as Record<string, unknown>;
+        const rawUrl = String(candidate.url || candidate.final_url || "").trim();
+        if (!rawUrl) continue;
+        let key = "";
+        try {
+          const parsed = new URL(rawUrl);
+          if (parsed.protocol !== "https:" && parsed.protocol !== "http:") continue;
+          parsed.hash = "";
+          key = parsed.href;
+        } catch {
+          continue;
+        }
+        if (seen.has(key)) continue;
+        seen.add(key);
+        combined.push(candidate);
+        if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
+      }
+      if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
+    }
+    const providers = [...new Set([
+      ...(Array.isArray(primary.providers) ? primary.providers.map((item) => String(item || "")) : []),
+      ...(Array.isArray(recovery.providers) ? recovery.providers.map((item) => String(item || "")) : []),
+      ...combined.map((item) => String(item.provider || "")),
+    ].filter(Boolean))];
+    const merged: Record<string, unknown> = {
+      ...primary,
+      ...recovery,
+      ok: combined.length > 0,
+      results: combined,
+      sources: combined,
+      providers,
+      fallback_path: "combined-edge-and-vercel-backend",
+    };
+    const evidence = metrics(merged);
+    merged.verification = {
+      level: providers.length > 1 ? "dual-public-provider" : "public-fallback",
+      distinct_domains: evidence.domains.size,
+      distinct_providers: providers.length,
+    };
+    return merged;
+  };
+
+  const coverageScore = (result: Record<string, unknown>): number => {
+    const evidence = metrics(result);
+    return evidence.providers.size * 100 + evidence.domains.size * 20 + evidence.results.length;
   };
 
   for (let index = 0; index < candidates.length; index++) {
     try {
-      // Connectivity audit verifies that independent search providers can return
-      // current, relevant candidates. Full page extraction remains mandatory in
-      // the normal chat/navigation path and is validated by production web gates.
-      let result = await edgeSearch(candidates[index], sessionId, userAuthorization, false, false);
-      if (!sufficientSearchCoverage(result) && userAuthorization.startsWith("Bearer ")) {
-        result = await edgeSearch(candidates[index], sessionId, userAuthorization, true, false);
+      const direct = await edgeSearch(candidates[index], sessionId, userAuthorization, false, false);
+      let result = direct;
+      if (!sufficientSearchCoverage(direct) && userAuthorization.startsWith("Bearer ")) {
+        // Do not discard useful public-provider results if the backend recovery
+        // has no candidates. Merge distinct URLs and provider/domain evidence.
+        const recovery = await edgeSearch(candidates[index], sessionId, userAuthorization, true, false);
+        result = mergeSearchResults(direct, recovery);
       }
-      const results = Array.isArray(result.results) ? result.results : [];
       if (sufficientSearchCoverage(result)) {
         return { ...result, audit_query: candidates[index], audit_attempts: index + 1 };
       }
-      last = { ...result, ok: false, results };
+      const candidate = { ...result, ok: false, audit_attempts: index + 1 };
+      if (coverageScore(candidate) > coverageScore(last)) last = candidate;
     } catch (error) {
-      last = { ok: false, error: error instanceof Error ? error.message : String(error), results: [] };
+      const candidate = {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        results: [],
+        audit_attempts: index + 1,
+      };
+      if (coverageScore(candidate) > coverageScore(last)) last = candidate;
     }
   }
   return { ...last, ok: false, audit_attempts: candidates.length };
@@ -3751,7 +3827,7 @@ async function edgeSearch(
   query: string,
   sessionId = "deep33-edge-search",
   userAuthorization = "",
-  railwayOnly = false,
+  backendOnly = false,
   requireExtractedEvidence = false,
 ): Promise<Record<string, unknown>> {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
@@ -3945,11 +4021,11 @@ async function edgeSearch(
   };
 
   // Search public Edge providers first. Recovery mode skips them and queries
-  // the already configured Railway search service exactly once.
-  const direct: Record<string, unknown> = railwayOnly
+  // the canonical DEEP33 Vercel backend exactly once.
+  const direct: Record<string, unknown> = backendOnly
     ? {
         ok: false,
-        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_RAILWAY_RECOVERY",
+        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_BACKEND_RECOVERY",
         results: [],
         providers: [],
       }
@@ -3961,7 +4037,7 @@ async function edgeSearch(
       })) as Record<string, unknown>;
 
   if (
-    !railwayOnly &&
+    !backendOnly &&
     direct.ok === true &&
     Array.isArray(direct.results) &&
     direct.results.length > 0
@@ -3982,13 +4058,13 @@ async function edgeSearch(
     const unavailable = requireExtractedEvidence
       ? { ...direct, ok: false, results: [], sources: [], error: "SOURCE_VERIFICATION_AUTH_REQUIRED" }
       : direct;
-    logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "edge-direct", unavailable);
+    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "edge-direct", unavailable);
     return unavailable;
   }
 
   try {
-    const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
-    const res = await fetch(railwaySearchUrl, {
+    const backendSearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
+    const res = await fetch(backendSearchUrl, {
       method: "GET",
       headers: {
         "Authorization": userAuthorization,
@@ -4028,9 +4104,9 @@ async function edgeSearch(
             results: publicResults,
             sources: publicResults,
             verification: edgeSearchVerification(filtered, providers),
-            fallback_path: "railway",
+            fallback_path: "vercel-backend",
           };
-          logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response);
+          logSearchStage("success", backendOnly ? "backend-recovery" : "backend-fallback", response);
           return response;
         } else if (!requireExtractedEvidence) {
           // Keep candidate URLs available to chat so its navigation phase can read
@@ -4045,29 +4121,29 @@ async function edgeSearch(
             results: publicResults,
             sources: publicResults,
             verification: edgeSearchVerification(filtered, providers),
-            fallback_path: "railway-candidates",
+            fallback_path: "vercel-backend-candidates",
           };
-          logSearchStage("degraded", railwayOnly ? "railway-recovery" : "railway-candidate-recovery", candidatePayload);
+          logSearchStage("degraded", backendOnly ? "backend-recovery" : "backend-candidate-recovery", candidatePayload);
           return candidatePayload;
         }
       }
     }
     const unavailable = requireExtractedEvidence
-      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "railway", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
-      : { ...direct, fallback_path: "railway" };
-    logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "railway-fallback", unavailable);
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "vercel-backend" };
+    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "backend-fallback", unavailable);
     return unavailable;
   } catch (error) {
     console.warn(JSON.stringify({
       event: "edge_web_search_fallback_error",
-      path: railwayOnly ? "railway-recovery" : "railway-fallback",
+      path: backendOnly ? "backend-recovery" : "backend-fallback",
       error: error instanceof Error ? error.name : "UNKNOWN",
       request_scope: sessionId.slice(0, 128),
     }));
     const unavailable = requireExtractedEvidence
-      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "railway", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
-      : { ...direct, fallback_path: "railway" };
-    logSearchStage("unavailable", railwayOnly ? "railway-recovery" : "railway-fallback", unavailable);
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "vercel-backend" };
+    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "backend-fallback", unavailable);
     return unavailable;
   }
 }
@@ -4364,7 +4440,7 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "railway-recovery",
+              fallback_path: "backend-recovery",
             };
           }
         }
@@ -4914,7 +4990,7 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "railway-recovery",
+              fallback_path: "backend-recovery",
             };
           }
         }
