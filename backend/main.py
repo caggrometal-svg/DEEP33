@@ -3912,13 +3912,22 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and len(valid_news_providers) >= 2
             )
         )
-        final_ok = (
-            search_ok
-            and (has_extracted_content or has_snippet_evidence)
-            and news_quorum_met
-        )
+        # For realtime-news queries, the orchestrator's initial candidate
+        # quorum may be incomplete while direct publisher pages are still
+        # retrievable. The verified extracted-article quorum below is the
+        # authoritative gate: three recent article identities, three editorial
+        # domains and at least two successful search providers.
+        if news_quorum_required:
+            final_ok = has_extracted_content and news_quorum_met
+        else:
+            final_ok = (
+                search_ok
+                and (has_extracted_content or has_snippet_evidence)
+                and news_quorum_met
+            )
         if (
-            not search_ok
+            (not search_ok and not news_quorum_required)
+            or (news_quorum_required and not has_extracted_content)
             or (not has_extracted_content and not has_snippet_evidence)
             or not news_quorum_met
         ):
@@ -3931,7 +3940,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         errors = list(result.get("errors") or [])
         if news_quorum_required and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
-        if not search_ok:
+        if not search_ok and not news_quorum_required:
             errors.append("SEARCH_RESULT_NOT_OK")
         errors.extend(
             f"{item['reason']}:{item['url']}"
