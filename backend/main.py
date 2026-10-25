@@ -150,8 +150,25 @@ def _is_generic_realtime_news_candidate(
     parsed = urlparse(url)
     if not url or _realtime_news_path_is_generic(parsed.path):
         return True
-    if query and _is_broad_current_news_query(query) and not _is_known_chile_editorial_news_domain(source, url):
-        return True
+    if query and _is_broad_current_news_query(query):
+        host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+        path_segments = {
+            segment for segment in parsed.path.casefold().split("/") if segment
+        }
+        # These are publisher-adjacent service/marketing surfaces, not original
+        # articles. They otherwise consume the scarce fetch slots and mask the
+        # Google News article wrappers for the same newsroom.
+        non_article_hosts = {
+            "kiosco.latercera.com", "mediakit.cooperativa.cl",
+            "neomedia.emol.com",
+        }
+        if host in non_article_hosts or path_segments & {
+            "library", "apuestas", "pronosticos", "pronósticos",
+            "nuestros-medios", "mediakit", "media-kit",
+        }:
+            return True
+        if not _is_known_chile_editorial_news_domain(source, url):
+            return True
     title = " ".join(str(source.get("title") or "").casefold().split())
     return any(marker in title for marker in (
         "home -", "home |", "inicio -", "inicio |", "conoce chile",
