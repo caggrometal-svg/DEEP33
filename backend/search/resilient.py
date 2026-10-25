@@ -250,6 +250,9 @@ def _is_direct_chile_news_article_candidate(item: dict) -> bool:
         "inicio |", "inicio -", "home |", "home -", "portada |",
         "últimas noticias de chile", "ultimas noticias de chile",
         "noticias de chile y el mundo", "todas las noticias del día", "todas las noticias del dia", "edición del día", "edicion del dia",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "datos generales de chile",
     )):
         return False
     return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
