@@ -1816,47 +1816,50 @@ class WebOrchestrator:
                     if pending_general_news:
                         await asyncio.gather(*pending_general_news, return_exceptions=True)
 
-                merged = [
-                    {**item, "provider": outcome.provider}
-                    for outcome in outcomes
-                    if outcome.ok
-                    for item in outcome.results
-                ]
-                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
-                selected = deduplicate(ranked, self.max_results)
+            merged = [
+                {**item, "provider": outcome.provider}
+                for outcome in outcomes
+                if outcome.ok
+                for item in outcome.results
+            ]
+            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            selected = deduplicate(ranked, self.max_results)
 
-                # The ranker can prefer generic or unrelated pages from the broad
-                # query. Preserve only actual HTTPS article candidates on distinct
-                # Chilean newsrooms discovered above, with publisher diversity first.
-                diverse_news: list[dict] = []
-                diverse_news_domains: set[str] = set()
-                for item in [*selected, *merged]:
-                    if len(diverse_news) >= self.max_results:
-                        break
-                    if not is_direct_chile_news_article(item):
-                        continue
-                    url = str(item.get("url") or "").strip()
-                    host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
-                    if not host or host in diverse_news_domains:
-                        continue
-                    diverse_news.append(item)
-                    diverse_news_domains.add(host)
-                if len(diverse_news) >= min(3, self.max_results):
-                    selected = diverse_news[: self.max_results]
-                logger.info(
-                    "web_search_chile_general_news_recovery selected_count=%d "
-                    "direct_editorial_domains=%d successful_providers=%d",
-                    len(selected),
-                    len({
-                        (urlparse(str(item.get("url") or "")).hostname or "")
-                        .casefold().rstrip(".").removeprefix("www.")
-                        for item in selected
-                    } - {""}),
-                    len({
-                        outcome.provider for outcome in outcomes
-                        if outcome.ok and outcome.results
-                    }),
-                )
+            # Always apply diversity-first selection to discovered direct articles,
+            # even when the broad provider pool already contains three domains. The
+            # ranker may otherwise rank only one of those publisher pages into the
+            # small public result set, causing the downstream fetch quorum to fail.
+            # Only actual HTTPS editorial URLs are surfaced; the API subsequently
+            # validates title identity, date freshness and extracted article text.
+            diverse_news: list[dict] = []
+            diverse_news_domains: set[str] = set()
+            for item in [*selected, *merged]:
+                if len(diverse_news) >= self.max_results:
+                    break
+                if not is_direct_chile_news_article(item):
+                    continue
+                url = str(item.get("url") or "").strip()
+                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                if not host or host in diverse_news_domains:
+                    continue
+                diverse_news.append(item)
+                diverse_news_domains.add(host)
+            if len(diverse_news) >= min(3, self.max_results):
+                selected = diverse_news[: self.max_results]
+            logger.info(
+                "web_search_chile_general_news_recovery selected_count=%d "
+                "direct_editorial_domains=%d successful_providers=%d",
+                len(selected),
+                len({
+                    (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                    for item in selected
+                } - {""}),
+                len({
+                    outcome.provider for outcome in outcomes
+                    if outcome.ok and outcome.results
+                }),
+            )
 
         if chile_economic_news_intent and merged:
             # Search providers may discover several real publisher domains while
