@@ -478,6 +478,89 @@ def _freshness_score(item: dict) -> float:
         return 0.0
 
 
+_REALTIME_BLOCKED_LEXICAL_DOMAINS = {
+    "bab.la",
+    "www.bab.la",
+    "spanishdict.com",
+    "www.spanishdict.com",
+    "wordreference.com",
+    "www.wordreference.com",
+    "linguee.com",
+    "www.linguee.com",
+    "dictionary.cambridge.org",
+    "merriam-webster.com",
+    "www.merriam-webster.com",
+    "collinsdictionary.com",
+    "www.collinsdictionary.com",
+    "reverso.net",
+    "www.reverso.net",
+    "deepl.com",
+    "www.deepl.com",
+}
+
+_REALTIME_LEXICAL_PATH_MARKERS = (
+    "/dictionary/",
+    "/diccionario/",
+    "/translation/",
+    "/translate/",
+    "/traductor/",
+    "/grammar/",
+    "/gramatica/",
+    "/vocabulary/",
+    "/conjugation/",
+    "/conjugacion/",
+)
+
+
+def _is_realtime_lexical_noise(item: dict) -> bool:
+    url = str(item.get("url") or "").strip()
+    host = _source_host(item).removeprefix("www.")
+    parsed = urlparse(url)
+    path = (parsed.path or "").casefold()
+    title = str(item.get("title") or "").casefold()
+    if host in {domain.removeprefix("www.") for domain in _REALTIME_BLOCKED_LEXICAL_DOMAINS}:
+        return True
+    if any(marker in path for marker in _REALTIME_LEXICAL_PATH_MARKERS):
+        return True
+    lexical_title = (
+        "dictionary" in title
+        or "diccionario" in title
+        or "translation" in title
+        or "traducción" in title
+        or "traduccion" in title
+        or "conjugation" in title
+        or "conjugación" in title
+        or "grammar" in title
+        or "gramática" in title
+    )
+    return lexical_title
+
+
+def _explicitly_stale_realtime_news(query: str, item: dict) -> bool:
+    query_folded = str(query or "").casefold()
+    news_intent = any(
+        marker in query_folded
+        for marker in (
+            "noticia", "noticias", "última hora", "ultima hora", "actualidad",
+            "breaking", "latest news", "news", "hoy", "today", "ahora", "now",
+        )
+    )
+    if not news_intent:
+        return False
+    raw = str(item.get("published_at") or "").strip()
+    if not raw:
+        return False
+    try:
+        published = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - published.astimezone(timezone.utc)
+    # Explicitly dated old material must never satisfy a "today/latest/news" query.
+    return age.total_seconds() > 14 * 86400
+
+
 def rank_results(
     query: str,
     results: list[dict],
@@ -496,6 +579,14 @@ def rank_results(
     for item in results:
         url = str(item.get("url") or "").strip()
         if not url:
+            continue
+        if realtime and _is_realtime_lexical_noise(item):
+            # Translation/dictionary/grammar portals are lexical reference material,
+            # never evidence for current events or live factual changes.
+            continue
+        if realtime and _explicitly_stale_realtime_news(query, item):
+            # Reject explicitly dated stale material for current-news intent before
+            # it can gain relevance/domain score and crowd out fresh reporting.
             continue
         if realtime and _source_host(item).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
