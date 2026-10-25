@@ -1003,6 +1003,7 @@ def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monke
     now = datetime.now(timezone.utc).isoformat()
     homepage = "https://chile.travel/en/"
     evergreen = "https://dschile.cl/conoce-chile"
+    section_landing = "https://chile.as.com/noticias/chile"
     articles = [
         {
             "title": "Noticias de Chile hoy: Gobierno anuncia medidas económicas - Emol",
@@ -1040,6 +1041,14 @@ def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monke
             "snippet": "Información general sobre Chile, su territorio y destinos.",
             "published_at": now,
         },
+        {
+            "title": "Noticias de Chile y el mundo - AS Chile",
+            "url": section_landing,
+            "source_domain": "chile.as.com",
+            "provider": "bing",
+            "snippet": "Noticias de Chile y el mundo, actualidad nacional.",
+            "published_at": now,
+        },
         *[
             {
                 **article,
@@ -1072,8 +1081,8 @@ def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monke
     async def fake_fetch_source(source, **_kwargs):
         url = source["url"]
         fetched.append(url)
-        assert url not in {homepage, evergreen}, (
-            "Generic pages must be filtered before they consume fetch slots."
+        assert url not in {homepage, evergreen, section_landing}, (
+            "Generic pages and nested section landings must be filtered before fetch."
         )
         title = source["title"]
         return {
@@ -1107,6 +1116,7 @@ def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monke
     assert body["status"] == "success"
     assert body["domains_used"] == 3
     assert set(fetched) == {article["url"] for article in articles}
+    assert section_landing not in fetched
     assert {item["source_domain"] for item in body["results"]} == {
         "emol.com", "cooperativa.cl", "biobiochile.cl"
     }
