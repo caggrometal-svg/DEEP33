@@ -1768,7 +1768,17 @@ class WebOrchestrator:
                 if parsed.scheme.casefold() != "https" or not parsed.hostname:
                     return False
                 host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+                is_google_news_wrapper = host in {"news.google.com", "news.googleusercontent.com"}
+                declared_host = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
                 publisher = next(
+                    (
+                        domain for domain in generic_news_publishers
+                        if (
+                            declared_host == domain or declared_host.endswith("." + domain)
+                        ) if is_google_news_wrapper
+                    ),
+                    None,
+                ) if is_google_news_wrapper else next(
                     (
                         domain for domain in generic_news_publishers
                         if host == domain or host.endswith("." + domain)
@@ -1779,6 +1789,15 @@ class WebOrchestrator:
                     return False
                 path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
                 parts = [part for part in path.strip("/").split("/") if part]
+                # An opaque Google News wrapper is only a fetch candidate when its
+                # feed metadata identifies a known editorial publisher and the URL
+                # has an article identifier. It is not evidence until the fetcher
+                # resolves it and the shared validator confirms the original article.
+                if is_google_news_wrapper and not (
+                    (len(parts) >= 3 and parts[0] == "rss" and parts[1] == "articles")
+                    or (len(parts) >= 2 and parts[0] == "articles")
+                ):
+                    return False
                 if len(parts) < 2 or path in {
                     "/", "/noticias", "/actualidad", "/nacional", "/politica",
                     "/política", "/economia", "/mundo", "/lo-ultimo",
@@ -1840,8 +1859,7 @@ class WebOrchestrator:
             # Only spend the publisher-scoped wave while fewer than three direct
             # editorial articles are discoverable; never manufacture fallback URLs.
             initial_article_domains = {
-                (urlparse(str(item.get("url") or "")).hostname or "")
-                .casefold().rstrip(".").removeprefix("www.")
+                editorial_publisher_host(item)
                 for item in [*selected, *merged]
                 if isinstance(item, dict) and is_direct_chile_news_article(item)
             } - {""}
@@ -1886,8 +1904,7 @@ class WebOrchestrator:
                             for item in outcome.results
                         ]
                         article_domains_now = {
-                            (urlparse(str(item.get("url") or "")).hostname or "")
-                            .casefold().rstrip(".").removeprefix("www.")
+                            editorial_publisher_host(item)
                             for item in merged_now
                             if is_direct_chile_news_article(item)
                         } - {""}
@@ -1934,9 +1951,14 @@ class WebOrchestrator:
                 parsed_host = (
                     urlparse(str(item.get("url") or "")).hostname or ""
                 ).casefold().rstrip(".").removeprefix("www.")
-                declared = str(item.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
-                host = declared if parsed_host == declared or parsed_host.endswith("." + declared) else parsed_host
-                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com"):
+                declared = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
+                is_google_news_wrapper = parsed_host in {"news.google.com", "news.googleusercontent.com"}
+                host = (
+                    declared
+                    if is_google_news_wrapper or parsed_host == declared or parsed_host.endswith("." + declared)
+                    else parsed_host
+                )
+                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com", "chilevision.cl", "t13.cl"):
                     if host == publisher or host.endswith("." + publisher):
                         return publisher
                 return host
@@ -2206,8 +2228,8 @@ class WebOrchestrator:
                 if not direct_article:
                     continue
                 url = str(item.get("url") or "").strip()
-                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
-                if not host:
+                host = editorial_publisher_host(item)
+                if not url or not host:
                     continue
                 canonical = (host, url)
                 if canonical in seen_domain_urls:
@@ -2240,9 +2262,9 @@ class WebOrchestrator:
                 if next_item is None:
                     break
                 url = str(next_item.get("url") or "")
-                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                host = editorial_publisher_host(next_item)
                 provider_name = str(next_item.get("provider") or "").strip()
-                if not host:
+                if not url or not host:
                     break
                 diverse_final.append(next_item)
                 diverse_final_domains.add(host)
