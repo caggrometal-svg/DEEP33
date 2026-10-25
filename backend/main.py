@@ -2172,12 +2172,41 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
-    if not isinstance(search_result, dict) or search_result.get("ok") is not True:
-        errors = search_result.get("errors") if isinstance(search_result, dict) else None
+    if not isinstance(search_result, dict):
+        logger.warning(
+            "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
+            request_id, (time.perf_counter() - search_started) * 1000,
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
+
+    search_result_ok = search_result.get("ok") is True
+    partial_news_sources = (
+        search_result.get("results")
+        if isinstance(search_result.get("results"), list)
+        else search_result.get("sources")
+        if isinstance(search_result.get("sources"), list)
+        else []
+    )
+    successful_search_providers = {
+        str(provider).strip().casefold()
+        for provider in (search_result.get("providers") or [])
+        if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+    }
+    # Search orchestration can honestly report an incomplete candidate quorum.
+    # In current-news mode, still inspect those real candidates; only the extracted
+    # article validator below can determine whether they are enough to answer.
+    partial_news_candidates = (
+        news_query
+        and bool(partial_news_sources)
+        and len(successful_search_providers) >= 2
+    )
+    if not search_result_ok and not partial_news_candidates:
+        errors = search_result.get("errors")
         logger.warning(
             "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
             request_id, (time.perf_counter() - search_started) * 1000,
-            search_result.get("providers_attempted") if isinstance(search_result, dict) else None,
+            search_result.get("providers_attempted"),
             errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
