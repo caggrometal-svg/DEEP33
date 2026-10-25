@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published
+from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -3176,6 +3176,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                         rescue_query,
                         timeout_seconds=1.8,
                         max_results=8,
+                    )
+                    recent_candidates = rank_results(
+                        q,
+                        recent_candidates,
+                        realtime=True,
                     )
                     for raw in recent_candidates:
                         if not isinstance(raw, dict):
