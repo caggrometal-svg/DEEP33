@@ -93,3 +93,41 @@ def test_news_ranking_rejects_dictionary_junk_stale_and_undated_results():
     assert [item["url"] for item in ranked] == [
         "https://news.example.cl/chile/medidas"
     ]
+
+
+
+def test_fresh_page_fetch_skips_both_cache_reads_and_writes(monkeypatch):
+    import asyncio
+    import tools.web_fetch as fetch_module
+
+    calls = {"count": 0}
+
+    async def fake_fetch(**kwargs):
+        calls["count"] += 1
+        return {
+            "ok": True,
+            "url": kwargs["original_url"],
+            "final_url": kwargs["current_url"],
+            "title": f"Live response {calls['count']}",
+            "text": "fresh publisher content " * 20,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    async def exercise():
+        fetch_module._FETCH_CACHE.clear()
+        fetch_module._FETCH_INFLIGHT.clear()
+        monkeypatch.setattr(fetch_module, "validate_public_url", lambda value: value)
+        monkeypatch.setattr(fetch_module, "_fetch_with_total_budget", fake_fetch)
+        first = await fetch_module.fetch_page(
+            "https://fresh.example/article", fresh=True
+        )
+        second = await fetch_module.fetch_page(
+            "https://fresh.example/article", fresh=True
+        )
+        assert first["title"] == "Live response 1"
+        assert second["title"] == "Live response 2"
+        assert calls["count"] == 2
+        assert fetch_module._FETCH_CACHE == {}
+        assert fetch_module._FETCH_INFLIGHT == {}
+
+    asyncio.run(exercise())
