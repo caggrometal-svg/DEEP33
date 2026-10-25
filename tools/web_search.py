@@ -752,10 +752,21 @@ async def _parse_bing_rss(response, max_results):
                         source_domain = (urlparse(safe_source_url).hostname or "").casefold().rstrip(".")
                     except Exception:
                         source_domain = ""
+            published_at = (
+                item.findtext("pubDate")
+                or item.findtext("{*}pubDate")
+                or item.findtext("published")
+                or item.findtext("{*}published")
+                or item.findtext("updated")
+                or item.findtext("{*}updated")
+                or ""
+            ).strip()
             if title and url:
                 result = {"title": title, "url": url, "snippet": snippet}
                 if source_domain:
                     result["source_domain"] = source_domain
+                if published_at:
+                    result["published_at"] = published_at[:100]
                 rss_results.append(result)
         normalized = _normalise_results(rss_results, max_results)
         if not normalized:

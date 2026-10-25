@@ -433,11 +433,13 @@ def test_realtime_economics_ranking_normalizes_cross_language_and_inflections():
                 "title": "Economía y mercados: últimas noticias",
                 "url": "https://economia.example/chile",
                 "snippet": "Finanzas, mercados y actividad económica en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Chile economy and financial markets",
                 "url": "https://markets.example/chile",
                 "snippet": "Current economic and market developments.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Football results",
@@ -532,6 +534,7 @@ def test_realtime_rank_drops_unrelated_current_results():
             "title": "Las Condes registra emergencia por lluvias",
             "url": "https://news.example/las-condes",
             "snippet": "Actualización de la situación en Las Condes.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Actualización de Windows",
@@ -560,6 +563,7 @@ def test_realtime_rank_rejects_country_only_match_for_named_locality():
             "title": "Aluvión afecta San Carlos de Apoquindo en Las Condes",
             "url": "https://news.example/las-condes-live",
             "snippet": "Emergencia local en Las Condes tras las lluvias.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
     ranked = rank_results(query, results, realtime=True)
@@ -572,6 +576,7 @@ def test_realtime_broad_country_news_does_not_require_a_country_anchor():
             "title": "Noticias de Chile hoy: autoridades anuncian nuevas medidas",
             "url": "https://news.example/chile-live",
             "snippet": "Actualización de última hora publicada hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Partido Republicano de Chile",
@@ -602,6 +607,7 @@ def test_realtime_world_news_does_not_overfit_to_literal_world_synonyms():
             "title": "International leaders meet for a new agreement",
             "url": "https://news.example/world",
             "snippet": "Últimas noticias internacionales publicadas hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
     ranked = rank_results("noticias mundiales", results, realtime=True)
@@ -645,6 +651,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live Tavily",
             "url": "https://tavily.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def fake_bing(query, timeout_seconds, max_results):
@@ -652,6 +659,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live Bing",
             "url": "https://bing.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def fake_ddg(query, timeout_seconds, max_results):
@@ -659,6 +667,7 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
             "title": "Live DDG",
             "url": "https://ddg.example/live",
             "snippet": "latest current news about noticias mundiales",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     monkeypatch.setattr("tools.web_search._tavily_search", fake_tavily)
@@ -696,6 +705,7 @@ def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch
             "title": "Las Condes: alertas locales publicadas hoy",
             "url": "https://news.example/las-condes/alertas-hoy",
             "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }]
 
     async def hanging_ddg(query, timeout_seconds, max_results):
@@ -732,6 +742,7 @@ def test_realtime_locality_anchor_can_be_found_in_destination_url_path():
                 "title": "Alertas locales publicadas hoy",
                 "url": "https://news.example/las-condes/alertas-hoy",
                 "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             },
             {
                 "title": "Actualización del sistema operativo",
@@ -756,6 +767,7 @@ def test_realtime_locality_rescue_keeps_the_place_name(monkeypatch):
                     "title": "Alertas locales publicadas hoy",
                     "url": "https://news.example/las-condes/alertas-hoy",
                     "snippet": "Actualización local con información municipal.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 }
             ]
         return []
@@ -813,6 +825,7 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
             "title": "Chile anuncia nuevas medidas este sábado",
             "url": "https://news.example/chile/actualidad",
             "snippet": "Autoridades informaron hoy de nuevas medidas en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
         }],
         realtime=True,
     )
@@ -830,11 +843,13 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
                     "title": "Chile anuncia nuevas medidas",
                     "url": "https://news.example/chile-medidas",
                     "snippet": "Noticia actual publicada hoy en Chile.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 },
                 {
                     "title": "Gobierno de Chile informa nuevos cambios",
                     "url": "https://report.example/chile-cambios",
                     "snippet": "Actualización reciente de una fuente informativa.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
                 },
             ])],
             [],
@@ -865,6 +880,7 @@ def test_rank_results_normalizes_ai_and_technology_synonyms():
                 "title": "AI tech research news today",
                 "url": "https://example.org/ai-tech-research",
                 "snippet": "Research and analysis of AI technology.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             }
         ],
         realtime=True,
@@ -1104,3 +1120,92 @@ def test_chile_commercial_site_fallback_returns_official_navigation_candidates_w
         assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
 
     asyncio.run(scenario())
+
+
+def test_realtime_ranking_rejects_lexical_translation_noise():
+    ranked = rank_results(
+        "noticias Chile hoy cambios recientes",
+        [
+            {
+                "title": "Chile - English translation and dictionary",
+                "url": "https://www.spanishdict.com/translate/chile",
+                "snippet": "Spanish-English translation, conjugation and grammar.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            },
+            {
+                "title": "Noticias de Chile hoy: cambios recientes",
+                "url": "https://news.example.cl/chile/cambios-recientes",
+                "snippet": "Actualidad y noticias de Chile con cambios recientes confirmados.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["source_domain"] for item in ranked] == ["news.example.cl"]
+
+
+def test_realtime_news_rejects_explicitly_stale_dated_result():
+    old = datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    ranked = rank_results(
+        "últimas noticias de Chile hoy",
+        [
+            {
+                "title": "Últimas noticias de Chile hoy",
+                "url": "https://stale.example.cl/chile/noticias",
+                "snippet": "Noticias y actualidad de Chile.",
+                "published_at": old,
+            },
+            {
+                "title": "Noticias de Chile hoy",
+                "url": "https://fresh.example.cl/chile/noticias",
+                "snippet": "Últimas noticias y actualidad de Chile.",
+                "published_at": fresh,
+            },
+        ],
+        realtime=True,
+    )
+    assert [item["source_domain"] for item in ranked] == ["fresh.example.cl"]
+
+
+def test_realtime_orchestrator_never_reads_or_writes_cache():
+    from backend.search.resilient import WebOrchestrator
+
+    calls = {"count": 0}
+
+    async def provider(query, timeout, limit):
+        calls["count"] += 1
+        return [
+            {
+                "title": "DEEP33 noticias actuales",
+                "url": f"https://news.example/item-{calls['count']}",
+                "snippet": "DEEP33 noticias actualidad hoy",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=0.3,
+            fallback_delay_seconds=0,
+            cache_ttl_seconds=120,
+        )
+        orchestrator.providers = {"bing": provider}
+        orchestrator.fallback_providers = {}
+        orchestrator.circuits = {"bing": orchestrator.circuits["bing"]}
+
+        first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        return first, second, orchestrator
+
+    first, second, orchestrator = asyncio.run(exercise())
+    assert first["ok"] is True
+    assert second["ok"] is True
+    # Each top-level realtime search executes two planned query variants. Both
+    # variants must execute again on the second call because realtime is cache-free.
+    assert calls["count"] == 4
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is False
+    assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None

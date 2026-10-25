@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -197,7 +198,7 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
                 "title": "Situación actual de la comuna de Las Condes",
                 "url": "https://news.google.com/rss/articles/las-condes",
                 "snippet": "Actualidad reciente en Las Condes, Chile.",
-                "published_at": "2026-10-10T02:00:00Z",
+                "published_at": datetime.now(timezone.utc).isoformat(),
             }])],
             [],
             ["google_news"],

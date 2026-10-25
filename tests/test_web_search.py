@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 
@@ -173,6 +174,7 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
                 f"Chile política: noticias actuales del gobierno y Congreso. "
                 f"Información sobre {title_suffix}."
             ),
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
 
     async def provider(query, timeout, limit):
@@ -537,25 +539,29 @@ def test_rss_publisher_metadata_preserves_real_domains_behind_google_news_links(
     import tools.web_search as module
     from backend.search.engine import deduplicate, rank_results
 
-    feed = """<?xml version="1.0" encoding="UTF-8"?>
+    pub_date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    feed = f"""<?xml version="1.0" encoding="UTF-8"?>
     <rss version="2.0"><channel>
       <item>
         <title>Política en Chile hoy: gobierno anuncia medidas</title>
         <link>https://news.google.com/rss/articles/article-emol</link>
         <description>Política y gobierno de Chile, medidas públicas anunciadas hoy.</description>
         <source url="https://www.emol.com/">Emol</source>
+        <pubDate>{pub_date}</pubDate>
       </item>
       <item>
         <title>Política de Chile: Congreso y gobierno informan cambios</title>
         <link>https://news.google.com/rss/articles/article-latercera</link>
         <description>Últimas noticias de política y gobierno en Chile.</description>
         <source url="https://www.latercera.com/">La Tercera</source>
+        <pubDate>{pub_date}</pubDate>
       </item>
       <item>
         <title>Gobierno de Chile comunica nuevas medidas políticas</title>
         <link>https://news.google.com/rss/articles/article-biobio</link>
         <description>Información actual de Chile y del gobierno.</description>
         <source url="https://www.biobiochile.cl/">BioBioChile</source>
+        <pubDate>{pub_date}</pubDate>
       </item>
     </channel></rss>"""
 
@@ -740,6 +746,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
             "title": f"Artificial intelligence research technology news today {index}",
             "url": f"https://ai-source-{index}.example.com/article",
             "snippet": "Latest artificial intelligence research and technology news today.",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
         for index in range(5)
     ]
@@ -748,6 +755,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
             "title": "Artificial intelligence research technology news today independent",
             "url": "https://independent-ai.example.org/article",
             "snippet": "Latest artificial intelligence research and technology news today.",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
     ]
     yahoo_calls = {"count": 0}
@@ -1195,19 +1203,21 @@ def test_chile_current_political_news_rejects_generic_landing_pages() -> None:
             "url": "https://www.biobiochile.cl/noticias/nacional/chile/politica/diputados-reforma.shtml",
             "snippet": "La Cámara discutirá el proyecto del gobierno durante la sesión de hoy en el Congreso nacional.",
             "provider": "bing",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Oposición cuestiona nueva propuesta política del gobierno chileno",
             "url": "https://www.emol.com/noticias/Nacional/2026/10/14/oposicion-gobierno.shtml",
             "snippet": "La oposición criticó la medida presentada hoy y pidió explicaciones a los ministros del gobierno.",
             "provider": "google_news",
-            "published_at": "2026-10-14T16:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Senadores debaten nueva ley política en Chile",
             "url": "https://cooperativa.cl/noticias/pais/politica/senadores-debaten-ley/2026-10-14/120000.html",
             "snippet": "La comisión debatió la iniciativa y los parlamentarios esperan una votación durante esta jornada.",
             "provider": "duckduckgo",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
 

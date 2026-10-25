@@ -149,15 +149,17 @@ class GatewayConfig:
             and _provider_url_is_secure(provider.health_url)
             and "gemma-4" not in provider.model.casefold()
         )
-        # Production telemetry showed Dots3 emitting transport/reasoning frames
-        # before visible assistant text. Always keep a text-oriented free Kilo
-        # fallback after the configured chain, unless that exact model is already
-        # present. Existing configured fallbacks remain in their original order.
-        dots_provider = next(
+        # A 200 response with no visible assistant text is an invalid inference,
+        # not a successful completion. Keep a text-oriented free Kilo model as the
+        # final deterministic fallback for every Kilo gateway primary (including
+        # kilo-auto/free), unless that model is already configured explicitly.
+        kilo_provider = next(
             (
                 provider
                 for provider in secure_providers
-                if "dots-studio/dots-3-note-preview" in provider.model.casefold()
+                if (
+                    urlsplit(provider.url).hostname or ""
+                ).casefold() == "api.kilo.ai"
             ),
             None,
         )
@@ -165,13 +167,13 @@ class GatewayConfig:
             "poolside/laguna-s-2.1" in provider.model.casefold()
             for provider in secure_providers
         )
-        if dots_provider is not None and not has_laguna_fallback:
+        if kilo_provider is not None and not has_laguna_fallback:
             secure_providers += (
                 GatewayProvider(
                     name="kilo-laguna-fallback",
-                    url=dots_provider.url,
-                    health_url=dots_provider.health_url,
-                    api_key=dots_provider.api_key,
+                    url=kilo_provider.url,
+                    health_url=kilo_provider.health_url,
+                    api_key=kilo_provider.api_key,
                     model="poolside/laguna-s-2.1:free",
                 ),
             )

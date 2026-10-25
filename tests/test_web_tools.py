@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import base64
+from datetime import datetime, timezone
 import httpx
 import pytest
 from tools.web_fetch import SSRFBlockedError, validate_public_url
@@ -743,13 +744,13 @@ def test_realtime_rank_results_reject_social_media_reposts() -> None:
             "title": "Chile: latest events and updates - Facebook",
             "url": "https://news.google.com/rss/articles/social-repost",
             "snippet": "Current news and updates from Chile",
-            "published_at": "2026-10-10T05:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile: latest news from ADN Radio",
             "url": "https://adnradio.cl/noticias/chile",
             "snippet": "Current events in Chile today",
-            "published_at": "2026-10-10T05:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
 
@@ -934,21 +935,21 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
             "url": "https://fuente-uno.example/chile/actualidad-uno",
             "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2,
             "provider": "bing",
-            "published_at": "2026-10-18T08:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad dos",
             "url": "https://fuente-dos.example/noticias/chile-dos",
             "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2,
             "provider": "google_news",
-            "published_at": "2026-10-18T08:01:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad tres",
             "url": "https://fuente-tres.example/politica/chile-tres",
             "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2,
             "provider": "bing",
-            "published_at": "2026-10-18T08:02:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
 
@@ -1047,6 +1048,7 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
             "url": "https://www.t13.cl/noticia/politica/presidente-dc-analiza-elecciones-15-10-2026",
             "snippet": "Artículo periodístico con declaraciones sobre política en Chile hoy; últimas noticias de las elecciones.",
             "provider": "duckduckgo",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
     attempted = []
@@ -1081,6 +1083,7 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
                 "presidenciales. " * 5
             ),
             "retrieved_at": "2026-10-16T04:00:01Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         }
 
     async def allow_controls(*_args, **_kwargs):
