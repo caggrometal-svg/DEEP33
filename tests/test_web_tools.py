@@ -925,7 +925,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_news_blocks_snippet_fallback_when_publishers_block(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
@@ -961,14 +961,18 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
             "sources": results,
             "provider": "multi",
             "winner_provider": "multi",
+            "providers": ["bing", "google_news"],
             "providers_attempted": ["bing", "google_news"],
             "queries": [query],
-            "retrieved_at": "2026-10-18T08:03:00Z",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "verification": {"distinct_domains": 3, "distinct_providers": 2},
             "fresh_request": True,
         }
 
-    async def blocked_fetch(*_args, **_kwargs):
+    attempted = []
+
+    async def blocked_fetch(url, **_kwargs):
+        attempted.append(url)
         raise RuntimeError("WEB_FETCH_HTTP_403")
 
     monkeypatch.setattr(main, "search_web", fake_search)
@@ -982,12 +986,11 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
+    assert set(attempted) == {item["url"] for item in results}
 
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
