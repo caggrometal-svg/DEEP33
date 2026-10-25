@@ -2242,14 +2242,17 @@ class WebOrchestrator:
             if len(diverse_final_domains) >= required_publishers:
                 selected = diverse_final[: self.max_results]
             else:
-                # Do not fall back to a mixed/possibly evergreen SERP list if the
-                # strict publisher set cannot meet quorum. The caller must fail
-                # closed rather than treating unrelated domains as broad Chile news.
-                selected = []
+                # Preserve the direct publisher articles discovered so far as
+                # candidates for the downstream extractor. The search-layer flag
+                # remains false until the required candidate quorum exists; callers
+                # must validate publication date, title identity and body before use.
+                selected = diverse_final[: self.max_results]
                 logger.warning(
-                    "web_search_chile_general_news_quorum_not_met valid_domains=%d required=%d",
+                    "web_search_chile_general_news_candidate_quorum_incomplete "
+                    "valid_domains=%d required=%d preserved_candidates=%d",
                     len(diverse_final_domains),
                     required_publishers,
+                    len(selected),
                 )
             logger.info(
                 "web_search_chile_general_news_final_selection selected_count=%d "
@@ -2319,6 +2322,46 @@ class WebOrchestrator:
             results=selected,
             executed_query=provider_query,
         )
+        if chile_general_news_intent:
+            candidate_domains: set[str] = set()
+            for item in selected:
+                host = (
+                    str(item.get("source_domain") or "").strip().casefold()
+                    .rstrip(".").removeprefix("www.")
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                )
+                publisher_domain = next(
+                    (
+                        domain for domain in _CHILE_GENERAL_NEWS_PUBLISHERS
+                        if host == domain or host.endswith("." + domain)
+                    ),
+                    host,
+                )
+                if publisher_domain:
+                    candidate_domains.add(publisher_domain)
+            successful_providers = {
+                str(provider).strip().casefold()
+                for provider in (payload.get("providers") or [])
+                if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+            }
+            candidate_quorum_met = (
+                len(selected) >= min(3, self.max_results)
+                and len(candidate_domains) >= min(3, self.max_results)
+                and len(successful_providers) >= 2
+            )
+            payload["ok"] = candidate_quorum_met
+            payload["status"] = "OK" if candidate_quorum_met else "INSUFFICIENT_EVIDENCE"
+            payload["diagnostic_code"] = None if candidate_quorum_met else "REALTIME_NEWS_QUORUM_NOT_MET"
+            verification = payload.setdefault("verification", {})
+            verification["quorum_met"] = candidate_quorum_met
+            verification["distinct_editorial_domains"] = len(candidate_domains)
+            verification["successful_providers"] = len(successful_providers)
+            if not candidate_quorum_met:
+                payload["errors"] = list(dict.fromkeys([
+                    *(payload.get("errors") or []),
+                    "REALTIME_NEWS_QUORUM_NOT_MET",
+                ]))[:8]
         if selected and not force_fresh:
             self.cache.put(cache_key, payload, self.cache_ttl_seconds)
         return payload
