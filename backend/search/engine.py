@@ -67,6 +67,8 @@ _REALTIME_QUERY_FILLERS = {
     "publicada", "publicado", "publicadas", "publicados",
     "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
     "oficialmente", "más", "mas", "cuál", "cual", "cuáles", "cuales",
+    # Release descriptors describe the requested fact, not the subject being searched.
+    "versión", "version", "versiones", "estable", "stable", "stability", "release", "releases",
     "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
     "oficial", "oficiales", "fiable", "fiables", "verificada", "verificado",
     "titular", "titulares", "fecha", "resumen", "breve", "enlace", "enlaces",
@@ -311,6 +313,8 @@ _TOPIC_FILLERS = {
     "page", "pages", "source", "sources", "site", "search", "internet",
     "online", "what", "which", "when", "where", "why", "how",
     "whoever", "best", "top", "latest", "current", "currently",
+    # Version/release wording is query shape; it must not let a non-matching product pass.
+    "versión", "version", "versiones", "estable", "stable", "stability", "release", "releases",
     "today", "now", "information", "info", "guide", "overview",
     "investiga", "investigar", "investigación", "investigacion",
     "investigate", "analiza", "analizar", "analyze", "analyse",
