@@ -3205,6 +3205,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         fetched_pages: list[dict[str, Any]] = []
         fetch_failures: list[dict[str, str]] = []
         resolved_urls: dict[str, str] = {}
+        resolved_publication_dates: dict[str, str | None] = {}
         for source, fetched in zip(fetch_candidates, fetch_results):
             if isinstance(fetched, BaseException):
                 if isinstance(fetched, asyncio.CancelledError):
@@ -3242,6 +3243,9 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             resolved_source_url = str(fetched.get("url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
+                resolved_publication_dates[original_source_url] = (
+                    str(fetched.get("published_at") or source.get("published_at") or "").strip() or None
+                )
 
         # Surface verified direct publisher URLs to callers. Keep the wrapper in
         # original_url for diagnostics, but never make clients navigate a Google
@@ -3256,10 +3260,18 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             direct_url = resolved_urls.get(original_url)
             if not direct_url:
                 continue
+            verified_published_at = (
+                item.get("published_at") or resolved_publication_dates.get(original_url)
+            )
             if direct_url != original_url:
-                resolved_results.append({**item, "original_url": original_url, "url": direct_url})
+                resolved_results.append({
+                    **item,
+                    "original_url": original_url,
+                    "url": direct_url,
+                    "published_at": verified_published_at,
+                })
             else:
-                resolved_results.append(dict(item))
+                resolved_results.append({**item, "published_at": verified_published_at})
 
         fetched_domains = {
             str(page.get("domain") or "")
