@@ -99,6 +99,17 @@ def _realtime_news_path_is_generic(path: str) -> bool:
     parts = [part for part in normalized.strip("/").split("/") if part]
     if len(parts) == 1 and re.fullmatch(r"(?:[a-z]{2}(?:-[a-z]{2})?)", parts[0]):
         return True
+    # Nested section pages such as /noticias/chile or /actualidad/nacional
+    # are category landings, not evidence-bearing article permalinks.
+    section_segments = {
+        "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+        "sociedad", "politica", "política", "economia", "economía", "mundo",
+        "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+        "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "portada", "tecnologia", "tecnología", "negocios", "vida",
+    }
+    if len(parts) <= 3 and parts and all(part in section_segments for part in parts):
+        return True
     blocked_segments = {
         "admin", "au_creatives", "template", "login", "signin", "search",
         "tag", "tags", "category", "categories", "author", "authors",
