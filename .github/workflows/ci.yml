@@ -347,7 +347,7 @@ jobs:
               ([.results[]? | select((.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article")] | length) >= 3 and
               all(.results[]?; (.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article" and ((.url // "") | test("^https://"))) and
               ([.results[]?.source_domain | select(type == "string" and length > 0)] | unique | length) >= 3 and
-              ([.results[]?.provider | select(type == "string" and length > 0)] | unique | length) >= 2 and
+              ([.providers[]? | select(type == "string" and length > 0 and . != "unknown" and . != "multi")] | unique | length) >= 2 and
               ((.fetched_pages // []) | length) >= 3 and
               (.domains_used // 0) >= 3 and
               (.extracted_text_chars // 0) >= 240
