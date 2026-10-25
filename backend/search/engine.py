@@ -6,6 +6,7 @@ import re
 from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 from backend.search.resilience import DiagnosticCode, controller
@@ -478,87 +479,125 @@ def _freshness_score(item: dict) -> float:
         return 0.0
 
 
-_REALTIME_BLOCKED_LEXICAL_DOMAINS = {
-    "bab.la",
-    "www.bab.la",
-    "spanishdict.com",
-    "www.spanishdict.com",
-    "wordreference.com",
-    "www.wordreference.com",
-    "linguee.com",
-    "www.linguee.com",
-    "dictionary.cambridge.org",
-    "merriam-webster.com",
-    "www.merriam-webster.com",
-    "collinsdictionary.com",
-    "www.collinsdictionary.com",
-    "reverso.net",
-    "www.reverso.net",
+_LEXICAL_REFERENCE_DOMAINS = {
+    "bab.la", "spanishdict.com", "wordreference.com", "linguee.com",
+    "glosbe.com", "reverso.net", "dictionary.com", "wiktionary.org",
+    "thefreedictionary.com", "vocabulary.com", "urbandictionary.com",
+    "collinsdictionary.com", "merriam-webster.com", "yourdictionary.com",
+    "oxfordlearnersdictionaries.com", "dictionary.cambridge.org",
     "deepl.com",
-    "www.deepl.com",
 }
-
-_REALTIME_LEXICAL_PATH_MARKERS = (
-    "/dictionary/",
-    "/diccionario/",
-    "/translation/",
-    "/translate/",
-    "/traductor/",
-    "/grammar/",
-    "/gramatica/",
-    "/vocabulary/",
-    "/conjugation/",
-    "/conjugacion/",
+_LEXICAL_PATH_MARKERS = (
+    "/dictionary/", "/diccionario/", "/translate/", "/translator/",
+    "/translation/", "/traductor/", "/conjugation/", "/conjugate/",
+    "/conjugacion/", "/grammar/", "/gramatica/", "/definition/",
+    "/pronunciation/", "/vocabulary/",
+)
+_REALTIME_NEWS_SIGNALS = (
+    "noticia", "noticias", " news", "news ", "breaking news", "breaking",
+    "última hora", "ultima hora", "actualidad", "situación actual",
+    "situacion actual", "qué pasó", "que paso", "qué está pasando",
+    "que esta pasando", "qué ocurre", "que ocurre", "qué pasa", "que pasa",
+    "noticias recientes", "noticia reciente", "últimos cambios",
+    "ultimos cambios", "últimas novedades", "ultimas novedades",
+    "cambios recientes", "actualización reciente", "actualizaciones recientes",
+    "latest news", "current events", "current affairs", "release notes",
+    "latest release", "latest version", "security advisory",
+    "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
+    "en desarrollo", "acontecimientos actuales", "acontecimiento actual",
+    "eventos actuales", "eventos recientes", "últimos acontecimientos",
+    "ultimos acontecimientos", "hechos recientes",
+)
+_REALTIME_MARKERS = (
+    "hoy", "ahora", "ahora mismo", "ayer", "actual", "actualmente",
+    "último", "última", "últimos", "últimas", "reciente", "recientes",
+    "en vivo", "última hora", "ultima hora", "today", "right now",
+    "latest", "current", "breaking", "this week", "recent",
 )
 
 
-def _is_realtime_lexical_noise(item: dict) -> bool:
-    url = str(item.get("url") or "").strip()
-    host = _source_host(item).removeprefix("www.")
-    parsed = urlparse(url)
-    path = (parsed.path or "").casefold()
-    title = str(item.get("title") or "").casefold()
-    if host in {domain.removeprefix("www.") for domain in _REALTIME_BLOCKED_LEXICAL_DOMAINS}:
-        return True
-    if any(marker in path for marker in _REALTIME_LEXICAL_PATH_MARKERS):
-        return True
-    lexical_title = (
-        "dictionary" in title
-        or "diccionario" in title
-        or "translation" in title
-        or "traducción" in title
-        or "traduccion" in title
-        or "conjugation" in title
-        or "conjugación" in title
-        or "grammar" in title
-        or "gramática" in title
-    )
-    return lexical_title
-
-
-def _explicitly_stale_realtime_news(query: str, item: dict) -> bool:
-    query_folded = str(query or "").casefold()
-    news_intent = any(
-        marker in query_folded
-        for marker in (
-            "noticia", "noticias", "última hora", "ultima hora", "actualidad",
-            "breaking", "latest news", "news", "hoy", "today", "ahora", "now",
+def is_realtime_news_query(query: str) -> bool:
+    """Return True for explicit current-news/recent-change requests."""
+    lowered = " ".join(str(query or "").split()).casefold()
+    if not lowered:
+        return False
+    return (
+        any(signal in lowered for signal in _REALTIME_NEWS_SIGNALS)
+        and (
+            is_realtime_query(lowered)
+            or any(marker in lowered for marker in _REALTIME_MARKERS)
         )
     )
-    if not news_intent:
-        return False
-    raw = str(item.get("published_at") or "").strip()
+
+
+def _is_lexical_reference_result(item: dict) -> bool:
+    """Identify dictionary, translation, grammar and conjugation destinations."""
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    host = str(item.get("source_domain") or parsed.hostname or "")
+    host = host.casefold().rstrip(".").removeprefix("www.")
+    if any(host == domain or host.endswith("." + domain) for domain in _LEXICAL_REFERENCE_DOMAINS):
+        return True
+    if host in {"translate.google.com", "translate.googleusercontent.com"}:
+        return True
+    path = parsed.path.casefold()
+    if any(marker in path for marker in _LEXICAL_PATH_MARKERS):
+        return True
+    title = str(item.get("title") or "").casefold()
+    return any(marker in title for marker in (
+        " dictionary", "diccionario", " translation", "traducción",
+        "traduccion", " conjugation", "conjugación", " grammar", "gramática",
+    ))
+
+
+def _published_timestamp(item: dict) -> datetime | None:
+    """Parse publisher time; retrieval time is never substituted for publication time."""
+    raw = next(
+        (
+            str(item.get(key) or "").strip()
+            for key in ("published_at", "published_date", "published", "pubDate", "date")
+            if str(item.get(key) or "").strip()
+        ),
+        "",
+    )
     if not raw:
-        return False
+        return None
     try:
-        published = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_recently_published(item: dict, query: str) -> bool:
+    """Fail closed for current-news evidence with missing, future or stale publication time."""
+    published = _published_timestamp(item)
+    if published is None:
         return False
-    if published.tzinfo is None:
-        published = published.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - published.astimezone(timezone.utc)
-    # Explicitly dated old material must never satisfy a "today/latest/news" query.
-    return age.total_seconds() > 14 * 86400
+    now = datetime.now(timezone.utc)
+    age_seconds = (now - published).total_seconds()
+    if age_seconds < -300:
+        return False
+
+    try:
+        hours = max(
+            1,
+            min(168, int(os.getenv("DEEP33_REALTIME_NEWS_MAX_AGE_HOURS", "72"))),
+        )
+    except (TypeError, ValueError):
+        hours = 72
+    lowered = " ".join(str(query or "").split()).casefold()
+    if any(marker in lowered for marker in (
+        "hoy", "ahora", "ahora mismo", "última hora", "ultima hora",
+        "breaking", "today", "right now", "en vivo",
+    )):
+        hours = min(hours, 24)
+    return age_seconds <= hours * 3600
 
 
 def rank_results(
@@ -567,6 +606,17 @@ def rank_results(
     *,
     realtime: bool = False,
 ) -> list[dict]:
+    realtime_news_query = is_realtime_news_query(query)
+    if realtime_news_query:
+        # Current-news evidence is strict: lexical/reference portals and any
+        # candidate without a valid recent publisher timestamp are inadmissible.
+        results = [
+            candidate
+            for candidate in results
+            if isinstance(candidate, dict)
+            and not _is_lexical_reference_result(candidate)
+            and _is_recently_published(candidate, query)
+        ]
     query_tokens = _tokens(query)
     topic_tokens = _topic_tokens(query)
     topic_token_set = set(topic_tokens)
@@ -580,13 +630,7 @@ def rank_results(
         url = str(item.get("url") or "").strip()
         if not url:
             continue
-        if realtime and _is_realtime_lexical_noise(item):
-            # Translation/dictionary/grammar portals are lexical reference material,
-            # never evidence for current events or live factual changes.
-            continue
-        if realtime and _explicitly_stale_realtime_news(query, item):
-            # Reject explicitly dated stale material for current-news intent before
-            # it can gain relevance/domain score and crowd out fresh reporting.
+        if realtime and _is_lexical_reference_result(item):
             continue
         if realtime and _source_host(item).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
