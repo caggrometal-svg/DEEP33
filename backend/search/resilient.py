@@ -198,6 +198,7 @@ def _is_chile_commercial_technology_item(item: dict) -> bool:
 _CHILE_GENERAL_NEWS_PUBLISHERS = {
     "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
     "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+    "futuro.cl", "as.com", "clarin.com", "elpais.com",
 }
 
 
@@ -1739,10 +1740,15 @@ class WebOrchestrator:
                 ("mojeek", "site:cnnchile.com Chile noticias hoy"),
                 ("google", "site:biobiochile.cl/noticias Chile actualidad hoy"),
                 ("cl0q", "site:cooperativa.cl/noticias Chile actualidad hoy"),
+                ("google_news", "site:futuro.cl Chile noticias hoy"),
+                ("yahoo", "site:chile.as.com Chile noticias hoy"),
+                ("google", "site:clarin.com Chile noticias hoy"),
+                ("duckduckgo", "site:elpais.com Chile noticias hoy"),
             )
             generic_news_publishers = {
                 "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
                 "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+                "futuro.cl", "as.com", "clarin.com", "elpais.com",
             }
 
             def is_direct_chile_news_article(item: dict) -> bool:
