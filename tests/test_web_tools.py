@@ -932,23 +932,26 @@ def test_realtime_news_blocks_snippet_fallback_when_publishers_block(monkeypatch
     results = [
         {
             "title": "Chile actualidad uno",
-            "url": "https://fuente-uno.example/chile/actualidad-uno",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/gobierno-medidas-uno.html",
             "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2,
             "provider": "bing",
+            "source_domain": "emol.com",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad dos",
-            "url": "https://fuente-dos.example/noticias/chile-dos",
+            "url": "https://cooperativa.cl/noticias/pais/actualidad/2026/10/25/gobierno-medidas-dos/",
             "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2,
             "provider": "google_news",
+            "source_domain": "cooperativa.cl",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad tres",
-            "url": "https://fuente-tres.example/politica/chile-tres",
+            "url": "https://www.biobiochile.cl/noticias/nacional/2026/10/25/gobierno-medidas-tres.shtml",
             "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2,
             "provider": "bing",
+            "source_domain": "biobiochile.cl",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
