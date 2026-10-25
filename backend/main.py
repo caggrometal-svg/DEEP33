@@ -212,6 +212,30 @@ def _requires_current_news_quorum(query: str) -> bool:
     )
 
 
+def _is_broad_current_news_query(query: str) -> bool:
+    """Detect country-wide headline requests that have no narrower topic anchor."""
+    if not _requires_current_news_quorum(query):
+        return False
+    lowered = " ".join(str(query or "").split()).casefold()
+    tokens = set(re.findall(r"[0-9a-záéíóúüñ]+", lowered))
+    generic = {
+        "cuales", "cuáles", "son", "las", "los", "de", "del", "la", "el", "y",
+        "en", "a", "un", "una", "por", "para", "con", "sobre", "hoy", "ahora",
+        "chile", "chilena", "chilenas", "chileno", "chilenos",
+        "noticia", "noticias", "news", "ultima", "ultimas", "última", "últimas",
+        "hora", "actualidad", "actual", "actuales", "reciente", "recientes",
+        "publicada", "publicadas", "publicado", "publicados", "principales",
+        "importante", "importantes", "destacada", "destacadas", "acontecimiento",
+        "acontecimientos", "evento", "eventos", "hecho", "hechos", "suceso",
+        "sucesos", "resumen", "internet", "busca", "buscar", "revisa", "revisar",
+        "verifica", "verificar", "fuente", "fuentes", "varias", "independientes",
+        "informacion", "información", "informar", "nacional", "nacionales",
+        "del", "mas", "más", "que", "qué", "se", "esta", "está", "pasando",
+        "ocurre", "paso", "pasó", "está", "hay", "todo", "toda", "todos", "todas",
+    }
+    return "chile" in tokens and not (tokens - generic)
+
+
 def _verified_realtime_news_published_at(
     query: str,
     source: dict[str, Any],
@@ -284,12 +308,20 @@ def _is_publishable_realtime_news_source(
         "text": page_text[:2000],
     }
     try:
-        minimum_relevance_score = max(
+        configured_relevance_score = max(
             0.18,
             min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
         )
     except (TypeError, ValueError):
-        minimum_relevance_score = 0.28
+        configured_relevance_score = 0.28
+    # Broad country-level headlines have no narrow topic token for a lexical
+    # ranker to match. Keep a small bounded floor for these queries only; article
+    # identity, freshness, extracted text and editorial independence remain strict.
+    minimum_relevance_score = (
+        min(0.22, configured_relevance_score)
+        if _is_broad_current_news_query(query)
+        else configured_relevance_score
+    )
     return score_result(query, relevance_item) >= minimum_relevance_score
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
@@ -3400,9 +3432,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # (for example a health-insurance login) must not crowd out a matching news
         # article or official document. Filter weak results, then use direct/permalink
         # priority only as a tie-breaker between similarly relevant candidates.
-        minimum_relevance_score = max(
-            0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+        try:
+            configured_relevance_score = max(
+                0.18,
+                min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            )
+        except (TypeError, ValueError):
+            configured_relevance_score = 0.28
+        minimum_relevance_score = (
+            min(0.22, configured_relevance_score)
+            if _is_broad_current_news_query(q)
+            else configured_relevance_score
         )
         ranked_sources = [
             {**item, "relevance_score": score_result(q, item)}
@@ -3516,7 +3556,20 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        configured_fetch_candidates = max(
+            3,
+            min(8, int(os.getenv(
+                "WEB_SEARCH_FETCH_CANDIDATES",
+                "8" if _is_broad_current_news_query(q) else "5",
+            ))),
+        )
+        # Broad Chile-news requests need a wider direct-article fetch pool because
+        # multiple SERP candidates can fail publication/article-identity checks.
+        max_fetch_candidates = (
+            max(8, configured_fetch_candidates)
+            if _is_broad_current_news_query(q)
+            else min(6, configured_fetch_candidates)
+        )
         direct_sources = [
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
