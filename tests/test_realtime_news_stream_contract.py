@@ -71,11 +71,11 @@ def test_chat_stream_blocks_current_news_when_only_two_verified_articles(monkeyp
     async def fake_search(_query, **_kwargs):
         search_calls.append(_query)
         return {
-            # Deliberately simulate a search-layer partial candidate pool: two
-            # publisher URLs plus a wrapper resolving to an admin template.
-            # Chat must inspect candidates but refuse synthesis when validation
-            # leaves fewer than three independently verified articles.
-            "ok": False,
+            # Simulate a successful SERP containing two direct articles and
+            # one fresh-dated Google News wrapper that resolves to an admin template.
+            # The downstream article validator must reject the template, leaving
+            # fewer than three verified articles and blocking model synthesis.
+            "ok": True,
             "fresh_request": True,
             "retrieved_at": now,
             "query": _query,
