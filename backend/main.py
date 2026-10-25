@@ -75,7 +75,7 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = os.getenv("VERCEL_GIT_COMMIT_REF", "main").strip() or "main"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
