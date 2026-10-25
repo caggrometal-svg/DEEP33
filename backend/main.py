@@ -105,7 +105,7 @@ def _realtime_news_path_is_generic(path: str) -> bool:
         "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
         "sociedad", "politica", "política", "economia", "economía", "mundo",
         "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
-        "regiones", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "regiones", "santiago", "santiago-de-chile", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
         "portada", "tecnologia", "tecnología", "negocios", "vida",
         "page", "en-vivo", "envivo", "live", "directo", "minuto-a-minuto",
     }
@@ -117,6 +117,7 @@ def _realtime_news_path_is_generic(path: str) -> bool:
         "publicidad", "portada", "en-vivo", "envivo", "live-blog",
         "liveblog", "live-updates", "live-update", "streaming",
         "sucursal-virtual", "oficina-virtual",
+        "mapa-de-chile", "mapas-de-chile", "map-of-chile", "mapa-interactivo",
         # Cooperativa's issue archive can carry a fresh RSS timestamp while the
         # URL itself identifies a cached 2025 edition, not a current article.
         "cache", "nroedic", "todas",
@@ -138,13 +139,18 @@ def _realtime_news_title_tokens(value: Any) -> set[str]:
     }
 
 
-def _is_generic_realtime_news_candidate(source: dict[str, Any]) -> bool:
-    """Reject generic publisher pages before they consume the bounded fetch quorum."""
+def _is_generic_realtime_news_candidate(
+    source: dict[str, Any],
+    query: str = "",
+) -> bool:
+    """Reject generic pages and non-newsroom hosts before consuming a broad-news fetch slot."""
     if not isinstance(source, dict):
         return True
     url = str(source.get("url") or "").strip()
     parsed = urlparse(url)
     if not url or _realtime_news_path_is_generic(parsed.path):
+        return True
+    if query and _is_broad_current_news_query(query) and not _is_known_chile_editorial_news_domain(source, url):
         return True
     title = " ".join(str(source.get("title") or "").casefold().split())
     return any(marker in title for marker in (
@@ -154,6 +160,10 @@ def _is_generic_realtime_news_candidate(source: dict[str, Any]) -> bool:
         "guia de viaje", "travel guide", "información turística",
         "informacion turistica", "destinos de chile", "plantilla administrativa",
         "advertising template", "promociones y publicidad", "portal oficial",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "bandera de chile", "capital de chile",
+        "datos generales de chile", "lugares que visitar en chile",
         "todas las noticias del día", "todas las noticias del dia",
         "edición del día", "edicion del dia", "número de edición", "numero de edicion",
     ))
@@ -348,6 +358,10 @@ def _is_publishable_realtime_news_source(
         "guia de viaje", "travel guide", "información turística",
         "informacion turistica", "destinos de chile", "plantilla administrativa",
         "advertising template", "promociones y publicidad", "portal oficial",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "bandera de chile", "capital de chile",
+        "datos generales de chile", "lugares que visitar en chile",
         "sucursal virtual", "oficina virtual", "portal de clientes",
         "ingresa a tu cuenta", "acceso a tu cuenta", "consulta tus servicios",
         "login isapre", "servicios en línea", "servicios en linea",
@@ -2286,7 +2300,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # Drop generic/homepage hits before filling the small fetch batch. A
         # fresh SERP timestamp on /en/ or /conoce-chile must not consume one
         # of the three scarce current-news extraction slots.
-        if news_query and _is_generic_realtime_news_candidate(source):
+        if news_query and _is_generic_realtime_news_candidate(source, query):
             logger.info(
                 "web_evidence_generic_news_candidate_skipped request_id=%s url=%s",
                 request_id or "unknown",
@@ -3535,7 +3549,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in normalized_sources.values()
             if not (
                 news_quorum_required
-                and _is_generic_realtime_news_candidate(item)
+                and _is_generic_realtime_news_candidate(item, q)
             )
         ]
         # Broad news queries have no narrow topic anchor; lower the candidate
