@@ -1587,5 +1587,5 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
         "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
         "futuro.cl", "as.com", "chilevision.cl", "t13.cl",
     }
-    assert (domains - {""}) <= allowed_chilean_outlets, result["results"]
+    assert (editorial_domains - {""}) <= allowed_chilean_outlets, result["results"]
 
