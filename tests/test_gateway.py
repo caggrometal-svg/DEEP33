@@ -786,3 +786,21 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert config.providers[-1].model == "poolside/laguna-s-2.1:free"
     assert config.providers[-1].url == config.providers[0].url
     assert config.providers[-1].health_url == config.providers[0].health_url
+
+
+def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert len(config.providers) == 2
+    assert config.providers[0].model == "kilo-auto/free"
+    assert config.providers[1].name == "kilo-laguna-fallback"
+    assert config.providers[1].model == "poolside/laguna-s-2.1:free"
+    assert config.providers[1].url == config.providers[0].url
+    assert config.providers[1].health_url == config.providers[0].health_url
