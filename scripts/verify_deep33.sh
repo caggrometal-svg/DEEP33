@@ -157,7 +157,7 @@ grep -qi '^content-type:.*text/event-stream' "$TMP_DIR/chat_stream.headers" ||
 # "STREAM" and "_PASS"). Parse each data payload and join token deltas before
 # asserting on the rendered assistant text.
 stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/chat_stream.body" |
-  jq -r 'fromjson? | .choices[]?.delta.content // empty' |
+  jq -Rr 'fromjson? | .choices[]?.delta.content // empty' |
   tr -d '\r\n')"
 printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
   echo "CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$stream_text" | cut -c1-300)"
