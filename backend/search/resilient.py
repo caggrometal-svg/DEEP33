@@ -1983,6 +1983,29 @@ class WebOrchestrator:
             if len(core_news_domains) >= min(3, self.max_results):
                 candidate_items = core_news_items
 
+            direct_news_candidates = [
+                item for item in candidate_items
+                if is_direct_chile_news_article(item)
+            ]
+            logger.info(
+                "web_search_chile_general_news_candidate_debug "
+                "candidate_count=%d candidate_hosts=%s candidate_paths=%s",
+                len(direct_news_candidates),
+                sorted({
+                    editorial_publisher_host(item)
+                    for item in direct_news_candidates
+                    if editorial_publisher_host(item)
+                }),
+                [
+                    {
+                        "host": (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www."),
+                        "path": urlparse(str(item.get("url") or "")).path[:180],
+                        "provider": str(item.get("provider") or "")[:40],
+                        "title": str(item.get("title") or "")[:100],
+                    }
+                    for item in direct_news_candidates[:12]
+                ],
+            )
             for item in candidate_items:
                 if len(diverse_news) >= self.max_results:
                     break
