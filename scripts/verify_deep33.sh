@@ -107,13 +107,26 @@ for attempt in $(seq 1 30); do
 done
 [ "$health_pass" = "1" ] || fail "HEALTH_SHA_MISMATCH_OR_DEPLOYMENT_NOT_READY expected=$CURRENT_SHA"
 
-request_file ready "$VERCEL_URL/ready" 30
-[ "$HTTP_CODE" = "200" ] || { show_redirect ready; cat "$TMP_DIR/ready.body"; fail "READY_HTTP_$HTTP_CODE"; }
-jq -e --arg sha "$CURRENT_SHA" '
-  .status == "PASS" and .ready == true and
-  ((.git_sha | ascii_downcase) == ($sha | ascii_downcase))
-' "$TMP_DIR/ready.body" >/dev/null || fail "READY_CONTRACT_OR_SHA_MISMATCH"
-jq -c '{status,ready,git_sha,network,gateway,memory_ready}' "$TMP_DIR/ready.body"
+ready_pass=0
+for attempt in $(seq 1 6); do
+  request_file ready "$VERCEL_URL/ready" 30
+  if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$CURRENT_SHA" '
+    .status == "PASS" and .ready == true and
+    ((.git_sha | type == "string") and
+     ((.git_sha | ascii_downcase) == ($sha | ascii_downcase)))
+  ' "$TMP_DIR/ready.body" >/dev/null 2>&1; then
+    jq -c '{status,ready,git_sha,build_id,network,gateway,memory_ready}' "$TMP_DIR/ready.body"
+    ready_pass=1
+    break
+  fi
+  echo "READY_CONTRACT_NOT_READY attempt=$attempt http=$HTTP_CODE expected_sha=$CURRENT_SHA"
+  jq -c '{status,ready,git_sha,build_id,network,gateway,memory_ready}' "$TMP_DIR/ready.body" 2>/dev/null || true
+  if [ "$HTTP_CODE" != "200" ]; then
+    show_redirect ready
+  fi
+  [ "$attempt" -lt 6 ] && sleep 5
+done
+[ "$ready_pass" = "1" ] || fail "READY_CONTRACT_OR_SHA_MISMATCH"
 echo "READY_PASS"
 
 request_file web_status "$VERCEL_URL/v1/web/status" 25
