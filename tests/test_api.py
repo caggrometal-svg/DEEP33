@@ -624,15 +624,15 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "ok": True,
             "results": [
                 {
-                    "title": "Últimas noticias de política en Chile hoy: Gobierno y Congreso",
+                    "title": "Gobierno anuncia nuevas medidas y Congreso avanza agenda política hoy - Emol",
                     "url": wrapper,
                     "source_domain": "www.emol.com",
                     "provider": "google_news",
-                    "snippet": "Últimas noticias de política en Chile hoy: Gobierno y Congreso avanzan en la agenda nacional.",
+                    "snippet": "Últimas noticias de política en Chile hoy: el Gobierno anunció medidas y el Congreso avanzó en la agenda nacional.",
                     "published_at": published_at,
                 },
                 {
-                    "title": "Noticias de política de Chile hoy: Senado debate nueva reforma",
+                    "title": "Senado inicia debate de reforma nacional en Chile hoy - Cooperativa",
                     "url": cooperativa,
                     "source_domain": "www.cooperativa.cl",
                     "provider": "bing",
@@ -640,11 +640,11 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
                     "published_at": published_at,
                 },
                 {
-                    "title": "Actualidad de Chile hoy: BioBioChile informa nuevo acuerdo nacional",
+                    "title": "Gobierno confirma nuevo acuerdo nacional en Chile hoy - BioBioChile",
                     "url": biobio,
                     "source_domain": "www.biobiochile.cl",
                     "provider": "duckduckgo",
-                    "snippet": "Noticias de Chile hoy: BioBioChile informa un nuevo acuerdo nacional.",
+                    "snippet": "Noticias de Chile hoy: el Gobierno confirmó un acuerdo nacional y sus principales medidas.",
                     "published_at": published_at,
                 },
             ],
@@ -661,7 +661,11 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
         return {
             "title": source["title"],
             "url": url,
-            "text": "Texto editorial verificable de la fuente original. " * 8,
+            "text": (
+                "Noticias de política de Chile hoy: " + str(source["title"])
+                + ". El reportaje entrega antecedentes, medidas oficiales y "
+                "detalles comprobables de la decisión nacional. "
+            ) * 8,
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T02:00:00+00:00",
@@ -708,10 +712,10 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         return {
             "ok": True,
             "results": [
-                {"title": "Últimas noticias de Chile hoy: política", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Últimas noticias de Chile hoy y actualidad nacional.", "published_at": published_at},
-                {"title": "Noticias de Chile hoy: informe nacional", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Últimas noticias e información actual de Chile hoy.", "published_at": published_at},
-                {"title": "Actualidad nacional de Chile hoy", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy con la actualidad nacional.", "published_at": published_at},
-                {"title": "Noticias de Chile hoy: actualización nacional - T13", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy con novedades nacionales verificables.", "published_at": published_at},
+                {"title": "Formalizan a 60 detenidos por robo de cobre en El Teniente - Emol", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Noticias de Chile hoy: formalizan a 60 detenidos por robo de cobre en El Teniente.", "published_at": published_at},
+                {"title": "Cooperativa informa detención de imputados por robo de cobre en El Teniente hoy", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Noticias de Chile hoy: Cooperativa informa de detenciones por robo de cobre en El Teniente.", "published_at": published_at},
+                {"title": "Fiscalía investiga robo de cobre en El Teniente tras detención de imputados - BioBioChile", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy: la Fiscalía investiga robo de cobre y nuevas detenciones en El Teniente.", "published_at": published_at},
+                {"title": "T13: Detenidos por robo de cobre en El Teniente enfrentarán formalización hoy", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy: detenidos por robo de cobre en El Teniente enfrentarán formalización.", "published_at": published_at},
             ],
             "errors": [],
             "providers": ["google_news", "bing", "duckduckgo"],
@@ -721,15 +725,24 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         fetched.append(source["url"])
         assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
         assert kwargs["direct_timeout_seconds"] == 0.85
+        resolved_url = (
+            "https://www.emol.com/noticias/Nacional/2026/10/25/robo-cobre.html"
+            if source["url"] == wrapper
+            else source["url"]
+        )
         return {
             "title": source["title"],
-            "url": source["url"],
-            "text": "Texto editorial directo verificable. " * 8,
+            "url": resolved_url,
+            "text": (
+                "Noticias de Chile hoy: " + str(source["title"])
+                + ". La Fiscalía detalla antecedentes de las detenciones por "
+                "robo de cobre en El Teniente y las medidas judiciales del caso. "
+            ) * 6,
             "provider": source["provider"],
             "domain": source["source_domain"],
-            "retrieved_at": "2026-10-16T03:00:00+00:00",
+            "retrieved_at": "2026-10-25T03:00:00+00:00",
             "published_at": published_at,
-            "text_chars": 280,
+            "text_chars": 700,
         }
 
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
