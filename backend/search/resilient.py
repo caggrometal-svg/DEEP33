@@ -929,6 +929,17 @@ class WebOrchestrator:
                 "actualidad", "breaking", "latest news", "news",
             ))
         )
+        chile_general_news_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            ))
+            and not chile_economic_news_intent
+            and not chile_political_news_intent
+            and not chile_weather_intent
+        )
         broad_ai_news_intent = (
             any(term in lowered_cleaned for term in (
                 "artificial intelligence", "inteligencia artificial", " ai ",
@@ -1664,6 +1675,188 @@ class WebOrchestrator:
                 len(recovered_domains),
                 recovered_providers,
             )
+
+        if chile_general_news_intent and loop.time() < deadline:
+            # Generic Chilean news can be dominated by unrelated pages from broad
+            # indexes. Discover real direct newsroom articles through scoped live
+            # queries; the downstream fetcher still verifies article identity,
+            # publication freshness, extracted text and editorial-domain quorum.
+            general_news_source_queries = (
+                ("google_news", "site:biobiochile.cl/noticias Chile noticias hoy"),
+                ("bing", "site:cooperativa.cl/noticias Chile noticias hoy"),
+                ("google", "site:latercera.com Chile noticias hoy"),
+                ("bing", "site:emol.com/noticias Chile noticias hoy"),
+                ("google_news", "site:24horas.cl Chile noticias hoy"),
+                ("yahoo", "site:adnradio.cl Chile noticias hoy"),
+                ("duckduckgo", "site:chvnoticias.cl Chile noticias hoy"),
+                ("mojeek", "site:cnnchile.com Chile noticias hoy"),
+                ("google", "site:biobiochile.cl/noticias Chile actualidad hoy"),
+                ("cl0q", "site:cooperativa.cl/noticias Chile actualidad hoy"),
+            )
+            generic_news_publishers = {
+                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+            }
+
+            def is_direct_chile_news_article(item: dict) -> bool:
+                url = str(item.get("url") or "").strip()
+                parsed = urlparse(url)
+                if parsed.scheme.casefold() != "https" or not parsed.hostname:
+                    return False
+                host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+                publisher = next(
+                    (
+                        domain for domain in generic_news_publishers
+                        if host == domain or host.endswith("." + domain)
+                    ),
+                    None,
+                )
+                if publisher is None:
+                    return False
+                path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+                parts = [part for part in path.strip("/").split("/") if part]
+                if len(parts) < 2 or path in {
+                    "/", "/noticias", "/actualidad", "/nacional", "/politica",
+                    "/política", "/economia", "/mundo", "/lo-ultimo",
+                    "/ultimas-noticias", "/ultimas-noticias-de-chile",
+                }:
+                    return False
+                if any(
+                    part in {
+                        "admin", "login", "signin", "template", "category",
+                        "categories", "tag", "tags", "author", "authors",
+                        "publicidad", "portada", "buscar", "buscador", "search",
+                    }
+                    for part in parts
+                ):
+                    return False
+                if parts[-1] in {
+                    "noticias", "actualidad", "nacional", "politica", "política",
+                    "economia", "mundo", "index.html", "index.shtml", "index.php",
+                    "home", "portada", "politica.shtml", "nacional.shtml",
+                    "noticias.shtml",
+                }:
+                    return False
+                title = " ".join(str(item.get("title") or "").casefold().split())
+                if not title or any(marker in title for marker in (
+                    "inicio |", "inicio -", "home |", "home -", "portada |",
+                    "últimas noticias de chile", "ultimas noticias de chile",
+                    "noticias de chile y el mundo",
+                )):
+                    return False
+                return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
+
+            # Only spend the publisher-scoped wave while fewer than three direct
+            # editorial articles are discoverable; never manufacture fallback URLs.
+            initial_article_domains = {
+                (urlparse(str(item.get("url") or "")).hostname or "")
+                .casefold().rstrip(".").removeprefix("www.")
+                for item in [*selected, *merged]
+                if isinstance(item, dict) and is_direct_chile_news_article(item)
+            } - {""}
+            if len(initial_article_domains) < min(3, self.max_results):
+                general_news_tasks = {
+                    asyncio.create_task(
+                        self._bounded_call_provider(provider, targeted_query),
+                        name=f"search:chile-general-news:{provider}:{index}",
+                    )
+                    for index, (provider, targeted_query) in enumerate(general_news_source_queries)
+                }
+                pending_general_news = set(general_news_tasks)
+                try:
+                    while pending_general_news:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            break
+                        done, pending_general_news = await asyncio.wait(
+                            pending_general_news,
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if not done:
+                            break
+                        for task in done:
+                            try:
+                                outcome = task.result()
+                            except asyncio.CancelledError:
+                                continue
+                            except Exception as exc:
+                                outcome = ProviderOutcome(
+                                    provider=task.get_name().split(":")[-2],
+                                    ok=False,
+                                    error_code=f"UNEXPECTED:{type(exc).__name__.upper()}",
+                                )
+                            outcomes.append(outcome)
+
+                        merged_now = [
+                            {**item, "provider": outcome.provider}
+                            for outcome in outcomes
+                            if outcome.ok
+                            for item in outcome.results
+                        ]
+                        article_domains_now = {
+                            (urlparse(str(item.get("url") or "")).hostname or "")
+                            .casefold().rstrip(".").removeprefix("www.")
+                            for item in merged_now
+                            if is_direct_chile_news_article(item)
+                        } - {""}
+                        successful_provider_names = {
+                            outcome.provider for outcome in outcomes
+                            if outcome.ok and outcome.results
+                        }
+                        if (
+                            len(article_domains_now) >= min(3, self.max_results)
+                            and len(successful_provider_names) >= 2
+                        ):
+                            break
+                finally:
+                    for task in pending_general_news:
+                        if not task.done():
+                            task.cancel()
+                    if pending_general_news:
+                        await asyncio.gather(*pending_general_news, return_exceptions=True)
+
+                merged = [
+                    {**item, "provider": outcome.provider}
+                    for outcome in outcomes
+                    if outcome.ok
+                    for item in outcome.results
+                ]
+                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                selected = deduplicate(ranked, self.max_results)
+
+                # The ranker can prefer generic or unrelated pages from the broad
+                # query. Preserve only actual HTTPS article candidates on distinct
+                # Chilean newsrooms discovered above, with publisher diversity first.
+                diverse_news: list[dict] = []
+                diverse_news_domains: set[str] = set()
+                for item in [*selected, *merged]:
+                    if len(diverse_news) >= self.max_results:
+                        break
+                    if not is_direct_chile_news_article(item):
+                        continue
+                    url = str(item.get("url") or "").strip()
+                    host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+                    if not host or host in diverse_news_domains:
+                        continue
+                    diverse_news.append(item)
+                    diverse_news_domains.add(host)
+                if len(diverse_news) >= min(3, self.max_results):
+                    selected = diverse_news[: self.max_results]
+                logger.info(
+                    "web_search_chile_general_news_recovery selected_count=%d "
+                    "direct_editorial_domains=%d successful_providers=%d",
+                    len(selected),
+                    len({
+                        (urlparse(str(item.get("url") or "")).hostname or "")
+                        .casefold().rstrip(".").removeprefix("www.")
+                        for item in selected
+                    } - {""}),
+                    len({
+                        outcome.provider for outcome in outcomes
+                        if outcome.ok and outcome.results
+                    }),
+                )
 
         if chile_economic_news_intent and merged:
             # Search providers may discover several real publisher domains while
