@@ -1921,15 +1921,45 @@ class WebOrchestrator:
             # validates title identity, date freshness and extracted article text.
             diverse_news: list[dict] = []
             diverse_news_domains: set[str] = set()
-            for item in [*selected, *merged]:
+            candidate_items = [*selected, *merged]
+            core_chile_publishers = {
+                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+            }
+
+            def editorial_publisher_host(item: dict) -> str:
+                parsed_host = (
+                    urlparse(str(item.get("url") or "")).hostname or ""
+                ).casefold().rstrip(".").removeprefix("www.")
+                declared = str(item.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
+                host = declared if parsed_host == declared or parsed_host.endswith("." + declared) else parsed_host
+                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com"):
+                    if host == publisher or host.endswith("." + publisher):
+                        return publisher
+                return host
+
+            # Prefer core Chilean newsroom articles when at least three independent
+            # publishers provide direct article candidates. Use broader publishers
+            # only when core newsrooms cannot supply the minimum domain count.
+            core_news_items = [
+                item for item in candidate_items
+                if is_direct_chile_news_article(item)
+                and editorial_publisher_host(item) in core_chile_publishers
+            ]
+            core_news_domains = {editorial_publisher_host(item) for item in core_news_items}
+            if len(core_news_domains) >= min(3, self.max_results):
+                candidate_items = core_news_items
+
+            for item in candidate_items:
                 if len(diverse_news) >= self.max_results:
                     break
                 if not is_direct_chile_news_article(item):
                     continue
                 url = str(item.get("url") or "").strip()
-                host = (urlparse(url).hostname or "").casefold().rstrip(".").removeprefix("www.")
-                if not host or host in diverse_news_domains:
+                host = editorial_publisher_host(item)
+                if not url or not host or host in diverse_news_domains:
                     continue
+                item = {**item, "source_domain": host}
                 diverse_news.append(item)
                 diverse_news_domains.add(host)
             if len(diverse_news) >= min(3, self.max_results):
