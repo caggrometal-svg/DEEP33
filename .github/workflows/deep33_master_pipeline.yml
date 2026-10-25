@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   id-token: write
 
 concurrency:
@@ -22,7 +23,6 @@ jobs:
     env:
       VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
       TEST_SESSION_TOKEN: ${{ secrets.TEST_USER_SESSION_TOKEN }}
-      VERCEL_URL: https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app
       CURRENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
@@ -43,6 +43,52 @@ jobs:
             exit 1
           }
           echo "CHECKOUT_SHA_PASS=$actual"
+
+      - name: Resolve exact Vercel deployment for this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "VERCEL_URL=https://deep33-backend.vercel.app" >> "$GITHUB_ENV"
+            echo "VERCEL_TARGET_RESOLVED=production"
+            exit 0
+          fi
+
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
+          alias=""
+          for attempt in $(seq 1 36); do
+            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api" || true)"
+
+            alias="$(printf '%s' "$checks" | jq -r '
+              [
+                .check_runs[]?
+                | select((.app.slug // "") == "vercel")
+                | (.output.summary // ""),
+                  (.output.text // "")
+              ]
+              | map(select(length > 0))
+              | join("\n")
+            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
+
+            if [ -n "$alias" ]; then
+              echo "VERCEL_URL=https://$alias" >> "$GITHUB_ENV"
+              echo "VERCEL_TARGET_RESOLVED=$alias"
+              exit 0
+            fi
+
+            echo "WAITING_FOR_VERCEL_COMMIT_ALIAS attempt=$attempt sha=$CURRENT_SHA"
+            [ "$attempt" -lt 36 ] && sleep 5
+          done
+
+          echo "VERCEL_COMMIT_ALIAS_NOT_FOUND sha=$CURRENT_SHA"
+          exit 1
 
       - name: Run authenticated Vercel, live-web, and SSE gates
         shell: bash
