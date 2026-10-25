@@ -148,6 +148,7 @@ request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
   -H 'Content-Type: application/json' \
   -H "X-Idempotency-Key: deep33-master-stream-${GITHUB_RUN_ID:-local}" \
   -H 'X-DEEP33-Personality: NEUTRO' \
+  -H 'x-deep33-skip-web-tools: true' \
   --data '{"messages":[{"role":"user","content":"Responde únicamente con la palabra STREAM_PASS. No busques en Internet."}],"personality":"NEUTRO"}'
 [ "$HTTP_CODE" = "200" ] || { show_redirect chat_stream; tail -c 3000 "$TMP_DIR/chat_stream.body" 2>/dev/null || true; fail "CHAT_STREAM_HTTP_$HTTP_CODE"; }
 grep -qi '^content-type:.*text/event-stream' "$TMP_DIR/chat_stream.headers" ||
