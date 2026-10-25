@@ -624,11 +624,12 @@ def rank_results(
         if not url:
             continue
         if is_realtime_news_query(query):
-            # Freshness is an admission gate, not a weak ranking bonus. A current
-            # request cannot be grounded in an undated, stale, or future-dated SERP hit.
+            # Lexical/reference pages are never current-news evidence. Reject known
+            # stale or future-dated SERP items now; undated candidates may proceed to
+            # page extraction, but must pass publication-date validation before use.
             if _is_lexical_reference_result(item):
                 continue
-            if not _is_recently_published(item, query):
+            if _published_timestamp(item) is not None and not _is_recently_published(item, query):
                 continue
         if realtime and _source_host(item).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
