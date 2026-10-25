@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 
@@ -1201,7 +1202,7 @@ def test_chile_current_political_news_rejects_generic_landing_pages() -> None:
             "url": "https://www.emol.com/noticias/Nacional/2026/10/14/oposicion-gobierno.shtml",
             "snippet": "La oposición criticó la medida presentada hoy y pidió explicaciones a los ministros del gobierno.",
             "provider": "google_news",
-            "published_at": "2026-10-14T16:00:00Z",
+            "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Senadores debaten nueva ley política en Chile",
