@@ -847,7 +847,9 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
 
     async def fake_search(_query, **_kwargs):
         return {
-            "ok": True,
+            # Candidate discovery is incomplete; the endpoint must still
+            # inspect these candidates and fail closed after article validation.
+            "ok": False,
             "results": [
                 {
                     "title": "Sucursal virtual Banmédica",
