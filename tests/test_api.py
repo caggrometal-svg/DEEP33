@@ -714,6 +714,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
                 {"title": "Noticias de Chile hoy: actualización nacional - T13", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy con novedades nacionales verificables.", "published_at": published_at},
             ],
             "errors": [],
+            "providers": ["google_news", "bing", "duckduckgo"],
         }
 
     async def fake_fetch_source(source, **kwargs):
