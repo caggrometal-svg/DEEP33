@@ -1510,3 +1510,69 @@ def test_generic_chile_news_search_recovers_direct_articles_from_multiple_publis
         for item in result["results"]
     )
 
+def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    bio_results = [
+        {
+            "title": f"Chile noticias hoy: Gobierno anuncia nuevas medidas nacionales {index}",
+            "url": f"https://www.biobiochile.cl/noticias/nacional/chile/2026/10/25/gobierno-medidas-{index}.shtml",
+            "snippet": "Información reciente de Chile sobre decisiones públicas y sus antecedentes.",
+            "source_domain": "biobiochile.cl",
+        }
+        for index in range(1, 6)
+    ]
+    mixed_results = [
+        *bio_results,
+        {
+            "title": "Dúo argentino vuelve a Chile con nuevo disco y fechas en Santiago",
+            "url": "https://www.futuro.cl/2026/10/duo-argentino-vuelve-a-chile-nuevo-disco-fechas-santiago/",
+            "snippet": "La banda anunció fechas en Chile y nuevas presentaciones durante octubre.",
+            "source_domain": "futuro.cl",
+        },
+        {
+            "title": "Chile noticias hoy: jugador analiza su etapa reciente en San Luis",
+            "url": "https://chile.as.com/futbol/jugador-analiza-etapa-reciente-san-luis-f202610-n/",
+            "snippet": "La entrevista aborda el fútbol chileno y la situación reciente del equipo.",
+            "source_domain": "chile.as.com",
+        },
+        {
+            "title": "Euro hoy en Chile: precio actual de la divisa y variación del mercado",
+            "url": "https://www.clarin.com/economia/2026/10/25/euro-hoy-en-chile-precio-divisa_0_test.html",
+            "snippet": "Cotización de la divisa y variación del euro en el mercado chileno.",
+            "source_domain": "clarin.com",
+        },
+    ]
+    calls: list[tuple[str, str]] = []
+
+    def provider_for(name: str):
+        async def provider(query, _timeout, _limit):
+            calls.append((name, query))
+            return [dict(item) for item in mixed_results]
+        return provider
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.9,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            name: provider_for(name)
+            for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
+        }
+        orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        return await orchestrator.search("últimas noticias de Chile hoy", fresh=True)
+
+    result = asyncio.run(exercise())
+    domains = {
+        (urlparse(str(item.get("url") or "")).hostname or "")
+        .casefold().rstrip(".").removeprefix("www.")
+        for item in result["results"]
+    }
+    assert result["ok"] is True, result
+    assert len(domains - {""}) >= 3, result["results"]
+    assert len(set(result["providers"])) >= 2, result["providers"]
+    assert {"futuro.cl", "as.com", "clarin.com"} <= (domains - {""})
+
