@@ -95,6 +95,25 @@ def test_health() -> None:
     assert response.json()["status"] == "PASS"
 
 
+def test_vercel_deployment_sha_has_priority_for_exact_release_gate(monkeypatch) -> None:
+    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "vercel-tested-sha")
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railway-stale-sha")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-stale-sha")
+    monkeypatch.setenv("DEEP33_GIT_SHA", "manually-configured-stale-sha")
+
+    assert main._resolve_git_sha() == "vercel-tested-sha"
+
+
+def test_other_runtime_sha_fallbacks_remain_available(monkeypatch) -> None:
+    monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railway-sha")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-sha")
+    assert main._resolve_git_sha() == "railway-sha"
+
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    assert main._resolve_git_sha() == "render-sha"
+
+
 def test_ready(monkeypatch) -> None:
     patch_memory(monkeypatch)
     monkeypatch.setattr(main, "network_probe", fake_network_probe)
@@ -183,9 +202,9 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
             [
                 {"role": "system", "content": "Server-side web evidence"},
             ],
-            [{"title": "Example", "url": "https://example.com"}],
+            [{"title": "Trusted evidence", "url": "https://trusted.example.org/page/"}],
             ["evidence"],
-            [{"title": "Example", "url": "https://example.com", "snippet": "evidence"}],
+            [{"title": "Trusted evidence", "url": "https://trusted.example.org/page/", "snippet": "evidence"}],
         )
 
     monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
@@ -214,6 +233,8 @@ def test_stream_contract_hides_sources(monkeypatch) -> None:
     assert response.status_code == 200
     assert "Respuesta propia de DEEP33." in body
     assert "example.com" not in body
+    assert "https://trusted.example.org/page/" in body
+    assert "Fuentes consultadas:" in body
     assert "turn1search1" not in body
     assert "Fuentes:" not in body
 
@@ -858,3 +879,60 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
         "banmedica" not in item["url"].casefold()
         for item in body["results"]
     )
+
+def test_memory_routes_scope_reads_and_writes_to_authenticated_owner(monkeypatch) -> None:
+    seen: list[tuple[str, str]] = []
+
+    class CapturingMemory(FakeMemory):
+        async def context(self, session_id: str, memory_profile_id=None, access_token=None) -> dict:
+            seen.append(("context", session_id))
+            return {"session": {"session_id": session_id}, "messages": [], "memories": []}
+
+        async def sync(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("sync", session_id))
+            return {"ok": True}
+
+        async def remember(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("remember", session_id))
+            return {"ok": True}
+
+        async def set_preferences(self, session_id: str, *args, **kwargs) -> dict:
+            seen.append(("preferences", session_id))
+            return {"ok": True}
+
+    async def authenticate_as_test_owner(request, *_args, **_kwargs):
+        request.state.user_id = "owner-a"
+        return None
+
+    monkeypatch.setattr(main, "memory", CapturingMemory())
+    monkeypatch.setattr(main, "enforce_client_controls", authenticate_as_test_owner)
+
+    headers = {"X-DEEP33-Session-Id": "session-a"}
+    context = client.get("/v1/memory/context", headers=headers)
+    sync = client.post(
+        "/v1/memory/sync",
+        headers=headers,
+        json={"messages": [{"role": "user", "content": "scope regression"}]},
+    )
+    remember = client.post(
+        "/v1/memory/remember",
+        headers=headers,
+        json={"kind": "explicit", "content": "scope regression"},
+    )
+    preferences = client.put(
+        "/v1/memory/preferences",
+        headers=headers,
+        json={"personality": "NEUTRO", "preferences": {}},
+    )
+
+    assert context.status_code == 200, context.text
+    assert sync.status_code == 200, sync.text
+    assert remember.status_code == 200, remember.text
+    assert preferences.status_code == 200, preferences.text
+    assert seen == [
+        ("context", "owner-a:session-a"),
+        ("sync", "owner-a:session-a"),
+        ("remember", "owner-a:session-a"),
+        ("preferences", "owner-a:session-a"),
+    ]
+

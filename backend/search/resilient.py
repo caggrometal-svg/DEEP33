@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -85,20 +85,19 @@ def _has_who_dengue_item(items: list[dict]) -> bool:
 
 
 def _is_direct_chile_economy_item(item: dict) -> bool:
+    """Accept any relevant direct HTTPS source, without a publisher allowlist."""
     url = str(item.get("url") or "").strip()
     parsed = urlparse(url)
     url_host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
-    source_host = str(item.get("source_domain") or url_host).casefold().rstrip(".").removeprefix("www.")
-    allowed = (
-        "df.cl", "latercera.com", "emol.com", "meganoticias.cl",
-        "24horas.cl", "biobiochile.cl", "cooperativa.cl",
-        "chvnoticias.cl", "cnnchile.com",
-    )
+    # Keep search-aggregator wrappers out of the evidence pool; the original
+    # publisher domain may come from source metadata, but the fetched URL must
+    # itself be a direct public page. Public URLs are safety-validated downstream.
     if (
-        not url.startswith("https://")
+        parsed.scheme.casefold() != "https"
         or not url_host
         or url_host == "news.google.com"
-        or not any(source_host == domain or source_host.endswith("." + domain) for domain in allowed)
+        or parsed.username is not None
+        or parsed.password is not None
     ):
         return False
     story = f"{item.get('title', '')} {item.get('snippet', '')}"
@@ -418,7 +417,37 @@ class WebOrchestrator:
             # original user query for ranking.
             return "Chile noticias hoy actualidad acontecimientos recientes"
         if is_realtime_query(cleaned):
-            return cleaned
+            # Realtime questions must retain their topical entities, not their
+            # full conversational instructions. The raw Spanish prompt often
+            # causes search providers to return a completely different topic.
+            normalized_lookup = _normalise_lookup_query(cleaned)
+            realtime_tokens = list(dict.fromkeys(_topic_tokens(normalized_lookup)))
+            if "chile" in lowered and "chile" not in {token.casefold() for token in realtime_tokens}:
+                realtime_tokens.append("Chile")
+            if any(term in lowered for term in ("oficial", "official", "sitio oficial", "documentación oficial")):
+                if "official" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("official")
+            if any(term in lowered for term in (
+                "hoy", "ahora", "actual", "actualmente", "último", "última",
+                "últimos", "últimas", "reciente", "recientes", "latest", "current",
+                "today", "right now", "en vivo",
+            )):
+                # Search providers need a freshness cue, but it should not
+                # outweigh the actual topic or location.
+                if "latest" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("latest")
+            # Preserve requested release semantics in the provider query. These
+            # descriptors are excluded separately from topical relevance scoring,
+            # so "stable version" cannot make an unrelated product a false match.
+            if any(term in lowered for term in ("versión", "version", "versiones", "release", "releases")):
+                if "version" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("version")
+            if any(term in lowered for term in ("estable", "stable", "stability")):
+                if "stable" not in {token.casefold() for token in realtime_tokens}:
+                    realtime_tokens.append("stable")
+            if 2 <= len(realtime_tokens) <= 10:
+                return " ".join(realtime_tokens)
+            return normalized_lookup or cleaned
         government_site_intent = any(
             term in lowered
             for term in (
@@ -1639,11 +1668,6 @@ class WebOrchestrator:
             # strict ranking retains only an opaque Google News wrapper. Preserve
             # independently discovered *direct* newsroom URLs that are still
             # economically relevant. No URL or evidence is synthesized here.
-            economy_publishers = {
-                "df.cl", "latercera.com", "emol.com", "meganoticias.cl",
-                "24horas.cl", "biobiochile.cl", "cooperativa.cl",
-                "chvnoticias.cl", "cnnchile.com",
-            }
             economy_direct: list[dict] = []
             economy_domains: set[str] = set()
             for item in [*selected, *merged]:

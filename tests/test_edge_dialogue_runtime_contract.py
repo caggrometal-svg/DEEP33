@@ -174,12 +174,18 @@ def test_edge_search_uses_authenticated_bounded_railway_fallback() -> None:
         search = source.split("async function edgeSearch(", 1)[1].split(
             "async function readinessResponse()", 1
         )[0]
-        assert 'const railwaySearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
-        assert "await fetch(railwaySearchUrl" in search
+        is_primary = path.parent.name == "deep33-proxy"
+        search_url_name = "backendSearchUrl" if is_primary else "railwaySearchUrl"
+        recovery_flag = "backendOnly" if is_primary else "railwayOnly"
+        recovery_name = "backend-recovery" if is_primary else "railway-recovery"
+        fallback_name = "backend-fallback" if is_primary else "railway-fallback"
+        fallback_path = "vercel-backend" if is_primary else "railway"
+        assert f'const {search_url_name} = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
+        assert f"await fetch({search_url_name}" in search
         assert '"Authorization": userAuthorization' in search
         assert "AbortSignal.timeout(Math.max(6500, Math.min(8000, EDGE_INTERNAL_FETCH_TIMEOUT_MS)))" in search
-        assert 'fallback_path: "railway"' in search
-        assert 'logSearchStage("success", railwayOnly ? "railway-recovery" : "railway-fallback", response)' in search
+        assert f'fallback_path: "{fallback_path}"' in search
+        assert f'logSearchStage("success", {recovery_flag} ? "{recovery_name}" : "{fallback_name}", response)' in search
         assert "if (!UPSTREAM" not in search
         assert "fetchUpstream(" not in search
 
@@ -239,7 +245,8 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         assert "if (edgeCurrentDateTimeQuery(query)) return 1;" in source
         assert 'const recoverySearch = await edgeSearch(' in generate
         assert '!excludedDomains.has(hostname)' in generate
-        assert 'fallback_path: "railway-recovery"' in generate
+        expected_recovery = "backend-recovery" if path.parent.name == "deep33-proxy" else "railway-recovery"
+        assert f'fallback_path: "{expected_recovery}"' in generate
 
 def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
     for path in EDGE_FILES:
@@ -331,6 +338,7 @@ def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pa
         assert "requireExtractedEvidence = false" in source
         assert "const verifyCandidatePayload = async (" in source
         assert "source.page_text.trim().length >= 80" in source
-        assert 'fallback_path: "railway-candidates"' in source
-        assert 'recoverySearch.fallback_path === "railway-candidates"' in source
+        expected_candidates = "vercel-backend-candidates" if path.parent.name == "deep33-proxy" else "railway-candidates"
+        assert f'fallback_path: "{expected_candidates}"' in source
+        assert f'recoverySearch.fallback_path === "{expected_candidates}"' in source
         assert "WEB_SEARCH_NO_VERIFIED_PAGES" in source

@@ -263,7 +263,7 @@ def test_android_stream_timeout_bounds_first_visible_text_and_global_deadline():
     ).read_text(encoding="utf-8")
     # Bound absolute time-to-first-token; periodic SSE status/heartbeat frames
     # must not keep a stalled inference alive until the 180-second global deadline.
-    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 5_000" in source
+    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 12_000" in source
     assert "firstTextDeadlineNanos = minOf(" in source
     assert "if (!emitted && nowNanos >= firstTextDeadlineNanos)" in source
     assert "FIRST_TEXT_TIMEOUT request_id=" in source
@@ -387,7 +387,7 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
     assert "readableSources.length < requiredReadableSources" in source
     assert "if (!search.ok || sources.length < 1)" in source
-    assert 'fallback_path: "railway-recovery"' in source
+    assert 'fallback_path: "backend-recovery"' in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
 

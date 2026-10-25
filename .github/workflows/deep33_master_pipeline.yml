@@ -1,0 +1,52 @@
+name: DEEP33 Master Pipeline & Integration Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deep33-master-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-gate:
+    name: validate-and-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
+      TEST_SESSION_TOKEN: ${{ secrets.TEST_USER_SESSION_TOKEN }}
+      VERCEL_URL: https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app
+      CURRENT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+
+      - name: Verify checkout SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$CURRENT_SHA" || {
+            echo "CHECKOUT_SHA_MISMATCH expected=$CURRENT_SHA actual=$actual"
+            exit 1
+          }
+          echo "CHECKOUT_SHA_PASS=$actual"
+
+      - name: Run authenticated Vercel, live-web, and SSE gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./scripts/verify_deep33.sh
+          ./scripts/verify_deep33.sh

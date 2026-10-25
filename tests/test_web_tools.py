@@ -916,7 +916,9 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     )
 
     assert working
-    assert len(sources) == len(urls)
+    # Source links must identify pages that supplied readable text, not blocked pages.
+    assert {item["url"] for item in sources} == {urls[3], urls[4], urls[5]}
+    assert not any(item["url"] in set(urls[:3]) for item in sources)
     assert set(attempted) == {urls[0], urls[1], urls[3], urls[4], urls[5]}
     assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
@@ -1018,7 +1020,8 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
         assert "if (!search.ok || sources.length < 1)" in source
-        assert 'fallback_path: "railway-recovery"' in source
+        expected_recovery = "backend-recovery" if function_name == "deep33-proxy" else "railway-recovery"
+        assert f'fallback_path: "{expected_recovery}"' in source
         assert "async function buildNavigatedWebEvidence(" in source
 
 def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable(monkeypatch):
@@ -1375,3 +1378,32 @@ def test_web_search_endpoint_fetches_orchestrator_selected_sources_when_secondar
     assert result["domains_used"] == 2
     assert len(result["results"]) == 2
     assert result["extracted_text_chars"] >= 160
+
+def test_realtime_provider_query_compacts_long_spanish_instructions() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    query = (
+        "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. "
+        "Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+    )
+    provider_query = WebOrchestrator._provider_query(query).casefold()
+
+    assert len(provider_query.split()) <= 10
+    assert "python" in provider_query
+    assert "versión" in provider_query or "version" in provider_query
+    assert "official" in provider_query
+    assert "contrasta" not in provider_query
+    assert "recuperadas" not in provider_query
+    assert "enlaces" not in provider_query
+
+
+def test_realtime_provider_query_preserves_country_when_compacting() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    query = "Busca en Internet el valor actual del dólar en Chile y cita fuentes oficiales."
+    provider_query = WebOrchestrator._provider_query(query).casefold()
+
+    assert "chile" in provider_query
+    assert "dólar" in provider_query or "dolar" in provider_query
+    assert len(provider_query.split()) <= 10
+

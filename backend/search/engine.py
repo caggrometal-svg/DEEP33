@@ -66,6 +66,9 @@ _REALTIME_QUERY_FILLERS = {
     "busca", "buscar", "buscando", "una", "uno", "un",
     "publicada", "publicado", "publicadas", "publicados",
     "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
+    "oficialmente", "más", "mas", "cuál", "cual", "cuáles", "cuales",
+    # Release descriptors describe the requested fact, not the subject being searched.
+    "versión", "version", "versiones", "estable", "stable", "stability", "release", "releases",
     "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
     "oficial", "oficiales", "fiable", "fiables", "verificada", "verificado",
     "titular", "titulares", "fecha", "resumen", "breve", "enlace", "enlaces",
@@ -198,7 +201,8 @@ def _normalise_lookup_query(query: str) -> str:
     # Trim instruction clauses even when the prompt is longer than provider limits.
     instruction_clause = (
         r"(?<=[.!?;:])\s+(?:devuelve|entrega|proporciona|indica|comprueba|verifica|confirma|"
-        r"incluye|resume|cita|describe|presenta|informa|muestra|señala|"
+        r"incluye|resume|cita|cite|describe|presenta|informa|muestra|señala|"
+        r"contrasta|contrastar|compare|compara|comparar|"
         r"no inventes|no afirmes|no supongas|responde en|responde una sola vez|"
         r"usa\s+(?:una\s+)?fuentes?\s+(?:real|reales|actualizada|actualizado|oficial|fiable|verificada)|"
         r"use\s+(?:a\s+)?(?:real|current|official)\s+source|"
@@ -309,6 +313,8 @@ _TOPIC_FILLERS = {
     "page", "pages", "source", "sources", "site", "search", "internet",
     "online", "what", "which", "when", "where", "why", "how",
     "whoever", "best", "top", "latest", "current", "currently",
+    # Version/release wording is query shape; it must not let a non-matching product pass.
+    "versión", "version", "versiones", "estable", "stable", "stability", "release", "releases",
     "today", "now", "information", "info", "guide", "overview",
     "investiga", "investigar", "investigación", "investigacion",
     "investigate", "analiza", "analizar", "analyze", "analyse",

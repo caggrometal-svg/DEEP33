@@ -1268,32 +1268,6 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
 
 
 
-def test_authoritative_navigation_resolver_short_circuits_noisy_serp(monkeypatch):
-    from tools import web_search
-
-    async def forbidden_orchestrator(*_args, **_kwargs):
-        raise AssertionError("public provider fanout should be bypassed for canonical docs intent")
-
-    class Forbidden:
-        search = forbidden_orchestrator
-
-    monkeypatch.setattr(web_search, "getattr" if False else "_SEARCH_CACHE", web_search._SEARCH_CACHE)
-    monkeypatch.setattr(
-        "backend.search.resilient.get_web_orchestrator",
-        lambda _limit: Forbidden(),
-    )
-    result = asyncio.run(web_search.search_web(
-        "Python asyncio official documentation",
-        max_results=5,
-        fresh=True,
-    ))
-    assert result["ok"] is True
-    assert result["provider"] == "authoritative_resolver"
-    assert result["depth"] == "authoritative-navigation"
-    assert result["results"][0]["url"] == "https://docs.python.org/3/library/asyncio.html"
-    assert {item["source_domain"] for item in result["results"]} >= {"docs.python.org", "python.org"}
-
-
 def test_search_web_propagates_non_fast_budget_to_orchestrator(monkeypatch):
     from tools import web_search
 
@@ -1340,19 +1314,84 @@ def test_search_web_propagates_non_fast_budget_to_orchestrator(monkeypatch):
     assert seen["budget_seconds"] == 4.75
 
 
-def test_wikipedia_asyncio_authoritative_resolver_preserves_independent_reference() -> None:
-    from tools.web_search import _authoritative_navigation_results
+def test_known_reference_query_uses_general_web_search_fanout(monkeypatch):
+    import backend.search.resilient as resilient
+    from backend.search.resilient import WebOrchestrator
+    from tools import web_search
 
-    results = _authoritative_navigation_results("Wikipedia asyncio Python")
-    domains = {item["source_domain"] for item in results}
-    assert "en.wikipedia.org" in domains
-    assert "docs.python.org" in domains
+    calls = []
 
+    class FakeOrchestrator(WebOrchestrator):
+        async def search(self, query, *, fresh=False, budget_seconds=None):
+            calls.append(query)
+            return {
+                "ok": True,
+                "status": "OK",
+                "query": query,
+                "realtime": False,
+                "providers": ["bing", "google"],
+                "provider": "bing",
+                "winner_provider": "bing",
+                "results": [
+                    {
+                        "title": "Asyncio general web result",
+                        "url": "https://example.org/asyncio",
+                        "snippet": "Independent general-web result for the requested topic.",
+                        "source_domain": "example.org",
+                    }
+                ],
+                "sources": [],
+                "verification": {
+                    "level": "multi-provider",
+                    "distinct_domains": 1,
+                    "distinct_providers": 2,
+                    "relevant_results": 1,
+                },
+                "errors": [],
+            }
 
-def test_python_authoritative_navigation_has_multidomain_coverage() -> None:
-    from tools.web_search import _authoritative_navigation_results
+    orchestrator = FakeOrchestrator(max_results=5)
+    monkeypatch.setattr(
+        resilient,
+        "get_web_orchestrator",
+        lambda _max_results: orchestrator,
+    )
 
-    results = _authoritative_navigation_results("Python asyncio TaskGroup documentación oficial")
-    domains = {item["source_domain"] for item in results}
-    assert {"docs.python.org", "python.org", "peps.python.org"}.issubset(domains)
-    assert len(domains) >= 3
+    result = asyncio.run(
+        web_search.search_web(
+            "python asyncio official documentation",
+            timeout_seconds=2.0,
+            max_results=5,
+            fresh=True,
+        )
+    )
+
+    assert calls == ["python asyncio official documentation"]
+    assert result["providers"] == ["bing", "google"]
+    assert result["results"][0]["url"] == "https://example.org/asyncio"
+    assert result["fresh_request"] is True
+
+def test_spanish_python_release_query_rejects_off_topic_debian_page():
+    from backend.search.engine import is_realtime_query, rank_results
+
+    query = (
+        "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. "
+        "Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+    )
+    unrelated = {
+        "title": "Debian -- Versiones de Debian",
+        "url": "https://www.debian.org/releases/index.es.html",
+        "snippet": "Versiones estables y documentación de Debian GNU/Linux.",
+        "source_domain": "www.debian.org",
+    }
+    relevant = {
+        "title": "Python Release Python 3.15.1",
+        "url": "https://www.python.org/downloads/release/python-3151/",
+        "snippet": "Python 3.15.1 is the latest stable release of Python.",
+        "source_domain": "www.python.org",
+    }
+
+    assert is_realtime_query(query)
+    assert rank_results(query, [unrelated], realtime=True) == []
+    ranked = rank_results(query, [unrelated, relevant], realtime=True)
+    assert [item["url"] for item in ranked] == [relevant["url"]]

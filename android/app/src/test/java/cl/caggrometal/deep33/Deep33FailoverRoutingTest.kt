@@ -8,7 +8,7 @@ class Deep33FailoverRoutingTest {
     @Test
     fun primaryEndpointIsConfigured() {
         assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
+            "https://deep33-backend-iac33.vercel.app",
             BuildConfig.DEEP33_PRIMARY_URL
         )
         assertTrue(BuildConfig.DEEP33_PRIMARY_URL.isNotBlank())
@@ -17,16 +17,16 @@ class Deep33FailoverRoutingTest {
     @Test
     fun secondaryEndpointUsesCanonicalDeep33TertiaryRoute() {
         assertEquals(
-            "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
+            "https://deep33-backend-git-main-iac33.vercel.app",
             BuildConfig.DEEP33_SECONDARY_URL
         )
         assertTrue(BuildConfig.DEEP33_SECONDARY_URL.isNotBlank())
     }
 
     @Test
-    fun tertiaryEndpointUsesCanonicalRenderFallback() {
+    fun tertiaryEndpointUsesCanonicalVercelFallback() {
         assertEquals(
-            "https://deep33-backend.onrender.com",
+            "https://deep33-backend.vercel.app",
             BuildConfig.DEEP33_TERTIARY_URL.trim()
         )
     }

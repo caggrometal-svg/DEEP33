@@ -37,14 +37,18 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
     assert 'android:exported="false"' in source
 
 
-def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
+def test_android_endpoint_contract_is_immutable_and_vercel_only() -> None:
     source = read("android/app/build.gradle.kts")
-    assert '"https://deep33-backend.onrender.com"' in source
-    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
-    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
-    assert 'Transport contract is immutable by build environment' in source
+    assert '"https://deep33-backend.vercel.app"' in source
+    assert '"https://deep33-backend-iac33.vercel.app"' in source
+    assert '"https://deep33-backend-git-main-iac33.vercel.app"' in source
+    assert 'immutable by build environment' in source
     assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
+    assert 'onrender.com' not in source.lower()
+    assert '/functions/v1/deep33-proxy' not in source
+    assert '/functions/v1/deep33-tertiary' not in source
+    assert 'railway.app' not in source.lower()
     assert 'http://' not in source
 
 
@@ -85,15 +89,16 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert r'render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza' in source
 
 
-def test_transport_workflows_keep_canonical_endpoint_set() -> None:
+def test_transport_workflows_keep_canonical_vercel_endpoint_set() -> None:
     expected = {
-        "https://deep33-backend.onrender.com",
-        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
-        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
+        "https://deep33-backend.vercel.app",
+        "https://deep33-backend-iac33.vercel.app",
+        "https://deep33-backend-git-main-iac33.vercel.app",
     }
     full_set_paths = [
         ".github/workflows/android-debug-apk.yml",
         ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-package.yml",
         ".github/workflows/ci.yml",
     ]
     for path in full_set_paths:
@@ -104,7 +109,10 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
         assert "c-33.blitz.cloud" not in source.lower()
 
     production_e2e = read(".github/workflows/production-e2e.yml")
-    assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
+    assert "https://deep33-backend.vercel.app" in production_e2e
+    assert "RAILWAY_BASE_URL" not in production_e2e
+    assert "railway.app" not in production_e2e.lower()
+    assert "onrender.com" not in production_e2e.lower()
     assert "http://" not in production_e2e
     assert "c-33.blitz.cloud" not in production_e2e.lower()
 
@@ -239,9 +247,14 @@ def test_secondary_edge_idempotency_is_scoped_to_authenticated_owner() -> None:
 
 def test_production_e2e_requires_relevant_live_search_results() -> None:
     source = read(".github/workflows/production-e2e.yml")
-    assert '.checks.INTERNET=="PASS"' in source
-    assert '.checks.DNS=="PASS"' in source
-    assert source.count("(.search.verification.relevant_results // 0) >= 1") == 2
+    assert '.status=="PASS"' in source
+    assert '.edge=="PASS"' in source
+    assert '.internet=="PASS"' in source
+    assert '.upstream.ready==true' in source
+    assert '.search.ok==true' in source
+    assert '(.search.results|length)>=1' in source
+    assert '.checks.INTERNET=="PASS"' not in source
+    assert '.search.verification.relevant_results' not in source
 
 
 def test_secondary_memory_calls_send_internal_token() -> None:
@@ -268,18 +281,18 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "needs.android_validation.result == 'success'" in recovery
     assert (
         "needs: [change_scope, backend_unit, production_realtime_search, "
-        "android_validation, performance_gate, android_feature_instrumentation, "
-        "production_gate, android_e2e, recovery_gate]"
+        "vercel_realtime_search, android_validation, performance_gate, "
+        "android_feature_instrumentation, production_gate, android_e2e, recovery_gate]"
     ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
     for gate in (
-        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "ANDROID_VALIDATION",
-        "PERFORMANCE_GATE", "ANDROID_FEATURE", "PRODUCTION_GATE",
-        "ANDROID_E2E", "RECOVERY_GATE",
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "VERCEL_REALTIME",
+        "ANDROID_VALIDATION", "PERFORMANCE_GATE", "ANDROID_FEATURE",
+        "PRODUCTION_GATE", "ANDROID_E2E", "RECOVERY_GATE",
     ):
         assert f"DEEP33_{gate}_RESULT" in release
-    assert '"success success success success success success success success success"' in release
+    assert '"success success success success success success success success success success"' in release
 
 def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
@@ -523,4 +536,23 @@ def test_primary_edge_silent_internal_provider_fails_fast_without_empty_success(
     assert 'if (!fullText.trim()) throw new Error("EDGE_AI_EMPTY_RESPONSE");' in source
     assert "if (emitted) {" in source
     assert "EDGE_AI_RETRY_COUNT = 0;" in source
+
+def test_every_apk_artifact_workflow_requires_the_current_main_certification() -> None:
+    paths = (
+        ".github/workflows/android-certified-apk.yml",
+        ".github/workflows/android-delivery-apk.yml",
+        ".github/workflows/android-current-apk.yml",
+        ".github/workflows/android-debug-apk.yml",
+        ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-package.yml",
+    )
+    for path in paths:
+        source = read(path)
+        assert "production-pass" in source, path
+        assert "git fetch origin refs/heads/main:refs/remotes/origin/main --force" in source, path
+        assert 'main_head="$(git rev-parse refs/remotes/origin/main^{commit})"' in source, path
+        assert 'test "$certified" = "$current" && test "$certified" = "$main_head"' in source, path
+        # The only APK artifacts distributed as current/certified must come from
+        # a successful main release gate, not from a direct push to main.
+        assert "branches: [main]" not in source, path
 
