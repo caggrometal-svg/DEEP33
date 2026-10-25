@@ -81,63 +81,152 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("deep33")
 
 
-def _is_publishable_realtime_news_source(
-    query: str,
-    source: dict[str, Any],
-    fetched_page: dict[str, Any],
-) -> bool:
-    """Accept current-news evidence only when a real page is fresh and query-relevant."""
-    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
-        return False
-
-    published_at = fetched_page.get("published_at") or source.get("published_at")
-    if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
-        query,
-    ):
-        return False
-
-    page_url = str(
-        fetched_page.get("url")
-        or fetched_page.get("final_url")
-        or source.get("url")
-        or ""
-    ).strip()
-    parsed = urlparse(page_url)
-    if parsed.scheme.casefold() != "https" or not parsed.hostname:
-        return False
-    page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
-    # A signed Google News wrapper is not an independently readable publisher article.
-    if page_host in {"news.google.com", "news.googleusercontent.com"}:
-        return False
-
-    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+def _realtime_news_path_is_generic(path: str) -> bool:
+    normalized = re.sub(r"/+", "/", str(path or "").casefold()).rstrip("/") or "/"
     landing_paths = {
         "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
         "/latest-news", "/breaking-news", "/ultimo-momento",
     }
-    if path in landing_paths:
+    if normalized in landing_paths:
+        return True
+    blocked_segments = {
+        "admin", "au_creatives", "template", "login", "signin", "search",
+        "tag", "tags", "category", "categories", "author", "authors",
+        "publicidad", "portada",
+    }
+    return bool(set(normalized.strip("/").split("/")) & blocked_segments)
+
+
+def _realtime_news_title_tokens(value: Any) -> set[str]:
+    ignored = {
+        "de", "del", "la", "las", "el", "los", "y", "en", "a", "un", "una",
+        "por", "para", "con", "sobre", "hoy", "chile", "noticia", "noticias",
+        "ultima", "ultimas", "actualidad", "emol", "biobiochile", "bio",
+        "radio", "portal", "home", "inicio",
+    }
+    return {
+        token
+        for token in re.findall(r"[0-9a-záéíóúüñ]+", str(value or "").casefold())
+        if len(token) > 2 and token not in ignored
+    }
+
+
+def _same_realtime_news_article(
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+    page_url: str,
+) -> bool:
+    """Verify that the fetched publisher page represents the discovered article."""
+    original_url = str(source.get("url") or "").strip()
+    original = urlparse(original_url)
+    resolved = urlparse(page_url)
+    if not resolved.hostname or resolved.scheme.casefold() != "https":
         return False
 
+    original_host = (original.hostname or "").casefold().rstrip(".").removeprefix("www.")
+    resolved_host = resolved.hostname.casefold().rstrip(".").removeprefix("www.")
+    original_path = re.sub(r"/+", "/", original.path.casefold()).rstrip("/") or "/"
+    resolved_path = re.sub(r"/+", "/", resolved.path.casefold()).rstrip("/") or "/"
+
+    # Identical publisher article URL/path is a direct identity match. Signed
+    # Google News URLs are wrappers, so they must be resolved by the article title.
+    if (
+        original.scheme.casefold() == "https"
+        and original_host == resolved_host
+        and original_path == resolved_path
+    ):
+        return True
+
+    if fetched_page.get("title_from_page") is False:
+        return False
+    source_tokens = _realtime_news_title_tokens(source.get("title"))
+    page_tokens = _realtime_news_title_tokens(fetched_page.get("title"))
+    if len(source_tokens) < 3 or len(page_tokens) < 3:
+        return False
+    shared = len(source_tokens & page_tokens)
+    return (
+        shared / max(1, len(source_tokens)) >= 0.60
+        and shared / max(1, len(page_tokens)) >= 0.50
+    )
+
+
+def _editorial_domain(source: dict[str, Any], page_url: str) -> str:
+    """Return the publisher domain, collapsing its subdomains into one outlet."""
+    page_host = (urlparse(page_url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+    declared = str(source.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
+    if declared and (page_host == declared or page_host.endswith("." + declared)):
+        return declared
+    return page_host
+
+
+def _verified_realtime_news_published_at(
+    query: str,
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+) -> str | None:
+    """Return a fresh publication time only after the page/article identity is verified."""
+    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
+        return None
+    page_url = str(
+        fetched_page.get("url")
+        or fetched_page.get("final_url")
+        or ""
+    ).strip()
+    parsed = urlparse(page_url)
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return None
+    page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if page_host in {"news.google.com", "news.googleusercontent.com"}:
+        return None
+    if _realtime_news_path_is_generic(parsed.path):
+        return None
+    if not _same_realtime_news_article(source, fetched_page, page_url):
+        return None
+
+    # Search metadata can supply publication time only when the fetched page is
+    # independently verified to be the same article. A redirected template or
+    # unrelated page must never inherit the wrapper's timestamp.
+    published_at = fetched_page.get("published_at") or source.get("published_at")
+    if not published_at or not _is_recently_published(
+        {"published_at": published_at},
+        query,
+    ):
+        return None
+    return str(published_at)
+
+
+def _is_publishable_realtime_news_source(
+    query: str,
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+) -> bool:
+    """Accept only a fresh, relevant extracted article verified against its search result."""
+    published_at = _verified_realtime_news_published_at(query, source, fetched_page)
+    if not published_at:
+        return False
+
+    page_url = str(fetched_page.get("url") or fetched_page.get("final_url") or "").strip()
     page_text = str(fetched_page.get("text") or "").strip()
     if len(page_text) < 80:
         return False
 
-    title = str(fetched_page.get("title") or source.get("title") or "").casefold()
+    title = str(fetched_page.get("title") or "").casefold()
     if any(marker in title for marker in (
         "capital, mapa, bandera, población",
         "capital, map, flag",
         "lugares imperdibles",
         "guía de viaje",
         "travel guide",
+        "plantilla administrativa",
+        "advertising template",
     )):
         return False
 
     relevance_item = {
         **source,
-        "title": fetched_page.get("title") or source.get("title") or "",
+        "title": fetched_page.get("title") or "",
         "url": page_url,
         "published_at": published_at,
         "snippet": page_text[:2000],
@@ -1903,7 +1992,10 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Do not copy SERP publication metadata here: it is only trusted later
+        # after the fetched page is verified as the same article.
+        "published_at": result.get("published_at"),
+        "title_from_page": bool(str(result.get("title") or "").strip()),
         "text_chars": len(page_text),
     }
 
@@ -1915,11 +2007,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Explicit current-news requests must verify three independent publisher pages.
+    # Other research/contrast intents require two independently extracted domains.
+    news_query = is_realtime_news_query(query)
     must_fetch = bool(explicitly_forced or deep or realtime)
-    contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    contrast_required = bool(news_query or should_deep_web(messages) or (deep and not realtime))
+    required_pages = 3 if news_query else (2 if contrast_required else 1)
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -2078,17 +2171,24 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
-            if (
-                page is not None
-                and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
-            ):
-                logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
-                    request_id or "unknown",
-                    str(page.get("url") or source.get("url") or "")[:500],
+            if page is not None and news_query:
+                published_at = _verified_realtime_news_published_at(query, source, page)
+                if (
+                    not published_at
+                    or not _is_publishable_realtime_news_source(query, source, page)
+                ):
+                    logger.info(
+                        "web_evidence_current_news_rejected request_id=%s url=%s reason=stale_missing_or_article_identity_mismatch",
+                        request_id or "unknown",
+                        str(page.get("url") or source.get("url") or "")[:500],
+                    )
+                    return None
+                page["published_at"] = published_at
+                page["domain"] = _editorial_domain(
+                    source,
+                    str(page.get("url") or page.get("final_url") or ""),
                 )
-                return None
+                page["source_url"] = str(source.get("url") or "")
             return page
 
         fetch_batch = await fetch_source_quorum(
@@ -2110,13 +2210,37 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             fetch_batch.elapsed_ms,
         )
 
+    if news_query:
+        valid_news_domains = {
+            str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+            .casefold().rstrip(".").removeprefix("www.")
+            for page in fetched_pages
+        } - {""}
+        valid_news_providers = {
+            str(provider).strip().casefold()
+            for provider in (search_result.get("providers") or [])
+            if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+        }
+        if (
+            len(fetched_pages) < 3
+            or len(valid_news_domains) < 3
+            or len(valid_news_providers) < 2
+        ):
+            logger.warning(
+                "web_evidence_current_news_quorum_not_met request_id=%s pages=%s domains=%s providers=%s",
+                request_id or "unknown",
+                len(fetched_pages),
+                len(valid_news_domains),
+                len(valid_news_providers),
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+        # Current-news requests are never downgraded to raw SERP snippets.
+        # Other realtime queries may use a clearly degraded multi-domain fallback.
+        if realtime and not news_query and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
             snippet_fallback_used = True
             logger.warning(
                 "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
@@ -2138,20 +2262,27 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "url": item.get("url"),
             "provider": item.get("provider"),
             "published_at": item.get("published_at"),
+            "domain": item.get("domain"),
             "text_chars": item.get("text_chars"),
             "text": str(item.get("text") or "")[:2200],
         }
         for item in fetched_pages[:5]
     ]
-    # Current-news candidates without a verified recent publication time never
-    # reach the model through raw SERP metadata.
-    verified_search_results = [
-        item for item in compact_search_results
-        if (
-            not is_realtime_news_query(query)
-            or _is_recently_published(item, query)
-        )
-    ]
+    # In current-news mode, only pages that passed date, article-identity,
+    # extraction, relevance and editorial-domain validation may reach the model.
+    if news_query:
+        verified_search_results = [
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "snippet": str(item.get("text") or "")[:700],
+                "published_at": item.get("published_at"),
+                "provider": item.get("provider"),
+            }
+            for item in compact_fetched_pages
+        ]
+    else:
+        verified_search_results = list(compact_search_results)
     evidence_fragments = [
         str(item.get("snippet") or "")
         for item in (snippet_evidence if snippet_fallback_used else [])
@@ -2164,19 +2295,35 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     extracted_text_chars = sum(len(str(item.get("text") or "")) for item in compact_fetched_pages)
     extracted_domains = {
-        (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        str(
+            item.get("domain")
+            or (urlparse(str(item.get("url") or "")).hostname or "")
+        ).casefold().rstrip(".").removeprefix("www.")
         for item in compact_fetched_pages
     } - {""}
     domains_used = len(
         extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
     )
+    successful_news_providers = sorted({
+        str(provider).strip().casefold()
+        for provider in (search_result.get("providers") or [])
+        if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+    })
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
         "retrieved_at": search_result.get("retrieved_at"),
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
-        "verification": search_result.get("verification") or {},
+        "verification": (
+            {
+                "level": "verified-current-news-quorum",
+                "distinct_domains": len(extracted_domains),
+                "distinct_providers": len(successful_news_providers),
+                "corroborated_results": 0,
+            }
+            if news_query else (search_result.get("verification") or {})
+        ),
         "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
@@ -3408,11 +3555,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if is_realtime_news_query(q):
                 if not _is_publishable_realtime_news_source(q, item, fetched_page):
                     continue
-                published_at = fetched_page.get("published_at") or item.get("published_at")
-                page_domain = str(
-                    fetched_page.get("domain")
-                    or (urlparse(direct_url).hostname or "")
-                ).casefold().removeprefix("www.")
+                published_at = _verified_realtime_news_published_at(q, item, fetched_page)
+                if not published_at:
+                    continue
+                page_domain = _editorial_domain(item, direct_url)
+                fetched_page["published_at"] = published_at
+                fetched_page["domain"] = page_domain
                 valid_news_pages_by_url[original_url] = fetched_page
                 resolved_results.append({
                     **item,
@@ -3527,7 +3675,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             })
 
         valid_news_domains = {
-            (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            str(
+                item.get("source_domain")
+                or (urlparse(str(item.get("url") or "")).hostname or "")
+            ).casefold().rstrip(".").removeprefix("www.")
             for item in resolved_results
             if str(item.get("url") or "").startswith("https://")
         }
