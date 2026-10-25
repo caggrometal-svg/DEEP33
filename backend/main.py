@@ -114,7 +114,9 @@ def _realtime_news_path_is_generic(path: str) -> bool:
     blocked_segments = {
         "admin", "au_creatives", "template", "login", "signin", "search",
         "tag", "tags", "category", "categories", "author", "authors",
-        "publicidad", "portada",
+        "publicidad", "portada", "en-vivo", "envivo", "live-blog",
+        "liveblog", "live-updates", "live-update", "streaming",
+        "sucursal-virtual", "oficina-virtual",
     }
     return bool(set(parts) & blocked_segments)
 
@@ -341,6 +343,9 @@ def _is_publishable_realtime_news_source(
         "guia de viaje", "travel guide", "información turística",
         "informacion turistica", "destinos de chile", "plantilla administrativa",
         "advertising template", "promociones y publicidad", "portal oficial",
+        "sucursal virtual", "oficina virtual", "portal de clientes",
+        "ingresa a tu cuenta", "acceso a tu cuenta", "consulta tus servicios",
+        "login isapre", "servicios en línea", "servicios en linea",
     )):
         return False
 
