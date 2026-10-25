@@ -271,19 +271,19 @@ def test_broad_chile_news_accepts_moderately_relevant_real_article(monkeypatch):
         "¿Cuáles son las noticias más recientes de Chile publicadas hoy "
         "domingo 25 de octubre de 2026? Busca en Internet y revisa varias fuentes."
     )
-    url = "https://medio.example/2026/10/25/suben-tarifas-transporte-publico.html"
+    url = "https://www.futuro.cl/2026/10/25/suben-tarifas-transporte-publico/"
     source = {
         "title": "Suben las tarifas del transporte público este domingo",
         "url": url,
         "snippet": "La medida fue informada este domingo y rige desde hoy.",
-        "source_domain": "medio.example",
+        "source_domain": "futuro.cl",
         "provider": "bing",
         "published_at": now,
     }
     page = {
         "title": source["title"],
         "url": url,
-        "domain": "medio.example",
+        "domain": "futuro.cl",
         "published_at": now,
         "title_from_page": True,
         "text": (
@@ -301,19 +301,19 @@ def test_topical_chile_news_does_not_get_broad_query_relevance_relaxation(monkey
 
     now = datetime.now(timezone.utc).isoformat()
     query = "Últimas noticias del dólar en Chile hoy"
-    url = "https://medio.example/2026/10/25/suben-tarifas-transporte-publico.html"
+    url = "https://www.futuro.cl/2026/10/25/suben-tarifas-transporte-publico/"
     source = {
         "title": "Suben las tarifas del transporte público este domingo",
         "url": url,
         "snippet": "La medida fue informada este domingo y rige desde hoy.",
-        "source_domain": "medio.example",
+        "source_domain": "futuro.cl",
         "provider": "bing",
         "published_at": now,
     }
     page = {
         "title": source["title"],
         "url": url,
-        "domain": "medio.example",
+        "domain": "futuro.cl",
         "published_at": now,
         "title_from_page": True,
         "text": (
