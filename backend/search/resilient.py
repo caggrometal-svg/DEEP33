@@ -236,7 +236,7 @@ def _is_direct_chile_news_article_candidate(item: dict) -> bool:
     if any(part in {
         "admin", "login", "signin", "template", "category", "categories",
         "tag", "tags", "author", "authors", "publicidad", "portada",
-        "buscar", "buscador", "search",
+        "buscar", "buscador", "search", "cache", "nroedic", "todas",
     } for part in parts):
         return False
     if parts[-1] in {
@@ -249,7 +249,7 @@ def _is_direct_chile_news_article_candidate(item: dict) -> bool:
     if not title or any(marker in title for marker in (
         "inicio |", "inicio -", "home |", "home -", "portada |",
         "últimas noticias de chile", "ultimas noticias de chile",
-        "noticias de chile y el mundo",
+        "noticias de chile y el mundo", "todas las noticias del día", "todas las noticias del dia", "edición del día", "edicion del dia",
     )):
         return False
     return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
@@ -1813,7 +1813,7 @@ class WebOrchestrator:
                     part in {
                         "admin", "login", "signin", "template", "category",
                         "categories", "tag", "tags", "author", "authors",
-                        "publicidad", "portada", "buscar", "buscador", "search",
+                        "publicidad", "portada", "buscar", "buscador", "search", "cache", "nroedic", "todas",
                     }
                     for part in parts
                 ):
@@ -1829,7 +1829,7 @@ class WebOrchestrator:
                 if not title or any(marker in title for marker in (
                     "inicio |", "inicio -", "home |", "home -", "portada |",
                     "últimas noticias de chile", "ultimas noticias de chile",
-                    "noticias de chile y el mundo",
+                    "noticias de chile y el mundo", "todas las noticias del día", "todas las noticias del dia", "edición del día", "edicion del dia",
                 )):
                     return False
                 return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
