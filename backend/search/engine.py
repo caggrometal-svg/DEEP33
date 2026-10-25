@@ -612,6 +612,19 @@ def rank_results(
     *,
     realtime: bool = False,
 ) -> list[dict]:
+    realtime_news_query = is_realtime_news_query(query)
+    if realtime_news_query:
+        admissible: list[dict] = []
+        for candidate in results:
+            if not isinstance(candidate, dict) or _is_lexical_reference_result(candidate):
+                continue
+            if (
+                _published_timestamp(candidate) is not None
+                and not _is_recently_published(candidate, query)
+            ):
+                continue
+            admissible.append(candidate)
+        results = admissible
     query_tokens = _tokens(query)
     topic_tokens = _topic_tokens(query)
     topic_token_set = set(topic_tokens)
@@ -625,14 +638,6 @@ def rank_results(
         url = str(item.get("url") or "").strip()
         if not url:
             continue
-        if is_realtime_news_query(query):
-            # Lexical/reference pages are never current-news evidence. Reject known
-            # stale or future-dated SERP items now; undated candidates may proceed to
-            # page extraction, but must pass publication-date validation before use.
-            if _is_lexical_reference_result(item):
-                continue
-            if _published_timestamp(item) is not None and not _is_recently_published(item, query):
-                continue
         if realtime and _source_host(item).endswith("wikipedia.org"):
             # Static encyclopedia content is not live/current evidence.
             continue
