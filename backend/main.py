@@ -106,13 +106,17 @@ def _is_publishable_realtime_news_source(
     parsed = urlparse(page_url)
     if parsed.scheme.casefold() != "https" or not parsed.hostname:
         return False
+    page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    # A signed Google News wrapper is not an independently readable publisher article.
+    if page_host in {"news.google.com", "news.googleusercontent.com"}:
+        return False
 
     path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
     landing_paths = {
         "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news",
+        "/latest-news", "/breaking-news", "/ultimo-momento",
     }
     if path in landing_paths:
         return False
@@ -3232,6 +3236,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 ).casefold().removeprefix("www.")
                 for item in candidate_sources
                 if str(item.get("url") or "").startswith("https://")
+                and item.get("published_at")
+                and _is_recently_published(item, q)
             } - {""}
             if len(candidate_domains) < 3:
                 try:
@@ -3525,10 +3531,14 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in resolved_results
             if str(item.get("url") or "").startswith("https://")
         }
+        # The orchestrator reports providers that successfully returned a
+        # response. Editorial independence is proven separately by three dated,
+        # extracted publisher domains; article metadata may retain one feed's
+        # adapter label even when multiple search providers contributed to discovery.
         valid_news_providers = {
-            str(item.get("provider") or "").casefold()
-            for item in resolved_results
-            if str(item.get("provider") or "").strip()
+            str(provider).strip().casefold()
+            for provider in (result.get("providers") or [])
+            if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
         news_quorum_met = (
             not is_realtime_news_query(q)
