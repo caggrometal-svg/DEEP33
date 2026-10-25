@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query
+from backend.search.engine import _is_recently_published, is_realtime_news_query, is_realtime_query
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -1840,6 +1840,7 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
+        "published_at": result.get("published_at") or source.get("published_at"),
         "text_chars": len(page_text),
     }
 
@@ -1938,6 +1939,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         item for item in compact_search_results
         if str(item.get("url") or "").strip()
         and len(str(item.get("snippet") or "").strip()) >= 80
+        and (
+            not is_realtime_news_query(query)
+            or _is_recently_published(item, query)
+        )
     ]
     snippet_evidence_domains = {
         (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -2005,11 +2010,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             source: dict[str, Any],
             adaptive_timeout: float,
         ) -> dict[str, Any] | None:
-            return await _fetch_web_source(
+            page = await _fetch_web_source(
                 source,
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
+            if (
+                page is not None
+                and is_realtime_news_query(query)
+                and not _is_recently_published(page, query)
+            ):
+                logger.info(
+                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    request_id or "unknown",
+                    str(page.get("url") or source.get("url") or "")[:500],
+                )
+                return None
+            return page
 
         fetch_batch = await fetch_source_quorum(
             candidates,
@@ -3213,6 +3230,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "reason": "FETCH_OR_EXTRACTION_FAILED",
                 })
                 continue
+            if is_realtime_news_query(q) and not _is_recently_published(fetched, q):
+                fetch_failures.append({
+                    "url": str(source.get("url") or ""),
+                    "provider": str(source.get("provider") or "unknown"),
+                    "reason": "PUBLICATION_DATE_UNVERIFIED_OR_STALE",
+                })
+                continue
             fetched_pages.append(fetched)
             original_source_url = str(source.get("url") or "").strip()
             resolved_source_url = str(fetched.get("url") or "").strip()
@@ -3266,6 +3290,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 ).casefold().removeprefix("www.")
                 if not url.startswith("https://") or not domain or len(snippet) < 24:
                     continue
+                if is_realtime_news_query(q) and not _is_recently_published(item, q):
+                    continue
                 snippet_fallback_results.append({
                     **item,
                     "evidence_type": "search_snippet",
@@ -3307,6 +3333,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or url in extracted_result_urls
                     or domain in extracted_result_domains
                 ):
+                    continue
+                if is_realtime_news_query(q) and not _is_recently_published(item, q):
                     continue
                 supplemental_snippet_results.append({
                     **item,
