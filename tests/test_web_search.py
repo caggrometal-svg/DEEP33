@@ -1574,5 +1574,12 @@ def test_generic_chile_news_diversity_survives_final_provider_fallback() -> None
     assert result["ok"] is True, result
     assert len(domains - {""}) >= 3, result["results"]
     assert len(set(result["providers"])) >= 2, result["providers"]
-    assert {"futuro.cl", "as.com", "clarin.com"} <= (domains - {""})
+    assert "futuro.cl" in (domains - {""}), result["results"]
+    assert len(domains - {""}) == len(result["results"]), result["results"]
+    allowed_chilean_outlets = {
+        "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+        "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+        "futuro.cl", "as.com", "chilevision.cl", "t13.cl",
+    }
+    assert (domains - {""}) <= allowed_chilean_outlets, result["results"]
 
