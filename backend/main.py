@@ -121,6 +121,25 @@ def _realtime_news_title_tokens(value: Any) -> set[str]:
     }
 
 
+def _is_generic_realtime_news_candidate(source: dict[str, Any]) -> bool:
+    """Reject generic publisher pages before they consume the bounded fetch quorum."""
+    if not isinstance(source, dict):
+        return True
+    url = str(source.get("url") or "").strip()
+    parsed = urlparse(url)
+    if not url or _realtime_news_path_is_generic(parsed.path):
+        return True
+    title = " ".join(str(source.get("title") or "").casefold().split())
+    return any(marker in title for marker in (
+        "home -", "home |", "inicio -", "inicio |", "conoce chile",
+        "discover chile", "about us", "who we are", "quienes somos",
+        "quiénes somos", "lugares imperdibles", "guía de viaje",
+        "guia de viaje", "travel guide", "información turística",
+        "informacion turistica", "destinos de chile", "plantilla administrativa",
+        "advertising template", "promociones y publicidad", "portal oficial",
+    ))
+
+
 def _same_realtime_news_article(
     source: dict[str, Any],
     fetched_page: dict[str, Any],
@@ -2144,6 +2163,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     candidates: list[dict[str, Any]] = []
     seen_candidate_domains: set[str] = set()
     for source in sources.values():
+        # Drop generic/homepage hits before filling the small fetch batch. A
+        # fresh SERP timestamp on /en/ or /conoce-chile must not consume one
+        # of the three scarce current-news extraction slots.
+        if news_query and _is_generic_realtime_news_candidate(source):
+            logger.info(
+                "web_evidence_generic_news_candidate_skipped request_id=%s url=%s",
+                request_id or "unknown",
+                str(source.get("url") or "")[:500],
+            )
+            continue
         host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
         if not host:
             host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3378,6 +3407,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         ranked_sources = [
             {**item, "relevance_score": score_result(q, item)}
             for item in normalized_sources.values()
+            if not (
+                news_quorum_required
+                and _is_generic_realtime_news_candidate(item)
+            )
         ]
         relevant_sources = [
             item
