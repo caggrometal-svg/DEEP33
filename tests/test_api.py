@@ -867,17 +867,40 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
+        now = datetime.now(timezone.utc).isoformat()
+        if source["url"] == irrelevant_direct:
+            return {
+                "title": "Sucursal virtual Banmédica",
+                "url": irrelevant_direct,
+                "text": "Ingresa a tu cuenta de salud y consulta tus servicios. " * 10,
+                "provider": source["provider"],
+                "domain": "banmedica.cl",
+                "retrieved_at": now,
+                "published_at": now,
+                "text_chars": 500,
+            }
+        if source["url"] == irrelevant_login:
+            return {
+                "title": "Login Isapre Banmédica",
+                "url": irrelevant_login,
+                "text": "Acceso a consultas, cuenta y servicios médicos. " * 10,
+                "provider": source["provider"],
+                "domain": "login.isaprebanmedica.cl",
+                "retrieved_at": now,
+                "published_at": now,
+                "text_chars": 500,
+            }
         assert source["url"] == wrapper
         assert source["source_domain"] == "emol.com"
         return {
             "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
             "url": "https://www.emol.com/noticias/Nacional/2026/10/18/noticia.html",
-            "text": "Texto editorial de noticias de Chile hoy. " * 10,
+            "text": "Formalizan a detenidos por robo de cobre en El Teniente, informa Emol. " * 10,
             "provider": source["provider"],
             "domain": "emol.com",
-            "retrieved_at": "2026-10-18T06:00:00+00:00",
-            "published_at": datetime.now(timezone.utc).isoformat(),
-            "text_chars": 390,
+            "retrieved_at": now,
+            "published_at": now,
+            "text_chars": 700,
         }
 
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
@@ -896,7 +919,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in body["errors"]
     assert body["domains_used"] == 1
     assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
-    assert fetched == [wrapper]
+    assert set(fetched) == {irrelevant_direct, irrelevant_login, wrapper}
     assert all(
         "banmedica" not in item["url"].casefold()
         for item in body["results"]
