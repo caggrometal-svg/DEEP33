@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  DEEP33_PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  DEEP33_SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-  DEEP33_TERTIARY_URL: https://deep33-backend.onrender.com
+  DEEP33_PRIMARY_URL: https://deep33-backend-iac33.vercel.app
+  DEEP33_SECONDARY_URL: https://deep33-backend-git-main-iac33.vercel.app
+  DEEP33_TERTIARY_URL: https://deep33-backend.vercel.app
   DEEP33_REQUIRE_REDUNDANCY: "true"
 
 jobs:
@@ -35,13 +35,13 @@ jobs:
           test -n "$token"
           echo "DEEP33_CI_ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Verify DEEP33 edge backend
+      - name: Verify DEEP33 Vercel backend
         run: |
           set -euo pipefail
           headers=(-H "Authorization: Bearer $DEEP33_CI_ACCESS_TOKEN")
-          curl -fsS --connect-timeout 8 --max-time 45 "${headers[@]}" "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Edge Gateway"'
-          curl -fsS --connect-timeout 8 --max-time 90 "${headers[@]}" "$DEEP33_PRIMARY_URL/v1/connectivity/audit" | jq -e '.edge=="PASS" and .internet=="PASS" and .search.ok==true'
-          echo "DEEP33_EDGE_GATE_PASS"
+          curl -fsS --connect-timeout 8 --max-time 45 "${headers[@]}" "$DEEP33_PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
+          curl -fsS --connect-timeout 8 --max-time 90 "${headers[@]}" "$DEEP33_PRIMARY_URL/v1/connectivity/audit" | jq -e '.status=="PASS" and .edge=="PASS" and .internet=="PASS" and .upstream.ready==true and .search.ok==true and (.search.results|length)>=1'
+          echo "DEEP33_VERCEL_GATE_PASS"
 
 
   android_package:

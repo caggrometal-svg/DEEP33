@@ -1,4 +1,4 @@
-name: DEEP33 Railway Production Gate
+name: DEEP33 Vercel Production Gate
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
       - "tools/**"
       - "api/**"
       - "supabase/**"
-      - ".github/workflows/deep33-railway-production-gate.yml"
+      - ".github/workflows/deep33-vercel-production-gate.yml"
       - "backend/requirements.txt"
       - "requirements.txt"
       - "tests/test_edge_tertiary_idempotency_contract.py"
@@ -30,16 +30,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: deep33-railway-production-gate
+  group: deep33-vercel-production-gate
   cancel-in-progress: false
 
 jobs:
-  railway-production-gate:
+  vercel-production-gate:
     if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/cert-green-live-search-161026')) || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      RAILWAY_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
+      VERCEL_BASE_URL: https://deep33-backend.vercel.app
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
     steps:
@@ -48,64 +48,59 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Wait for exact Railway revision to become healthy
+      - name: Wait for exact Vercel revision to become healthy
         shell: bash
         run: |
           set -euo pipefail
-          # -m includes the first-parent diff of merge commits. Without it,
-          # path-limited git log skips a merge SHA and can compare Railway's merged
-          # build to the pre-merge runtime commit forever.
-          expected_sha="$(git log --first-parent -m -1 --format=%H -- Dockerfile .dockerignore .python-version backend tools supabase api)"
-          test -n "$expected_sha" || { echo "RAILWAY_EXPECTED_SHA_RESOLUTION_FAIL"; exit 1; }
           ready=0
           for attempt in $(seq 1 36); do
-            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/railway-ready.json -w '%{http_code}' "$RAILWAY_BASE_URL/ready" || true)"
-            live_sha="$(jq -r '.git_sha // empty' /tmp/railway-ready.json 2>/dev/null || true)"
-            live_status="$(jq -r '.status // empty' /tmp/railway-ready.json 2>/dev/null || true)"
-            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$expected_sha live=$live_sha status=$live_status http=$code"
-            if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$expected_sha" ]; then
-              jq -c '{status, git_sha, build_id, timestamp}' /tmp/railway-ready.json
+            code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/vercel-ready.json -w '%{http_code}' "$VERCEL_BASE_URL/health" || true)"
+            live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-ready.json 2>/dev/null || true)"
+            live_status="$(jq -r '.status // empty' /tmp/vercel-ready.json 2>/dev/null || true)"
+            echo "VERCEL_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status http=$code"
+            if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
+              jq -c '{status, git_sha, build_id, timestamp}' /tmp/vercel-ready.json
               ready=1
               break
             fi
             [ "$attempt" -lt 36 ] && sleep 5
           done
-          test "$ready" = "1" || { echo "RAILWAY_EXACT_SHA_FAIL expected=$expected_sha"; exit 1; }
-          echo "RAILWAY_EXACT_SHA_PASS=$expected_sha"
+          test "$ready" = "1" || { echo "VERCEL_EXACT_SHA_FAIL expected=$GITHUB_SHA"; cat /tmp/vercel-ready.json 2>/dev/null || true; exit 1; }
+          echo "VERCEL_EXACT_SHA_PASS=$GITHUB_SHA"
 
       - name: Verify real AI inference
         shell: bash
         run: |
           set -euo pipefail
-          response="$(curl -sS --connect-timeout 5 --max-time 90 -w '\nSTATUS:%{http_code}\nELAPSED:%{time_total}' "$RAILWAY_BASE_URL/v1/ai/inference-check" || true)"
+          response="$(curl -sS --connect-timeout 5 --max-time 90 -w '\nSTATUS:%{http_code}\nELAPSED:%{time_total}' "$VERCEL_BASE_URL/v1/ai/inference-check" || true)"
           status="$(printf '%s' "$response" | sed -n 's/^STATUS://p')"
           elapsed="$(printf '%s' "$response" | sed -n 's/^ELAPSED://p')"
           body="$(printf '%s' "$response" | sed '/^STATUS:/,$d')"
           if [ "$status" != "200" ] || ! printf '%s' "$body" | jq -e '.status == "PASS" and .text_ok == true and ((.model // "") | length) > 0' >/dev/null 2>&1; then
             printf '%s\n' "$body" | jq -c '{status, provider, model, text_ok, timestamp}' 2>/dev/null || true
-            echo "RAILWAY_REAL_INFERENCE_FAIL http=$status elapsed_seconds=$elapsed"
+            echo "VERCEL_REAL_INFERENCE_FAIL http=$status elapsed_seconds=$elapsed"
             exit 1
           fi
           printf '%s' "$body" | jq -c '{status, provider, model, text_ok, timestamp}'
-          echo "RAILWAY_REAL_INFERENCE_PASS elapsed_seconds=$elapsed"
+          echo "VERCEL_REAL_INFERENCE_PASS elapsed_seconds=$elapsed"
 
       - name: Verify web tools and hybrid search configuration
         shell: bash
         run: |
           set -euo pipefail
-          web_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$RAILWAY_BASE_URL/v1/web/status")"
+          web_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$VERCEL_BASE_URL/v1/web/status")"
           printf '%s' "$web_status" | jq -e '.tool_loop_enabled == true and .realtime_policy_enabled == true' >/dev/null
           printf '%s' "$web_status" | jq -c '{engine, engine_version, tool_loop_enabled, realtime_policy_enabled, fetch_limits}'
-          hybrid_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$RAILWAY_BASE_URL/v1/search/hybrid/status")"
+          hybrid_status="$(curl -fsS --connect-timeout 5 --max-time 12 "$VERCEL_BASE_URL/v1/search/hybrid/status")"
           printf '%s' "$hybrid_status" | jq -e '.enabled == true and .configured == true' >/dev/null
           printf '%s' "$hybrid_status" | jq -c '{engine, engine_version, enabled, configured, transport, vector_backend, keyword_backend}'
-          echo "RAILWAY_SEARCH_CONFIGURATION_PASS"
+          echo "VERCEL_SEARCH_CONFIGURATION_PASS"
 
       - name: Create isolated authenticated test session
         shell: bash
         run: |
           set -euo pipefail
-          profile_id="railway-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
+          profile_id="vercel-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RANDOM}"
           response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
             -X POST "$SUPABASE_URL/functions/v1/deep33-auth" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
@@ -117,13 +112,13 @@ jobs:
           if [ "$status" = "200" ]; then
             token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
           fi
-          test -n "$token" || { echo "RAILWAY_AUTH_SESSION_FAIL http=$status"; exit 1; }
+          test -n "$token" || { echo "VERCEL_AUTH_SESSION_FAIL http=$status"; exit 1; }
           echo "::add-mask::$token"
           {
-            echo "DEEP33_RAILWAY_GATE_TOKEN=$token"
-            echo "DEEP33_RAILWAY_GATE_SESSION_ID=$profile_id"
+            echo "DEEP33_VERCEL_GATE_TOKEN=$token"
+            echo "DEEP33_VERCEL_GATE_SESSION_ID=$profile_id"
           } >> "$GITHUB_ENV"
-          echo "RAILWAY_AUTH_SESSION_PASS"
+          echo "VERCEL_AUTH_SESSION_PASS"
 
       - name: Verify real semantic embedding runtime
         shell: bash
@@ -132,54 +127,54 @@ jobs:
           status="$(curl -sS --connect-timeout 5 --max-time 30 -o /tmp/deep33-embedding-ping.json -w '%{http_code}' \
             -X POST "$SUPABASE_URL/functions/v1/deep33-hybrid-search" \
             -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
+            -H "Authorization: Bearer $DEEP33_VERCEL_GATE_TOKEN" \
             -H 'content-type: application/json' \
             -d '{"action":"ping"}' || true)"
           body="$(cat /tmp/deep33-embedding-ping.json 2>/dev/null || true)"
-          test "$status" = "200" || { echo "RAILWAY_EMBEDDING_RUNTIME_FAIL http=$status"; exit 1; }
+          test "$status" = "200" || { echo "VERCEL_EMBEDDING_RUNTIME_FAIL http=$status"; exit 1; }
           printf '%s' "$body" | jq -e '.ok == true and .embedding_model == "Supabase/gte-small" and .embedding_smoke == true and .model_dimensions == 384 and .storage_dimensions == 1536 and .version >= 2' >/dev/null || {
             printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
-            echo "RAILWAY_EMBEDDING_RUNTIME_FAIL: semantic embedding runtime unavailable"
+            echo "VERCEL_EMBEDDING_RUNTIME_FAIL: semantic embedding runtime unavailable"
             exit 1
           }
           printf '%s' "$body" | jq -c '{ok, service, version, embedding_model, storage_dimensions}'
-          echo "RAILWAY_EMBEDDING_RUNTIME_PASS"
+          echo "VERCEL_EMBEDDING_RUNTIME_PASS"
 
       - name: Verify user-scoped memory read
         shell: bash
         run: |
           set -euo pipefail
           response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-            "$RAILWAY_BASE_URL/v1/memory/context" || true)"
+            -H "Authorization: Bearer $DEEP33_VERCEL_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_GATE_SESSION_ID" \
+            "$VERCEL_BASE_URL/v1/memory/context" || true)"
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_MEMORY_READ_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" | jq -e '(.messages | type == "array") and (.memories | type == "array")' >/dev/null || { echo "RAILWAY_MEMORY_READ_FAIL: context schema invalid"; exit 1; }
+          test "$status" = "200" || { echo "VERCEL_MEMORY_READ_FAIL http=$status body=${body:0:500}"; exit 1; }
+          printf '%s' "$body" | jq -e '(.messages | type == "array") and (.memories | type == "array")' >/dev/null || { echo "VERCEL_MEMORY_READ_FAIL: context schema invalid"; exit 1; }
           printf '%s' "$body" | jq -c '{ok, session, message_count: ((.messages // []) | length), memory_count: ((.memories // []) | length)}'
-          echo "RAILWAY_MEMORY_READ_PASS"
+          echo "VERCEL_MEMORY_READ_PASS"
 
       - name: Verify hybrid search request reaches Supabase Edge
         shell: bash
         run: |
           set -euo pipefail
           response="$(curl -sS --connect-timeout 5 --max-time 15 -w '\nSTATUS:%{http_code}' \
-            -X POST "$RAILWAY_BASE_URL/v1/search/hybrid" \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
+            -X POST "$VERCEL_BASE_URL/v1/search/hybrid" \
+            -H "Authorization: Bearer $DEEP33_VERCEL_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_GATE_SESSION_ID" \
             -H 'content-type: application/json' \
             -d '{"query":"DEEP33 Search Engine orchestrator providers","limit":3}' || true)"
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
+          test "$status" = "200" || { echo "VERCEL_HYBRID_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
           printf '%s' "$body" | jq -e '.ok == true and .mode == "hybrid" and .embedding_model == "Supabase/gte-small" and (.results | type == "array") and (.results | length) > 0 and any(.results[]; (.vector_rank // 0) > 0) and any(.results[]; (.keyword_rank // 0) > 0)' >/dev/null || {
             printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, embedding_model, results: [(.results // [])[] | {document_id, keyword_rank, vector_rank, keyword_score, vector_score}]}'
-            echo "RAILWAY_HYBRID_SEARCH_FAIL: semantic embeddings and keyword/vector fusion are not both confirmed"
+            echo "VERCEL_HYBRID_SEARCH_FAIL: semantic embeddings and keyword/vector fusion are not both confirmed"
             exit 1
           }
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, mode, result_count: ((.results // []) | length)}'
-          echo "RAILWAY_HYBRID_SEARCH_PASS"
+          echo "VERCEL_HYBRID_SEARCH_PASS"
 
       - name: Verify live multi-domain web search
         shell: bash
@@ -187,26 +182,26 @@ jobs:
           set -euo pipefail
           query="principales acontecimientos actuales en Chile hoy"
           response="$(curl -sS --connect-timeout 5 --max-time 20 -w '\nSTATUS:%{http_code}' \
-            -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-            -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-            --get "$RAILWAY_BASE_URL/v1/web/search" --data-urlencode "q=$query" || true)"
+            -H "Authorization: Bearer $DEEP33_VERCEL_GATE_TOKEN" \
+            -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_GATE_SESSION_ID" \
+            --get "$VERCEL_BASE_URL/v1/web/search" --data-urlencode "q=$query" || true)"
           status="${response##*STATUS:}"
           body="${response%$'\n'STATUS:*}"
-          test "$status" = "200" || { echo "RAILWAY_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
-          printf '%s' "$body" > /tmp/railway-live-search.json
+          test "$status" = "200" || { echo "VERCEL_LIVE_SEARCH_FAIL http=$status body=${body:0:500}"; exit 1; }
+          printf '%s' "$body" > /tmp/vercel-live-search.json
           printf '%s' "$body" | jq -e '.ok == true and .fresh_request == true and .realtime == true and (.results | length) >= 3 and (.verification.distinct_domains // 0) >= 3 and (.verification.distinct_providers // 0) >= 2 and (.providers | unique | length) >= 2 and (.retrieved_at | strings | length) > 10' >/dev/null || {
             printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
-            echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_FAIL: requires at least two successful independent providers and three domains"
+            echo "VERCEL_LIVE_MULTIDOMAIN_SEARCH_FAIL: requires at least two successful independent providers and three domains"
             exit 1
           }
           printf '%s' "$body" | jq -c '{ok, engine, engine_version, realtime, fresh_request, result_count: (.results | length), providers, verification, retrieved_at}'
-          echo "RAILWAY_LIVE_MULTIDOMAIN_SEARCH_PASS"
+          echo "VERCEL_LIVE_MULTIDOMAIN_SEARCH_PASS"
 
       - name: Verify source-page fetch from web-search result
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t urls < <(jq -r '.results[0:5][]?.url // empty' /tmp/railway-live-search.json)
+          mapfile -t urls < <(jq -r '.results[0:5][]?.url // empty' /tmp/vercel-live-search.json)
           fetched=0
           index=0
           context_pattern='(chile|chilean|chilen[oa]s?|santiago|valpara[ií]so|viña del mar|concepción|biobío|temuco|antofagasta|arica|iquique|puerto montt|punta arenas|la serena|coquimbo|rancagua|talca|chillán|copiapó|calama|las condes|ñuñoa|providencia|maipú|puente alto|senapred|sernageomin)'
@@ -214,9 +209,9 @@ jobs:
             index=$((index + 1))
             [ -n "$url" ] || continue
             response="$(curl -sS --connect-timeout 5 --max-time 8 -w '\nSTATUS:%{http_code}' \
-              -H "Authorization: Bearer $DEEP33_RAILWAY_GATE_TOKEN" \
-              -H "X-DEEP33-Session-Id: $DEEP33_RAILWAY_GATE_SESSION_ID" \
-              --get "$RAILWAY_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
+              -H "Authorization: Bearer $DEEP33_VERCEL_GATE_TOKEN" \
+              -H "X-DEEP33-Session-Id: $DEEP33_VERCEL_GATE_SESSION_ID" \
+              --get "$VERCEL_BASE_URL/v1/web/fetch" --data-urlencode "url=$url" || true)"
             status="${response##*STATUS:}"
             body="${response%$'\n'STATUS:*}"
             if [ "$status" = "200" ] && printf '%s' "$body" | jq -e --arg pattern "$context_pattern" '.ok == true and ((.text // "") | length) > 80 and (((.title // "") + " " + (.text // "")) | test($pattern; "i"))' >/dev/null 2>&1; then
@@ -224,7 +219,7 @@ jobs:
               fetched=1
               break
             fi
-            echo "RAILWAY_CHILE_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
+            echo "VERCEL_CHILE_WEB_FETCH_CANDIDATE_FAILED candidate=$index http=$status"
           done
-          test "$fetched" = "1" || { echo "RAILWAY_CHILE_WEB_FETCH_FAIL: no readable page carried Chilean context"; exit 1; }
-          echo "RAILWAY_CHILE_WEB_FETCH_PASS"
+          test "$fetched" = "1" || { echo "VERCEL_CHILE_WEB_FETCH_FAIL: no readable page carried Chilean context"; exit 1; }
+          echo "VERCEL_CHILE_WEB_FETCH_PASS"

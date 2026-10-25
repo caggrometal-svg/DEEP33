@@ -30,9 +30,9 @@ adb shell getprop net.dns2 || true
 
 echo "=== ENDPOINT PREFLIGHT ==="
 : "${DEEP33_E2E_VERCEL_URL:=https://deep33-backend.vercel.app}"
-: "${DEEP33_PRIMARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy}"
-: "${DEEP33_SECONDARY_URL:=https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary}"
-: "${DEEP33_TERTIARY_URL:=https://deep33-backend.onrender.com}"
+: "${DEEP33_PRIMARY_URL:=https://deep33-backend-iac33.vercel.app}"
+: "${DEEP33_SECONDARY_URL:=https://deep33-backend-git-main-iac33.vercel.app}"
+: "${DEEP33_TERTIARY_URL:=https://deep33-backend.vercel.app}"
 if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]] && {
   [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ];
 }; then

@@ -42,7 +42,7 @@ concurrency:
 env:
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-  DEEP33_PRODUCTION_GATE_URL: https://iac33-fastapi-edge-production.up.railway.app
+  DEEP33_PRODUCTION_GATE_URL: https://deep33-backend.vercel.app
   DEEP33_REQUIRE_LIVE_GATE: "true"
   PYTHONPATH: .
 
@@ -69,7 +69,7 @@ jobs:
         run: |
           python -m py_compile             backend/main.py             backend/search/engine.py             backend/search/resilience.py             tools/web_search.py             tools/web_fetch.py
 
-  production-railway-gate:
+  production-vercel-gate:
     if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/cert-green-live-search-161026')) || github.event_name == 'workflow_dispatch'
     needs: chaos-unit-gate
     runs-on: ubuntu-latest
@@ -94,7 +94,7 @@ jobs:
           token="$(printf '%s' "$body" | jq -r '.access_token // empty')"
           test -n "$token"
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Wait for exact Railway revision to become healthy
+      - name: Wait for exact Vercel revision to become healthy
         run: |
           set -euo pipefail
           ok=0
@@ -102,29 +102,14 @@ jobs:
             code="$(curl -sS --connect-timeout 8 --max-time 30 -o /tmp/health.json -w "%{http_code}" "$DEEP33_PRODUCTION_GATE_URL/health" || true)"
             live_sha="$(jq -r '.git_sha // empty' /tmp/health.json 2>/dev/null || true)"
             live_status="$(jq -r '.status // empty' /tmp/health.json 2>/dev/null || true)"
-            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status"
+            echo "VERCEL_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status http=$code"
             if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
               ok=1
               break
             fi
-            # Railway only deploys runtime paths. A newer main SHA is compatible
-            # when every intervening file is outside the exact runtime watch set.
-            if [ "$live_status" = "PASS" ] && [ -n "$live_sha" ] && [ "$live_sha" != "$GITHUB_SHA" ]; then
-              if ! git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
-                git fetch --no-tags --depth=1 origin "$live_sha" || true
-              fi
-              if git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
-                changed_files="$(git diff --name-only "$live_sha" "$GITHUB_SHA" || true)"
-                if [ -n "$changed_files" ] && ! printf '%s\n' "$changed_files" | grep -Eq '^(Dockerfile$|\.dockerignore$|\.python-version$|backend/|tools/|supabase/|api/)'; then
-                  echo "RAILWAY_RUNTIME_SHA_COMPATIBLE live=$live_sha head=$GITHUB_SHA"
-                  ok=1
-                  break
-                fi
-              fi
-            fi
             sleep 5
           done
-          test "$ok" = "1"
+          test "$ok" = "1" || { echo "VERCEL_EXACT_SHA_FAIL expected=$GITHUB_SHA"; cat /tmp/health.json 2>/dev/null || true; exit 1; }
       - name: Run live multidomain, stress and Android SSE gate
         run: |
           set -euo pipefail

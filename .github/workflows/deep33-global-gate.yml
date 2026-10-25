@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       require_live:
-        description: Require live Railway/Android SSE validation
+        description: Require live Vercel/Android SSE validation
         required: false
         default: "true"
         type: choice
@@ -32,14 +32,14 @@ permissions:
 
 jobs:
   # Always produce a real gate result. On main this job requires authenticated live
-  # Railway/Android verification; on PRs it runs the deterministic Global Gate suite
+  # Vercel/Android verification; on PRs it runs the deterministic Global Gate suite
   # without pretending that an undeployed branch is the live production SHA.
   production_gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: https://iac33-fastapi-edge-production.up.railway.app
+      DEEP33_BASE_URL: https://deep33-backend.vercel.app
       DEEP33_TEST_AUTH_TOKEN: ""
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
@@ -64,7 +64,7 @@ jobs:
 
       - name: Enable canonical live production target
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_BASE_URL == ''
-        run: echo "DEEP33_BASE_URL=https://iac33-fastapi-edge-production.up.railway.app" >> "$GITHUB_ENV"
+        run: echo "DEEP33_BASE_URL=https://deep33-backend.vercel.app" >> "$GITHUB_ENV"
 
       - name: Prepare authenticated live production session
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
@@ -111,36 +111,23 @@ jobs:
           echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
           echo "DEEP33_TEST_SESSION_ID=global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
-      - name: Wait for exact main SHA on canonical Railway
+      - name: Wait for exact main SHA on canonical Vercel
         if: ${{ env.DEEP33_REQUIRE_LIVE_GATE == 'true' }}
         run: |
           set -euo pipefail
           for attempt in $(seq 1 36); do
-            health="$(curl -fsS --connect-timeout 8 --max-time 20 "$DEEP33_BASE_URL/health" || true)"
-            live_sha="$(printf '%s' "$health" | jq -r '.git_sha // empty' 2>/dev/null || true)"
-            status="$(printf '%s' "$health" | jq -r '.status // empty' 2>/dev/null || true)"
-            echo "RAILWAY_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status"
-            if [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
-              echo "RAILWAY_EXACT_SHA_PASS=$live_sha"
+            code="$(curl -sS --connect-timeout 8 --max-time 20 -o /tmp/vercel-health.json -w "%{http_code}" "$DEEP33_BASE_URL/health" || true)"
+            live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-health.json 2>/dev/null || true)"
+            status="$(jq -r '.status // empty' /tmp/vercel-health.json 2>/dev/null || true)"
+            echo "VERCEL_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status http=$code"
+            if [ "$code" = "200" ] && [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
+              echo "VERCEL_EXACT_SHA_PASS=$live_sha"
               exit 0
-            fi
-            # Railway only deploys runtime paths. A newer main SHA is compatible
-            # when every intervening file is outside the exact runtime watch set.
-            if [ "$status" = "PASS" ] && [ -n "$live_sha" ] && [ "$live_sha" != "$GITHUB_SHA" ]; then
-              if ! git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
-                git fetch --no-tags --depth=1 origin "$live_sha" || true
-              fi
-              if git cat-file -e "$live_sha^{commit}" 2>/dev/null; then
-                changed_files="$(git diff --name-only "$live_sha" "$GITHUB_SHA" || true)"
-                if [ -n "$changed_files" ] && ! printf '%s\n' "$changed_files" | grep -Eq '^(Dockerfile$|\.dockerignore$|\.python-version$|backend/|tools/|supabase/|api/)'; then
-                  echo "RAILWAY_RUNTIME_SHA_COMPATIBLE live=$live_sha head=$GITHUB_SHA"
-                  exit 0
-                fi
-              fi
             fi
             sleep 5
           done
-          echo "RAILWAY_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          echo "VERCEL_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          cat /tmp/vercel-health.json 2>/dev/null || true
           exit 1
 
       - name: Record branch-safe gate mode

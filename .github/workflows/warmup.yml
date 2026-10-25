@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  PRIMARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy
-  SECONDARY_URL: https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary
-  TERTIARY_URL: https://deep33-backend.onrender.com
+  PRIMARY_URL: https://deep33-backend.vercel.app
+  SECONDARY_URL: https://deep33-backend-iac33.vercel.app
+  TERTIARY_URL: https://deep33-backend-git-main-iac33.vercel.app
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
 

@@ -162,11 +162,9 @@ object Deep33Api {
         val canonical = canonicalEndpoints()
         if (overrides == null) {
             if (BuildConfig.DEBUG) e2eBackendUrl?.let { selectedEndpoint ->
-                // Exercise the exact PR preview first, but retain the same real
-                // production fallback routes after it. Exclude the production Vercel
-                // alias so an old live deployment cannot mask a broken PR preview.
-                return (listOf(selectedEndpoint) +
-                    canonical.filter { it != BuildConfig.DEEP33_VERCEL_URL }).distinct()
+                // A PR E2E must exercise only the exact preview under test.
+                // Falling through to production aliases could hide a broken preview.
+                return listOf(selectedEndpoint)
             }
             return canonical
         }

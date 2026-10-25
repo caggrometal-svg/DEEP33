@@ -37,14 +37,18 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
     assert 'android:exported="false"' in source
 
 
-def test_android_endpoint_contract_is_immutable_and_distinct() -> None:
+def test_android_endpoint_contract_is_immutable_and_vercel_only() -> None:
     source = read("android/app/build.gradle.kts")
-    assert '"https://deep33-backend.onrender.com"' in source
-    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy"' in source
-    assert '"https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary"' in source
-    assert 'Transport contract is immutable by build environment' in source
+    assert '"https://deep33-backend.vercel.app"' in source
+    assert '"https://deep33-backend-iac33.vercel.app"' in source
+    assert '"https://deep33-backend-git-main-iac33.vercel.app"' in source
+    assert 'immutable by build environment' in source
     assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
+    assert 'onrender.com' not in source.lower()
+    assert '/functions/v1/deep33-proxy' not in source
+    assert '/functions/v1/deep33-tertiary' not in source
+    assert 'railway.app' not in source.lower()
     assert 'http://' not in source
 
 
@@ -85,15 +89,16 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert r'render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza' in source
 
 
-def test_transport_workflows_keep_canonical_endpoint_set() -> None:
+def test_transport_workflows_keep_canonical_vercel_endpoint_set() -> None:
     expected = {
-        "https://deep33-backend.onrender.com",
-        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy",
-        "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-tertiary",
+        "https://deep33-backend.vercel.app",
+        "https://deep33-backend-iac33.vercel.app",
+        "https://deep33-backend-git-main-iac33.vercel.app",
     }
     full_set_paths = [
         ".github/workflows/android-debug-apk.yml",
         ".github/workflows/android-fast-apk.yml",
+        ".github/workflows/android-package.yml",
         ".github/workflows/ci.yml",
     ]
     for path in full_set_paths:
@@ -104,7 +109,10 @@ def test_transport_workflows_keep_canonical_endpoint_set() -> None:
         assert "c-33.blitz.cloud" not in source.lower()
 
     production_e2e = read(".github/workflows/production-e2e.yml")
-    assert "https://opocgzydeknuchtrqzfa.supabase.co/functions/v1/deep33-proxy" in production_e2e
+    assert "https://deep33-backend.vercel.app" in production_e2e
+    assert "RAILWAY_BASE_URL" not in production_e2e
+    assert "railway.app" not in production_e2e.lower()
+    assert "onrender.com" not in production_e2e.lower()
     assert "http://" not in production_e2e
     assert "c-33.blitz.cloud" not in production_e2e.lower()
 
