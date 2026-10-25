@@ -333,7 +333,14 @@ jobs:
         run: |
           set -euo pipefail
           status_code="000"
-          for attempt in $(seq 1 5); do
+          # Try broad and topical natural-language queries without weakening the
+          # three-article, three-editorial-domain, two-provider evidence contract.
+          for news_query in \
+            "últimas noticias de Chile hoy" \
+            "últimas noticias políticas de Chile hoy" \
+            "noticias nacionales de Chile publicadas hoy"; do
+            echo "VERCEL_CHILE_NEWS_QUERY=$news_query"
+            for attempt in $(seq 1 2); do
             status_code="$(curl -sS --connect-timeout 10 --max-time 75 -o "$RUNNER_TEMP/deep33-vercel-chile-news.json" -w "%{http_code}" \
               -H "apikey: $SUPABASE_PUBLISHABLE_KEY" \
               -H "Authorization: Bearer $DEEP33_VERCEL_TEST_TOKEN" \
@@ -341,7 +348,7 @@ jobs:
               -H "x-vercel-trusted-oidc-idp-token: $VERCEL_TRUSTED_OIDC_TOKEN" \
               -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS" \
               -H "Cache-Control: no-cache" \
-              --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=últimas noticias de Chile hoy" || true)"
+              --get "$VERCEL_URL/v1/web/search" --data-urlencode "q=$news_query" || true)"
             if [ "$status_code" = "200" ] && jq -e '
               .ok == true and .realtime == true and .fresh_request == true and
               ([.results[]? | select((.published_at // "") != "" and .fetched == true and .evidence_type == "verified_current_news_article")] | length) >= 3 and
@@ -358,9 +365,10 @@ jobs:
             fi
             echo "VERCEL_CHILE_NEWS_QUORUM_RETRY attempt=$attempt http=$status_code"
             jq -c '{ok,status,code,errors,fresh_request,providers,domains_used,extracted_text_chars,results:([.results[]? | {title,url,source_domain,published_at}][0:5]),fetched_pages_count:((.fetched_pages // [])|length)}' "$RUNNER_TEMP/deep33-vercel-chile-news.json" 2>/dev/null || true
-            [ "$attempt" -lt 5 ] && sleep 5
+              [ "$attempt" -lt 2 ] && sleep 5
+            done
           done
-          echo "VERCEL_CHILE_NEWS_THREE_DOMAIN_QUORUM_FAIL http=$status_code"
+          echo "VERCEL_CHILE_NEWS_THREE_DOMAIN_QUORUM_FAIL all_queries_exhausted last_http=$status_code"
           exit 1
       - name: Mint fresh OIDC token for Spanish live-search check
         id: vercel_spanish_oidc
