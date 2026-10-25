@@ -851,11 +851,11 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
                     "snippet": "Acceso a consultas, cuenta y servicios.",
                 },
                 {
-                    "title": "Últimas noticias de Chile hoy: política y actualidad",
+                    "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
                     "url": wrapper,
                     "source_domain": "emol.com",
                     "provider": "google_news",
-                    "snippet": "Últimas noticias de Chile hoy con cobertura de política y actualidad nacional.",
+                    "snippet": "Formalizan a 60 detenidos por robo de cobre en El Teniente; siete quedaron en prisión preventiva.",
                 },
             ],
             "sources": [],
@@ -870,7 +870,7 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
         assert source["url"] == wrapper
         assert source["source_domain"] == "emol.com"
         return {
-            "title": source["title"],
+            "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
             "url": "https://www.emol.com/noticias/Nacional/2026/10/18/noticia.html",
             "text": "Texto editorial de noticias de Chile hoy. " * 10,
             "provider": source["provider"],
