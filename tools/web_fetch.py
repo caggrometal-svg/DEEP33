@@ -662,6 +662,11 @@ async def _fetch_with_reader_fallback(
         if parsed is None:
             raise WebFetchError("WEB_FETCH_READER_EMPTY_OR_BLOCKED")
         title, text = parsed
+        reader_published_at = None
+        for line in content.decode("utf-8", errors="replace").splitlines():
+            if line.strip().casefold().startswith("published time:"):
+                reader_published_at = line.partition(":")[2].strip() or None
+                break
         return {
             "ok": True,
             "url": original_url,
@@ -672,6 +677,7 @@ async def _fetch_with_reader_fallback(
             "bytes": len(content),
             "redirects": 0,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "published_at": reader_published_at,
             "reader_fallback": "jina_reader",
             "direct_fetch_error": str(direct_error)[:100],
         }
