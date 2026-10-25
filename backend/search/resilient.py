@@ -2182,8 +2182,19 @@ class WebOrchestrator:
                 if provider_name:
                     diverse_final_providers.add(provider_name)
 
-            if len(diverse_final_domains) >= min(3, self.max_results):
+            required_publishers = min(3, self.max_results)
+            if len(diverse_final_domains) >= required_publishers:
                 selected = diverse_final[: self.max_results]
+            else:
+                # Do not fall back to a mixed/possibly evergreen SERP list if the
+                # strict publisher set cannot meet quorum. The caller must fail
+                # closed rather than treating unrelated domains as broad Chile news.
+                selected = []
+                logger.warning(
+                    "web_search_chile_general_news_quorum_not_met valid_domains=%d required=%d",
+                    len(diverse_final_domains),
+                    required_publishers,
+                )
             logger.info(
                 "web_search_chile_general_news_final_selection selected_count=%d "
                 "distinct_domains=%d selected_providers=%d",
