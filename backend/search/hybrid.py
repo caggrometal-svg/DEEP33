@@ -111,9 +111,12 @@ class HybridSearchClient:
         else:
             memory_url = os.getenv("DEEP33_MEMORY_URL", "").strip().rstrip("/")
             marker = "/functions/v1/deep33-memory"
+            supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
             self.base_url = (
                 f"{memory_url.rsplit(marker, 1)[0]}/functions/v1/deep33-hybrid-search"
                 if marker in memory_url
+                else f"{supabase_url}/functions/v1/deep33-hybrid-search"
+                if supabase_url
                 else ""
             )
 

@@ -1777,18 +1777,9 @@ async def _fetch_web_source(
                 type(exc).__name__,
             )
 
-    # An unresolved opaque Google News URL is not publisher evidence. Do not
-    # spend the remaining Edge budget fetching the wrapper/Reader fallback.
-    if (urlparse(url).hostname or "").casefold().removeprefix("www.") == "news.google.com":
-        _log_web_fetch_failure(
-            request_id=request_id,
-            url=url,
-            provider=provider,
-            error="GOOGLE_NEWS_WRAPPER_UNRESOLVED",
-            reason="PARSER_FAIL",
-        )
-        return None
-
+    # If the provider-level rescue could not find a direct article URL, let the
+    # fetch layer decode the signed Google News RSS wrapper to its publisher URL.
+    # The fetcher fails closed if Google cannot resolve the wrapper safely.
     try:
         result = await fetch_page(
             url,

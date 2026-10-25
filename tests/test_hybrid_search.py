@@ -230,3 +230,34 @@ def test_hybrid_client_reports_edge_generated_embedding_mode():
             os.environ["DEEP33_HYBRID_SEARCH_ENABLED"] = previous
         httpx.AsyncClient = original
 
+
+
+def test_hybrid_client_derives_edge_url_from_supabase_base_url():
+    keys = (
+        "DEEP33_HYBRID_SEARCH_URL",
+        "DEEP33_KNOWLEDGE_DB_URL",
+        "DEEP33_KNOWLEDGE_DB_KEY",
+        "DEEP33_MEMORY_URL",
+        "SUPABASE_URL",
+        "SUPABASE_ANON_KEY",
+        "DEEP33_HYBRID_SEARCH_ENABLED",
+    )
+    previous = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
+    os.environ["SUPABASE_URL"] = "https://project.example.co"
+    os.environ["SUPABASE_ANON_KEY"] = "anon-key"
+    try:
+        client = HybridSearchClient()
+        assert client.base_url == (
+            "https://project.example.co/functions/v1/deep33-hybrid-search"
+        )
+        assert client.api_key == "anon-key"
+        assert client.status()["configured"] is True
+        assert client.status()["enabled"] is True
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value

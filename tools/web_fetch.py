@@ -631,6 +631,155 @@ async def _fetch_with_total_budget(
         raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
 
 
+def _is_google_news_wrapper(url: str) -> bool:
+    parsed = urlparse(str(url or "").strip())
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    return (
+        host == "news.google.com"
+        and (
+            parsed.path.startswith("/rss/articles/")
+            or parsed.path.startswith("/articles/")
+            or parsed.path.startswith("/read/")
+        )
+    )
+
+
+async def _resolve_google_news_wrapper(url: str, timeout_seconds: float) -> str:
+    """Resolve an opaque Google News RSS URL to the original publisher URL."""
+    if not _is_google_news_wrapper(url):
+        return url
+
+    parsed = urlparse(url)
+    article_id = parsed.path.rstrip("/").rsplit("/", 1)[-1].strip()
+    if not article_id or len(article_id) > 4096:
+        raise WebFetchError("GOOGLE_NEWS_WRAPPER_INVALID")
+
+    client = await _fetch_http_client()
+    request_timeout = httpx.Timeout(
+        connect=min(1.0, max(0.2, timeout_seconds)),
+        read=min(1.6, max(0.4, timeout_seconds)),
+        write=min(1.2, max(0.4, timeout_seconds)),
+        pool=min(0.5, max(0.2, timeout_seconds)),
+    )
+    browser_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "es-CL,es;q=0.9,en;q=0.7",
+        "Cookie": "CONSENT=PENDING+987",
+    }
+
+    splash_url = f"https://news.google.com/rss/articles/{article_id}"
+    response = await client.get(
+        splash_url,
+        headers=browser_headers,
+        timeout=request_timeout,
+    )
+    # Google may canonicalize the splash URL with locale parameters. Follow at
+    # most one same-origin redirect and never follow /sorry/ or an external hop.
+    if response.status_code in REDIRECT_STATUSES:
+        location = response.headers.get("location") or ""
+        next_url = urljoin(splash_url, location)
+        next_parsed = urlparse(next_url)
+        if (
+            (next_parsed.hostname or "").casefold().removeprefix("www.") != "news.google.com"
+            or "/sorry/" in next_parsed.path.casefold()
+        ):
+            raise WebFetchError("GOOGLE_NEWS_WRAPPER_UNRESOLVED")
+        response = await client.get(
+            next_url,
+            headers=browser_headers,
+            timeout=request_timeout,
+        )
+    if response.status_code != 200:
+        raise WebFetchError(f"GOOGLE_NEWS_WRAPPER_HTTP_{response.status_code}")
+
+    body = response.text
+    signature_match = re.search(r'data-n-a-sg=["\']([^"\']+)["\']', body)
+    timestamp_match = re.search(r'data-n-a-ts=["\']([0-9]+)["\']', body)
+    if not signature_match or not timestamp_match:
+        raise WebFetchError("GOOGLE_NEWS_WRAPPER_PARAMS_MISSING")
+
+    signature = html.unescape(signature_match.group(1))
+    timestamp = int(timestamp_match.group(1))
+    inner = json.dumps(
+        [
+            "garturlreq",
+            [
+                ["X", "X", ["X", "X"], None, None, 1, 1, "US:en", None, 1, None, None, None, None, None, 0, 1],
+                "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0,
+            ],
+            article_id,
+            timestamp,
+            signature,
+        ],
+        separators=(",", ":"),
+    )
+    outer = json.dumps([[["Fbv4je", inner]]], separators=(",", ":"))
+    rpc = await client.post(
+        "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+        headers={
+            **browser_headers,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "Origin": "https://news.google.com",
+            "Referer": "https://news.google.com/",
+            "X-Same-Domain": "1",
+        },
+        data={"f.req": outer},
+        timeout=request_timeout,
+    )
+    if rpc.status_code != 200:
+        raise WebFetchError(f"GOOGLE_NEWS_WRAPPER_RPC_HTTP_{rpc.status_code}")
+
+    payload_text = rpc.text
+    if "\n\n" in payload_text:
+        payload_text = payload_text.split("\n\n", 1)[1]
+    try:
+        frames = json.loads(payload_text)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise WebFetchError("GOOGLE_NEWS_WRAPPER_RPC_INVALID") from exc
+
+    decoded_url = ""
+    if isinstance(frames, list):
+        for frame in frames:
+            if (
+                isinstance(frame, list)
+                and len(frame) >= 3
+                and frame[0] == "wrb.fr"
+                and frame[1] == "Fbv4je"
+                and frame[2]
+            ):
+                try:
+                    decoded = json.loads(frame[2])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if (
+                    isinstance(decoded, list)
+                    and len(decoded) >= 2
+                    and decoded[0] == "garturlres"
+                ):
+                    decoded_url = str(decoded[1] or "").strip()
+                    break
+
+    if not decoded_url:
+        raise WebFetchError("GOOGLE_NEWS_WRAPPER_UNRESOLVED")
+
+    decoded_parsed = urlparse(decoded_url)
+    decoded_host = (decoded_parsed.hostname or "").casefold().removeprefix("www.")
+    if (
+        decoded_parsed.scheme.casefold() not in {"http", "https"}
+        or not decoded_host
+        or decoded_host == "news.google.com"
+        or decoded_host == "google.com"
+        or decoded_host.endswith(".google.com")
+    ):
+        raise WebFetchError("GOOGLE_NEWS_WRAPPER_UNSAFE_DESTINATION")
+
+    return await asyncio.to_thread(validate_public_url, decoded_url)
+
+
 async def _fetch_page_uncached(
     *,
     original_url: str,
@@ -722,6 +871,11 @@ async def fetch_page(
     max_text_chars = max(1000, min(MAX_TEXT_CHARS, max_text_chars))
     original_url = url.strip()
     current_url = await asyncio.to_thread(validate_public_url, original_url)
+    if _is_google_news_wrapper(current_url):
+        current_url = await _resolve_google_news_wrapper(
+            current_url,
+            timeout_seconds=max(0.8, min(2.5, timeout_seconds * 0.45)),
+        )
     cache_key=hashlib.sha256(
         f"{current_url}{max_redirects}{max_text_chars}{user_agent}".encode("utf-8")
     ).hexdigest()
