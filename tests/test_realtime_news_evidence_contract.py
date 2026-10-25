@@ -249,3 +249,77 @@ def test_current_news_requires_title_identity_even_for_same_direct_url():
         source,
         page,
     )
+
+
+def test_broad_chile_news_query_keeps_date_words_in_general_news_classification(monkeypatch):
+    from backend import main
+
+    query = (
+        "¿Cuáles son las noticias más recientes de Chile publicadas hoy "
+        "domingo 25 de octubre de 2026? Busca en Internet y revisa varias fuentes."
+    )
+    assert main._is_broad_current_news_query(query) is True
+    assert main._is_broad_current_news_query("noticias del dólar en Chile hoy") is False
+
+
+def test_broad_chile_news_accepts_moderately_relevant_real_article(monkeypatch):
+    from backend import main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = (
+        "¿Cuáles son las noticias más recientes de Chile publicadas hoy "
+        "domingo 25 de octubre de 2026? Busca en Internet y revisa varias fuentes."
+    )
+    url = "https://medio.example/2026/10/25/suben-tarifas-transporte-publico.html"
+    source = {
+        "title": "Suben las tarifas del transporte público este domingo",
+        "url": url,
+        "snippet": "La medida fue informada este domingo y rige desde hoy.",
+        "source_domain": "medio.example",
+        "provider": "bing",
+        "published_at": now,
+    }
+    page = {
+        "title": source["title"],
+        "url": url,
+        "domain": "medio.example",
+        "published_at": now,
+        "title_from_page": True,
+        "text": (
+            "Suben las tarifas del transporte público este domingo. "
+            "La autoridad confirmó la medida y detalló su entrada en vigencia. "
+        ) * 6,
+    }
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.21)
+
+    assert main._is_publishable_realtime_news_source(query, source, page)
+
+
+def test_topical_chile_news_does_not_get_broad_query_relevance_relaxation(monkeypatch):
+    from backend import main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "Últimas noticias del dólar en Chile hoy"
+    url = "https://medio.example/2026/10/25/suben-tarifas-transporte-publico.html"
+    source = {
+        "title": "Suben las tarifas del transporte público este domingo",
+        "url": url,
+        "snippet": "La medida fue informada este domingo y rige desde hoy.",
+        "source_domain": "medio.example",
+        "provider": "bing",
+        "published_at": now,
+    }
+    page = {
+        "title": source["title"],
+        "url": url,
+        "domain": "medio.example",
+        "published_at": now,
+        "title_from_page": True,
+        "text": (
+            "Suben las tarifas del transporte público este domingo. "
+            "La autoridad confirmó la medida y detalló su entrada en vigencia. "
+        ) * 6,
+    }
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.21)
+
+    assert not main._is_publishable_realtime_news_source(query, source, page)
