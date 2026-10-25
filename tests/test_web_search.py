@@ -1371,3 +1371,27 @@ def test_known_reference_query_uses_general_web_search_fanout(monkeypatch):
     assert result["results"][0]["url"] == "https://example.org/asyncio"
     assert result["fresh_request"] is True
 
+def test_spanish_python_release_query_rejects_off_topic_debian_page():
+    from backend.search.engine import is_realtime_query, rank_results
+
+    query = (
+        "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. "
+        "Contrasta las páginas oficiales recuperadas y cita enlaces directos."
+    )
+    unrelated = {
+        "title": "Debian -- Versiones de Debian",
+        "url": "https://www.debian.org/releases/index.es.html",
+        "snippet": "Versiones estables y documentación de Debian GNU/Linux.",
+        "source_domain": "www.debian.org",
+    }
+    relevant = {
+        "title": "Python Release Python 3.15.1",
+        "url": "https://www.python.org/downloads/release/python-3151/",
+        "snippet": "Python 3.15.1 is the latest stable release of Python.",
+        "source_domain": "www.python.org",
+    }
+
+    assert is_realtime_query(query)
+    assert rank_results(query, [unrelated], realtime=True) == []
+    ranked = rank_results(query, [unrelated, relevant], realtime=True)
+    assert [item["url"] for item in ranked] == [relevant["url"]]
