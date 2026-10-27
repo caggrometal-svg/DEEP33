@@ -152,6 +152,34 @@ def _is_publishable_realtime_news_source(
         minimum_relevance_score = 0.28
     return score_result(query, relevance_item) >= minimum_relevance_score
 
+
+def _is_relevant_fetched_web_source(
+    query: str,
+    fetched_page: dict[str, Any],
+) -> bool:
+    """Require relevance from the page actually opened, not only its SERP snippet."""
+    if not isinstance(fetched_page, dict):
+        return False
+    page_text = str(fetched_page.get("text") or "").strip()
+    page_url = str(fetched_page.get("url") or fetched_page.get("final_url") or "").strip()
+    if len(page_text) < 80 or not page_url:
+        return False
+    relevance_item = {
+        "title": str(fetched_page.get("title") or ""),
+        "url": page_url,
+        "snippet": page_text[:2000],
+        "text": page_text[:2000],
+    }
+    try:
+        minimum = max(
+            0.14,
+            min(0.35, float(os.getenv("WEB_FETCH_MIN_RELEVANCE_SCORE", "0.18"))),
+        )
+    except (TypeError, ValueError):
+        minimum = 0.18
+    return score_result(query, relevance_item) >= minimum
+
+
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
@@ -1901,7 +1929,9 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Publication time is trusted only when extracted from the page that
+        # was actually opened. Search-engine timestamps remain discovery metadata.
+        "published_at": result.get("published_at"),
         "text_chars": len(page_text),
     }
 
@@ -2077,17 +2107,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
-            if (
-                page is not None
-                and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
-            ):
+            if page is None:
+                return None
+            if not _is_relevant_fetched_web_source(query, page):
                 logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    "web_evidence_page_relevance_rejected request_id=%s url=%s",
                     request_id or "unknown",
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
                 return None
+            if is_realtime_news_query(query):
+                if not _is_publishable_realtime_news_source(query, source, page):
+                    logger.info(
+                        "web_evidence_realtime_article_rejected request_id=%s url=%s reason=identity_freshness_or_relevance",
+                        request_id or "unknown",
+                        str(page.get("url") or source.get("url") or "")[:500],
+                    )
+                    return None
             return page
 
         fetch_batch = await fetch_source_quorum(
