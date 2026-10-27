@@ -818,7 +818,7 @@ async def search_recent_news_candidates(
         return []
 
     limit = max(1, min(8, int(max_results)))
-    budget = min(2.2, max(0.8, float(timeout_seconds)))
+    budget = min(4.0, max(2.0, float(timeout_seconds)))
     folded = cleaned.casefold()
     if "chile" in folded or "chileno" in folded or "chilena" in folded:
         variants = [
@@ -834,37 +834,46 @@ async def search_recent_news_candidates(
         ]
     variants = list(dict.fromkeys(" ".join(item.split()) for item in variants if item.strip()))
 
-    # Do not let one empty or blocked index consume the whole recovery window.
-    # Google News, Bing, and DuckDuckGo are independent discovery paths; the
-    # final article validator still verifies dates, identity, relevance, and text.
+    # Current-news recovery must fan out across the independent indexes already
+    # used by the general-web orchestrator. The caller's original article
+    # validator still decides which pages count as evidence; candidates alone
+    # never satisfy a news quorum.
     calls = [
         ("google_news", variants[0]),
         ("google_news", variants[min(1, len(variants) - 1)]),
-        ("google_news", variants[min(2, len(variants) - 1)]),
         ("bing", variants[0]),
         ("bing", variants[min(1, len(variants) - 1)]),
-        ("duckduckgo", variants[0]),
+        ("google", variants[min(2, len(variants) - 1)]),
+        ("cl0q", variants[0]),
+        ("mojeek", variants[min(1, len(variants) - 1)]),
         ("duckduckgo", variants[min(2, len(variants) - 1)]),
+        ("yahoo", variants[min(1, len(variants) - 1)]),
     ]
 
     async def collect(provider_name: str, search_query: str) -> tuple[str, list[dict]]:
         try:
-            per_call = min(1.8, budget)
+            per_call = min(2.5, budget)
             if provider_name == "google_news":
-                items = await asyncio.wait_for(
-                    _google_news_search(search_query, per_call, limit),
-                    timeout=per_call,
-                )
+                search = _google_news_search(search_query, per_call, limit)
             elif provider_name == "bing":
-                items = await asyncio.wait_for(
-                    _bing_search(search_query, per_call, limit, preserve_candidates=True),
-                    timeout=per_call,
+                search = _bing_search(
+                    search_query, per_call, limit, preserve_candidates=True
                 )
+            elif provider_name == "google":
+                search = _google_search(
+                    search_query, per_call, limit, preserve_candidates=True
+                )
+            elif provider_name == "cl0q":
+                search = _cl0q_search(search_query, per_call, limit)
+            elif provider_name == "mojeek":
+                search = _mojeek_search(search_query, per_call, limit)
+            elif provider_name == "duckduckgo":
+                search = _duckduckgo_search(search_query, per_call, limit)
             else:
-                items = await asyncio.wait_for(
-                    _duckduckgo_search(search_query, per_call, limit),
-                    timeout=per_call,
+                search = _yahoo_search(
+                    search_query, per_call, limit, preserve_candidates=True
                 )
+            items = await asyncio.wait_for(search, timeout=per_call)
             return provider_name, [
                 {**item, "provider": provider_name}
                 for item in items
