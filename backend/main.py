@@ -3250,6 +3250,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
 
+        # This path is intentionally part of the deployed backend contract: every
+        # runtime-news recovery change must produce a new Vercel revision for exact-SHA gates.
         # The cross-provider orchestrator intentionally compresses candidates before
         # this endpoint performs page reads. For realtime-news queries that can leave
         # fewer than three editorial domains even though the recent-news feed contains
