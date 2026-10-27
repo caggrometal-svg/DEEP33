@@ -647,6 +647,14 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
                     "snippet": "Noticias de Chile hoy: el Gobierno confirmó un acuerdo nacional y sus principales medidas.",
                     "published_at": published_at,
                 },
+                {
+                    "title": "Gobierno y política de Chile confirman sesión extraordinaria - Diario Extra",
+                    "url": "https://extra.example/2026/10/27/sesion-extraordinaria.html",
+                    "source_domain": "extra.example",
+                    "provider": "bing",
+                    "snippet": "Noticias de política en Chile: el Gobierno confirmó una sesión extraordinaria.",
+                    "published_at": published_at,
+                },
             ],
             "sources": [],
             "errors": [],
@@ -656,6 +664,8 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
         }
 
     async def fake_fetch_source(source, **_kwargs):
+        if source.get("source_domain") == "extra.example":
+            raise TimeoutError("simulated failure for an extra publisher after the verified quorum")
         assert source.get("source_domain") in {"emol.com", "cooperativa.cl", "biobiochile.cl"}
         url = direct if source["source_domain"] == "emol.com" else cooperativa if source["source_domain"] == "cooperativa.cl" else biobio
         return {
@@ -673,6 +683,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "text_chars": 360,
         }
 
+    monkeypatch.setenv("WEB_EVIDENCE_TARGET_SOURCES", "4")
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
@@ -685,7 +696,10 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
+    assert body["status"] == "success"
+    assert body["degraded"] is False
     assert body["domains_used"] == 3
+    assert len(body["results"]) == 3
     assert body["results"][0]["url"] == direct
     assert body["results"][0]["original_url"] == wrapper
     assert body["results"][0]["source_domain"] == "emol.com"
