@@ -65,7 +65,7 @@ def test_tavily_realtime_news_is_time_bounded(monkeypatch):
 
     result = asyncio.run(
         module._tavily_search(
-            "situación actual de Las Condes",
+            "noticias actuales de Las Condes",
             "tvly-test",
             5,
             5,
