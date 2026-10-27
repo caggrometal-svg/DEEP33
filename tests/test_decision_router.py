@@ -39,7 +39,9 @@ def test_classifier_routes_external_mutable_facts_to_web_without_magic_words():
         "¿Qué dice la documentación de FastAPI sobre lifespan?",
         "¿Cuál es la normativa de equipaje de LATAM?",
         "¿Quién fundó OpenAI?",
+        "¿quién fundó openai?",
         "¿Cuál es la población de Japón?",
+        "¿cuál es la capital de francia?",
     )
     for query in cases:
         assert classify_query(query).route == DecisionRoute.WEB, query
