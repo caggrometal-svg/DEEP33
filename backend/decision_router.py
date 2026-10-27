@@ -116,7 +116,8 @@ _SEISMIC_RE = re.compile(
 )
 _FINANCE_RE = re.compile(
     r"\b(?:d[oó]lar|dolar|tipo de cambio|cotizaci[oó]n|divisa|divisas|"
-    r"euro|uf|utm|bitcoin|btc|usd|clp|precio de|valor de)\b",
+    r"euro|uf|utm|bitcoin|btc|usd|clp|acciones?|bolsa|mercado burs[aá]til|"
+    r"stock(?:s)?|share price|nasdaq|nyse|s&p 500)\b",
     re.I,
 )
 _REALTIME_RE = re.compile(
@@ -130,7 +131,31 @@ _RESEARCH_RE = re.compile(
     r"comprueba|contrasta|evidencia|fuentes|fact[- ]?check)\b",
     re.I,
 )
-_PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
+_PRICE_RE = re.compile(
+    r"\b(?:precio(?:s)?|valor(?:es)?|cotizaci[oó]n|cu[aá]nto cuesta|cu[aá]nto vale|"
+    r"price(?:s)?|pricing|cost(?:s)?|coste(?:s)?|cu[aá]nto est[aá])\b",
+    re.I,
+)
+_DOMAIN_SPECIFIC_WEB_RE = re.compile(
+    r"\b(?:"
+    r"empresa(?:s)?|compa[nñ][ií]a(?:s)?|marca(?:s)?|fabricante(?:s)?|producto(?:s)?|modelo(?:s)?|"
+    r"company|companies|brand|manufacturer|product(?:s)?|model(?:s)?|"
+    r"precio(?:s)?|price(?:s)?|pricing|cost(?:s)?|coste(?:s)?|costos?|"
+    r"especificaci[oó]n(?:es)?|ficha t[eé]cnica|manual(?:es)?|documentaci[oó]n(?: t[eé]cnica| oficial)?|"
+    r"api|sdk|repositorio|github|framework|biblioteca|librer[ií]a|changelog|release notes|"
+    r"versi[oó]n(?:es)?|version(?:s)?|documentation|technical docs?|official docs?|"
+    r"comparar|compara(?:ci[oó]n|tiva)?|comparisons?|compare|versus|vs\.?|alternativa(?:s)?|"
+    r"rese[nñ]as|opiniones|reviews?|ratings?|mejores|best|"
+    r"noticia(?:s)?|news|titular(?:es)?|reportaje(?:s)?|"
+    r"art[ií]culo(?:s)? cient[ií]fico(?:s)?|papers?|preprints?|estudio(?:s)? cient[ií]fico(?:s)?|"
+    r"publicaci[oó]n(?:es)? cient[ií]fica(?:s)?|investigaci[oó]n(?:es)? reciente(?:s)?|"
+    r"open data|datos abiertos|datos p[uú]blicos|dataset(?:s)?|estad[ií]sticas oficiales|"
+    r"base de datos|portal de transparencia|transparencia|organismo oficial|sitio oficial|"
+    r"ministerio|government data|public records|official website|regulaci[oó]n|normativa|"
+    r"ley vigente|reglamento|foro(?:s)?|forum(?:s)?|reddit|stackoverflow|stack overflow"
+    r")\b",
+    re.I,
+)
 
 
 def classify_query(query: str) -> Decision:
@@ -162,6 +187,11 @@ def classify_query(query: str) -> Decision:
         return Decision(
             DecisionRoute.FINANCE, 0.95,
             "financial_indicator_should_use_live_data", cleaned, 20.0,
+        )
+    if _DOMAIN_SPECIFIC_WEB_RE.search(cleaned) or _PRICE_RE.search(cleaned):
+        return Decision(
+            DecisionRoute.WEB, 0.90,
+            "specific_external_evidence_requested", cleaned, 20.0,
         )
     if _RESEARCH_RE.search(cleaned) or _REALTIME_RE.search(cleaned):
         return Decision(
