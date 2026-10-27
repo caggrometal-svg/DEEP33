@@ -3402,7 +3402,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        max_fetch_candidates = max(4, min(8, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "6"))))
         direct_sources = [
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3413,76 +3413,68 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             == "news.google.com"
         ]
-        direct_editorial_domains = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
-            .casefold().removeprefix("www.")
-            for item in direct_sources
-        } - {""}
-        # Keep direct publisher URLs first, but retain wrapper candidates as a
-        # bounded fallback. A current-news quorum cannot be certified from two
-        # readable pages when the third editorial domain is behind a wrapper.
-        candidate_pool = [*direct_sources, *wrapper_sources]
-        for source in candidate_pool:
-            editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-            if not editorial_host:
-                editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            if not editorial_host or editorial_host in seen_fetch_domains:
-                continue
-            seen_fetch_domains.add(editorial_host)
-            fetch_candidates.append(source)
-            if len(fetch_candidates) >= max_fetch_candidates:
-                break
-        # Reserve time for the Reader after a fast direct attempt. The former
-        # 1.2s cap cancelled the shared deadline before any usable page text arrived.
-        # Candidates run concurrently; bound the whole per-page fetch at 3.3–4.0s.
-        fetch_timeout = max(
-            3.3,
-            min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
-        )
-        fetch_results = await asyncio.gather(
-            *(
-                _fetch_web_source(
-                    source,
-                    request_id=request_id,
-                    timeout_seconds=fetch_timeout,
-                    direct_timeout_seconds=0.85,
-                )
-                for source in fetch_candidates
+        # Keep ranked direct URLs first, then wrappers. Do not pre-collapse by
+        # domain here: fetch_source_quorum() preserves domain diversity while also
+        # retaining one alternate URL per domain when the first candidate blocks.
+        candidate_pool = [*direct_sources, *wrapper_sources][:max_fetch_candidates]
+
+        endpoint_target_sources = 3 if is_realtime_news_query(q) else 2
+        endpoint_policy = FetchPolicy(
+            base_timeout_seconds=max(
+                2.4,
+                min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
             ),
-            return_exceptions=True,
+            min_timeout_seconds=1.0,
+            max_timeout_seconds=4.2,
+            global_budget_seconds=max(
+                4.5,
+                min(8.0, float(os.getenv("WEB_SEARCH_FETCH_BUDGET_SECONDS", "6.2"))),
+            ),
+            concurrency=4,
+            target_sources=endpoint_target_sources,
+            max_sources=5,
+            min_text_chars=80,
+            min_total_chars=320 if endpoint_target_sources == 2 else 600,
         )
-        fetched_pages: list[dict[str, Any]] = []
-        fetch_failures: list[dict[str, str]] = []
+
+        async def endpoint_fetcher(
+            source: dict[str, Any],
+            adaptive_timeout: float,
+        ) -> dict[str, Any] | None:
+            page = await _fetch_web_source(
+                source,
+                request_id=request_id,
+                timeout_seconds=adaptive_timeout,
+                direct_timeout_seconds=min(0.85, adaptive_timeout),
+            )
+            if page is None:
+                return None
+            if not _is_relevant_fetched_web_source(q, source, page):
+                return None
+            return {
+                **page,
+                "_source_url": str(source.get("url") or "").strip(),
+            }
+
+        fetch_batch = await fetch_source_quorum(
+            candidate_pool,
+            endpoint_fetcher,
+            policy=endpoint_policy,
+        )
+        fetched_pages = list(fetch_batch.documents)
+        fetch_failures: list[dict[str, str]] = [
+            {
+                "url": str(item.get("url") or ""),
+                "provider": "web_fetch",
+                "reason": str(item.get("status") or "FETCH_OR_EXTRACTION_FAILED"),
+            }
+            for item in fetch_batch.failures
+        ]
         resolved_urls: dict[str, str] = {}
         fetched_by_source_url: dict[str, dict[str, Any]] = {}
-        for source, fetched in zip(fetch_candidates, fetch_results):
-            if isinstance(fetched, BaseException):
-                if isinstance(fetched, asyncio.CancelledError):
-                    raise fetched
-                reason = _web_fetch_failure_reason(fetched)
-                _log_web_fetch_failure(
-                    request_id=request_id,
-                    url=str(source.get("url") or ""),
-                    provider=str(source.get("provider") or "unknown"),
-                    error=fetched,
-                    reason=reason,
-                )
-                fetch_failures.append({
-                    "url": str(source.get("url") or ""),
-                    "provider": str(source.get("provider") or "unknown"),
-                    "reason": reason,
-                })
-                continue
-            if fetched is None:
-                fetch_failures.append({
-                    "url": str(source.get("url") or ""),
-                    "provider": str(source.get("provider") or "unknown"),
-                    "reason": "FETCH_OR_EXTRACTION_FAILED",
-                })
-                continue
-            fetched_pages.append(fetched)
-            original_source_url = str(source.get("url") or "").strip()
-            resolved_source_url = str(fetched.get("url") or "").strip()
+        for fetched in fetched_pages:
+            original_source_url = str(fetched.get("_source_url") or "").strip()
+            resolved_source_url = str(fetched.get("url") or fetched.get("final_url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
                 fetched_by_source_url[original_source_url] = fetched
