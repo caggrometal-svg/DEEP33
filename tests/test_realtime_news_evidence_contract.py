@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.main import _is_publishable_realtime_news_source
+from backend.main import _is_publishable_realtime_news_source, _realtime_news_quorum
 
 
 def _news_source(*, published_at, url="https://noticias.example/2026/10/25/gobierno-medidas-chile.html"):
@@ -37,6 +37,47 @@ def test_current_news_accepts_recent_relevant_extracted_article():
         source,
         page,
     )
+
+
+def test_current_news_rejects_search_result_date_when_final_page_has_no_date():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    page = _fetched_page(published_at=None)
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_shared_news_quorum_requires_three_domains_and_two_providers():
+    now = datetime.now(timezone.utc).isoformat()
+    pages = [
+        {
+            "url": f"https://publisher-{index}.example/2026/10/27/article-{index}",
+            "published_at": now,
+            "fetched": True,
+            "evidence_type": "verified_current_news_article",
+        }
+        for index in range(3)
+    ]
+
+    ok, domains, providers = _realtime_news_quorum(pages, ["bing", "mojeek"])
+    assert ok is True
+    assert len(domains) == 3
+    assert len(providers) == 2
+
+    ok_two_pages, _, _ = _realtime_news_quorum(pages[:2], ["bing", "mojeek"])
+    assert ok_two_pages is False
+
+    same_publisher = [dict(page, url="https://publisher.example/article") for page in pages]
+    ok_same_domain, same_domains, _ = _realtime_news_quorum(same_publisher, ["bing", "mojeek"])
+    assert ok_same_domain is False
+    assert len(same_domains) == 1
+
+    ok_single_provider, _, _ = _realtime_news_quorum(pages, ["bing"])
+    assert ok_single_provider is False
 
 
 def test_current_news_rejects_undated_evergreen_geography_page():
