@@ -38,6 +38,8 @@ def test_classifier_routes_external_mutable_facts_to_web_without_magic_words():
         "¿Cuál es el horario del Museo del Prado?",
         "¿Qué dice la documentación de FastAPI sobre lifespan?",
         "¿Cuál es la normativa de equipaje de LATAM?",
+        "¿Quién fundó OpenAI?",
+        "¿Cuál es la población de Japón?",
     )
     for query in cases:
         assert classify_query(query).route == DecisionRoute.WEB, query
