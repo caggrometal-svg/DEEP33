@@ -214,20 +214,39 @@ object Deep33Api {
         )
 
     private fun requiresVerifiedWebEvidence(messages: JSONArray): Boolean {
-        val text = buildString {
-            for (index in 0 until messages.length()) {
-                val item = messages.optJSONObject(index) ?: continue
-                if (item.optString("role") != "user") continue
-                append(' ')
-                append(item.optString("content"))
-            }
-        }.lowercase()
-        return listOf(
-            "internet", " web ", "noticia", "actual", "hoy", "ayer", "mañana",
-            "clima", "temperatura", "pronóstico", "pronostico", "precio",
-            "cotización", "cotizacion", "fuente", "verifica", "comprueba",
-            "fecha", "hora", "presidente", "elecciones"
-        ).any { text.contains(it) }
+        var latestUser = ""
+        for (index in messages.length() - 1 downTo 0) {
+            val item = messages.optJSONObject(index) ?: continue
+            if (item.optString("role") != "user") continue
+            latestUser = item.optString("content").trim().lowercase()
+            if (latestUser.isNotBlank()) break
+        }
+        if (latestUser.isBlank()) return false
+
+        if (listOf(
+                "internet", " web ", "noticia", "actual", "hoy", "ayer", "mañana",
+                "clima", "temperatura", "pronóstico", "pronostico", "precio",
+                "cotización", "cotizacion", "fuente", "verifica", "comprueba",
+                "fecha", "hora", "presidente", "elecciones", "ceo", "versión",
+                "version", "release", "horario", "disponibilidad", "stock",
+                "normativa", "reglamento", "documentación", "documentacion",
+                "sitio oficial", "página oficial", "pagina oficial"
+            ).any { latestUser.contains(it) }
+        ) {
+            return true
+        }
+
+        val stableExplanation = Regex(
+            """^¿?\s*(qué es|que es|what is|explica|explain|cómo funciona|como funciona|how does|por qué|por que|why|define|definición|definicion)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        if (stableExplanation.containsMatchIn(latestUser)) return false
+
+        val factualLookup = Regex(
+            """^¿?\s*(quién|quien|who|dónde|donde|where|cuándo|cuando|when|cuál|cual|which|cuánto|cuanto|how much|qué dice|que dice|what does|según|segun)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        return factualLookup.containsMatchIn(latestUser)
     }
 
     fun generate(
