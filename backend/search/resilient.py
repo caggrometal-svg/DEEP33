@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _extract_realtime_locality, _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -656,12 +656,12 @@ class WebOrchestrator:
                 "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
             )
         if news_intent and "chile" in lowered:
+            locality = _extract_realtime_locality(cleaned)
+            if locality:
+                return f"{locality} Chile noticias hoy actualidad"
             if current_events_intent:
-                # Generic current-events phrasing ("acontecimientos actuales",
-                # "what is happening") was not classified as news here. The
-                # primary engines then repeated a narrow query and recovery could
-                # collapse to country-only tokens. Broaden discovery across topics
-                # and providers without restricting results to named sites.
+                # Broad country-level current events can be widened, but a named
+                # locality must never be discarded by recovery.
                 return "Chile noticias hoy actualidad acontecimientos recientes"
             return "Chile últimas noticias hoy"
         if news_intent and compact:
