@@ -570,6 +570,40 @@ def test_realtime_rank_rejects_country_only_match_for_named_locality():
     assert [item["url"] for item in ranked] == ["https://news.example/las-condes-live"]
 
 
+def test_broad_chile_news_question_ignores_generic_headline_adjectives():
+    from backend.search.engine import _realtime_anchor_tokens
+
+    query = "¿Cuáles son las noticias más importantes de Chile hoy?"
+    assert _realtime_anchor_tokens(query) == {"chile"}
+    published = datetime.now(timezone.utc).isoformat()
+    results = [
+        {
+            "title": "Gobierno ingresará hoy al Congreso un mensaje presidencial",
+            "url": "https://www.latercera.com/politica/noticia/gobierno-ingresara-hoy-al-congreso/",
+            "source_domain": "latercera.com",
+            "snippet": "El Gobierno ingresa hoy al Congreso la medida, en Chile.",
+            "published_at": published,
+        },
+        {
+            "title": "Detienen a 40 personas durante un despliegue policial",
+            "url": "https://www.diarioeldia.cl/noticias/2026/10/27/155016-detienen-a-40-personas",
+            "source_domain": "diarioeldia.cl",
+            "snippet": "Operativo de seguridad este martes en la región de Coquimbo, Chile.",
+            "published_at": published,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: autoridades anuncian nuevas medidas",
+            "url": "https://www.cooperativa.cl/noticias/pais/actualidad/noticias-del-dia/2026-10-27/",
+            "source_domain": "cooperativa.cl",
+            "snippet": "Resumen de información actualizada sobre Chile.",
+            "published_at": published,
+        },
+    ]
+
+    ranked = rank_results(query, results, realtime=True)
+    assert {item["url"] for item in ranked} == {item["url"] for item in results}
+
+
 def test_realtime_broad_country_news_does_not_require_a_country_anchor():
     results = [
         {
