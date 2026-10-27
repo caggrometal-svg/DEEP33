@@ -31,6 +31,22 @@ def test_classifier_routes_explicit_web_request_to_web():
     assert classify_query("Busca en internet quién ganó la elección hoy").route == DecisionRoute.WEB
 
 
+def test_classifier_routes_product_prices_to_web_not_finance():
+    assert classify_query("¿Cuánto cuesta un Samsung Galaxy y dónde lo venden?").route == DecisionRoute.WEB
+
+
+def test_classifier_routes_technical_documentation_to_web():
+    assert classify_query("Documentación oficial de la API de Python asyncio").route == DecisionRoute.WEB
+
+
+def test_classifier_routes_science_and_public_data_queries_to_web():
+    assert classify_query("Busca papers científicos y datasets públicos sobre contaminación").route == DecisionRoute.WEB
+
+
+def test_classifier_routes_product_comparisons_and_forums_to_web():
+    assert classify_query("Compara reseñas y opiniones en foros sobre dos routers").route == DecisionRoute.WEB
+
+
 def test_validation_rejects_missing_metadata():
     evidence = Evidence(ok=True, route=DecisionRoute.FINANCE, data={"value": 900, "date": "2026-10-15"})
     validated = __import__("asyncio").run(validate_evidence(evidence))
