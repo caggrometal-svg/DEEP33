@@ -3559,6 +3559,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for provider in (result.get("providers") or [])
             if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
+        navigation_quorum_met = (
+            len(evidence_fetched_pages) >= 2
+            and domains_used >= 2
+            and extracted_text_chars >= 160
+        )
         news_quorum_met = (
             not is_realtime_news_query(q)
             or (
@@ -3567,7 +3572,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and len(valid_news_providers) >= 2
             )
         )
-        final_ok = search_ok and has_extracted_content and news_quorum_met
+        final_ok = (
+            search_ok
+            and has_extracted_content
+            and navigation_quorum_met
+            and news_quorum_met
+        )
         if not final_ok:
             status = "failed"
         elif fetch_failures:
@@ -3576,6 +3586,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
+        if not navigation_quorum_met:
+            errors.append("WEB_NAVIGATION_QUORUM_NOT_MET")
         if is_realtime_news_query(q) and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
