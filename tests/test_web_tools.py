@@ -917,10 +917,11 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     )
 
     assert working
-    # Source links must identify pages that supplied readable text, not blocked pages.
-    assert {item["url"] for item in sources} == {urls[3], urls[4], urls[5]}
-    assert not any(item["url"] in set(urls[:3]) for item in sources)
-    assert set(attempted) == {urls[0], urls[1], urls[3], urls[4], urls[5]}
+    # A blocked first URL must not poison the whole domain. The second URL from
+    # that domain may contribute if it is independently readable.
+    assert {item["url"] for item in sources} == {urls[2], urls[3], urls[4], urls[5]}
+    assert not any(item["url"] in {urls[0], urls[1]} for item in sources)
+    assert set(attempted) == set(urls)
     assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
