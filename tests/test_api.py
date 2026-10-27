@@ -624,15 +624,15 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "ok": True,
             "results": [
                 {
-                    "title": "Últimas noticias de política en Chile hoy: Gobierno y Congreso",
+                    "title": "Gobierno anuncia nuevas medidas y Congreso avanza agenda política hoy - Emol",
                     "url": wrapper,
                     "source_domain": "www.emol.com",
                     "provider": "google_news",
-                    "snippet": "Últimas noticias de política en Chile hoy: Gobierno y Congreso avanzan en la agenda nacional.",
+                    "snippet": "Últimas noticias de política en Chile hoy: el Gobierno anunció medidas y el Congreso avanzó en la agenda nacional.",
                     "published_at": published_at,
                 },
                 {
-                    "title": "Noticias de política de Chile hoy: Senado debate nueva reforma",
+                    "title": "Senado inicia debate de reforma nacional en Chile hoy - Cooperativa",
                     "url": cooperativa,
                     "source_domain": "www.cooperativa.cl",
                     "provider": "bing",
@@ -640,11 +640,19 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
                     "published_at": published_at,
                 },
                 {
-                    "title": "Actualidad de Chile hoy: BioBioChile informa nuevo acuerdo nacional",
+                    "title": "Gobierno confirma nuevo acuerdo nacional en Chile hoy - BioBioChile",
                     "url": biobio,
                     "source_domain": "www.biobiochile.cl",
                     "provider": "duckduckgo",
-                    "snippet": "Noticias de Chile hoy: BioBioChile informa un nuevo acuerdo nacional.",
+                    "snippet": "Noticias de Chile hoy: el Gobierno confirmó un acuerdo nacional y sus principales medidas.",
+                    "published_at": published_at,
+                },
+                {
+                    "title": "Gobierno y política de Chile confirman sesión extraordinaria - Diario Extra",
+                    "url": "https://extra.example/2026/10/27/sesion-extraordinaria.html",
+                    "source_domain": "extra.example",
+                    "provider": "bing",
+                    "snippet": "Noticias de política en Chile: el Gobierno confirmó una sesión extraordinaria.",
                     "published_at": published_at,
                 },
             ],
@@ -656,12 +664,18 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
         }
 
     async def fake_fetch_source(source, **_kwargs):
+        if source.get("source_domain") == "extra.example":
+            raise TimeoutError("simulated failure for an extra publisher after the verified quorum")
         assert source.get("source_domain") in {"emol.com", "cooperativa.cl", "biobiochile.cl"}
         url = direct if source["source_domain"] == "emol.com" else cooperativa if source["source_domain"] == "cooperativa.cl" else biobio
         return {
             "title": source["title"],
             "url": url,
-            "text": "Texto editorial verificable de la fuente original. " * 8,
+            "text": (
+                "Noticias de política de Chile hoy: " + str(source["title"])
+                + ". El reportaje entrega antecedentes, medidas oficiales y "
+                "detalles comprobables de la decisión nacional. "
+            ) * 8,
             "provider": source["provider"],
             "domain": source["source_domain"],
             "retrieved_at": "2026-10-16T02:00:00+00:00",
@@ -669,6 +683,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "text_chars": 360,
         }
 
+    monkeypatch.setenv("WEB_EVIDENCE_TARGET_SOURCES", "4")
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
@@ -681,7 +696,10 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["ok"] is True
+    assert body["status"] == "success"
+    assert body["degraded"] is False
     assert body["domains_used"] == 3
+    assert len(body["results"]) == 3
     assert body["results"][0]["url"] == direct
     assert body["results"][0]["original_url"] == wrapper
     assert body["results"][0]["source_domain"] == "emol.com"
@@ -708,10 +726,10 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         return {
             "ok": True,
             "results": [
-                {"title": "Últimas noticias de Chile hoy: política", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Últimas noticias de Chile hoy y actualidad nacional.", "published_at": published_at},
-                {"title": "Noticias de Chile hoy: informe nacional", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Últimas noticias e información actual de Chile hoy.", "published_at": published_at},
-                {"title": "Actualidad nacional de Chile hoy", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy con la actualidad nacional.", "published_at": published_at},
-                {"title": "Noticias de Chile hoy: actualización nacional - T13", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy con novedades nacionales verificables.", "published_at": published_at},
+                {"title": "Formalizan a 60 detenidos por robo de cobre en El Teniente - Emol", "url": wrapper, "source_domain": "emol.com", "provider": "google_news", "snippet": "Noticias de Chile hoy: formalizan a 60 detenidos por robo de cobre en El Teniente.", "published_at": published_at},
+                {"title": "Cooperativa informa detención de imputados por robo de cobre en El Teniente hoy", "url": direct_a, "source_domain": "cooperativa.cl", "provider": "bing", "snippet": "Noticias de Chile hoy: Cooperativa informa de detenciones por robo de cobre en El Teniente.", "published_at": published_at},
+                {"title": "Fiscalía investiga robo de cobre en El Teniente tras detención de imputados - BioBioChile", "url": direct_b, "source_domain": "biobiochile.cl", "provider": "duckduckgo", "snippet": "Noticias de Chile hoy: la Fiscalía investiga robo de cobre y nuevas detenciones en El Teniente.", "published_at": published_at},
+                {"title": "T13: Detenidos por robo de cobre en El Teniente enfrentarán formalización hoy", "url": direct_c, "source_domain": "t13.cl", "provider": "yahoo", "snippet": "Noticias de Chile hoy: detenidos por robo de cobre en El Teniente enfrentarán formalización.", "published_at": published_at},
             ],
             "errors": [],
             "providers": ["google_news", "bing", "duckduckgo"],
@@ -721,15 +739,24 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         fetched.append(source["url"])
         assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
         assert kwargs["direct_timeout_seconds"] == 0.85
+        resolved_url = (
+            "https://www.emol.com/noticias/Nacional/2026/10/25/robo-cobre.html"
+            if source["url"] == wrapper
+            else source["url"]
+        )
         return {
             "title": source["title"],
-            "url": source["url"],
-            "text": "Texto editorial directo verificable. " * 8,
+            "url": resolved_url,
+            "text": (
+                "Noticias de Chile hoy: " + str(source["title"])
+                + ". La Fiscalía detalla antecedentes de las detenciones por "
+                "robo de cobre en El Teniente y las medidas judiciales del caso. "
+            ) * 6,
             "provider": source["provider"],
             "domain": source["source_domain"],
-            "retrieved_at": "2026-10-16T03:00:00+00:00",
+            "retrieved_at": "2026-10-25T03:00:00+00:00",
             "published_at": published_at,
-            "text_chars": 280,
+            "text_chars": 700,
         }
 
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
@@ -834,7 +861,9 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
 
     async def fake_search(_query, **_kwargs):
         return {
-            "ok": True,
+            # Candidate discovery is incomplete; the endpoint must still
+            # inspect these candidates and fail closed after article validation.
+            "ok": False,
             "results": [
                 {
                     "title": "Sucursal virtual Banmédica",
@@ -851,11 +880,11 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
                     "snippet": "Acceso a consultas, cuenta y servicios.",
                 },
                 {
-                    "title": "Últimas noticias de Chile hoy: política y actualidad",
+                    "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
                     "url": wrapper,
                     "source_domain": "emol.com",
                     "provider": "google_news",
-                    "snippet": "Últimas noticias de Chile hoy con cobertura de política y actualidad nacional.",
+                    "snippet": "Formalizan a 60 detenidos por robo de cobre en El Teniente; siete quedaron en prisión preventiva.",
                 },
             ],
             "sources": [],
@@ -867,21 +896,50 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
+        now = datetime.now(timezone.utc).isoformat()
+        if source["url"] == irrelevant_direct:
+            return {
+                "title": "Sucursal virtual Banmédica",
+                "url": irrelevant_direct,
+                "text": "Ingresa a tu cuenta de salud y consulta tus servicios. " * 10,
+                "provider": source["provider"],
+                "domain": "banmedica.cl",
+                "retrieved_at": now,
+                "published_at": now,
+                "text_chars": 500,
+            }
+        if source["url"] == irrelevant_login:
+            return {
+                "title": "Login Isapre Banmédica",
+                "url": irrelevant_login,
+                "text": "Acceso a consultas, cuenta y servicios médicos. " * 10,
+                "provider": source["provider"],
+                "domain": "login.isaprebanmedica.cl",
+                "retrieved_at": now,
+                "published_at": now,
+                "text_chars": 500,
+            }
         assert source["url"] == wrapper
         assert source["source_domain"] == "emol.com"
         return {
-            "title": source["title"],
+            "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
             "url": "https://www.emol.com/noticias/Nacional/2026/10/18/noticia.html",
-            "text": "Texto editorial de noticias de Chile hoy. " * 10,
+            "text": "Noticias de Chile hoy: formalizan a detenidos por robo de cobre en El Teniente, informa Emol. " * 10,
             "provider": source["provider"],
             "domain": "emol.com",
-            "retrieved_at": "2026-10-18T06:00:00+00:00",
-            "published_at": datetime.now(timezone.utc).isoformat(),
-            "text_chars": 390,
+            "retrieved_at": now,
+            "published_at": now,
+            "text_chars": 700,
         }
+
+    async def fake_recent_news_candidates(*_args, **_kwargs):
+        # This unit test isolates endpoint filtering from the separate live RSS
+        # recovery; never let a real external search alter the candidate pool.
+        return []
 
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", fake_recent_news_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(
@@ -896,7 +954,11 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in body["errors"]
     assert body["domains_used"] == 1
     assert body["fetched_pages"][0]["url"].startswith("https://www.emol.com/")
-    assert fetched == [wrapper]
+    # The service portal is excluded before extraction; only the Google News
+    # wrapper is fetched and resolved to its original editorial article.
+    assert set(fetched) == {wrapper}
+    assert irrelevant_direct not in fetched
+    assert irrelevant_login not in fetched
     assert all(
         "banmedica" not in item["url"].casefold()
         for item in body["results"]
@@ -958,3 +1020,160 @@ def test_memory_routes_scope_reads_and_writes_to_authenticated_owner(monkeypatch
         ("preferences", "owner-a:session-a"),
     ]
 
+
+
+def test_web_search_skips_generic_fresh_homepages_before_news_fetch_quorum(monkeypatch):
+    from backend import main
+
+    now = datetime.now(timezone.utc).isoformat()
+    homepage = "https://chile.travel/en/"
+    evergreen = "https://dschile.cl/conoce-chile"
+    section_landing = "https://chile.as.com/noticias/chile"
+    articles = [
+        {
+            "title": "Noticias de Chile hoy: Gobierno anuncia medidas económicas - Emol",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/gobierno-medidas.html",
+            "source_domain": "emol.com",
+            "provider": "bing",
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: Senado debate reforma - Cooperativa",
+            "url": "https://www.cooperativa.cl/noticias/pais/politica/2026/10/25/senado-reforma.html",
+            "source_domain": "cooperativa.cl",
+            "provider": "google_news",
+        },
+        {
+            "title": "Noticias de Chile hoy: Fiscalía investiga robo de cobre - BioBioChile",
+            "url": "https://www.biobiochile.cl/noticias/nacional/2026/10/25/fiscalia-cobre.shtml",
+            "source_domain": "biobiochile.cl",
+            "provider": "bing",
+        },
+    ]
+    results = [
+        {
+            "title": "Home - Chile Travel",
+            "url": homepage,
+            "source_domain": "chile.travel",
+            "provider": "bing",
+            "snippet": "Explore Chile, destinations, travel guides and places to visit.",
+            "published_at": now,
+        },
+        {
+            "title": "Conoce Chile - DSChile",
+            "url": evergreen,
+            "source_domain": "dschile.cl",
+            "provider": "google_news",
+            "snippet": "Información general sobre Chile, su territorio y destinos.",
+            "published_at": now,
+        },
+        {
+            "title": "Noticias de Chile y el mundo - AS Chile",
+            "url": section_landing,
+            "source_domain": "chile.as.com",
+            "provider": "bing",
+            "snippet": "Noticias de Chile y el mundo, actualidad nacional.",
+            "published_at": now,
+        },
+        *[
+            {
+                **article,
+                "snippet": (
+                    "Noticias de Chile hoy: " + article["title"]
+                    + ". Información reciente sobre el hecho en Chile."
+                ),
+                "published_at": now,
+            }
+            for article in articles
+        ],
+    ]
+    fetched = []
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "fresh_request": True,
+            "results": results,
+            "sources": [],
+            "providers": ["bing", "google_news"],
+            "providers_attempted": ["bing", "google_news"],
+            "errors": [],
+            "retrieved_at": now,
+        }
+
+    async def fake_fetch_source(source, **_kwargs):
+        url = source["url"]
+        fetched.append(url)
+        assert url not in {homepage, evergreen, section_landing}, (
+            "Generic pages and nested section landings must be filtered before fetch."
+        )
+        title = source["title"]
+        return {
+            "title": title,
+            "url": url,
+            "domain": source["source_domain"],
+            "provider": source["provider"],
+            "published_at": now,
+            "text": (
+                "Noticias de Chile hoy. " + title
+                + ". La publicación informa hechos recientes y detalles "
+                "verificables del acontecimiento en el país. "
+            ) * 8,
+            "text_chars": 900,
+            "title_from_page": True,
+        }
+
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
+
+    response = client.get(
+        "/v1/web/search",
+        params={"q": "noticias Chile hoy"},
+        headers={"X-DEEP33-Session-Id": "skip-generic-news-candidates"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True, body
+    assert body["status"] == "success"
+    assert body["domains_used"] == 3
+    assert set(fetched) == {article["url"] for article in articles}
+    assert section_landing not in fetched
+    assert {item["source_domain"] for item in body["results"]} == {
+        "emol.com", "cooperativa.cl", "biobiochile.cl"
+    }
+    assert homepage not in {item["url"] for item in body["results"]}
+    assert evergreen not in {item["url"] for item in body["results"]}
+
+
+def test_broad_news_filter_skips_service_landings_and_betting_verticals() -> None:
+    query = "últimas noticias de Chile hoy"
+    candidates = [
+        {
+            "title": "Digital newspaper library",
+            "url": "https://kiosco.latercera.com/library",
+            "source_domain": "kiosco.latercera.com",
+        },
+        {
+            "title": "Cooperativa media kit",
+            "url": "https://mediakit.cooperativa.cl/nuestros-medios/radio-cooperativa/a-ultima-hora",
+            "source_domain": "mediakit.cooperativa.cl",
+        },
+        {
+            "title": "Universidad de Chile vs Everton betting predictions",
+            "url": "https://bolavip.com/cl/apuestas/pronosticos/universidad-de-chile-vs-everton",
+            "source_domain": "bolavip.com",
+        },
+    ]
+    for candidate in candidates:
+        assert main._is_generic_realtime_news_candidate(candidate, query) is True, candidate
+
+    real_article = {
+        "title": "Formalizan a 60 detenidos por robo de cobre en El Teniente",
+        "url": "https://www.biobiochile.cl/noticias/nacional/region-de-ohiggins/2026/10/25/formalizan-a-detenidos.shtml",
+        "source_domain": "biobiochile.cl",
+    }
+    assert main._is_generic_realtime_news_candidate(real_article, query) is False

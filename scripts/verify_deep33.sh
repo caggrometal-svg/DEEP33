@@ -156,6 +156,102 @@ jq -e '
 jq -c '{ok,realtime,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
 echo "SEARCH=PASS web_navigation=true results>=1 fetched_pages>=1 sources>=1"
 
+# Black-box negative test: a fabricated, date-sensitive news query must fail closed.
+# The response must expose zero verified sources and the fixed no-verification answer.
+request_file chat_news_block "$VERCEL_URL/v1/chat/stream" 75 \
+  --no-buffer -X POST \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -H "X-Idempotency-Key: deep33-news-block-${GITHUB_RUN_ID:-local}" \
+  -H 'X-DEEP33-Personality: NEUTRO' \
+  --data '{"messages":[{"role":"user","content":"Busca en Internet las últimas noticias verificadas de hoy sobre el supuesto evento ZXQ-9999-ASTERION-25 en Chile. Si no hay tres artículos válidos de medios distintos, indica que no puedes verificarlo y no inventes una síntesis."}],"personality":"NEUTRO"}'
+[ "$HTTP_CODE" = "200" ] || {
+  show_redirect chat_news_block
+  tail -c 3000 "$TMP_DIR/chat_news_block.body" 2>/dev/null || true
+  fail "LIVE_CHAT_NEWS_BLOCK_HTTP_$HTTP_CODE"
+}
+grep -qi '^content-type:.*text/event-stream' "$TMP_DIR/chat_news_block.headers" || \
+  fail "LIVE_CHAT_NEWS_BLOCK_NOT_SSE"
+block_status="$(sed -n 's/^data: //p' "$TMP_DIR/chat_news_block.body" | \
+  jq -Rr 'fromjson? | select((.state // "") == "sources_ready" and (.sources // -1) == 0 and .degraded == true) | "NEWS_BLOCKED_NO_VALID_SOURCES"')"
+block_text="$(sed -n 's/^data: //p' "$TMP_DIR/chat_news_block.body" | \
+  jq -Rr 'fromjson? | .choices[]?.delta.content // empty' | tr -d '\r\n')"
+printf '%s\n' "$block_status" | grep -Fq 'NEWS_BLOCKED_NO_VALID_SOURCES' || {
+  tail -c 3000 "$TMP_DIR/chat_news_block.body" 2>/dev/null || true
+  fail "LIVE_CHAT_NEWS_BLOCK_DID_NOT_REPORT_ZERO_SOURCES_AND_DEGRADED"
+}
+printf '%s' "$block_text" | grep -Fq 'No pude verificar información actual' || {
+  echo "CHAT_NEWS_BLOCK_TEXT=$(printf '%s' "$block_text" | cut -c1-300)"
+  fail "LIVE_CHAT_NEWS_BLOCK_FALLBACK_MISSING"
+}
+printf '%s' "$block_text" | grep -Fq 'No voy a inventar datos ni enlaces.' || \
+  fail "LIVE_CHAT_NEWS_BLOCK_TRUTHFUL_FALLBACK_MISSING"
+echo "LIVE_CHAT_NEWS_BLOCK_PASS sources=0 degraded=true fixed_fallback=true"
+
+# Positive live-web gate: use natural current-news queries with a bounded fallback.
+# Every attempt must independently satisfy the full article/domain/provider quorum.
+# Changing the query does not lower the evidence contract.
+news_quorum_pass=false
+for news_query in \
+  "últimas noticias de Chile hoy" \
+  "últimas noticias políticas de Chile hoy" \
+  "noticias nacionales de Chile publicadas hoy"; do
+  echo "LIVE_NEWS_QUERY_ATTEMPT=$news_query"
+  request_file news_quorum "$VERCEL_URL/v1/web/search" 75 \
+    --get --data-urlencode "q=$news_query"
+  if [ "$HTTP_CODE" != "200" ]; then
+    echo "LIVE_NEWS_QUERY_HTTP_FAIL status=$HTTP_CODE"
+    show_redirect news_quorum || true
+    continue
+  fi
+  if jq -e '
+    .ok == true and
+    .status == "success" and
+    .realtime == true and
+    ((.results // []) | length) >= 3 and
+    ((.fetched_pages // []) | length) >= 3 and
+    ([.results[]? |
+      select(
+        (.evidence_type // "") == "verified_current_news_article" and
+        (.published_at | (type == "string" and length > 10))
+      )] | length) >= 3 and
+    ([.results[]? |
+      select((.evidence_type // "") == "verified_current_news_article") |
+      ((.source_domain // .url // "") |
+        ascii_downcase | sub("^https?://"; "") | sub("^www\\."; "") | split("/")[0])
+    ] | unique | length) >= 3 and
+    ([.providers[]? | ascii_downcase |
+      select(. != "unknown" and . != "multi" and . != "none")
+    ] | unique | length) >= 2 and
+    (.domains_used // 0) >= 3 and
+    (.extracted_text_chars // 0) >= 240 and
+    ((.errors // []) | index("REALTIME_NEWS_QUORUM_NOT_MET")) == null
+  ' "$TMP_DIR/news_quorum.body" >/dev/null 2>&1; then
+    jq -c '{
+      ok,status,realtime,providers,domains_used,extracted_text_chars,
+      verified_articles:([.results[]? | select((.evidence_type // "") == "verified_current_news_article")] | length),
+      fetched_pages_count:((.fetched_pages // []) | length),
+      article_domains:([.results[]? |
+        select((.evidence_type // "") == "verified_current_news_article") |
+        (.source_domain // .url // "")] | unique),
+      errors
+    }' "$TMP_DIR/news_quorum.body"
+    echo "LIVE_NEWS_QUORUM_PASS articles>=3 distinct_editorial_domains>=3 providers>=2 extracted_pages>=3"
+    news_quorum_pass=true
+    break
+  fi
+  jq -c '{
+    ok,status,realtime,providers,domains_used,extracted_text_chars,errors,
+    verified_articles:([.results[]? | select((.evidence_type // "") == "verified_current_news_article")] | length),
+    fetched_pages_count:((.fetched_pages // []) | length),
+    article_domains:([.results[]? |
+      select((.evidence_type // "") == "verified_current_news_article") |
+      (.source_domain // .url // "")] | unique)
+  }' "$TMP_DIR/news_quorum.body" 2>/dev/null || true
+done
+[ "$news_quorum_pass" = true ] || \
+  fail "LIVE_NEWS_QUORUM_FAIL_all_queries_need_three_recent_articles_three_domains_two_providers"
+
 request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \

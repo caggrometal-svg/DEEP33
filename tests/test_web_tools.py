@@ -127,7 +127,7 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
          "snippet": "Python asyncio event loop design and APIs"},
     ]
 
-    async def fake_call_provider(provider, query):
+    async def fake_call_provider(provider, query, **_kwargs):
         if "official" in query.casefold():
             return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
         recovered.append(provider)
@@ -925,30 +925,33 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_news_blocks_snippet_fallback_when_publishers_block(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
     results = [
         {
             "title": "Chile actualidad uno",
-            "url": "https://fuente-uno.example/chile/actualidad-uno",
+            "url": "https://www.emol.com/noticias/Nacional/2026/10/25/gobierno-medidas-uno.html",
             "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2,
             "provider": "bing",
+            "source_domain": "emol.com",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad dos",
-            "url": "https://fuente-dos.example/noticias/chile-dos",
+            "url": "https://cooperativa.cl/noticias/pais/actualidad/2026/10/25/gobierno-medidas-dos/",
             "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2,
             "provider": "google_news",
+            "source_domain": "cooperativa.cl",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad tres",
-            "url": "https://fuente-tres.example/politica/chile-tres",
+            "url": "https://www.biobiochile.cl/noticias/nacional/2026/10/25/gobierno-medidas-tres.shtml",
             "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2,
             "provider": "bing",
+            "source_domain": "biobiochile.cl",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
     ]
@@ -961,14 +964,18 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
             "sources": results,
             "provider": "multi",
             "winner_provider": "multi",
+            "providers": ["bing", "google_news"],
             "providers_attempted": ["bing", "google_news"],
             "queries": [query],
-            "retrieved_at": "2026-10-18T08:03:00Z",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "verification": {"distinct_domains": 3, "distinct_providers": 2},
             "fresh_request": True,
         }
 
-    async def blocked_fetch(*_args, **_kwargs):
+    attempted = []
+
+    async def blocked_fetch(url, **_kwargs):
+        attempted.append(url)
         raise RuntimeError("WEB_FETCH_HTTP_403")
 
     monkeypatch.setattr(main, "search_web", fake_search)
@@ -982,12 +989,11 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
+    assert set(attempted) == {item["url"] for item in results}
 
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
@@ -1122,7 +1128,10 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "backend/main.py").read_text(encoding="utf-8")
-    assert 'max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))' in source
+    assert 'configured_fetch_candidates = max(' in source
+    assert 'max_fetch_candidates = (' in source
+    assert 'max(8, configured_fetch_candidates)' in source
+    assert 'else min(6, configured_fetch_candidates)' in source
     assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
     assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
 

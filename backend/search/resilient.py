@@ -31,6 +31,7 @@ GLOBAL_BUDGET_SECONDS = 5.0
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
+MAX_CONCURRENT_PROVIDER_CALLS = 16
 CIRCUIT_OPEN_SECONDS = 5.0
 CACHE_TTL_SECONDS = 60.0
 CACHE_MAX_ENTRIES = 256
@@ -195,6 +196,69 @@ def _is_chile_commercial_technology_item(item: dict) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in _CHILE_TECH_COMPANY_HOSTS)
 
 
+_CHILE_GENERAL_NEWS_PUBLISHERS = {
+    "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+    "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+    "futuro.cl", "as.com", "elrancaguino.cl", "redgol.cl", "bolavip.com",
+    "meganoticias.cl", "t13.cl", "publimetro.cl", "theclinic.cl",
+    "elmostrador.cl", "lacuarta.com", "lun.com", "radioagricultura.cl",
+    "df.cl", "tvn.cl", "chilevision.cl",
+}
+
+
+def _is_direct_chile_news_article_candidate(item: dict) -> bool:
+    """Keep direct article-like URLs from known Chilean newsrooms; never accept wrappers or landing pages."""
+    if not isinstance(item, dict):
+        return False
+    url = str(item.get("url") or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if not any(host == domain or host.endswith("." + domain) for domain in _CHILE_GENERAL_NEWS_PUBLISHERS):
+        return False
+    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) < 2 or path in {
+        "/", "/noticias", "/actualidad", "/nacional", "/politica", "/política",
+        "/economia", "/mundo", "/lo-ultimo", "/ultimas-noticias",
+        "/ultimas-noticias-de-chile",
+    }:
+        return False
+    section_segments = {
+        "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+        "sociedad", "politica", "política", "economia", "economía", "mundo",
+        "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+        "regiones", "santiago", "santiago-de-chile", "valparaiso", "valparaíso", "concepcion", "concepción", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "portada", "tecnologia", "tecnología", "negocios", "vida",
+    }
+    if len(parts) <= 3 and all(part in section_segments for part in parts):
+        return False
+    if any(part in {
+        "admin", "login", "signin", "template", "category", "categories",
+        "tag", "tags", "author", "authors", "publicidad", "portada",
+        "buscar", "buscador", "search", "cache", "nroedic", "todas",
+    } for part in parts):
+        return False
+    if parts[-1] in {
+        "noticias", "actualidad", "nacional", "politica", "política", "economia",
+        "mundo", "index.html", "index.shtml", "index.php", "home", "portada",
+        "politica.shtml", "nacional.shtml", "noticias.shtml",
+    }:
+        return False
+    title = " ".join(str(item.get("title") or "").casefold().split())
+    if not title or any(marker in title for marker in (
+        "inicio |", "inicio -", "home |", "home -", "portada |",
+        "últimas noticias de chile", "ultimas noticias de chile",
+        "noticias de chile y el mundo", "todas las noticias del día", "todas las noticias del dia", "edición del día", "edicion del dia",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "datos generales de chile",
+    )):
+        return False
+    return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
+
+
 class TTLRUCache:
     def __init__(self, max_entries: int = CACHE_MAX_ENTRIES) -> None:
         self.max_entries = max(8, int(max_entries))
@@ -307,6 +371,10 @@ class WebOrchestrator:
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
         self._inflight: dict[str, asyncio.Task[dict]] = {}
+        # All normal and targeted provider probes share one bounded slot pool.
+        # Leave four connections of headroom in the shared 20-connection HTTPX pool.
+        self._provider_semaphore: asyncio.Semaphore | None = None
+        self._provider_semaphore_loop: asyncio.AbstractEventLoop | None = None
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
@@ -662,7 +730,21 @@ class WebOrchestrator:
             return compact
         return cleaned
 
-    async def _call_provider(self, provider: str, query: str) -> ProviderOutcome:
+    def _provider_slots(self) -> asyncio.Semaphore:
+        """Return a concurrency limiter tied to the active ASGI event loop."""
+        loop = asyncio.get_running_loop()
+        if self._provider_semaphore is None or self._provider_semaphore_loop is not loop:
+            self._provider_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROVIDER_CALLS)
+            self._provider_semaphore_loop = loop
+        return self._provider_semaphore
+
+    async def _call_provider(
+        self,
+        provider: str,
+        query: str,
+        *,
+        record_failure: bool = True,
+    ) -> ProviderOutcome:
         state = self.circuits[provider]
         now = time.monotonic()
         if state.is_open(now):
@@ -677,14 +759,18 @@ class WebOrchestrator:
             provider_function = self.providers.get(provider) or self.fallback_providers.get(provider)
             if provider_function is None:
                 raise RuntimeError("SEARCH_PROVIDER_NOT_REGISTERED")
-            results = await asyncio.wait_for(
-                provider_function(
-                    query,
-                    self.provider_total_seconds,
-                    self.max_results,
-                ),
-                timeout=self.provider_total_seconds,
-            )
+            # The semaphore is shared across all in-flight queries on this search
+            # engine, not just one fan-out wave. This prevents one large news query
+            # from monopolizing the shared HTTP client and starving the next query.
+            async with self._provider_slots():
+                results = await asyncio.wait_for(
+                    provider_function(
+                        query,
+                        self.provider_total_seconds,
+                        self.max_results,
+                    ),
+                    timeout=self.provider_total_seconds,
+                )
             latency_ms = (time.perf_counter() - started) * 1000.0
             if results:
                 state.success()
@@ -704,7 +790,8 @@ class WebOrchestrator:
                 latency_ms=round(latency_ms, 2),
             )
         except asyncio.TimeoutError:
-            state.failure(time.monotonic())
+            if record_failure:
+                state.failure(time.monotonic())
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
@@ -712,7 +799,8 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
         except Exception as exc:
-            state.failure(time.monotonic())
+            if record_failure:
+                state.failure(time.monotonic())
             name = type(exc).__name__.upper()
             return ProviderOutcome(
                 provider=provider,
@@ -721,20 +809,32 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
-    async def _bounded_call_provider(self, provider: str, query: str) -> ProviderOutcome:
-        """Enforce the provider deadline even if a provider adapter is replaced or misbehaves."""
+    async def _bounded_call_provider(
+        self,
+        provider: str,
+        query: str,
+        *,
+        record_failure: bool = True,
+    ) -> ProviderOutcome:
+        """Enforce provider deadlines without letting fan-out probes trip the shared circuit."""
         started = time.perf_counter()
         timeout = min(
             self.provider_total_seconds + 0.05,
             self.global_budget_seconds,
         )
         try:
+            provider_call = (
+                self._call_provider(provider, query)
+                if record_failure
+                else self._call_provider(provider, query, record_failure=False)
+            )
             return await asyncio.wait_for(
-                self._call_provider(provider, query),
+                provider_call,
                 timeout=max(0.05, timeout),
             )
         except asyncio.TimeoutError:
-            self.circuits[provider].failure(time.monotonic())
+            if record_failure:
+                self.circuits[provider].failure(time.monotonic())
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
@@ -929,6 +1029,17 @@ class WebOrchestrator:
                 "actualidad", "breaking", "latest news", "news",
             ))
         )
+        chile_general_news_intent = (
+            "chile" in lowered_cleaned
+            and is_realtime_query(cleaned)
+            and any(term in lowered_cleaned for term in (
+                "noticia", "noticias", "última hora", "ultima hora",
+                "actualidad", "breaking", "latest news", "news",
+            ))
+            and not chile_economic_news_intent
+            and not chile_political_news_intent
+            and not chile_weather_intent
+        )
         broad_ai_news_intent = (
             any(term in lowered_cleaned for term in (
                 "artificial intelligence", "inteligencia artificial", " ai ",
@@ -991,7 +1102,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-economy-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(economic_queries)
@@ -1002,6 +1113,7 @@ class WebOrchestrator:
                     self._bounded_call_provider(
                         "google_news",
                         "artificial intelligence AI technology research latest news",
+                        record_failure=False,
                     ),
                     name="search:google-news-ai",
                 )
@@ -1026,7 +1138,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-general-news:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(general_news_queries)
@@ -1046,7 +1158,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-current-events:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(current_events_queries)
@@ -1066,7 +1178,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-weather:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(weather_queries)
@@ -1108,7 +1220,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-political-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_primary_queries)
@@ -1126,7 +1238,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    self._bounded_call_provider(provider, official_query, record_failure=False),
                     name=f"search:official-primary:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1138,7 +1250,7 @@ class WebOrchestrator:
             who_query = "site:who.int/news-room/fact-sheets/detail dengue and severe dengue"
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, who_query),
+                    self._bounded_call_provider(provider, who_query, record_failure=False),
                     name=f"search:who-dengue:{provider}",
                 )
                 for provider in ("bing", "google", "duckduckgo", "cl0q")
@@ -1151,7 +1263,7 @@ class WebOrchestrator:
             company_queries = _commercial_technology_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, company_query),
+                    self._bounded_call_provider(provider, company_query, record_failure=False),
                     name=f"search:commercial-tech:{provider}:{index}",
                 )
                 for index, (provider, company_query) in enumerate(company_queries)
@@ -1163,7 +1275,7 @@ class WebOrchestrator:
             academic_queries = _academic_ai_research_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, academic_query),
+                    self._bounded_call_provider(provider, academic_query, record_failure=False),
                     name=f"search:academic-ai:{provider}:{index}",
                 )
                 for index, (provider, academic_query) in enumerate(academic_queries)
@@ -1298,7 +1410,7 @@ class WebOrchestrator:
             )
             official_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    self._bounded_call_provider(provider, official_query, record_failure=False),
                     name=f"search-official:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1406,7 +1518,7 @@ class WebOrchestrator:
             # The same end-to-end deadline covers the primary and recovery phases.
             recovery_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, recovery_query),
+                    self._bounded_call_provider(provider, recovery_query, record_failure=False),
                     name=f"search-recovery:{provider}",
                 )
                 for provider in self.providers
@@ -1530,7 +1642,7 @@ class WebOrchestrator:
             )
             political_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-political-diversity:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_source_queries)
@@ -1663,6 +1775,302 @@ class WebOrchestrator:
                 len(selected),
                 len(recovered_domains),
                 recovered_providers,
+            )
+
+        if chile_general_news_intent:
+            # Generic Chilean news can be dominated by unrelated pages from broad
+            # indexes. Discover real direct newsroom articles through scoped live
+            # queries; the downstream fetcher still verifies article identity,
+            # publication freshness, extracted text and editorial-domain quorum.
+            general_news_source_queries = (
+                ("google_news", "site:biobiochile.cl/noticias Chile noticias hoy"),
+                ("bing", "site:cooperativa.cl/noticias Chile noticias hoy"),
+                ("google", "site:latercera.com Chile noticias hoy"),
+                ("bing", "site:emol.com/noticias Chile noticias hoy"),
+                ("google_news", "site:24horas.cl Chile noticias hoy"),
+                ("yahoo", "site:adnradio.cl Chile noticias hoy"),
+                ("duckduckgo", "site:chvnoticias.cl Chile noticias hoy"),
+                ("mojeek", "site:cnnchile.com Chile noticias hoy"),
+                ("google", "site:biobiochile.cl/noticias Chile actualidad hoy"),
+                ("cl0q", "site:cooperativa.cl/noticias Chile actualidad hoy"),
+                ("google_news", "site:futuro.cl Chile noticias hoy"),
+                ("yahoo", "site:chile.as.com Chile noticias hoy"),
+                ("google", "site:chilevision.cl/noticias Chile noticias hoy"),
+                ("duckduckgo", "site:t13.cl Chile noticias hoy"),
+            )
+            generic_news_publishers = set(_CHILE_GENERAL_NEWS_PUBLISHERS)
+
+            def is_direct_chile_news_article(item: dict) -> bool:
+                url = str(item.get("url") or "").strip()
+                parsed = urlparse(url)
+                if parsed.scheme.casefold() != "https" or not parsed.hostname:
+                    return False
+                host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+                is_google_news_wrapper = host in {"news.google.com", "news.googleusercontent.com"}
+                declared_host = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
+                publisher = next(
+                    (
+                        domain for domain in generic_news_publishers
+                        if (
+                            declared_host == domain or declared_host.endswith("." + domain)
+                        ) if is_google_news_wrapper
+                    ),
+                    None,
+                ) if is_google_news_wrapper else next(
+                    (
+                        domain for domain in generic_news_publishers
+                        if host == domain or host.endswith("." + domain)
+                    ),
+                    None,
+                )
+                if publisher is None:
+                    return False
+                path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+                parts = [part for part in path.strip("/").split("/") if part]
+                # An opaque Google News wrapper is only a fetch candidate when its
+                # feed metadata identifies a known editorial publisher and the URL
+                # has an article identifier. It is not evidence until the fetcher
+                # resolves it and the shared validator confirms the original article.
+                if is_google_news_wrapper and not (
+                    (len(parts) >= 3 and parts[0] == "rss" and parts[1] == "articles")
+                    or (len(parts) >= 2 and parts[0] == "articles")
+                ):
+                    return False
+                if len(parts) < 2 or path in {
+                    "/", "/noticias", "/actualidad", "/nacional", "/politica",
+                    "/política", "/economia", "/mundo", "/lo-ultimo",
+                    "/ultimas-noticias", "/ultimas-noticias-de-chile",
+                    "/page/en-vivo", "/en-vivo", "/envivo", "/live",
+                    "/directo", "/minuto-a-minuto",
+                }:
+                    return False
+                section_segments = {
+                    "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+                    "sociedad", "politica", "política", "economia", "economía", "mundo",
+                    "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+                    "regiones", "santiago", "santiago-de-chile", "valparaiso", "valparaíso", "concepcion", "concepción", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+                    "portada", "tecnologia", "tecnología", "negocios", "vida",
+                }
+                if len(parts) <= 3 and all(part in section_segments for part in parts):
+                    return False
+                # Category/section paths such as /noticias/chile and
+                # /page/en-vivo can look like article candidates in SERPs.
+                # Exclude them before they satisfy the early diversity quorum
+                # and cause remaining publisher queries to be cancelled.
+                section_segments = {
+                    "noticias", "news", "actualidad", "nacional", "chile",
+                    "pais", "país", "sociedad", "politica", "política",
+                    "economia", "economía", "mundo", "deportes", "internacional",
+                    "futbol", "fútbol", "cultura", "region", "regiones",
+                    "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+                    "portada", "tecnologia", "tecnología", "negocios", "vida",
+                    "page", "en-vivo", "envivo", "live", "directo",
+                    "minuto-a-minuto",
+                }
+                if len(parts) <= 3 and parts and all(part in section_segments for part in parts):
+                    return False
+                if any(
+                    part in {
+                        "admin", "login", "signin", "template", "category",
+                        "categories", "tag", "tags", "author", "authors",
+                        "publicidad", "portada", "buscar", "buscador", "search", "cache", "nroedic", "todas",
+                    }
+                    for part in parts
+                ):
+                    return False
+                if parts[-1] in {
+                    "noticias", "actualidad", "nacional", "politica", "política",
+                    "economia", "mundo", "index.html", "index.shtml", "index.php",
+                    "home", "portada", "politica.shtml", "nacional.shtml",
+                    "noticias.shtml",
+                }:
+                    return False
+                title = " ".join(str(item.get("title") or "").casefold().split())
+                if not title or any(marker in title for marker in (
+                    "inicio |", "inicio -", "home |", "home -", "portada |",
+                    "últimas noticias de chile", "ultimas noticias de chile",
+                    "noticias de chile y el mundo", "todas las noticias del día", "todas las noticias del dia", "edición del día", "edicion del dia",
+                )):
+                    return False
+                return len(re.findall(r"[0-9a-záéíóúüñ]+", title)) >= 5
+
+            core_chile_publishers = {
+                "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+                "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+            }
+
+            def editorial_publisher_host(item: dict) -> str:
+                parsed_host = (
+                    urlparse(str(item.get("url") or "")).hostname or ""
+                ).casefold().rstrip(".").removeprefix("www.")
+                declared = str(item.get("source_domain") or "").casefold().strip().rstrip(".").removeprefix("www.")
+                is_google_news_wrapper = parsed_host in {"news.google.com", "news.googleusercontent.com"}
+                host = (
+                    declared
+                    if is_google_news_wrapper or parsed_host == declared or parsed_host.endswith("." + declared)
+                    else parsed_host
+                )
+                for publisher in (*core_chile_publishers, "futuro.cl", "as.com", "clarin.com", "elpais.com", "chilevision.cl", "t13.cl"):
+                    if host == publisher or host.endswith("." + publisher):
+                        return publisher
+                return host
+
+            # Only spend the publisher-scoped wave while fewer than three direct
+            # editorial articles are discoverable; never manufacture fallback URLs.
+            initial_article_domains = {
+                editorial_publisher_host(item)
+                for item in [*selected, *merged]
+                if isinstance(item, dict) and is_direct_chile_news_article(item)
+            } - {""}
+            if len(initial_article_domains) < min(3, self.max_results):
+                # Define the candidate predicate even when the overall search
+                # deadline has already elapsed; the final selection pass below
+                # always reuses it. Only launch additional provider calls while
+                # there is still time left in the shared budget.
+                general_news_tasks = (
+                    {
+                        asyncio.create_task(
+                            self._bounded_call_provider(provider, targeted_query, record_failure=False),
+                            name=f"search:chile-general-news:{provider}:{index}",
+                        )
+                        for index, (provider, targeted_query) in enumerate(general_news_source_queries)
+                    }
+                    if loop.time() < deadline
+                    else set()
+                )
+                pending_general_news = set(general_news_tasks)
+                try:
+                    while pending_general_news:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            break
+                        done, pending_general_news = await asyncio.wait(
+                            pending_general_news,
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if not done:
+                            break
+                        for task in done:
+                            try:
+                                outcome = task.result()
+                            except asyncio.CancelledError:
+                                continue
+                            except Exception as exc:
+                                outcome = ProviderOutcome(
+                                    provider=task.get_name().split(":")[-2],
+                                    ok=False,
+                                    error_code=f"UNEXPECTED:{type(exc).__name__.upper()}",
+                                )
+                            outcomes.append(outcome)
+
+                        merged_now = [
+                            {**item, "provider": outcome.provider}
+                            for outcome in outcomes
+                            if outcome.ok
+                            for item in outcome.results
+                        ]
+                        article_domains_now = {
+                            editorial_publisher_host(item)
+                            for item in merged_now
+                            if is_direct_chile_news_article(item)
+                        } - {""}
+                        successful_provider_names = {
+                            outcome.provider for outcome in outcomes
+                            if outcome.ok and outcome.results
+                        }
+                        if (
+                            len(article_domains_now) >= min(3, self.max_results)
+                            and len(successful_provider_names) >= 2
+                        ):
+                            break
+                finally:
+                    for task in pending_general_news:
+                        if not task.done():
+                            task.cancel()
+                    if pending_general_news:
+                        await asyncio.gather(*pending_general_news, return_exceptions=True)
+
+            merged = [
+                {**item, "provider": outcome.provider}
+                for outcome in outcomes
+                if outcome.ok
+                for item in outcome.results
+            ]
+            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            selected = deduplicate(ranked, self.max_results)
+
+            # Always apply diversity-first selection to discovered direct articles,
+            # even when the broad provider pool already contains three domains. The
+            # ranker may otherwise rank only one of those publisher pages into the
+            # small public result set, causing the downstream fetch quorum to fail.
+            # Only actual HTTPS editorial URLs are surfaced; the API subsequently
+            # validates title identity, date freshness and extracted article text.
+            diverse_news: list[dict] = []
+            diverse_news_domains: set[str] = set()
+            candidate_items = [*selected, *merged]
+            # Prefer core Chilean newsroom articles when at least three independent
+            # publishers provide direct article candidates. Use broader publishers
+            # only when core newsrooms cannot supply the minimum domain count.
+            core_news_items = [
+                item for item in candidate_items
+                if is_direct_chile_news_article(item)
+                and editorial_publisher_host(item) in core_chile_publishers
+            ]
+            core_news_domains = {editorial_publisher_host(item) for item in core_news_items}
+            if len(core_news_domains) >= min(3, self.max_results):
+                candidate_items = core_news_items
+
+            direct_news_candidates = [
+                item for item in candidate_items
+                if is_direct_chile_news_article(item)
+            ]
+            logger.info(
+                "web_search_chile_general_news_candidate_debug "
+                "candidate_count=%d candidate_hosts=%s candidate_paths=%s",
+                len(direct_news_candidates),
+                sorted({
+                    editorial_publisher_host(item)
+                    for item in direct_news_candidates
+                    if editorial_publisher_host(item)
+                }),
+                [
+                    {
+                        "host": (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www."),
+                        "path": urlparse(str(item.get("url") or "")).path[:180],
+                        "provider": str(item.get("provider") or "")[:40],
+                        "title": str(item.get("title") or "")[:100],
+                    }
+                    for item in direct_news_candidates[:12]
+                ],
+            )
+            for item in candidate_items:
+                if len(diverse_news) >= self.max_results:
+                    break
+                if not is_direct_chile_news_article(item):
+                    continue
+                url = str(item.get("url") or "").strip()
+                host = editorial_publisher_host(item)
+                if not url or not host or host in diverse_news_domains:
+                    continue
+                item = {**item, "source_domain": host}
+                diverse_news.append(item)
+                diverse_news_domains.add(host)
+            if len(diverse_news) >= min(3, self.max_results):
+                selected = diverse_news[: self.max_results]
+            logger.info(
+                "web_search_chile_general_news_recovery selected_count=%d "
+                "direct_editorial_domains=%d successful_providers=%d",
+                len(selected),
+                len({
+                    (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                    for item in selected
+                } - {""}),
+                len({
+                    outcome.provider for outcome in outcomes
+                    if outcome.ok and outcome.results
+                }),
             )
 
         if chile_economic_news_intent and merged:
@@ -1870,6 +2278,100 @@ class WebOrchestrator:
                     len(seen_company_hosts),
                 )
 
+        if chile_general_news_intent and merged:
+            # Run diversity selection after the optional Yahoo fallback and every
+            # other ranker pass. Otherwise a late fallback can collapse a valid
+            # three-publisher candidate set back to one newsroom immediately before
+            # it is returned to /v1/web/search.
+            candidates_by_domain: dict[str, list[dict]] = {}
+            seen_domain_urls: set[tuple[str, str]] = set()
+            for item in [*selected, *merged]:
+                # Reuse the exact predicate that built the recovery candidate set.
+                # A second near-duplicate validator was unexpectedly collapsing
+                # seven valid newsroom candidates to one or two at the final step.
+                direct_article = (
+                    is_direct_chile_news_article(item)
+                    if chile_general_news_intent
+                    else _is_direct_chile_news_article_candidate(item)
+                )
+                if not direct_article:
+                    continue
+                url = str(item.get("url") or "").strip()
+                host = editorial_publisher_host(item)
+                if not url or not host:
+                    continue
+                canonical = (host, url)
+                if canonical in seen_domain_urls:
+                    continue
+                seen_domain_urls.add(canonical)
+                candidates_by_domain.setdefault(host, []).append(item)
+
+            diverse_final: list[dict] = []
+            diverse_final_domains: set[str] = set()
+            diverse_final_providers: set[str] = set()
+            # Choose a new publisher and, when possible, a different successful
+            # provider for each slot. Domain/provider metadata comes from actual
+            # search outcomes, not synthetic fallback records.
+            while len(diverse_final) < self.max_results:
+                next_item = None
+                for prefer_new_provider in (True, False):
+                    for host, items in candidates_by_domain.items():
+                        if host in diverse_final_domains:
+                            continue
+                        candidate = next((
+                            candidate for candidate in items
+                            if not prefer_new_provider
+                            or str(candidate.get("provider") or "").strip() not in diverse_final_providers
+                        ), None)
+                        if candidate is not None:
+                            next_item = candidate
+                            break
+                    if next_item is not None:
+                        break
+                if next_item is None:
+                    break
+                url = str(next_item.get("url") or "")
+                host = editorial_publisher_host(next_item)
+                provider_name = str(next_item.get("provider") or "").strip()
+                if not url or not host:
+                    break
+                diverse_final.append(next_item)
+                diverse_final_domains.add(host)
+                if provider_name:
+                    diverse_final_providers.add(provider_name)
+
+            required_publishers = min(3, self.max_results)
+            if len(diverse_final_domains) >= required_publishers:
+                selected = diverse_final[: self.max_results]
+            else:
+                # Preserve the direct publisher articles discovered so far as
+                # candidates for the downstream extractor. The search-layer flag
+                # remains false until the required candidate quorum exists; callers
+                # must validate publication date, title identity and body before use.
+                selected = diverse_final[: self.max_results]
+                logger.warning(
+                    "web_search_chile_general_news_candidate_quorum_incomplete "
+                    "valid_domains=%d required=%d preserved_candidates=%d",
+                    len(diverse_final_domains),
+                    required_publishers,
+                    len(selected),
+                )
+            logger.info(
+                "web_search_chile_general_news_final_selection selected_count=%d "
+                "distinct_domains=%d selected_providers=%d",
+                len(selected),
+                len({
+                    (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                    for item in selected
+                } - {""}),
+                len({
+                    str(item.get("provider") or "").strip()
+                    for item in selected
+                    if str(item.get("provider") or "").strip()
+                }),
+            )
+
         if not selected and merged:
             # Diagnose relevance rejection without recording query text, titles,
             # snippets, or full URLs. This lets production logs distinguish
@@ -1922,6 +2424,46 @@ class WebOrchestrator:
             results=selected,
             executed_query=provider_query,
         )
+        if chile_general_news_intent:
+            candidate_domains: set[str] = set()
+            for item in selected:
+                host = (
+                    str(item.get("source_domain") or "").strip().casefold()
+                    .rstrip(".").removeprefix("www.")
+                    or (urlparse(str(item.get("url") or "")).hostname or "")
+                    .casefold().rstrip(".").removeprefix("www.")
+                )
+                publisher_domain = next(
+                    (
+                        domain for domain in _CHILE_GENERAL_NEWS_PUBLISHERS
+                        if host == domain or host.endswith("." + domain)
+                    ),
+                    host,
+                )
+                if publisher_domain:
+                    candidate_domains.add(publisher_domain)
+            successful_providers = {
+                str(provider).strip().casefold()
+                for provider in (payload.get("providers") or [])
+                if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+            }
+            candidate_quorum_met = (
+                len(selected) >= min(3, self.max_results)
+                and len(candidate_domains) >= min(3, self.max_results)
+                and len(successful_providers) >= 2
+            )
+            payload["ok"] = candidate_quorum_met
+            payload["status"] = "OK" if candidate_quorum_met else "INSUFFICIENT_EVIDENCE"
+            payload["diagnostic_code"] = None if candidate_quorum_met else "REALTIME_NEWS_QUORUM_NOT_MET"
+            verification = payload.setdefault("verification", {})
+            verification["quorum_met"] = candidate_quorum_met
+            verification["distinct_editorial_domains"] = len(candidate_domains)
+            verification["successful_providers"] = len(successful_providers)
+            if not candidate_quorum_met:
+                payload["errors"] = list(dict.fromkeys([
+                    *(payload.get("errors") or []),
+                    "REALTIME_NEWS_QUORUM_NOT_MET",
+                ]))[:8]
         if selected and not force_fresh:
             self.cache.put(cache_key, payload, self.cache_ttl_seconds)
         return payload

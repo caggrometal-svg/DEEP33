@@ -128,6 +128,7 @@ class HTMLTextExtractor(HTMLParser):
         self.title_parts: list[str] = []
         self.meta_titles: dict[str, str] = {}
         self.meta_descriptions: dict[str, str] = {}
+        self.meta_published_at: list[str] = []
         self.jsonld_blocks: list[str] = []
         self._skip_depth = 0
         self._in_title = False
@@ -155,6 +156,12 @@ class HTMLTextExtractor(HTMLParser):
                 or ""
             ).strip().lower()
             value = " ".join(html.unescape(values.get("content", "")).split())
+            if value and key in {
+                "article:published_time", "og:published_time", "datepublished",
+                "publishdate", "publish_date", "publication_date", "published_at",
+                "pubdate", "date", "dc.date.issued", "parsely-pub-date",
+            }:
+                self.meta_published_at.append(value[:100])
             if value and key in {"og:title", "twitter:title"}:
                 self.meta_titles.setdefault(key, value)
             elif value and key in {
@@ -163,6 +170,20 @@ class HTMLTextExtractor(HTMLParser):
             }:
                 self.meta_descriptions.setdefault(key, value)
             return
+
+        if tag == "time":
+            raw_time = values.get("datetime", "").strip()
+            time_markers = " ".join((
+                values.get("itemprop", ""), values.get("class", ""), values.get("id", "")
+            )).casefold()
+            if raw_time and (
+                "datepublished" in time_markers
+                or any(marker in time_markers for marker in (
+                    "published", "publish-date", "published-at", "pubdate",
+                    "article-date", "post-date",
+                ))
+            ):
+                self.meta_published_at.append(raw_time[:100])
 
         if tag == "title":
             self._in_title = True
@@ -384,6 +405,89 @@ async def _read_limited(response,limit):
         chunks.append(chunk)
         total+=len(chunk)
     return b"".join(chunks)
+
+def _normalize_publication_time(value: str) -> str | None:
+    """Normalize an explicit page publication timestamp; never substitute retrieval time."""
+    raw = " ".join(str(value or "").split()).strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        from email.utils import parsedate_to_datetime
+        try:
+            parsed = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def _structured_article_published_at(blocks: list[str]) -> str | None:
+    """Extract datePublished only from JSON-LD objects that identify as articles."""
+    candidates: list[tuple[int, str]] = []
+
+    def visit(value) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        raw_type = value.get("@type", [])
+        if isinstance(raw_type, str):
+            types = [raw_type]
+        elif isinstance(raw_type, list):
+            types = [str(item) for item in raw_type]
+        else:
+            types = []
+        is_article = any(
+            "article" in item.casefold() or "blogposting" in item.casefold()
+            for item in types
+        )
+        date_value = value.get("datePublished")
+        if is_article and isinstance(date_value, str) and date_value.strip():
+            candidates.append((0, date_value.strip()[:100]))
+        for key, child in value.items():
+            if key != "datePublished":
+                visit(child)
+
+    for block in blocks:
+        try:
+            visit(json.loads(block))
+        except (TypeError, ValueError):
+            continue
+    candidates.sort(key=lambda item: item[0])
+    for _, value in candidates:
+        normalized = _normalize_publication_time(value)
+        if normalized:
+            return normalized
+    return None
+
+
+def _extract_published_at(content: bytes, content_type: str) -> str | None:
+    """Extract a publication time from the fetched publisher page's own metadata."""
+    mime = str(content_type or "").split(";", 1)[0].strip().casefold()
+    if mime not in {"text/html", "application/xhtml+xml"}:
+        return None
+    charset = "utf-8"
+    lower = str(content_type or "").casefold()
+    if "charset=" in lower:
+        charset = lower.split("charset=", 1)[1].split(";", 1)[0].strip() or charset
+    decoded = content.decode(charset, errors="replace")
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+    structured = _structured_article_published_at(parser.jsonld_blocks)
+    if structured:
+        return structured
+    for candidate in parser.meta_published_at:
+        normalized = _normalize_publication_time(candidate)
+        if normalized:
+            return normalized
+    return None
+
 
 def _extract_text(content, content_type, max_text_chars):
     charset = "utf-8"
@@ -836,6 +940,7 @@ async def _fetch_page_uncached(
                 "content_type":mime,
                 "bytes":len(content),
                 "redirects":len(redirects),
+                "published_at":_extract_published_at(content, content_type),
                 "retrieved_at":datetime.now(timezone.utc).isoformat(),
             }
         except httpx.TimeoutException as exc:

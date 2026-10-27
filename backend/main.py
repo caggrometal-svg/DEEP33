@@ -81,75 +81,427 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("deep33")
 
 
+def _realtime_news_path_is_generic(path: str) -> bool:
+    normalized = re.sub(r"/+", "/", str(path or "").casefold()).rstrip("/") or "/"
+    landing_paths = {
+        "/", "/en", "/es", "/en-us", "/es-cl", "/en-cl", "/cl",
+        "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
+        "/noticias", "/chile", "/actualidad", "/politica", "/política",
+        "/economia", "/deportes", "/mundo", "/news", "/latest",
+        "/latest-news", "/breaking-news", "/ultimo-momento",
+        "/conoce-chile", "/conoce-chile-1", "/travel-guide", "/guia-de-viaje",
+        "/about", "/about-us", "/quienes-somos", "/quiénes-somos",
+        "/contact", "/contacto", "/destinos", "/destinations",
+    }
+    if normalized in landing_paths:
+        return True
+    # A locale-only URL such as /en/ is still a site landing page.
+    parts = [part for part in normalized.strip("/").split("/") if part]
+    if len(parts) == 1 and re.fullmatch(r"(?:[a-z]{2}(?:-[a-z]{2})?)", parts[0]):
+        return True
+    # Nested section pages such as /noticias/chile or /actualidad/nacional
+    # are category landings, not evidence-bearing article permalinks.
+    section_segments = {
+        "noticias", "news", "actualidad", "nacional", "chile", "pais", "país",
+        "sociedad", "politica", "política", "economia", "economía", "mundo",
+        "deportes", "internacional", "futbol", "fútbol", "cultura", "region",
+        "regiones", "santiago", "santiago-de-chile", "lo-ultimo", "ultimas-noticias", "últimas-noticias",
+        "portada", "tecnologia", "tecnología", "negocios", "vida",
+        "page", "en-vivo", "envivo", "live", "directo", "minuto-a-minuto",
+    }
+    if len(parts) <= 3 and parts and all(part in section_segments for part in parts):
+        return True
+    blocked_segments = {
+        "admin", "au_creatives", "template", "login", "signin", "search",
+        "tag", "tags", "category", "categories", "author", "authors",
+        "publicidad", "portada", "en-vivo", "envivo", "live-blog",
+        "liveblog", "live-updates", "live-update", "streaming",
+        "sucursal-virtual", "oficina-virtual",
+        "mapa-de-chile", "mapas-de-chile", "map-of-chile", "mapa-interactivo",
+        # Cooperativa's issue archive can carry a fresh RSS timestamp while the
+        # URL itself identifies a cached 2025 edition, not a current article.
+        "cache", "nroedic", "todas",
+    }
+    return bool(set(parts) & blocked_segments)
+
+
+def _realtime_news_title_tokens(value: Any) -> set[str]:
+    ignored = {
+        "de", "del", "la", "las", "el", "los", "y", "en", "a", "un", "una",
+        "por", "para", "con", "sobre", "hoy", "chile", "noticia", "noticias",
+        "ultima", "ultimas", "actualidad", "emol", "biobiochile", "bio",
+        "radio", "portal", "home", "inicio",
+    }
+    return {
+        token
+        for token in re.findall(r"[0-9a-záéíóúüñ]+", str(value or "").casefold())
+        if len(token) > 2 and token not in ignored
+    }
+
+
+def _is_generic_realtime_news_candidate(
+    source: dict[str, Any],
+    query: str = "",
+) -> bool:
+    """Reject generic pages and non-newsroom hosts before consuming a broad-news fetch slot."""
+    if not isinstance(source, dict):
+        return True
+    url = str(source.get("url") or "").strip()
+    parsed = urlparse(url)
+    if not url or _realtime_news_path_is_generic(parsed.path):
+        return True
+    if query and _is_broad_current_news_query(query):
+        host = (parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+        path_segments = {
+            segment for segment in parsed.path.casefold().split("/") if segment
+        }
+        # These are publisher-adjacent service/marketing surfaces, not original
+        # articles. They otherwise consume the scarce fetch slots and mask the
+        # Google News article wrappers for the same newsroom.
+        non_article_hosts = {
+            "kiosco.latercera.com", "mediakit.cooperativa.cl",
+            "neomedia.emol.com",
+        }
+        if host in non_article_hosts or path_segments & {
+            "library", "apuestas", "pronosticos", "pronósticos",
+            "nuestros-medios", "mediakit", "media-kit",
+        }:
+            return True
+        if not _is_known_chile_editorial_news_domain(source, url):
+            return True
+    title = " ".join(str(source.get("title") or "").casefold().split())
+    return any(marker in title for marker in (
+        "home -", "home |", "inicio -", "inicio |", "conoce chile",
+        "discover chile", "about us", "who we are", "quienes somos",
+        "quiénes somos", "lugares imperdibles", "guía de viaje",
+        "guia de viaje", "travel guide", "información turística",
+        "informacion turistica", "destinos de chile", "plantilla administrativa",
+        "advertising template", "promociones y publicidad", "portal oficial",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "bandera de chile", "capital de chile",
+        "datos generales de chile", "lugares que visitar en chile",
+        "todas las noticias del día", "todas las noticias del dia",
+        "edición del día", "edicion del dia", "número de edición", "numero de edicion",
+    ))
+
+
+def _same_realtime_news_article(
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+    page_url: str,
+) -> bool:
+    """Verify article identity by the publisher page title, including direct URLs."""
+    original_url = str(source.get("url") or "").strip()
+    original = urlparse(original_url)
+    resolved = urlparse(page_url)
+    if not resolved.hostname or resolved.scheme.casefold() != "https":
+        return False
+    if fetched_page.get("title_from_page") is False:
+        return False
+
+    # URL equality alone does not prove that a page is an article: search indexes
+    # can timestamp homepages, destination guides and evergreen portal pages too.
+    # Require a substantive title match for both direct URLs and resolved wrappers.
+    source_tokens = _realtime_news_title_tokens(source.get("title"))
+    page_tokens = _realtime_news_title_tokens(fetched_page.get("title"))
+    if len(source_tokens) < 3 or len(page_tokens) < 3:
+        return False
+    shared = len(source_tokens & page_tokens)
+    if (
+        shared / max(1, len(source_tokens)) < 0.60
+        or shared / max(1, len(page_tokens)) < 0.50
+    ):
+        return False
+
+    original_host = (original.hostname or "").casefold().rstrip(".").removeprefix("www.")
+    resolved_host = resolved.hostname.casefold().rstrip(".").removeprefix("www.")
+    original_path = re.sub(r"/+", "/", original.path.casefold()).rstrip("/") or "/"
+    resolved_path = re.sub(r"/+", "/", resolved.path.casefold()).rstrip("/") or "/"
+    # Matching publisher pages are accepted directly. A wrapper may resolve across
+    # hosts only when the fetched publisher title independently matches the SERP title.
+    if (
+        original.scheme.casefold() == "https"
+        and original_host == resolved_host
+        and original_path == resolved_path
+    ):
+        return True
+    return bool(source_tokens and page_tokens)
+
+
+def _editorial_domain(source: dict[str, Any], page_url: str) -> str:
+    """Return the publisher domain, collapsing its subdomains into one outlet."""
+    page_host = (urlparse(page_url).hostname or "").casefold().rstrip(".").removeprefix("www.")
+    declared = str(source.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
+    if declared and (page_host == declared or page_host.endswith("." + declared)):
+        return declared
+    return page_host
+
+
+
+def _requires_current_news_quorum(query: str) -> bool:
+    """Apply the three-article gate to explicit news/event/update requests, not every current query."""
+    lowered = " ".join(str(query or "").split()).casefold()
+    explicit_news_signals = (
+        "noticia", "news", "última hora", "ultima hora", "actualidad",
+        "acontecimientos actuales", "acontecimientos recientes",
+        "eventos actuales", "eventos recientes", "hechos recientes",
+        "últimos acontecimientos", "ultimos acontecimientos",
+        "qué pasa", "que pasa", "qué ocurre", "que ocurre",
+        "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+        "últimas novedades", "ultimas novedades", "actualizaciones recientes",
+        "release notes", "latest release", "latest version", "security advisory",
+        "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
+    )
+    return is_realtime_news_query(lowered) and any(
+        signal in lowered for signal in explicit_news_signals
+    )
+
+
+def _is_broad_current_news_query(query: str) -> bool:
+    """Detect country-wide headline requests that have no narrower topic anchor."""
+    if not _requires_current_news_quorum(query):
+        return False
+    lowered = " ".join(str(query or "").split()).casefold()
+    tokens = set(re.findall(r"[0-9a-záéíóúüñ]+", lowered))
+    generic = {
+        "cuales", "cuáles", "son", "las", "los", "de", "del", "la", "el", "y",
+        "en", "a", "un", "una", "por", "para", "con", "sobre", "hoy", "ahora",
+        "chile", "chilena", "chilenas", "chileno", "chilenos",
+        "noticia", "noticias", "news", "ultima", "ultimas", "última", "últimas",
+        "hora", "actualidad", "actual", "actuales", "reciente", "recientes",
+        "publicada", "publicadas", "publicado", "publicados", "principales",
+        "importante", "importantes", "destacada", "destacadas", "acontecimiento",
+        "acontecimientos", "evento", "eventos", "hecho", "hechos", "suceso",
+        "sucesos", "resumen", "internet", "busca", "buscar", "revisa", "revisar",
+        "verifica", "verificar", "fuente", "fuentes", "varias", "independientes",
+        "informacion", "información", "informar", "nacional", "nacionales",
+        "del", "mas", "más", "que", "qué", "se", "esta", "está", "pasando",
+        "ocurre", "paso", "pasó", "hay", "todo", "toda", "todos", "todas",
+        "verifica", "verificar", "verificables", "resume", "resuma", "resumen",
+        "sintetiza", "sintetizar", "principales", "indicando", "indica", "indicar",
+        "cada", "proviene", "provienen", "fuente", "fuentes", "hecho", "hechos",
+        "articulo", "artículo", "articulos", "artículos", "menciona", "mencionar",
+        "contrasta", "contrastar", "presenta", "presentar", "cita", "citar",
+        "publicadas", "publicados", "publicada", "publicado", "información",
+        "informacion", "encontradas", "encontrados", "disponibles",
+        "lunes", "martes", "miércoles", "miercoles", "jueves", "viernes",
+        "sábado", "sabado", "domingo", "enero", "febrero", "marzo", "abril",
+        "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+        "noviembre", "diciembre", "dia", "día", "del", "fecha",
+    }
+    return "chile" in tokens and not ({token for token in tokens - generic if not token.isdigit()})
+
+
+_CHILE_EDITORIAL_NEWS_DOMAINS = {
+    "biobiochile.cl", "cooperativa.cl", "latercera.com", "emol.com",
+    "24horas.cl", "adnradio.cl", "chvnoticias.cl", "cnnchile.com",
+    "futuro.cl", "as.com", "elrancaguino.cl", "redgol.cl", "bolavip.com",
+    "meganoticias.cl", "t13.cl", "publimetro.cl", "theclinic.cl",
+    "elmostrador.cl", "lacuarta.com", "lun.com", "radioagricultura.cl",
+    "df.cl", "tvn.cl", "chilevision.cl",
+}
+
+
+def _is_known_chile_editorial_news_domain(source: dict[str, Any], page_url: str = "") -> bool:
+    """Allow broad-query relevance relaxation only for recognized editorial outlets."""
+    parsed_host = (urlparse(page_url or str(source.get("url") or "")).hostname or "")
+    host = parsed_host.casefold().rstrip(".").removeprefix("www.")
+    declared = str(source.get("source_domain") or "").casefold().rstrip(".").removeprefix("www.")
+    return any(
+        candidate == domain or candidate.endswith("." + domain)
+        for candidate in (host, declared)
+        for domain in _CHILE_EDITORIAL_NEWS_DOMAINS
+    )
+
+
+def _verified_realtime_news_published_at(
+    query: str,
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+) -> str | None:
+    """Return a fresh publication time only after the page/article identity is verified."""
+    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
+        return None
+    page_url = str(
+        fetched_page.get("url")
+        or fetched_page.get("final_url")
+        or ""
+    ).strip()
+    parsed = urlparse(page_url)
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return None
+    page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if page_host in {"news.google.com", "news.googleusercontent.com"}:
+        return None
+    if _realtime_news_path_is_generic(parsed.path):
+        return None
+    if not _same_realtime_news_article(source, fetched_page, page_url):
+        return None
+
+    # Search metadata can supply publication time only when the fetched page is
+    # independently verified to be the same article. A redirected template or
+    # unrelated page must never inherit the wrapper's timestamp.
+    published_at = fetched_page.get("published_at") or source.get("published_at")
+    if not published_at or not _is_recently_published(
+        {"published_at": published_at},
+        query,
+    ):
+        return None
+    return str(published_at)
+
+
+def _realtime_news_has_query_topic_match(query: str, fetched_page: dict[str, Any]) -> bool:
+    """Reject fresh extracted articles that do not cover the requested news topic."""
+    raw_query = " ".join(str(query or "").split())
+    # Separate evidence instructions from the actual subject being searched.
+    subject_query = re.split(
+        r"(?<=[.!?])\s+(?=(?:si\s+no\s+hay\b|si\s+no\s+existen\b|"
+        r"si\s+no\s+se\s+encuentran\b|si\s+no\s+puedes\b|no\s+inventes\b|"
+        r"no\s+afirmes\b|no\s+supongas\b|if\s+there\s+are\s+not\b|"
+        r"if\s+fewer\s+than\b|do\s+not\s+invent\b))",
+        raw_query,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    evidence_text = " ".join(
+        str(fetched_page.get(key) or "")
+        for key in ("title", "text")
+    ).casefold()
+    evidence_tokens = set(re.findall(r"[0-9a-záéíóúüñ]+", evidence_text))
+
+    # A structured identifier is a high-confidence subject anchor. Current
+    # headlines about unrelated events must never substantiate an unknown ID.
+    identifiers = re.findall(
+        r"(?<![A-Za-z0-9])[A-Z]{2,}(?:-[A-Z0-9]{2,})+(?![A-Za-z0-9])",
+        subject_query,
+        flags=re.IGNORECASE,
+    )
+    if identifiers:
+        generic_identifier_parts = {
+            "chile", "noticia", "noticias", "news", "latest", "current",
+            "release", "version", "update", "today",
+        }
+        normalized_evidence = re.sub(r"[^a-z0-9]+", "", evidence_text)
+        for identifier in identifiers:
+            strong_parts = {
+                part.casefold()
+                for part in identifier.split("-")
+                if len(part) >= 4
+                and not part.isdigit()
+                and part.casefold() not in generic_identifier_parts
+            }
+            if strong_parts:
+                if not (strong_parts & evidence_tokens):
+                    return False
+            else:
+                normalized_identifier = re.sub(
+                    r"[^a-z0-9]+", "", identifier.casefold()
+                )
+                if normalized_identifier not in normalized_evidence:
+                    return False
+        return True
+
+    # General country-wide headlines have no single subject anchor by design.
+    if _is_broad_current_news_query(subject_query):
+        return True
+
+    topic_stopwords = {
+        "busca", "buscar", "consulta", "consultar", "internet", "web",
+        "noticia", "noticias", "news", "latest", "breaking", "ultimas",
+        "últimas", "ultima", "última", "actualidad", "actual", "actualmente",
+        "reciente", "recientes", "hoy", "ayer", "ahora", "today", "current",
+        "publicada", "publicadas", "publicado", "publicados", "verificada",
+        "verificadas", "verificado", "verificados", "fuente", "fuentes",
+        "independiente", "independientes", "articulo", "artículos", "articulos",
+        "sobre", "segun", "según", "de", "del", "la", "las", "el", "los",
+        "en", "a", "y", "o", "para", "por", "con", "una", "un", "que", "qué",
+        "si", "no", "hay", "tres", "medio", "medios", "distinto", "distintos",
+        "valido", "validos", "válido", "válidos", "indica", "indicar", "puedes",
+        "puede", "verificar", "verificarlo", "inventa", "inventes", "sintesis",
+        "síntesis", "resumen", "datos", "informacion", "información", "chile",
+        "supuesto", "supuesta", "supuestos", "supuestas", "evento", "eventos",
+        "hecho", "hechos", "suceso", "sucesos", "precio", "valor", "cual", "cuál",
+        "cuales", "cuáles", "principales", "presenta", "entrega", "incluye",
+        "explica", "explicar", "informa", "informar", "responde",
+    }
+    topic_tokens = {
+        token
+        for token in re.findall(r"[0-9a-záéíóúüñ]+", subject_query.casefold())
+        if len(token) >= 3 and not token.isdigit() and token not in topic_stopwords
+    }
+    # A fresh timestamp and trusted domain are not proof of relevance: require
+    # at least one actual subject term in the extracted publisher text.
+    if not topic_tokens:
+        return False
+    return bool(topic_tokens & evidence_tokens)
+
+
 def _is_publishable_realtime_news_source(
     query: str,
     source: dict[str, Any],
     fetched_page: dict[str, Any],
 ) -> bool:
-    """Accept current-news evidence only when a real page is fresh and query-relevant."""
-    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
+    """Accept only a fresh, relevant extracted article verified against its search result."""
+    published_at = _verified_realtime_news_published_at(query, source, fetched_page)
+    if not published_at:
         return False
 
-    published_at = fetched_page.get("published_at") or source.get("published_at")
-    if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
-        query,
-    ):
-        return False
-
-    page_url = str(
-        fetched_page.get("url")
-        or fetched_page.get("final_url")
-        or source.get("url")
-        or ""
-    ).strip()
-    parsed = urlparse(page_url)
-    if parsed.scheme.casefold() != "https" or not parsed.hostname:
-        return False
-    page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
-    # A signed Google News wrapper is not an independently readable publisher article.
-    if page_host in {"news.google.com", "news.googleusercontent.com"}:
-        return False
-
-    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
-    landing_paths = {
-        "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
-        "/noticias", "/chile", "/actualidad", "/politica", "/política",
-        "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news", "/ultimo-momento",
-    }
-    if path in landing_paths:
-        return False
-
+    page_url = str(fetched_page.get("url") or fetched_page.get("final_url") or "").strip()
     page_text = str(fetched_page.get("text") or "").strip()
     if len(page_text) < 80:
         return False
 
-    title = str(fetched_page.get("title") or source.get("title") or "").casefold()
+    title = " ".join(str(fetched_page.get("title") or "").casefold().split())
     if any(marker in title for marker in (
-        "capital, mapa, bandera, población",
-        "capital, map, flag",
-        "lugares imperdibles",
-        "guía de viaje",
-        "travel guide",
+        "home -", "home |", "inicio -", "inicio |", "conoce chile",
+        "discover chile", "about us", "who we are", "quienes somos",
+        "quiénes somos", "capital, mapa, bandera, población",
+        "capital, map, flag", "lugares imperdibles", "guía de viaje",
+        "guia de viaje", "travel guide", "información turística",
+        "informacion turistica", "destinos de chile", "plantilla administrativa",
+        "advertising template", "promociones y publicidad", "portal oficial",
+        "mapa de chile", "mapas de chile", "mapa interactivo", "map of chile",
+        "world map", "mapasdelmundo", "mundomapa", "geografía de chile",
+        "geografia de chile", "bandera de chile", "capital de chile",
+        "datos generales de chile", "lugares que visitar en chile",
+        "sucursal virtual", "oficina virtual", "portal de clientes",
+        "ingresa a tu cuenta", "acceso a tu cuenta", "consulta tus servicios",
+        "login isapre", "servicios en línea", "servicios en linea",
     )):
+        return False
+
+    if not _realtime_news_has_query_topic_match(query, fetched_page):
         return False
 
     relevance_item = {
         **source,
-        "title": fetched_page.get("title") or source.get("title") or "",
+        "title": fetched_page.get("title") or "",
         "url": page_url,
         "published_at": published_at,
         "snippet": page_text[:2000],
         "text": page_text[:2000],
     }
     try:
-        minimum_relevance_score = max(
+        configured_relevance_score = max(
             0.18,
             min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
         )
     except (TypeError, ValueError):
-        minimum_relevance_score = 0.28
+        configured_relevance_score = 0.28
+    # Broad country-level headlines have no narrow topic token for a lexical
+    # ranker to match. Keep a small bounded floor for these queries only; article
+    # identity, freshness, extracted text and editorial independence remain strict.
+    relax_broad_news_relevance = (
+        _is_broad_current_news_query(query)
+        and _is_known_chile_editorial_news_domain(source, page_url)
+    )
+    minimum_relevance_score = (
+        min(0.22, configured_relevance_score)
+        if relax_broad_news_relevance
+        else configured_relevance_score
+    )
     return score_result(query, relevance_item) >= minimum_relevance_score
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
@@ -1903,7 +2255,10 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Do not copy SERP publication metadata here: it is only trusted later
+        # after the fetched page is verified as the same article.
+        "published_at": result.get("published_at"),
+        "title_from_page": bool(str(result.get("title") or "").strip()),
         "text_chars": len(page_text),
     }
 
@@ -1915,11 +2270,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Explicit current-news requests must verify three independent publisher pages.
+    # Other research/contrast intents require two independently extracted domains.
+    news_query = _requires_current_news_quorum(query)
     must_fetch = bool(explicitly_forced or deep or realtime)
-    contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    contrast_required = bool(news_query or should_deep_web(messages) or (deep and not realtime))
+    required_pages = 3 if news_query else (2 if contrast_required else 1)
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -1942,12 +2298,41 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
-    if not isinstance(search_result, dict) or search_result.get("ok") is not True:
-        errors = search_result.get("errors") if isinstance(search_result, dict) else None
+    if not isinstance(search_result, dict):
+        logger.warning(
+            "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
+            request_id, (time.perf_counter() - search_started) * 1000,
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
+
+    search_result_ok = search_result.get("ok") is True
+    partial_news_sources = (
+        search_result.get("results")
+        if isinstance(search_result.get("results"), list)
+        else search_result.get("sources")
+        if isinstance(search_result.get("sources"), list)
+        else []
+    )
+    successful_search_providers = {
+        str(provider).strip().casefold()
+        for provider in (search_result.get("providers") or [])
+        if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+    }
+    # Search orchestration can honestly report an incomplete candidate quorum.
+    # In current-news mode, still inspect those real candidates; only the extracted
+    # article validator below can determine whether they are enough to answer.
+    partial_news_candidates = (
+        news_query
+        and bool(partial_news_sources)
+        and len(successful_search_providers) >= 2
+    )
+    if not search_result_ok and not partial_news_candidates:
+        errors = search_result.get("errors")
         logger.warning(
             "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
             request_id, (time.perf_counter() - search_started) * 1000,
-            search_result.get("providers_attempted") if isinstance(search_result, dict) else None,
+            search_result.get("providers_attempted"),
             errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
@@ -2019,6 +2404,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     candidates: list[dict[str, Any]] = []
     seen_candidate_domains: set[str] = set()
     for source in sources.values():
+        # Drop generic/homepage hits before filling the small fetch batch. A
+        # fresh SERP timestamp on /en/ or /conoce-chile must not consume one
+        # of the three scarce current-news extraction slots.
+        if news_query and _is_generic_realtime_news_candidate(source, query):
+            logger.info(
+                "web_evidence_generic_news_candidate_skipped request_id=%s url=%s",
+                request_id or "unknown",
+                str(source.get("url") or "")[:500],
+            )
+            continue
         host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
         if not host:
             host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -2078,17 +2473,24 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
-            if (
-                page is not None
-                and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
-            ):
-                logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
-                    request_id or "unknown",
-                    str(page.get("url") or source.get("url") or "")[:500],
+            if page is not None and news_query:
+                published_at = _verified_realtime_news_published_at(query, source, page)
+                if (
+                    not published_at
+                    or not _is_publishable_realtime_news_source(query, source, page)
+                ):
+                    logger.info(
+                        "web_evidence_current_news_rejected request_id=%s url=%s reason=stale_missing_or_article_identity_mismatch",
+                        request_id or "unknown",
+                        str(page.get("url") or source.get("url") or "")[:500],
+                    )
+                    return None
+                page["published_at"] = published_at
+                page["domain"] = _editorial_domain(
+                    source,
+                    str(page.get("url") or page.get("final_url") or ""),
                 )
-                return None
+                page["source_url"] = str(source.get("url") or "")
             return page
 
         fetch_batch = await fetch_source_quorum(
@@ -2110,13 +2512,37 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             fetch_batch.elapsed_ms,
         )
 
+    if news_query:
+        valid_news_domains = {
+            str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+            .casefold().rstrip(".").removeprefix("www.")
+            for page in fetched_pages
+        } - {""}
+        valid_news_providers = {
+            str(provider).strip().casefold()
+            for provider in (search_result.get("providers") or [])
+            if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+        }
+        if (
+            len(fetched_pages) < 3
+            or len(valid_news_domains) < 3
+            or len(valid_news_providers) < 2
+        ):
+            logger.warning(
+                "web_evidence_current_news_quorum_not_met request_id=%s pages=%s domains=%s providers=%s",
+                request_id or "unknown",
+                len(fetched_pages),
+                len(valid_news_domains),
+                len(valid_news_providers),
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+        # Current-news requests are never downgraded to raw SERP snippets.
+        # Other realtime queries may use a clearly degraded multi-domain fallback.
+        if realtime and not news_query and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
             snippet_fallback_used = True
             logger.warning(
                 "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
@@ -2138,20 +2564,27 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "url": item.get("url"),
             "provider": item.get("provider"),
             "published_at": item.get("published_at"),
+            "domain": item.get("domain"),
             "text_chars": item.get("text_chars"),
             "text": str(item.get("text") or "")[:2200],
         }
         for item in fetched_pages[:5]
     ]
-    # Current-news candidates without a verified recent publication time never
-    # reach the model through raw SERP metadata.
-    verified_search_results = [
-        item for item in compact_search_results
-        if (
-            not is_realtime_news_query(query)
-            or _is_recently_published(item, query)
-        )
-    ]
+    # In current-news mode, only pages that passed date, article-identity,
+    # extraction, relevance and editorial-domain validation may reach the model.
+    if news_query:
+        verified_search_results = [
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "snippet": str(item.get("text") or "")[:700],
+                "published_at": item.get("published_at"),
+                "provider": item.get("provider"),
+            }
+            for item in compact_fetched_pages
+        ]
+    else:
+        verified_search_results = list(compact_search_results)
     evidence_fragments = [
         str(item.get("snippet") or "")
         for item in (snippet_evidence if snippet_fallback_used else [])
@@ -2164,19 +2597,35 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     extracted_text_chars = sum(len(str(item.get("text") or "")) for item in compact_fetched_pages)
     extracted_domains = {
-        (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        str(
+            item.get("domain")
+            or (urlparse(str(item.get("url") or "")).hostname or "")
+        ).casefold().rstrip(".").removeprefix("www.")
         for item in compact_fetched_pages
     } - {""}
     domains_used = len(
         extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
     )
+    successful_news_providers = sorted({
+        str(provider).strip().casefold()
+        for provider in (search_result.get("providers") or [])
+        if str(provider).strip().casefold() not in {"", "unknown", "multi", "none"}
+    })
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
         "retrieved_at": search_result.get("retrieved_at"),
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
-        "verification": search_result.get("verification") or {},
+        "verification": (
+            {
+                "level": "verified-current-news-quorum",
+                "distinct_domains": len(extracted_domains),
+                "distinct_providers": len(successful_news_providers),
+                "corroborated_results": 0,
+            }
+            if news_query else (search_result.get("verification") or {})
+        ),
         "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
@@ -3107,6 +3556,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     await enforce_client_controls(request, session_id)
     request_id = request_id_from_request(request)
     started = time.perf_counter()
+    news_quorum_required = _requires_current_news_quorum(q)
     if not DEEP33_WEB_TOOLS_ENABLED:
         payload = graceful_payload(
             ok=False,
@@ -3191,14 +3641,32 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # (for example a health-insurance login) must not crowd out a matching news
         # article or official document. Filter weak results, then use direct/permalink
         # priority only as a tie-breaker between similarly relevant candidates.
-        minimum_relevance_score = max(
-            0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
-        )
+        try:
+            configured_relevance_score = max(
+                0.18,
+                min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            )
+        except (TypeError, ValueError):
+            configured_relevance_score = 0.28
         ranked_sources = [
-            {**item, "relevance_score": score_result(q, item)}
+            {
+                **item,
+                "relevance_score": score_result(q, item),
+            }
             for item in normalized_sources.values()
+            if not (
+                news_quorum_required
+                and _is_generic_realtime_news_candidate(item, q)
+            )
         ]
+        # Broad news queries have no narrow topic anchor; lower the candidate
+        # floor slightly, but the shared final validator grants this relaxation
+        # only to recognized newsrooms after article identity/freshness checks.
+        minimum_relevance_score = (
+            min(0.22, configured_relevance_score)
+            if _is_broad_current_news_query(q)
+            else configured_relevance_score
+        )
         relevant_sources = [
             item
             for item in ranked_sources
@@ -3212,7 +3680,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # candidates only*. They still become public evidence only after a real page
         # is successfully fetched and extracted below.
         candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
+        if (search_ok or news_quorum_required) and ranked_sources and not candidate_sources:
             candidate_sources = ranked_sources
             logger.warning(
                 "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
@@ -3228,7 +3696,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_realtime_news_query(q):
+        if news_quorum_required:
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3274,11 +3742,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             for existing in candidate_sources
                         ):
                             continue
+                        provider_name = str(raw.get("provider") or "google_news").strip().casefold()
                         candidate = {
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
+                            "provider": provider_name,
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }
@@ -3287,6 +3756,23 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                         candidate_domains.add(domain)
                         if len(candidate_domains) >= 5:
                             break
+                    # Only providers that produced candidates contribute to the
+                    # two-provider quorum; empty responses never count as success.
+                    rescued_providers = {
+                        str(item.get("provider") or "").strip().casefold()
+                        for item in candidate_sources
+                        if str(item.get("provider") or "").strip().casefold()
+                        in {"google_news", "bing", "duckduckgo", "tavily", "mojeek"}
+                    }
+                    if rescued_providers:
+                        result["providers"] = list(dict.fromkeys([
+                            *[
+                                str(item).strip().casefold()
+                                for item in (result.get("providers") or [])
+                                if str(item).strip()
+                            ],
+                            *sorted(rescued_providers),
+                        ]))
                     logger.info(
                         "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
                         request_id,
@@ -3303,7 +3789,20 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        configured_fetch_candidates = max(
+            3,
+            min(8, int(os.getenv(
+                "WEB_SEARCH_FETCH_CANDIDATES",
+                "8" if _is_broad_current_news_query(q) else "5",
+            ))),
+        )
+        # Broad Chile-news requests need a wider direct-article fetch pool because
+        # multiple SERP candidates can fail publication/article-identity checks.
+        max_fetch_candidates = (
+            max(8, configured_fetch_candidates)
+            if _is_broad_current_news_query(q)
+            else min(6, configured_fetch_candidates)
+        )
         direct_sources = [
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3405,14 +3904,15 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if not direct_url or not fetched_page:
                 continue
 
-            if is_realtime_news_query(q):
+            if news_quorum_required:
                 if not _is_publishable_realtime_news_source(q, item, fetched_page):
                     continue
-                published_at = fetched_page.get("published_at") or item.get("published_at")
-                page_domain = str(
-                    fetched_page.get("domain")
-                    or (urlparse(direct_url).hostname or "")
-                ).casefold().removeprefix("www.")
+                published_at = _verified_realtime_news_published_at(q, item, fetched_page)
+                if not published_at:
+                    continue
+                page_domain = _editorial_domain(item, direct_url)
+                fetched_page["published_at"] = published_at
+                fetched_page["domain"] = page_domain
                 valid_news_pages_by_url[original_url] = fetched_page
                 resolved_results.append({
                     **item,
@@ -3430,7 +3930,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         evidence_fetched_pages = (
             list(valid_news_pages_by_url.values())
-            if is_realtime_news_query(q)
+            if news_quorum_required
             else fetched_pages
         )
         fetched_domains = {
@@ -3453,7 +3953,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # underlying page was fetched: callers can distinguish evidence_type and
         # fetched=false from fully extracted pages.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
+        if search_ok and is_realtime_query(q) and not news_quorum_required and not has_extracted_content:
             for item in candidate_sources:
                 snippet = str(item.get("snippet") or "").strip()
                 url = str(item.get("url") or "").strip()
@@ -3478,7 +3978,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # already-ranked live snippets from distinct domains. They are explicitly
         # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
+        if search_ok and is_realtime_query(q) and not news_quorum_required and has_extracted_content and len(resolved_results) < 3:
             extracted_result_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "")
                 .casefold().removeprefix("www.")
@@ -3527,7 +4027,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             })
 
         valid_news_domains = {
-            (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+            str(
+                item.get("source_domain")
+                or (urlparse(str(item.get("url") or "")).hostname or "")
+            ).casefold().rstrip(".").removeprefix("www.")
             for item in resolved_results
             if str(item.get("url") or "").startswith("https://")
         }
@@ -3541,33 +4044,52 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
         news_quorum_met = (
-            not is_realtime_news_query(q)
+            not news_quorum_required
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
                 and len(valid_news_providers) >= 2
             )
         )
-        final_ok = (
-            search_ok
-            and (has_extracted_content or has_snippet_evidence)
-            and news_quorum_met
-        )
+        # For realtime-news queries, the orchestrator's initial candidate
+        # quorum may be incomplete while direct publisher pages are still
+        # retrievable. The verified extracted-article quorum below is the
+        # authoritative gate: three recent article identities, three editorial
+        # domains and at least two successful search providers.
+        if news_quorum_required:
+            final_ok = has_extracted_content and news_quorum_met
+        else:
+            final_ok = (
+                search_ok
+                and (has_extracted_content or has_snippet_evidence)
+                and news_quorum_met
+            )
         if (
-            not search_ok
+            (not search_ok and not news_quorum_required)
+            or (news_quorum_required and not has_extracted_content)
             or (not has_extracted_content and not has_snippet_evidence)
             or not news_quorum_met
         ):
             status = "failed"
-        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
+        elif (
+            not has_extracted_content
+            or supplemental_snippet_results
+            or (
+                fetch_failures
+                and not (news_quorum_required and news_quorum_met)
+            )
+        ):
+            # A failed extra candidate must not demote a complete verified-news
+            # quorum. Failed URLs remain in errors; the published evidence set
+            # still contains three fresh articles from independent domains.
             status = "degraded"
         else:
             status = "success"
 
         errors = list(result.get("errors") or [])
-        if is_realtime_news_query(q) and not news_quorum_met:
+        if news_quorum_required and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
-        if not search_ok:
+        if not search_ok and not news_quorum_required:
             errors.append("SEARCH_RESULT_NOT_OK")
         errors.extend(
             f"{item['reason']}:{item['url']}"
