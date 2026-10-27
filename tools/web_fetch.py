@@ -870,7 +870,7 @@ async def _fetch_page_uncached(
                 content=await _read_limited(response,_max_response_bytes())
             try:
                 title, text = _extract_text(content, content_type, max_text_chars)
-            published_at = _extract_published_at(content, content_type)
+                published_at = _extract_published_at(content, content_type)
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
