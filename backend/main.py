@@ -5482,11 +5482,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             )
         )
         try:
-            yield _sse_status(
-                "thinking",
-                request_id,
-                web_required=web_required,
-            )
+            yield _sse_status("thinking", request_id, web_required=web_required)
 
             stream_answer_override: str | None = None
             router_evidence = None
