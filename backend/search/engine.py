@@ -494,19 +494,18 @@ _LEXICAL_PATH_MARKERS = (
     "/pronunciation/", "/vocabulary/",
 )
 _REALTIME_NEWS_SIGNALS = (
+    # Editorial/current-event intent only. Realtime product versions, release
+    # notes, security advisories, service status and generic "situación actual"
+    # remain ordinary open-web lookups and must not inherit newsroom constraints.
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
-    "última hora", "ultima hora", "actualidad", "situación actual",
-    "situacion actual", "qué pasó", "que paso", "qué está pasando",
-    "que esta pasando", "qué ocurre", "que ocurre", "qué pasa", "que pasa",
-    "noticias recientes", "noticia reciente", "últimos cambios",
-    "ultimos cambios", "últimas novedades", "ultimas novedades",
-    "cambios recientes", "actualización reciente", "actualizaciones recientes",
-    "latest news", "current events", "current affairs", "release notes",
-    "latest release", "latest version", "security advisory",
-    "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
-    "en desarrollo", "acontecimientos actuales", "acontecimiento actual",
-    "eventos actuales", "eventos recientes", "últimos acontecimientos",
-    "ultimos acontecimientos", "hechos recientes",
+    "última hora", "ultima hora", "actualidad", "qué pasó", "que paso",
+    "qué está pasando", "que esta pasando", "qué ocurre", "que ocurre",
+    "qué pasa", "que pasa", "noticias recientes", "noticia reciente",
+    "latest news", "current events", "current affairs",
+    "incidente reciente", "incidentes recientes", "en desarrollo",
+    "acontecimientos actuales", "acontecimiento actual", "eventos actuales",
+    "eventos recientes", "últimos acontecimientos", "ultimos acontecimientos",
+    "hechos recientes",
 )
 _REALTIME_MARKERS = (
     "hoy", "ahora", "ahora mismo", "ayer", "actual", "actualmente",
