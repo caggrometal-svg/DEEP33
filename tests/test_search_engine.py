@@ -1209,3 +1209,20 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
+
+
+def test_realtime_general_web_queries_do_not_inherit_newsroom_constraints():
+    from backend.search.engine import is_realtime_news_query, is_realtime_query
+
+    general_realtime = (
+        "¿Cuál es la situación actual de Python 3.14?",
+        "¿Cuál es la última versión estable de FastAPI?",
+        "Revisa las release notes recientes de Android.",
+        "¿Cuál es el estado actual del servicio de GitHub?",
+        "Busca el security advisory vigente de este paquete.",
+    )
+    for query in general_realtime:
+        assert is_realtime_query(query) is True
+        assert is_realtime_news_query(query) is False
+
+    assert is_realtime_news_query("¿Cuáles son las noticias más importantes de Chile hoy?") is True
