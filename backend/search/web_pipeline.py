@@ -431,18 +431,39 @@ async def fetch_one(
 
 
 def _unique_source_candidates(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    unique: list[dict[str, Any]] = []
-    seen_domains: set[str] = set()
+    """Keep bounded alternate URLs per domain and order them in domain rounds.
+
+    A search result can rank an unreadable homepage ahead of a useful article from
+    the same host. Dropping every later URL before fetching made that first bad URL
+    permanently hide valid evidence. Keep up to two URLs per domain, but schedule
+    the first URL from every domain before any same-domain alternate so diversity
+    still wins the initial fetch budget.
+    """
+    per_domain: dict[str, list[dict[str, Any]]] = {}
     seen_urls: set[str] = set()
+    max_per_domain = 2
+
     for source in sources:
         url = str(source.get("url") or "").strip()
-        host = str(source.get("source_domain") or source.get("domain") or _host(url)).casefold().removeprefix("www.")
-        if not url or not host or url in seen_urls or host in seen_domains:
+        host = str(
+            source.get("source_domain")
+            or source.get("domain")
+            or _host(url)
+        ).casefold().removeprefix("www.")
+        if not url or not host or url in seen_urls:
+            continue
+        bucket = per_domain.setdefault(host, [])
+        if len(bucket) >= max_per_domain:
             continue
         seen_urls.add(url)
-        seen_domains.add(host)
-        unique.append(source)
-    return unique
+        bucket.append(source)
+
+    ordered: list[dict[str, Any]] = []
+    for round_index in range(max_per_domain):
+        for bucket in per_domain.values():
+            if round_index < len(bucket):
+                ordered.append(bucket[round_index])
+    return ordered
 
 
 async def fetch_source_quorum(
