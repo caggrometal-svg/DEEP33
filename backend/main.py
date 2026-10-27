@@ -3652,11 +3652,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             for existing in candidate_sources
                         ):
                             continue
+                        provider_name = str(raw.get("provider") or "google_news").strip().casefold()
                         candidate = {
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
+                            "provider": provider_name,
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }
@@ -3665,6 +3666,23 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                         candidate_domains.add(domain)
                         if len(candidate_domains) >= 5:
                             break
+                    # Only providers that produced candidates contribute to the
+                    # two-provider quorum; empty responses never count as success.
+                    rescued_providers = {
+                        str(item.get("provider") or "").strip().casefold()
+                        for item in candidate_sources
+                        if str(item.get("provider") or "").strip().casefold()
+                        in {"google_news", "bing", "duckduckgo", "tavily", "mojeek"}
+                    }
+                    if rescued_providers:
+                        result["providers"] = list(dict.fromkeys([
+                            *[
+                                str(item).strip().casefold()
+                                for item in (result.get("providers") or [])
+                                if str(item).strip()
+                            ],
+                            *sorted(rescued_providers),
+                        ]))
                     logger.info(
                         "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
                         request_id,
