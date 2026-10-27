@@ -151,15 +151,33 @@ def _is_publishable_realtime_news_source(
 
 def _is_relevant_fetched_web_source(
     query: str,
+    source: dict[str, Any],
     fetched_page: dict[str, Any],
 ) -> bool:
-    """Require relevance from the page actually opened, not only its SERP snippet."""
-    if not isinstance(fetched_page, dict):
+    """Validate the page actually opened without re-ranking a verified exact URL.
+
+    Search ranking chooses the candidate. If fetching preserves that exact public
+    URL, readable extracted text is sufficient identity evidence. If navigation
+    redirects to a different destination, the final page must independently match
+    the query so login/admin/homepage redirects cannot inherit the SERP relevance.
+    """
+    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
     page_text = str(fetched_page.get("text") or "").strip()
     page_url = str(fetched_page.get("url") or fetched_page.get("final_url") or "").strip()
-    if len(page_text) < 80 or not page_url:
+    source_url = str(source.get("url") or "").strip()
+    if len(page_text) < 80 or not page_url or not source_url:
         return False
+
+    def canonical_identity(value: str) -> tuple[str, str]:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").casefold().removeprefix("www.").rstrip(".")
+        path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+        return host, path
+
+    if canonical_identity(page_url) == canonical_identity(source_url):
+        return True
+
     relevance_item = {
         "title": str(fetched_page.get("title") or ""),
         "url": page_url,
@@ -2105,7 +2123,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             if page is None:
                 return None
-            if not _is_relevant_fetched_web_source(query, page):
+            if not _is_relevant_fetched_web_source(query, source, page):
                 logger.info(
                     "web_evidence_page_relevance_rejected request_id=%s url=%s",
                     request_id or "unknown",
