@@ -4071,7 +4071,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             or not news_quorum_met
         ):
             status = "failed"
-        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
+        elif (
+            not has_extracted_content
+            or supplemental_snippet_results
+            or (
+                fetch_failures
+                and not (news_quorum_required and news_quorum_met)
+            )
+        ):
+            # A failed extra candidate must not demote a complete verified-news
+            # quorum. Failed URLs remain in errors; the published evidence set
+            # still contains three fresh articles from independent domains.
             status = "degraded"
         else:
             status = "success"
