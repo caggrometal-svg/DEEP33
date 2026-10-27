@@ -462,6 +462,65 @@ def test_prepare_web_evidence_marks_search_failure_without_http_503(
     assert results == []
 
 
+def test_prepare_web_evidence_blocks_current_news_without_two_search_providers(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from datetime import datetime, timezone
+
+    query = "¿Qué noticias relevantes se publicaron hoy en Chile?"
+    published_at = datetime.now(timezone.utc).isoformat()
+    results = [
+        {
+            "title": "Noticias de Chile hoy: Gobierno anuncia nuevas medidas",
+            "url": f"https://publisher-{index}.example/2026/10/27/noticias-chile-medidas-{index}",
+            "snippet": "El Gobierno de Chile anunció nuevas medidas hoy y confirmó detalles relevantes.",
+            "source_domain": f"publisher-{index}.example",
+            "provider": "bing",
+            "published_at": published_at,
+        }
+        for index in range(3)
+    ]
+
+    async def fake_search(_query, **_kwargs):
+        assert _query == query
+        # One provider succeeded; the second merely appears in the attempted list.
+        return {
+            "ok": True,
+            "query": query,
+            "providers": ["bing"],
+            "providers_attempted": ["bing", "mojeek"],
+            "results": results,
+        }
+
+    async def fake_fetch(source, **_kwargs):
+        text = (
+            "Noticias de Chile hoy. El Gobierno anunció nuevas medidas y confirmó "
+            "detalles relevantes de la decisión pública. "
+        ) * 20
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": text,
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "published_at": published_at,
+            "retrieved_at": published_at,
+            "text_chars": len(text),
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+
+    working, sources, evidence, search_results = asyncio.run(
+        main.prepare_web_evidence([{"role": "user", "content": query}], request_id="news-quorum-test")
+    )
+
+    assert working is None
+    assert sources == []
+    assert evidence == []
+    assert search_results == []
+
+
 def test_connectivity_question_uses_live_backend_probe_not_search(monkeypatch: pytest.MonkeyPatch):
     assert main.is_connectivity_question("¿Tienes acceso a Internet?")
     assert main.is_connectivity_question("Do you have internet access?")
