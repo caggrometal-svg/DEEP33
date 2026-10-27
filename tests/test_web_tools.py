@@ -65,7 +65,7 @@ def test_tavily_realtime_news_is_time_bounded(monkeypatch):
 
     result = asyncio.run(
         module._tavily_search(
-            "situación actual de Las Condes",
+            "noticias actuales de Las Condes",
             "tvly-test",
             5,
             5,
@@ -917,15 +917,20 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     )
 
     assert working
-    # Source links must identify pages that supplied readable text, not blocked pages.
-    assert {item["url"] for item in sources} == {urls[3], urls[4], urls[5]}
-    assert not any(item["url"] in set(urls[:3]) for item in sources)
-    assert set(attempted) == {urls[0], urls[1], urls[3], urls[4], urls[5]}
+    # A blocked first URL must not poison the whole domain. The second URL from
+    # that domain may contribute if it is independently readable.
+    returned_urls = {item["url"] for item in sources}
+    assert urls[2] in returned_urls
+    assert urls[3] in returned_urls
+    assert urls[4] in returned_urls
+    assert len(returned_urls) >= 3
+    assert not any(item["url"] in {urls[0], urls[1]} for item in sources)
+    assert urls[0] in attempted and urls[1] in attempted and urls[2] in attempted
     assert any("READABLE-THREE" in fragment for fragment in evidence_fragments)
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_web_evidence_fails_closed_when_publishers_block(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
@@ -933,21 +938,21 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
         {
             "title": "Chile actualidad uno",
             "url": "https://fuente-uno.example/chile/actualidad-uno",
-            "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2,
+            "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para descubrimiento. " * 2,
             "provider": "bing",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad dos",
             "url": "https://fuente-dos.example/noticias/chile-dos",
-            "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2,
+            "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales. " * 2,
             "provider": "google_news",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
         {
             "title": "Chile actualidad tres",
             "url": "https://fuente-tres.example/politica/chile-tres",
-            "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2,
+            "snippet": "Tercera fuente independiente con información reciente de Chile. " * 2,
             "provider": "bing",
             "published_at": datetime.now(timezone.utc).isoformat(),
         },
@@ -977,17 +982,15 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
     working, sources, evidence_fragments, compact = asyncio.run(
         main.prepare_web_evidence(
             [{"role": "user", "content": query}],
-            request_id="realtime-snippet-fallback",
+            request_id="realtime-fail-closed",
             deep=True,
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
 
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
@@ -1122,8 +1125,10 @@ def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "backend/main.py").read_text(encoding="utf-8")
-    assert 'max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))' in source
-    assert "if len(fetch_candidates) >= max_fetch_candidates:" in source
+    assert 'WEB_SEARCH_FETCH_CANDIDATES' in source
+    assert "candidate_pool = [*direct_sources, *wrapper_sources][:max_fetch_candidates]" in source
+    assert "fetch_source_quorum(" in source
+    assert "endpoint_target_sources = 3 if is_realtime_news_query(q) else 2" in source
     assert "landing_penalty = int(path in landing_paths or len(path_parts) <= 1)" in source
 
 

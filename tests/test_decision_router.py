@@ -9,8 +9,8 @@ from backend.decision_router import (
 )
 
 
-def test_classifier_routes_stable_knowledge_to_internal():
-    assert classify_query("¿Cuántos huesos tiene el cuerpo humano?").route == DecisionRoute.INTERNAL
+def test_classifier_verifies_stable_factual_lookups_on_the_web():
+    assert classify_query("¿Cuántos huesos tiene el cuerpo humano?").route == DecisionRoute.WEB
 
 
 def test_classifier_routes_current_dollar_to_finance():
@@ -29,6 +29,43 @@ def test_classifier_routes_weather_to_weather():
 
 def test_classifier_routes_explicit_web_request_to_web():
     assert classify_query("Busca en internet quién ganó la elección hoy").route == DecisionRoute.WEB
+
+
+def test_classifier_routes_external_mutable_facts_to_web_without_magic_words():
+    cases = (
+        "¿Quién es el CEO de NVIDIA?",
+        "¿Cuál es la versión estable de Python?",
+        "¿Cuál es el horario del Museo del Prado?",
+        "¿Qué dice la documentación de FastAPI sobre lifespan?",
+        "¿Cuál es la normativa de equipaje de LATAM?",
+        "¿Quién fundó OpenAI?",
+        "¿quién fundó openai?",
+        "¿Cuál es la población de Japón?",
+        "¿cuál es la capital de francia?",
+    )
+    for query in cases:
+        assert classify_query(query).route == DecisionRoute.WEB, query
+
+
+def test_classifier_routes_generic_external_prices_and_attributes_to_web():
+    cases = (
+        "¿Cuál es el precio de PlayStation 5?",
+        "What is the population of France?",
+        "¿Qué es la capital de Japón?",
+        "How old is the Eiffel Tower?",
+    )
+    for query in cases:
+        assert classify_query(query).route == DecisionRoute.WEB, query
+
+
+def test_classifier_keeps_stable_explanations_internal():
+    cases = (
+        "¿Qué es la fotosíntesis?",
+        "Explica cómo funciona la recursión",
+        "¿Por qué el cielo se ve azul?",
+    )
+    for query in cases:
+        assert classify_query(query).route == DecisionRoute.INTERNAL, query
 
 
 def test_validation_rejects_missing_metadata():

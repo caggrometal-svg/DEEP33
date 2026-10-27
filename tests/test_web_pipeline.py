@@ -151,3 +151,39 @@ def test_fetch_quorum_keeps_degraded_evidence_when_target_is_not_reached() -> No
     assert result.status == "DEGRADED"
     assert result.fetched == 1
     assert result.quorum_reached is False
+
+
+def test_fetch_quorum_tries_second_url_from_same_domain_after_first_fails() -> None:
+    sources = [
+        {"url": "https://a.example/", "source_domain": "a.example"},
+        {"url": "https://b.example/article", "source_domain": "b.example"},
+        {"url": "https://a.example/useful-article", "source_domain": "a.example"},
+    ]
+    attempted = []
+
+    async def fetcher(source, _timeout):
+        attempted.append(source["url"])
+        if source["url"] == "https://a.example/":
+            return None
+        return {
+            "url": source["url"],
+            "domain": source["source_domain"],
+            "text": "verified evidence " * 80,
+        }
+
+    result = asyncio.run(fetch_source_quorum(
+        sources,
+        fetcher,
+        policy=FetchPolicy(
+            global_budget_seconds=1.0,
+            concurrency=2,
+            target_sources=2,
+            max_sources=3,
+            min_text_chars=120,
+            min_total_chars=500,
+        ),
+    ))
+
+    assert result.quorum_reached is True
+    assert result.distinct_domains == 2
+    assert "https://a.example/useful-article" in attempted

@@ -45,23 +45,15 @@ from backend.search.engine import is_realtime_query, is_realtime_news_query, _is
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
-from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
+from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, requires_web_verification, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
-    # Prefer Vercel's immutable source revision for the currently active Vercel
-    # backend. This value is what CI compares with the exact tested commit.
+    # Vercel's immutable source revision is the canonical deployment identity.
     vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
     if vercel_sha:
         return vercel_sha
-    # Preserve revision reporting for the existing non-Vercel fallback runtimes.
-    railway_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
-    if railway_sha:
-        return railway_sha
-    runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
-    if runtime:
-        return runtime
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
@@ -75,7 +67,11 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = (
+    os.getenv("VERCEL_GIT_COMMIT_REF", "").strip()
+    or os.getenv("DEEP33_GIT_BRANCH", "").strip()
+    or "main"
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
@@ -151,6 +147,52 @@ def _is_publishable_realtime_news_source(
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
     return score_result(query, relevance_item) >= minimum_relevance_score
+
+
+def _is_relevant_fetched_web_source(
+    query: str,
+    source: dict[str, Any],
+    fetched_page: dict[str, Any],
+) -> bool:
+    """Validate the page actually opened without re-ranking a verified exact URL.
+
+    Search ranking chooses the candidate. If fetching preserves that exact public
+    URL, readable extracted text is sufficient identity evidence. If navigation
+    redirects to a different destination, the final page must independently match
+    the query so login/admin/homepage redirects cannot inherit the SERP relevance.
+    """
+    if not isinstance(source, dict) or not isinstance(fetched_page, dict):
+        return False
+    page_text = str(fetched_page.get("text") or "").strip()
+    page_url = str(fetched_page.get("url") or fetched_page.get("final_url") or "").strip()
+    source_url = str(source.get("url") or "").strip()
+    if len(page_text) < 80 or not page_url or not source_url:
+        return False
+
+    def canonical_identity(value: str) -> tuple[str, str]:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").casefold().removeprefix("www.").rstrip(".")
+        path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+        return host, path
+
+    if canonical_identity(page_url) == canonical_identity(source_url):
+        return True
+
+    relevance_item = {
+        "title": str(fetched_page.get("title") or ""),
+        "url": page_url,
+        "snippet": page_text[:2000],
+        "text": page_text[:2000],
+    }
+    try:
+        minimum = max(
+            0.14,
+            min(0.35, float(os.getenv("WEB_FETCH_MIN_RELEVANCE_SCORE", "0.18"))),
+        )
+    except (TypeError, ValueError):
+        minimum = 0.18
+    return score_result(query, relevance_item) >= minimum
+
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
@@ -876,7 +918,7 @@ def session_id_from_request(request: Request) -> str:
 
 
 def scope_session_for_user(user_id: str | None, session_id: str) -> str:
-    """Normalize direct Render and JWT-scoped Edge session IDs to one namespace."""
+    """Normalize direct backend and JWT-scoped session IDs to one namespace."""
     owner = str(user_id or "").strip()
     value = str(session_id or "").strip()
     if not owner:
@@ -884,7 +926,7 @@ def scope_session_for_user(user_id: str | None, session_id: str) -> str:
 
     prefix = f"{owner}:"
     # Edge has already scoped this session. Preserve its exact bounded form so the
-    # same request keeps its idempotency key when Android switches to direct Render.
+    # the same request keeps its idempotency key across authenticated backend paths.
     if value.startswith(prefix):
         return value[:128]
 
@@ -1048,7 +1090,7 @@ def payload_hash(value: dict) -> str:
 
 
 def generation_request_hash(request: ChatRequest, personality: str | None = None) -> str:
-    """Preserve Render's historical request fingerprint while sharing it with Edge."""
+    """Preserve the public request fingerprint across backend execution paths."""
     selected_personality = normalize_personality(
         personality if personality is not None else request.personality
     )
@@ -1405,6 +1447,13 @@ def latest_user_query(messages: list[dict[str, Any]]) -> str:
     return ""
 
 def should_force_web(messages):
+    """Route externally verifiable facts to live web evidence.
+
+    The old implementation depended mainly on topic keywords. That allowed
+    mutable facts about companies, products, officials, releases, laws or
+    public services to fall through to model memory. Keep explicit/realtime
+    triggers, then use the shared provider-agnostic externality classifier.
+    """
     query = latest_user_query(messages)
     if not query:
         return False
@@ -1415,16 +1464,7 @@ def should_force_web(messages):
         return True
     if any(term in lowered for term in CONTROVERSY_TERMS):
         return True
-    if re.search(r"\b(ahora|actualizado|vigente|reciente|esta semana|este mes|2026|fecha|día|hora)\b", lowered):
-        return True
-    if re.search(
-        r"\b(cu[aá]nto cuesta|cu[aá]l es el precio|horario|apertura|cerrado|disponible|"
-        r"cotiza|tipo de cambio|d[oó]lar|euro|clima|tiempo|temperatura|evento|"
-        r"partido|elecci[oó]n|presidente|ministro)\b",
-        lowered,
-    ):
-        return True
-    return False
+    return requires_web_verification(query)
 
 def is_connectivity_question(query: str) -> bool:
     """Identify direct questions about backend Internet connectivity, not web-search topics."""
@@ -1903,7 +1943,9 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Publication time is trusted only when extracted from the page that
+        # was actually opened. Search-engine timestamps remain discovery metadata.
+        "published_at": result.get("published_at"),
         "text_chars": len(page_text),
     }
 
@@ -1915,21 +1957,28 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Any externally verified answer must open real pages, not stop at SERP snippets.
+    # General web verification requires at least two independently hosted pages;
+    # deeper research may fetch more, but one readable page alone is not enough
+    # to present an external fact as corroborated.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    corroboration_required = bool(explicitly_forced or contrast_required or realtime)
+    required_pages = 2 if corroboration_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
+    search_result_limit = min(
+        8,
+        max(
+            required_pages * 2,
+            _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+        ),
+    )
     try:
         search_result = await search_web(
             query,
             timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
-            max_results=max(
-                required_pages,
-                _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
-            ),
+            max_results=search_result_limit,
             fast=not (deep or realtime or contrast_required),
             fresh=True,
         )
@@ -2012,22 +2061,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in snippet_evidence
     } - {""}
 
-    candidate_limit = max(
-        required_pages,
-        _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
-    )
-    candidates: list[dict[str, Any]] = []
-    seen_candidate_domains: set[str] = set()
-    for source in sources.values():
-        host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-        if not host:
-            host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-        if not host or host in seen_candidate_domains:
-            continue
-        seen_candidate_domains.add(host)
-        candidates.append(source)
-        if len(candidates) >= candidate_limit:
-            break
+    # Keep ranked alternate URLs from the same host. fetch_source_quorum()
+    # schedules one URL per domain first, then same-domain fallbacks only when
+    # needed. Pre-deduplicating by host here would hide a useful article behind
+    # an unreadable homepage before the fetch layer gets a chance to recover.
+    candidate_limit = search_result_limit
+    candidates: list[dict[str, Any]] = [
+        source
+        for source in sources.values()
+        if str(source.get("url") or "").strip()
+    ][:candidate_limit]
 
     if must_fetch and not candidates:
         logger.warning(
@@ -2078,17 +2121,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
-            if (
-                page is not None
-                and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
-            ):
+            if page is None:
+                return None
+            if not _is_relevant_fetched_web_source(query, source, page):
                 logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    "web_evidence_page_relevance_rejected request_id=%s url=%s",
                     request_id or "unknown",
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
                 return None
+            if is_realtime_news_query(query):
+                if not _is_publishable_realtime_news_source(query, source, page):
+                    logger.info(
+                        "web_evidence_realtime_article_rejected request_id=%s url=%s reason=identity_freshness_or_relevance",
+                        request_id or "unknown",
+                        str(page.get("url") or source.get("url") or "")[:500],
+                    )
+                    return None
             return page
 
         fetch_batch = await fetch_source_quorum(
@@ -2112,25 +2161,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
-            snippet_fallback_used = True
-            logger.warning(
-                "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
-                "snippet_sources=%s snippet_domains=%s",
-                request_id or "unknown", required_pages, len(fetched_pages),
-                len(snippet_evidence), len(snippet_evidence_domains),
-            )
-        else:
-            logger.warning(
-                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-                request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
-            )
-            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-            return None, [], [], []
+        logger.warning(
+            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
+            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -2153,10 +2189,6 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
     ]
     evidence_fragments = [
-        str(item.get("snippet") or "")
-        for item in (snippet_evidence if snippet_fallback_used else [])
-        if str(item.get("snippet") or "").strip()
-    ] + [
         str(item.get("text") or "")
         for item in compact_fetched_pages
         if str(item.get("text") or "").strip()
@@ -2167,9 +2199,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
         for item in compact_fetched_pages
     } - {""}
-    domains_used = len(
-        extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
-    )
+    domains_used = len(extracted_domains)
+    discovery_metadata = [
+        {
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "published_at": item.get("published_at"),
+            "provider": item.get("provider"),
+        }
+        for item in verified_search_results[:5]
+    ]
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
@@ -2177,7 +2216,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
-        "search_results": verified_search_results,
+        "search_results": discovery_metadata,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
@@ -2185,10 +2224,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "snippet_fallback": snippet_fallback_used,
     }
     compact_web_evidence = {
-        "search_results": [
-            {**item, "snippet": str(item.get("snippet") or "")[:300]}
-            for item in verified_search_results[:4]
-        ],
+        "search_results": discovery_metadata[:4],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
             for item in compact_fetched_pages[:2]
@@ -2233,16 +2269,6 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "url": url,
                 "provider": str(item.get("provider") or "web_fetch"),
             }
-    if snippet_fallback_used:
-        for item in snippet_evidence:
-            url = str(item.get("url") or "").strip()
-            if url and url not in source_links:
-                source_links[url] = {
-                    "title": str(item.get("title") or url),
-                    "url": url,
-                    "snippet": str(item.get("snippet") or ""),
-                    "provider": str(item.get("provider") or "web_search"),
-                }
     return working, safe_web_sources(list(source_links.values())), evidence_fragments, compact_web_evidence
 
 
@@ -2791,7 +2817,7 @@ def normalize_shared_generation_output(
     request_id: str,
     personality: str,
 ) -> dict:
-    """Adapt Edge's compact shared-cache record to Render's public response schema."""
+    """Adapt a compact shared-cache record to the public backend response schema."""
     if not isinstance(output, dict):
         raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
 
@@ -2831,6 +2857,7 @@ def normalize_shared_generation_output(
         },
         "sources": output.get("sources") if isinstance(output.get("sources"), list) else [],
         "web_navigation": bool(output.get("web_navigation")),
+        "web_required": bool(output.get("web_required")),
     }
     return sanitize_generation_output(normalized)
 
@@ -2884,7 +2911,7 @@ async def liveness() -> dict:
         "version": APP_VERSION,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": os.getenv("VERCEL_DEPLOYMENT_ID", "local"),
         "timestamp": utc_now(),
     }
 
@@ -2898,7 +2925,7 @@ async def health() -> dict:
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "git_branch": GIT_BRANCH,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": os.getenv("VERCEL_DEPLOYMENT_ID", "local"),
         "timestamp": utc_now(),
     }
 
@@ -2939,16 +2966,21 @@ async def ready(response: Response) -> dict:
 
 @app.get("/v1/connectivity/audit")
 async def connectivity_audit() -> dict:
+    """Exercise network -> search -> open pages -> extract text, not search alone."""
     network = await network_probe()
     gateway_status = await gateway_probe()
+    audit_query = os.getenv(
+        "WEB_NAVIGATION_AUDIT_QUERY",
+        "HTTP status code documentation standard",
+    ).strip() or "HTTP status code documentation standard"
 
     search: dict[str, Any]
     try:
         search = await search_web(
-            "DEEP33",
+            audit_query,
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
-            max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
-            fast=True,
+            max_results=max(4, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "5"))),
+            fast=False,
             fresh=True,
         )
     except Exception as exc:
@@ -2963,17 +2995,83 @@ async def connectivity_audit() -> dict:
             "error": "WEB_SEARCH_FAILED",
         }
 
+    search_ok = (
+        bool(search.get("ok"))
+        and isinstance(search.get("results"), list)
+        and len(search["results"]) >= 2
+    )
+    navigation = {
+        "ok": False,
+        "status": "SEARCH_UNAVAILABLE",
+        "fetched_pages": 0,
+        "distinct_domains": 0,
+        "extracted_text_chars": 0,
+    }
+    if search_ok:
+        audit_sources = _source_from_result(search)
+        try:
+            async def audit_fetcher(
+                source: dict[str, Any],
+                adaptive_timeout: float,
+            ) -> dict[str, Any] | None:
+                return await _fetch_web_source(
+                    source,
+                    request_id="connectivity-audit",
+                    timeout_seconds=adaptive_timeout,
+                )
+
+            audit_batch = await fetch_source_quorum(
+                audit_sources,
+                audit_fetcher,
+                policy=FetchPolicy(
+                    base_timeout_seconds=2.8,
+                    min_timeout_seconds=1.0,
+                    max_timeout_seconds=4.0,
+                    global_budget_seconds=6.0,
+                    concurrency=4,
+                    target_sources=2,
+                    max_sources=3,
+                    min_text_chars=120,
+                    min_total_chars=500,
+                ),
+            )
+            navigation = {
+                "ok": bool(audit_batch.quorum_reached),
+                "status": audit_batch.status,
+                "fetched_pages": audit_batch.fetched,
+                "distinct_domains": audit_batch.distinct_domains,
+                "extracted_text_chars": audit_batch.total_text_chars,
+                "failures": audit_batch.failures[:3],
+            }
+        except Exception as exc:
+            logger.warning(
+                "connectivity_audit_navigation_failed error=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:300],
+            )
+            navigation = {
+                "ok": False,
+                "status": "NAVIGATION_FAILED",
+                "fetched_pages": 0,
+                "distinct_domains": 0,
+                "extracted_text_chars": 0,
+            }
+
     gateway_pass = gateway_status.get("gateway") == "PASS"
     upstream_ready = (
         gateway_pass
         and bool(gateway_status.get("model"))
         and bool(gateway.config.providers)
     )
-    search_ok = bool(search.get("ok")) and isinstance(search.get("results"), list) and len(search["results"]) >= 1
     internet_pass = bool(network.get("internet_available"))
+    navigation_ok = bool(navigation.get("ok"))
 
     return {
-        "status": "PASS" if internet_pass and upstream_ready and search_ok else "FAIL",
+        "status": (
+            "PASS"
+            if internet_pass and upstream_ready and search_ok and navigation_ok
+            else "FAIL"
+        ),
         "edge": "PASS",
         "internet": "PASS" if internet_pass else "FAIL",
         "upstream": {
@@ -2981,6 +3079,7 @@ async def connectivity_audit() -> dict:
             "gateway": gateway_status,
         },
         "search": search,
+        "navigation": navigation,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "timestamp": utc_now(),
@@ -3204,31 +3303,100 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in ranked_sources
             if item["relevance_score"] >= minimum_relevance_score
         ]
-        # WebOrchestrator has already ranked/deduplicated these sources against the
-        # untouched user query. A second heuristic score can under-rate synonym-rich
-        # product/current queries (for example "smartphone actual especificaciones")
-        # even when the orchestrator selected real result URLs. If every selected
-        # source falls below this endpoint-only threshold, keep them as *fetch
-        # candidates only*. They still become public evidence only after a real page
-        # is successfully fetched and extracted below.
-        candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
-            candidate_sources = ranked_sources
-            logger.warning(
-                "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
-                "threshold=%.3f max_score=%.3f",
+        # Search-result relevance is a discovery heuristic, not evidence. Do not
+        # discard lower-scoring independent candidates before navigation: snippets
+        # can be sparse or misleading. Keep the orchestrator-selected set ordered
+        # by score, then require the fetched page itself to pass relevance checks.
+        candidate_sources = ranked_sources if search_ok else []
+        if search_ok and ranked_sources and len(relevant_sources) < len(ranked_sources):
+            logger.info(
+                "web_search_kept_low_score_candidates_for_fetch request_id=%s total=%s "
+                "above_threshold=%s threshold=%.3f",
                 request_id,
-                len(candidate_sources),
+                len(ranked_sources),
+                len(relevant_sources),
                 minimum_relevance_score,
-                max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
+
+        # If the ranked primary result set collapses to one host, run one bounded
+        # provider-independent diversity query. This is not a source allowlist: the
+        # second query only broadens discovery vocabulary, then every candidate is
+        # ranked again against the untouched user query and must still be fetched.
+        candidate_domains_before_recovery = {
+            str(
+                item.get("source_domain")
+                or (urlparse(str(item.get("url") or "")).hostname or "")
+            ).casefold().rstrip(".").removeprefix("www.")
+            for item in candidate_sources
+            if item.get("url")
+        } - {""}
+        if (
+            search_ok
+            and not is_realtime_news_query(q)
+            and len(candidate_domains_before_recovery) < 2
+        ):
+            try:
+                diversity_query = (
+                    re.sub(
+                        r"\b(?:official|oficial|documentation|documentación|documentacion|"
+                        r"docs?|source|fuente)\b",
+                        " ",
+                        q,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    + " independent reference"
+                ).strip()
+                diversity_result = await search_web(
+                    diversity_query,
+                    timeout_seconds=2.4,
+                    max_results=6,
+                    fast=True,
+                    fresh=True,
+                )
+                diversity_raw = _source_from_result(diversity_result) if isinstance(diversity_result, dict) else []
+                existing_urls = {str(item.get("url") or "").strip() for item in candidate_sources}
+                for raw in diversity_raw:
+                    if not isinstance(raw, dict):
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    host = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().rstrip(".").removeprefix("www.")
+                    if not url.startswith("https://") or not host or url in existing_urls:
+                        continue
+                    candidate = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": str(raw.get("provider") or "diversity_recovery"),
+                        "source_domain": host[:255],
+                        "published_at": raw.get("published_at"),
+                    }
+                    candidate["relevance_score"] = score_result(q, candidate)
+                    if candidate["relevance_score"] < minimum_relevance_score:
+                        continue
+                    candidate_sources.append(candidate)
+                    existing_urls.add(url)
+                logger.info(
+                    "web_search_general_diversity_recovery request_id=%s before_domains=%s candidates=%s",
+                    request_id,
+                    len(candidate_domains_before_recovery),
+                    len(candidate_sources),
+                )
+            except Exception as diversity_exc:
+                logger.warning(
+                    "web_search_general_diversity_recovery_failed request_id=%s error=%s",
+                    request_id,
+                    type(diversity_exc).__name__,
+                )
 
         # The cross-provider orchestrator intentionally compresses candidates before
         # this endpoint performs page reads. For realtime-news queries that can leave
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_realtime_news_query(q):
+        if is_realtime_news_query(q):
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3248,7 +3416,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     )
                     recent_candidates = await search_recent_news_candidates(
                         rescue_query,
-                        timeout_seconds=1.8,
+                        timeout_seconds=4.0,
                         max_results=8,
                     )
                     recent_candidates = rank_results(
@@ -3274,11 +3442,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             for existing in candidate_sources
                         ):
                             continue
+                        provider_name = str(raw.get("provider") or "google_news").strip().casefold()
                         candidate = {
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
+                            "provider": provider_name,
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }
@@ -3287,6 +3456,23 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                         candidate_domains.add(domain)
                         if len(candidate_domains) >= 5:
                             break
+                    # The quorum counts providers that actually supplied candidate
+                    # URLs, not merely providers that returned an empty HTTP response.
+                    rescued_providers = {
+                        str(item.get("provider") or "").strip().casefold()
+                        for item in candidate_sources
+                        if str(item.get("provider") or "").strip().casefold()
+                        in {"google_news", "bing", "duckduckgo", "tavily", "mojeek"}
+                    }
+                    if rescued_providers:
+                        result["providers"] = list(dict.fromkeys([
+                            *[
+                                str(item).strip().casefold()
+                                for item in (result.get("providers") or [])
+                                if str(item).strip()
+                            ],
+                            *sorted(rescued_providers),
+                        ]))
                     logger.info(
                         "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
                         request_id,
@@ -3303,7 +3489,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             candidate_sources,
             key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        max_fetch_candidates = max(4, min(8, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "6"))))
         direct_sources = [
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3314,76 +3500,68 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             == "news.google.com"
         ]
-        direct_editorial_domains = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
-            .casefold().removeprefix("www.")
-            for item in direct_sources
-        } - {""}
-        # Keep direct publisher URLs first, but retain wrapper candidates as a
-        # bounded fallback. A current-news quorum cannot be certified from two
-        # readable pages when the third editorial domain is behind a wrapper.
-        candidate_pool = [*direct_sources, *wrapper_sources]
-        for source in candidate_pool:
-            editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-            if not editorial_host:
-                editorial_host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            if not editorial_host or editorial_host in seen_fetch_domains:
-                continue
-            seen_fetch_domains.add(editorial_host)
-            fetch_candidates.append(source)
-            if len(fetch_candidates) >= max_fetch_candidates:
-                break
-        # Reserve time for the Reader after a fast direct attempt. The former
-        # 1.2s cap cancelled the shared deadline before any usable page text arrived.
-        # Candidates run concurrently; bound the whole per-page fetch at 3.3–4.0s.
-        fetch_timeout = max(
-            3.3,
-            min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
-        )
-        fetch_results = await asyncio.gather(
-            *(
-                _fetch_web_source(
-                    source,
-                    request_id=request_id,
-                    timeout_seconds=fetch_timeout,
-                    direct_timeout_seconds=0.85,
-                )
-                for source in fetch_candidates
+        # Keep ranked direct URLs first, then wrappers. Do not pre-collapse by
+        # domain here: fetch_source_quorum() preserves domain diversity while also
+        # retaining one alternate URL per domain when the first candidate blocks.
+        candidate_pool = [*direct_sources, *wrapper_sources][:max_fetch_candidates]
+
+        endpoint_target_sources = 3 if is_realtime_news_query(q) else 2
+        endpoint_policy = FetchPolicy(
+            base_timeout_seconds=max(
+                2.4,
+                min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
             ),
-            return_exceptions=True,
+            min_timeout_seconds=3.3,
+            max_timeout_seconds=4.0,
+            global_budget_seconds=max(
+                4.5,
+                min(8.0, float(os.getenv("WEB_SEARCH_FETCH_BUDGET_SECONDS", "6.2"))),
+            ),
+            concurrency=4,
+            target_sources=endpoint_target_sources,
+            max_sources=5,
+            min_text_chars=80,
+            min_total_chars=320 if endpoint_target_sources == 2 else 600,
         )
-        fetched_pages: list[dict[str, Any]] = []
-        fetch_failures: list[dict[str, str]] = []
+
+        async def endpoint_fetcher(
+            source: dict[str, Any],
+            adaptive_timeout: float,
+        ) -> dict[str, Any] | None:
+            page = await _fetch_web_source(
+                source,
+                request_id=request_id,
+                timeout_seconds=adaptive_timeout,
+                direct_timeout_seconds=min(0.85, adaptive_timeout),
+            )
+            if page is None:
+                return None
+            if not _is_relevant_fetched_web_source(q, source, page):
+                return None
+            return {
+                **page,
+                "_source_url": str(source.get("url") or "").strip(),
+            }
+
+        fetch_batch = await fetch_source_quorum(
+            candidate_pool,
+            endpoint_fetcher,
+            policy=endpoint_policy,
+        )
+        fetched_pages = list(fetch_batch.documents)
+        fetch_failures: list[dict[str, str]] = [
+            {
+                "url": str(item.get("url") or ""),
+                "provider": "web_fetch",
+                "reason": str(item.get("status") or "FETCH_OR_EXTRACTION_FAILED"),
+            }
+            for item in fetch_batch.failures
+        ]
         resolved_urls: dict[str, str] = {}
         fetched_by_source_url: dict[str, dict[str, Any]] = {}
-        for source, fetched in zip(fetch_candidates, fetch_results):
-            if isinstance(fetched, BaseException):
-                if isinstance(fetched, asyncio.CancelledError):
-                    raise fetched
-                reason = _web_fetch_failure_reason(fetched)
-                _log_web_fetch_failure(
-                    request_id=request_id,
-                    url=str(source.get("url") or ""),
-                    provider=str(source.get("provider") or "unknown"),
-                    error=fetched,
-                    reason=reason,
-                )
-                fetch_failures.append({
-                    "url": str(source.get("url") or ""),
-                    "provider": str(source.get("provider") or "unknown"),
-                    "reason": reason,
-                })
-                continue
-            if fetched is None:
-                fetch_failures.append({
-                    "url": str(source.get("url") or ""),
-                    "provider": str(source.get("provider") or "unknown"),
-                    "reason": "FETCH_OR_EXTRACTION_FAILED",
-                })
-                continue
-            fetched_pages.append(fetched)
-            original_source_url = str(source.get("url") or "").strip()
-            resolved_source_url = str(fetched.get("url") or "").strip()
+        for fetched in fetched_pages:
+            original_source_url = str(fetched.get("_source_url") or "").strip()
+            resolved_source_url = str(fetched.get("url") or fetched.get("final_url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
                 fetched_by_source_url[original_source_url] = fetched
@@ -3446,85 +3624,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         )
         has_extracted_content = extracted_text_chars >= 80 and domains_used > 0
 
-        # Live search providers can return relevant, timestamped publisher snippets
-        # even when every publisher blocks or times out full-page extraction. Preserve
-        # those results as explicitly degraded search evidence instead of converting a
-        # successful realtime discovery into an empty 503. This never claims that the
-        # underlying page was fetched: callers can distinguish evidence_type and
-        # fetched=false from fully extracted pages.
+        # Search snippets are discovery metadata only. A successful public web
+        # result requires readable page extraction; otherwise fail closed.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
-            for item in candidate_sources:
-                snippet = str(item.get("snippet") or "").strip()
-                url = str(item.get("url") or "").strip()
-                domain = str(
-                    item.get("source_domain")
-                    or (urlparse(url).hostname or "")
-                ).casefold().removeprefix("www.")
-                if not url.startswith("https://") or not domain or len(snippet) < 24:
-                    continue
-                snippet_fallback_results.append({
-                    **item,
-                    "evidence_type": "search_snippet",
-                    "fetched": False,
-                    "source_domain": domain,
-                })
-                if len(snippet_fallback_results) >= 5:
-                    break
-
-        # Realtime discovery can produce more independent domains than the
-        # short extraction window can fully read. When at least one real page was
-        # extracted but fewer than three public results survived, retain additional
-        # already-ranked live snippets from distinct domains. They are explicitly
-        # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
-            extracted_result_domains = {
-                (urlparse(str(item.get("url") or "")).hostname or "")
-                .casefold().removeprefix("www.")
-                for item in resolved_results
-                if item.get("url")
-            }
-            extracted_result_urls = {
-                str(item.get("url") or "").strip()
-                for item in resolved_results
-                if str(item.get("url") or "").strip()
-            }
-            for item in candidate_sources:
-                snippet = str(item.get("snippet") or "").strip()
-                url = str(item.get("url") or "").strip()
-                domain = str(
-                    item.get("source_domain")
-                    or (urlparse(url).hostname or "")
-                ).casefold().removeprefix("www.")
-                if (
-                    not url.startswith("https://")
-                    or not domain
-                    or len(snippet) < 24
-                    or url in extracted_result_urls
-                    or domain in extracted_result_domains
-                ):
-                    continue
-                supplemental_snippet_results.append({
-                    **item,
-                    "evidence_type": "search_snippet",
-                    "fetched": False,
-                    "source_domain": domain,
-                })
-                extracted_result_domains.add(domain)
-                if len(resolved_results) + len(supplemental_snippet_results) >= 5:
-                    break
-
-        has_snippet_evidence = bool(snippet_fallback_results or supplemental_snippet_results)
-        # domains_used remains the count of pages actually fetched/extracted.
-        # Search-snippet diversity is represented by verification/source_domain,
-        # so callers can distinguish navigated pages from degraded live evidence.
-        if has_snippet_evidence and not has_extracted_content:
-            domains_used = len({
-                str(item.get("source_domain") or "")
-                for item in snippet_fallback_results
-                if str(item.get("source_domain") or "")
-            })
+        has_snippet_evidence = False
 
         valid_news_domains = {
             (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3540,6 +3644,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for provider in (result.get("providers") or [])
             if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
+        navigation_quorum_met = (
+            len(evidence_fetched_pages) >= 2
+            and domains_used >= 2
+            and extracted_text_chars >= 160
+        )
         news_quorum_met = (
             not is_realtime_news_query(q)
             or (
@@ -3550,21 +3659,20 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         )
         final_ok = (
             search_ok
-            and (has_extracted_content or has_snippet_evidence)
+            and has_extracted_content
+            and navigation_quorum_met
             and news_quorum_met
         )
-        if (
-            not search_ok
-            or (not has_extracted_content and not has_snippet_evidence)
-            or not news_quorum_met
-        ):
+        if not final_ok:
             status = "failed"
-        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
+        elif fetch_failures:
             status = "degraded"
         else:
             status = "success"
 
         errors = list(result.get("errors") or [])
+        if not navigation_quorum_met:
+            errors.append("WEB_NAVIGATION_QUORUM_NOT_MET")
         if is_realtime_news_query(q) and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
@@ -3581,19 +3689,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 "none",
                 result.get("winner_provider") or result.get("provider") or "unknown",
             )
-        elif not has_extracted_content and not has_snippet_evidence:
+        elif not has_extracted_content:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
-        elif has_snippet_evidence and not has_extracted_content:
-            errors.append("PAGE_EXTRACTION_UNAVAILABLE_USING_SEARCH_SNIPPETS")
 
         response_payload = dict(result)
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
-        public_results = (
-            [*resolved_results, *supplemental_snippet_results]
-            if has_extracted_content
-            else snippet_fallback_results
-        )
+        public_results = resolved_results if has_extracted_content else []
         response_payload["results"] = public_results
         response_payload["sources"] = public_results
         response_payload.update({
@@ -4371,6 +4473,16 @@ async def generate(
             bool(evidence and evidence.ok),
             decision.reason,
         )
+        web_required_for_request = bool(
+            decision.route in {
+                DecisionRoute.WEB,
+                DecisionRoute.WEATHER,
+                DecisionRoute.SEISMIC,
+                DecisionRoute.FINANCE,
+            }
+            or should_force_web(messages)
+            or should_deep_web(messages, personality)
+        )
         if is_connectivity_question(raw_query):
             logger.info("backend_connectivity_question request_id=%s session_id=%s", request_id, session_id)
             data = {
@@ -4527,6 +4639,7 @@ async def generate(
             "response": data,
             "sources": sources,
             "web_navigation": bool(sources),
+            "web_required": web_required_for_request,
         }
         output = sanitize_generation_output(output)
         cache_put(session_id, idempotency_key, request_hash, output)
@@ -4854,6 +4967,7 @@ async def _finalize_stream(
     memory_profile_id: str | None = None,
     access_token: str | None = None,
     sources: list[dict] | None = None,
+    web_required: bool = False,
 ) -> None:
     safe_sources = safe_web_sources(sources)
     output = {
@@ -4868,6 +4982,7 @@ async def _finalize_stream(
         },
         "sources": safe_sources,
         "web_navigation": bool(safe_sources),
+        "web_required": bool(web_required),
     }
     await persist_messages(
         session_id,
@@ -5147,7 +5262,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
         text_value = sanitize_assistant_text(cached.get("result", {}).get("text", "")) + format_source_citations(cached.get("sources"))
+        cached_sources = safe_web_sources(cached.get("sources"))
         async def cached_stream():
+            yield _sse_status(
+                "thinking",
+                request_id,
+                cached=True,
+                web_required=bool(cached.get("web_required")),
+            )
+            yield _sse_status(
+                "sources_ready",
+                request_id,
+                cached=True,
+                sources=len(cached_sources),
+                degraded=bool(cached.get("web_required")) and not bool(cached_sources),
+            )
             yield _sse_status("token_stream", request_id, cached=True)
             for piece in _sse_text_chunks(text_value):
                 yield _sse_delta(piece)
@@ -5247,7 +5376,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 personality,
             )
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
+            replay_sources = safe_web_sources(cached.get("sources"))
             async def replay_stream():
+                yield _sse_status(
+                    "thinking",
+                    request_id,
+                    replay=True,
+                    web_required=bool(cached.get("web_required")),
+                )
+                yield _sse_status(
+                    "sources_ready",
+                    request_id,
+                    replay=True,
+                    sources=len(replay_sources),
+                    degraded=bool(cached.get("web_required")) and not bool(replay_sources),
+                )
                 yield _sse_status("token_stream", request_id, replay=True)
                 for piece in _sse_text_chunks(text_value):
                     yield _sse_delta(piece)
@@ -5321,7 +5464,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             )
         )
         try:
-            yield _sse_status("thinking", request_id)
+            yield _sse_status("thinking", request_id, web_required=web_required)
 
             stream_answer_override: str | None = None
             router_evidence = None
@@ -5439,6 +5582,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                             temperature=request.temperature,
                         )
                 runtime_state["payload"] = payload
+                runtime_state["web_required"] = web_required
                 yield _sse_status(
                     "sources_ready",
                     request_id,
@@ -5555,6 +5699,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             memory_profile_id=memory_profile_id,
             access_token=access_token,
             sources=runtime_state.get("sources") or [],
+            web_required=bool(runtime_state.get("web_required")),
         )
 
     return StreamingResponse(

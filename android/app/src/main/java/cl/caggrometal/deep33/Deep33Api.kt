@@ -76,10 +76,11 @@ object Deep33Api {
             ?: throw IllegalArgumentException("Invalid E2E backend URL")
         val host = URI(endpoint).host.orEmpty().lowercase()
         val isCanonicalProduction = host == "deep33-backend.vercel.app"
-        val isDEEP33Preview = host.endsWith(".vercel.app") &&
-            host.contains("deep33-backend-git-fix-vercel-android-route-221026")
+        val isDEEP33Preview =
+            host.startsWith("deep33-backend-") &&
+                host.endsWith("-iac33.vercel.app")
         require(isCanonicalProduction || isDEEP33Preview) {
-            "E2E backend must be the canonical DEEP33 Vercel production or approved PR preview"
+            "E2E backend must be canonical DEEP33 production or a deep33-backend Vercel preview owned by iac33"
         }
         val token = oidcToken?.trim().orEmpty()
         require(isCanonicalProduction || token.isNotBlank()) {
@@ -94,7 +95,23 @@ object Deep33Api {
         else BuildConfig.DEEP33_VERCEL_URL
 
     private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
-        if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
+        if (!BuildConfig.DEBUG) return
+
+        // API calls append paths (for example /health or /v1/chat/stream) to the
+        // configured base URL. Compare only the HTTPS origin so the short-lived
+        // OIDC token is attached to requests for this protected preview, not to
+        // a different host or to production.
+        val configuredBase = e2eBackendUrl ?: return
+        val configuredOrigin = runCatching { URI(configuredBase) }.getOrNull() ?: return
+        val requestOrigin = runCatching { URI(endpoint) }.getOrNull() ?: return
+        val sameHttpsOrigin =
+            configuredOrigin.scheme.equals("https", ignoreCase = true) &&
+                requestOrigin.scheme.equals("https", ignoreCase = true) &&
+                configuredOrigin.host?.equals(requestOrigin.host ?: "", ignoreCase = true) == true &&
+                (if (configuredOrigin.port == -1) 443 else configuredOrigin.port) ==
+                    (if (requestOrigin.port == -1) 443 else requestOrigin.port)
+        if (!sameHttpsOrigin) return
+
         e2eVercelOidcToken?.takeIf { it.isNotBlank() }?.let {
             connection.setRequestProperty("x-vercel-trusted-oidc-idp-token", it)
         }
@@ -213,20 +230,39 @@ object Deep33Api {
         )
 
     private fun requiresVerifiedWebEvidence(messages: JSONArray): Boolean {
-        val text = buildString {
-            for (index in 0 until messages.length()) {
-                val item = messages.optJSONObject(index) ?: continue
-                if (item.optString("role") != "user") continue
-                append(' ')
-                append(item.optString("content"))
-            }
-        }.lowercase()
-        return listOf(
-            "internet", " web ", "noticia", "actual", "hoy", "ayer", "mañana",
-            "clima", "temperatura", "pronóstico", "pronostico", "precio",
-            "cotización", "cotizacion", "fuente", "verifica", "comprueba",
-            "fecha", "hora", "presidente", "elecciones"
-        ).any { text.contains(it) }
+        var latestUser = ""
+        for (index in messages.length() - 1 downTo 0) {
+            val item = messages.optJSONObject(index) ?: continue
+            if (item.optString("role") != "user") continue
+            latestUser = item.optString("content").trim().lowercase()
+            if (latestUser.isNotBlank()) break
+        }
+        if (latestUser.isBlank()) return false
+
+        if (listOf(
+                "internet", " web ", "noticia", "actual", "hoy", "ayer", "mañana",
+                "clima", "temperatura", "pronóstico", "pronostico", "precio",
+                "cotización", "cotizacion", "fuente", "verifica", "comprueba",
+                "fecha", "hora", "presidente", "elecciones", "ceo", "versión",
+                "version", "release", "horario", "disponibilidad", "stock",
+                "normativa", "reglamento", "documentación", "documentacion",
+                "sitio oficial", "página oficial", "pagina oficial"
+            ).any { latestUser.contains(it) }
+        ) {
+            return true
+        }
+
+        val stableExplanation = Regex(
+            """^¿?\s*(qué es|que es|what is|explica|explain|cómo funciona|como funciona|how does|por qué|por que|why|define|definición|definicion)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        if (stableExplanation.containsMatchIn(latestUser)) return false
+
+        val factualLookup = Regex(
+            """^¿?\s*(quién|quien|who|dónde|donde|where|cuándo|cuando|when|cuál|cual|which|cuánto|cuanto|how much|qué dice|que dice|what does|según|segun)\b""",
+            RegexOption.IGNORE_CASE
+        )
+        return factualLookup.containsMatchIn(latestUser)
     }
 
     fun generate(
@@ -238,14 +274,18 @@ object Deep33Api {
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null
     ): JSONObject {
-        val requireWebEvidence = requiresVerifiedWebEvidence(messages)
-        val semanticAcceptance = acceptResponse ?: if (requireWebEvidence) {
-            { payload: JSONObject ->
+        val fallbackWebRequirement = requiresVerifiedWebEvidence(messages)
+        val semanticAcceptance = acceptResponse ?: { payload: JSONObject ->
+            val requireWebEvidence =
+                if (payload.has("web_required")) {
+                    payload.optBoolean("web_required", false)
+                } else {
+                    fallbackWebRequirement
+                }
+            !requireWebEvidence || (
                 payload.optBoolean("web_navigation", false) &&
                     (payload.optJSONArray("sources")?.length() ?: 0) >= 1
-            }
-        } else {
-            null
+            )
         }
         return request(
             "POST",
@@ -378,6 +418,9 @@ object Deep33Api {
                 var requestBodyStarted = false
                 var sawDone = false
                 var eventType: String? = null
+                var serverWebRequired: Boolean? = null
+                var sourcesReadyCount = 0
+                var webEvidenceDegraded = false
 
                 try {
                     connection.requestMethod = "POST"
@@ -467,6 +510,18 @@ object Deep33Api {
                             val data = line.removePrefix("data:").trim()
                             if (data.isBlank()) return@forEach
                             if (eventType == "error") throw mapStreamError(data)
+                            if (eventType == "status") {
+                                runCatching { JSONObject(data) }.getOrNull()?.let { status ->
+                                    if (status.has("web_required")) {
+                                        serverWebRequired = status.optBoolean("web_required", false)
+                                    }
+                                    if (status.optString("state") == "sources_ready") {
+                                        sourcesReadyCount = status.optInt("sources", 0)
+                                        webEvidenceDegraded = status.optBoolean("degraded", false)
+                                    }
+                                }
+                                return@forEach
+                            }
                             if (data == "[DONE]") {
                                 sawDone = true
                                 return@forEach
@@ -486,6 +541,13 @@ object Deep33Api {
                     }
                     // clean SSE termination: a valid stream may end by EOF without an explicit
                     // [DONE] after text has been received; an actually empty answer remains invalid.
+                    if (
+                        serverWebRequired == true &&
+                        sourcesReadyCount < 1 &&
+                        !webEvidenceDegraded
+                    ) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
