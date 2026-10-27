@@ -39,6 +39,45 @@ def test_current_news_accepts_recent_relevant_extracted_article():
     )
 
 
+def test_current_news_rejects_fresh_article_without_requested_topic_overlap():
+    now = datetime.now(timezone.utc).isoformat()
+    url = "https://noticias.example/2026/10/26/temblor-zona-central.html"
+    title = "Temblor hoy lunes 26 de octubre en la zona central"
+    source = _news_source(published_at=now, url=url)
+    source["title"] = title
+    page = _fetched_page(published_at=now, url=url, title=title)
+    page["text"] = (
+        "Un temblor se registró hoy en la zona central de Chile. "
+        "Las autoridades informaron el movimiento y sus efectos locales. "
+    ) * 8
+
+    assert not _is_publishable_realtime_news_source(
+        "Busca en Internet las noticias recientes sobre el precio del dólar en Chile hoy.",
+        source,
+        page,
+    )
+
+
+def test_current_news_rejects_unrelated_articles_for_code_like_event_identifier():
+    now = datetime.now(timezone.utc).isoformat()
+    query = (
+        "Busca en Internet las últimas noticias verificadas de hoy sobre el supuesto "
+        "evento ZXQ-9999-ASTERION-25 en Chile. Si no hay tres artículos válidos de "
+        "medios distintos, indica que no puedes verificarlo y no inventes una síntesis."
+    )
+    url = "https://noticias.example/2026/10/26/temblor-zona-central.html"
+    title = "Temblor hoy lunes 26 de octubre en la zona central"
+    source = _news_source(published_at=now, url=url)
+    source["title"] = title
+    page = _fetched_page(published_at=now, url=url, title=title)
+    page["text"] = (
+        "Un temblor se registró hoy en la zona central de Chile. "
+        "Las autoridades informaron el movimiento y sus efectos locales. "
+    ) * 8
+
+    assert not _is_publishable_realtime_news_source(query, source, page)
+
+
 def test_current_news_rejects_undated_evergreen_geography_page():
     source = _news_source(
         published_at=None,
