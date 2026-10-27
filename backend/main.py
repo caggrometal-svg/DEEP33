@@ -1923,14 +1923,18 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     required_pages = 2 if corroboration_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
+    search_result_limit = min(
+        8,
+        max(
+            required_pages * 2,
+            _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+        ),
+    )
     try:
         search_result = await search_web(
             query,
             timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
-            max_results=max(
-                required_pages,
-                _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
-            ),
+            max_results=search_result_limit,
             fast=not (deep or realtime or contrast_required),
             fresh=True,
         )
@@ -2013,22 +2017,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in snippet_evidence
     } - {""}
 
-    candidate_limit = max(
-        required_pages,
-        _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
-    )
-    candidates: list[dict[str, Any]] = []
-    seen_candidate_domains: set[str] = set()
-    for source in sources.values():
-        host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-        if not host:
-            host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-        if not host or host in seen_candidate_domains:
-            continue
-        seen_candidate_domains.add(host)
-        candidates.append(source)
-        if len(candidates) >= candidate_limit:
-            break
+    # Keep ranked alternate URLs from the same host. fetch_source_quorum()
+    # schedules one URL per domain first, then same-domain fallbacks only when
+    # needed. Pre-deduplicating by host here would hide a useful article behind
+    # an unreadable homepage before the fetch layer gets a chance to recover.
+    candidate_limit = search_result_limit
+    candidates: list[dict[str, Any]] = [
+        source
+        for source in sources.values()
+        if str(source.get("url") or "").strip()
+    ][:candidate_limit]
 
     if must_fetch and not candidates:
         logger.warning(
