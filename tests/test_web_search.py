@@ -1405,3 +1405,16 @@ def test_spanish_python_release_query_rejects_off_topic_debian_page():
     assert rank_results(query, [unrelated], realtime=True) == []
     ranked = rank_results(query, [unrelated, relevant], realtime=True)
     assert [item["url"] for item in ranked] == [relevant["url"]]
+
+
+def test_release_version_recovery_broadens_beyond_official_domain():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "latest stable Python release official documentation"
+    primary = WebOrchestrator._provider_query(query)
+    recovery = WebOrchestrator._recovery_query(query)
+
+    assert recovery.casefold() != primary.casefold()
+    assert "python" in recovery.casefold()
+    assert "independent" in recovery.casefold()
+    assert "version" in recovery.casefold()
