@@ -133,7 +133,7 @@ _RESEARCH_RE = re.compile(
 )
 _PRICE_RE = re.compile(
     r"\b(?:precio(?:s)?|valor(?:es)?|cotizaci[oó]n|cu[aá]nto cuesta|cu[aá]nto vale|"
-    r"price(?:s)?|pricing|cost(?:s)?|coste(?:s)?|cu[aá]nto est[aá])\b",
+    r"price(?:s)?|pricing|cost(?:s)?|coste(?:s)?|costos?|cu[aá]nto est[aá])\b",
     re.I,
 )
 _DOMAIN_SPECIFIC_WEB_RE = re.compile(
@@ -152,7 +152,10 @@ _DOMAIN_SPECIFIC_WEB_RE = re.compile(
     r"open data|datos abiertos|datos p[uú]blicos|dataset(?:s)?|estad[ií]sticas oficiales|"
     r"base de datos|portal de transparencia|transparencia|organismo oficial|sitio oficial|"
     r"ministerio|government data|public records|official website|regulaci[oó]n|normativa|"
-    r"ley vigente|reglamento|foro(?:s)?|forum(?:s)?|reddit|stackoverflow|stack overflow"
+    r"ley vigente|reglamento|foro(?:s)?|forum(?:s)?|reddit|stackoverflow|stack overflow|"
+    r"d[oó]nde comprar|d[oó]nde lo venden|d[oó]nde venden|d[oó]nde adquirir|"
+    r"comprar online|comprar en l[ií]nea|comprar|venden|venta|tienda(?:s)?|"
+    r"where to buy|buy online|shop(?:ping)?|store(?:s)?|available to buy"
     r")\b",
     re.I,
 )
