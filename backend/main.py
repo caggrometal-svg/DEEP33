@@ -1905,7 +1905,9 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Never inherit search-result publication metadata. Only the fetched
+        # final publisher page can establish its own publication time.
+        "published_at": result.get("published_at"),
         "text_chars": len(page_text),
     }
 
