@@ -238,14 +238,18 @@ object Deep33Api {
         endpointOverride: List<String>? = null,
         acceptResponse: ((JSONObject) -> Boolean)? = null
     ): JSONObject {
-        val requireWebEvidence = requiresVerifiedWebEvidence(messages)
-        val semanticAcceptance = acceptResponse ?: if (requireWebEvidence) {
-            { payload: JSONObject ->
+        val fallbackWebRequirement = requiresVerifiedWebEvidence(messages)
+        val semanticAcceptance = acceptResponse ?: { payload: JSONObject ->
+            val requireWebEvidence =
+                if (payload.has("web_required")) {
+                    payload.optBoolean("web_required", false)
+                } else {
+                    fallbackWebRequirement
+                }
+            !requireWebEvidence || (
                 payload.optBoolean("web_navigation", false) &&
                     (payload.optJSONArray("sources")?.length() ?: 0) >= 1
-            }
-        } else {
-            null
+            )
         }
         return request(
             "POST",
@@ -378,6 +382,9 @@ object Deep33Api {
                 var requestBodyStarted = false
                 var sawDone = false
                 var eventType: String? = null
+                var serverWebRequired: Boolean? = null
+                var sourcesReadyCount = 0
+                var webEvidenceDegraded = false
 
                 try {
                     connection.requestMethod = "POST"
@@ -467,6 +474,18 @@ object Deep33Api {
                             val data = line.removePrefix("data:").trim()
                             if (data.isBlank()) return@forEach
                             if (eventType == "error") throw mapStreamError(data)
+                            if (eventType == "status") {
+                                runCatching { JSONObject(data) }.getOrNull()?.let { status ->
+                                    if (status.has("web_required")) {
+                                        serverWebRequired = status.optBoolean("web_required", false)
+                                    }
+                                    if (status.optString("state") == "sources_ready") {
+                                        sourcesReadyCount = status.optInt("sources", 0)
+                                        webEvidenceDegraded = status.optBoolean("degraded", false)
+                                    }
+                                }
+                                return@forEach
+                            }
                             if (data == "[DONE]") {
                                 sawDone = true
                                 return@forEach
@@ -486,6 +505,13 @@ object Deep33Api {
                     }
                     // clean SSE termination: a valid stream may end by EOF without an explicit
                     // [DONE] after text has been received; an actually empty answer remains invalid.
+                    if (
+                        serverWebRequired == true &&
+                        sourcesReadyCount < 1 &&
+                        !webEvidenceDegraded
+                    ) {
+                        throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
