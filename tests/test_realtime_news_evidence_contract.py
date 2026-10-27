@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.main import _is_publishable_realtime_news_source, _realtime_news_quorum
+from backend.main import (
+    _is_publishable_realtime_news_source,
+    _looks_like_realtime_news_candidate_url,
+    _realtime_news_quorum,
+)
 
 
 def _news_source(*, published_at, url="https://noticias.example/2026/10/25/gobierno-medidas-chile.html"):
@@ -25,6 +29,21 @@ def _fetched_page(*, published_at, url="https://noticias.example/2026/10/25/gobi
             "El comunicado confirma los cambios y entrega detalles de la medida. "
         ) * 5,
     }
+
+
+def test_realtime_news_candidate_filter_rejects_admin_templates_and_portals():
+    assert not _looks_like_realtime_news_candidate_url(
+        "https://neomedia.emol.com/admin/au_creatives/422/emol_template"
+    )
+    assert not _looks_like_realtime_news_candidate_url(
+        "https://www.infobae.com/ultimas-noticias/"
+    )
+    assert _looks_like_realtime_news_candidate_url(
+        "https://www.latercera.com/politica/noticia/gobierno-ingresara-hoy-al-congreso/"
+    )
+    assert _looks_like_realtime_news_candidate_url(
+        "https://news.google.com/rss/articles/example"
+    )
 
 
 def test_current_news_accepts_recent_relevant_extracted_article():
