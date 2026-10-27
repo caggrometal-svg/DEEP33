@@ -5160,7 +5160,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if cached is not None:
         text_value = sanitize_assistant_text(cached.get("result", {}).get("text", "")) + format_source_citations(cached.get("sources"))
+        cached_sources = safe_web_sources(cached.get("sources"))
         async def cached_stream():
+            yield _sse_status(
+                "thinking",
+                request_id,
+                cached=True,
+                web_required=bool(cached.get("web_required")),
+            )
+            yield _sse_status(
+                "sources_ready",
+                request_id,
+                cached=True,
+                sources=len(cached_sources),
+                degraded=bool(cached.get("web_required")) and not bool(cached_sources),
+            )
             yield _sse_status("token_stream", request_id, cached=True)
             for piece in _sse_text_chunks(text_value):
                 yield _sse_delta(piece)
@@ -5260,7 +5274,21 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                 personality,
             )
             text_value = sanitize_assistant_text(cached.get("result", {}).get("text", ""))
+            replay_sources = safe_web_sources(cached.get("sources"))
             async def replay_stream():
+                yield _sse_status(
+                    "thinking",
+                    request_id,
+                    replay=True,
+                    web_required=bool(cached.get("web_required")),
+                )
+                yield _sse_status(
+                    "sources_ready",
+                    request_id,
+                    replay=True,
+                    sources=len(replay_sources),
+                    degraded=bool(cached.get("web_required")) and not bool(replay_sources),
+                )
                 yield _sse_status("token_stream", request_id, replay=True)
                 for piece in _sse_text_chunks(text_value):
                     yield _sse_delta(piece)
