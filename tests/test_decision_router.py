@@ -9,8 +9,8 @@ from backend.decision_router import (
 )
 
 
-def test_classifier_routes_stable_knowledge_to_internal():
-    assert classify_query("¿Cuántos huesos tiene el cuerpo humano?").route == DecisionRoute.INTERNAL
+def test_classifier_verifies_stable_factual_lookups_on_the_web():
+    assert classify_query("¿Cuántos huesos tiene el cuerpo humano?").route == DecisionRoute.WEB
 
 
 def test_classifier_routes_current_dollar_to_finance():
