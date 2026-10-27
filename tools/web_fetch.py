@@ -128,6 +128,7 @@ class HTMLTextExtractor(HTMLParser):
         self.title_parts: list[str] = []
         self.meta_titles: dict[str, str] = {}
         self.meta_descriptions: dict[str, str] = {}
+        self.meta_dates: dict[str, str] = {}
         self.jsonld_blocks: list[str] = []
         self._skip_depth = 0
         self._in_title = False
@@ -162,6 +163,11 @@ class HTMLTextExtractor(HTMLParser):
                 "article:description",
             }:
                 self.meta_descriptions.setdefault(key, value)
+            elif value and key in {
+                "article:published_time", "article:published", "datepublished",
+                "datePublished", "publishdate", "date",
+            }:
+                self.meta_dates.setdefault(key.casefold(), value)
             return
 
         if tag == "title":
@@ -236,6 +242,17 @@ class HTMLTextExtractor(HTMLParser):
         ).strip()
 
     @property
+    def published_at(self):
+        return (
+            self.meta_dates.get("article:published_time")
+            or self.meta_dates.get("article:published")
+            or self.meta_dates.get("datepublished")
+            or self.meta_dates.get("publishdate")
+            or self.meta_dates.get("date")
+            or ""
+        ).strip()
+
+    @property
     def text(self):
         lines = []
         blank = False
@@ -273,11 +290,12 @@ def _usable_fallback_text(value: str, *, minimum: int = 24) -> str:
     return candidate
 
 
-def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
+def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str, str]:
     """Return conservative articleBody, description, and headline JSON-LD candidates."""
     article_bodies: list[tuple[int, str]] = []
     descriptions: list[tuple[int, str]] = []
     headlines: list[tuple[int, str]] = []
+    publication_dates: list[tuple[int, str]] = []
 
     def visit(value) -> None:
         if isinstance(value, list):
@@ -314,8 +332,12 @@ def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
             if normalized:
                 headlines.append((priority, normalized))
 
+        for date_key in ("datePublished", "datepublished"):
+            date_value = value.get(date_key)
+            if isinstance(date_value, str) and date_value.strip():
+                publication_dates.append((priority, date_value.strip()))
         for key, child in value.items():
-            if key not in {"articleBody", "description", "headline", "name"}:
+            if key not in {"articleBody", "description", "headline", "name", "datePublished", "datepublished"}:
                 visit(child)
 
     for block in blocks:
@@ -327,10 +349,12 @@ def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
     article_bodies.sort(key=lambda item: (item[0], -len(item[1])))
     descriptions.sort(key=lambda item: (item[0], -len(item[1])))
     headlines.sort(key=lambda item: (item[0], -len(item[1])))
+    publication_dates.sort(key=lambda item: item[0])
     return (
         article_bodies[0][1] if article_bodies else "",
         descriptions[0][1] if descriptions else "",
         headlines[0][1] if headlines else "",
+        publication_dates[0][1] if publication_dates else "",
     )
 
 def _is_public_ip(value):
@@ -407,10 +431,11 @@ def _extract_text(content, content_type, max_text_chars):
     parser.feed(decoded)
     parser.close()
     visible_text = _clean_extracted_text(parser.text, max_chars=max_text_chars)
-    article_body, structured_description, structured_title = _structured_article_fields(
+    article_body, structured_description, structured_title, structured_published_at = _structured_article_fields(
         parser.jsonld_blocks
     )
     title = (parser.title or parser.meta_title or structured_title).strip()[:500]
+    published_at = (parser.published_at or structured_published_at).strip()
 
     # Visible text remains the primary evidence. Metadata is only a bounded
     # fallback for publisher pages whose main article is rendered in JavaScript.
@@ -431,6 +456,26 @@ def _extract_text(content, content_type, max_text_chars):
     return title, visible_text
 
 
+def _extract_published_at(content: bytes, content_type: str) -> str:
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime not in {"text/html", "application/xhtml+xml"}:
+        return ""
+    decoded = content.decode("utf-8", errors="replace")
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+    _body, _description, _title, structured_published_at = _structured_article_fields(parser.jsonld_blocks)
+    return (parser.published_at or structured_published_at).strip()
+
+
+def _reader_published_at(content: bytes) -> str:
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.casefold().startswith("published time:"):
+            return stripped.partition(":")[2].strip()
+    return ""
+
+
 def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, str] | None:
     """Return real article text from Reader output; never treat challenge pages as evidence."""
     decoded = content.decode("utf-8", errors="replace").strip()
@@ -439,11 +484,14 @@ def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, st
 
     lines = decoded.splitlines()
     title = ""
+    published_at = ""
     body_start = 0
     for index, line in enumerate(lines):
         stripped = line.strip()
         if not title and stripped.casefold().startswith("title:"):
             title = stripped.partition(":")[2].strip()[:500]
+        if not published_at and stripped.casefold().startswith("published time:"):
+            published_at = stripped.partition(":")[2].strip()
         if stripped.casefold() in {"markdown content:", "markdown content"}:
             body_start = index + 1
             break
@@ -577,6 +625,7 @@ async def _fetch_with_reader_fallback(
         if parsed is None:
             raise WebFetchError("WEB_FETCH_READER_EMPTY_OR_BLOCKED")
         title, text = parsed
+        published_at = _reader_published_at(content)
         return {
             "ok": True,
             "url": original_url,
@@ -587,6 +636,7 @@ async def _fetch_with_reader_fallback(
             "bytes": len(content),
             "redirects": 0,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "published_at": published_at or None,
             "reader_fallback": "jina_reader",
             "direct_fetch_error": str(direct_error)[:100],
         }
@@ -820,6 +870,7 @@ async def _fetch_page_uncached(
                 content=await _read_limited(response,_max_response_bytes())
             try:
                 title, text = _extract_text(content, content_type, max_text_chars)
+                published_at = _extract_published_at(content, content_type)
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
@@ -837,6 +888,7 @@ async def _fetch_page_uncached(
                 "bytes":len(content),
                 "redirects":len(redirects),
                 "retrieved_at":datetime.now(timezone.utc).isoformat(),
+                "published_at":published_at or None,
             }
         except httpx.TimeoutException as exc:
             raise WebFetchError("WEB_FETCH_TIMEOUT") from exc
