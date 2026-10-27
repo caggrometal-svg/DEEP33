@@ -496,14 +496,10 @@ _LEXICAL_PATH_MARKERS = (
 _REALTIME_NEWS_SIGNALS = (
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
     "última hora", "ultima hora", "actualidad", "situación actual",
-    "situacion actual", "qué pasó", "que paso", "qué está pasando",
-    "que esta pasando", "qué ocurre", "que ocurre", "qué pasa", "que pasa",
-    "noticias recientes", "noticia reciente", "últimos cambios",
+    "situacion actual",     "noticias recientes", "noticia reciente", "últimos cambios",
     "ultimos cambios", "últimas novedades", "ultimas novedades",
     "cambios recientes", "actualización reciente", "actualizaciones recientes",
-    "latest news", "current events", "current affairs", "release notes",
-    "latest release", "latest version", "security advisory",
-    "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
+    "latest news", "current events", "current affairs",     "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
     "en desarrollo", "acontecimientos actuales", "acontecimiento actual",
     "eventos actuales", "eventos recientes", "últimos acontecimientos",
     "ultimos acontecimientos", "hechos recientes",
@@ -1269,6 +1265,13 @@ class SearchEngine:
             if fast_mode:
                 return bool(ranked)
             if plan_depth == "realtime":
+                if is_realtime_news_query(planned_query):
+                    provider_count = len({name for name, _batch in successful})
+                    return (
+                        provider_count >= 2
+                        and len(urls) >= min(3, self.max_results)
+                        and len(domains) >= min(3, self.max_results)
+                    )
                 if _requires_realtime_multidomain(planned_query):
                     return len(domains) >= min(3, self.max_results)
                 return bool(ranked)
