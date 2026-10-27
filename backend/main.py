@@ -45,7 +45,7 @@ from backend.search.engine import is_realtime_query, is_realtime_news_query, _is
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
-from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
+from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, requires_web_verification, universal_router, validate_evidence
 
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
@@ -1405,6 +1405,13 @@ def latest_user_query(messages: list[dict[str, Any]]) -> str:
     return ""
 
 def should_force_web(messages):
+    """Route externally verifiable facts to live web evidence.
+
+    The old implementation depended mainly on topic keywords. That allowed
+    mutable facts about companies, products, officials, releases, laws or
+    public services to fall through to model memory. Keep explicit/realtime
+    triggers, then use the shared provider-agnostic externality classifier.
+    """
     query = latest_user_query(messages)
     if not query:
         return False
@@ -1415,16 +1422,7 @@ def should_force_web(messages):
         return True
     if any(term in lowered for term in CONTROVERSY_TERMS):
         return True
-    if re.search(r"\b(ahora|actualizado|vigente|reciente|esta semana|este mes|2026|fecha|día|hora)\b", lowered):
-        return True
-    if re.search(
-        r"\b(cu[aá]nto cuesta|cu[aá]l es el precio|horario|apertura|cerrado|disponible|"
-        r"cotiza|tipo de cambio|d[oó]lar|euro|clima|tiempo|temperatura|evento|"
-        r"partido|elecci[oó]n|presidente|ministro)\b",
-        lowered,
-    ):
-        return True
-    return False
+    return requires_web_verification(query)
 
 def is_connectivity_question(query: str) -> bool:
     """Identify direct questions about backend Internet connectivity, not web-search topics."""
