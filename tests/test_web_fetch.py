@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from tools.web_fetch import _extract_text
+from tools.web_fetch import (
+    _extract_published_at,
+    _extract_reader_published_at,
+    _extract_text,
+)
 
 
 def test_extracts_open_graph_description_from_client_rendered_article() -> None:
@@ -567,3 +571,67 @@ def test_google_news_wrapper_decoder_fails_closed_without_signed_params(monkeypa
         asyncio.run(
             web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
         )
+
+
+
+def test_extracts_published_at_from_final_article_html_metadata() -> None:
+    html = b"""
+    <html><head>
+      <meta property="article:published_time" content="2026-10-27T09:30:00-03:00">
+      <meta property="article:modified_time" content="2026-10-27T12:00:00Z">
+    </head><body><article><p>Publisher article content.</p></article></body></html>
+    """
+
+    assert _extract_published_at(html, "text/html; charset=utf-8") == "2026-10-27T12:30:00+00:00"
+
+
+def test_extracts_published_at_from_article_json_ld() -> None:
+    structured = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "Chile news report",
+        "datePublished": "2026-10-27T08:15:00-03:00",
+        "dateModified": "2026-10-27T11:50:00-03:00",
+    }
+    html = (
+        "<html><head><script type='application/ld+json'>"
+        + json.dumps(structured)
+        + "</script></head><body><article><p>Real article text.</p></article></body></html>"
+    ).encode()
+
+    assert _extract_published_at(html, "text/html") == "2026-10-27T11:15:00+00:00"
+
+
+def test_does_not_infer_publication_date_from_modified_date_or_retrieval_time() -> None:
+    structured = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "Chile report",
+        "dateModified": "2026-10-27T11:50:00Z",
+    }
+    html = (
+        "<html><head><script type='application/ld+json'>"
+        + json.dumps(structured)
+        + "</script></head><body><article><p>Article text.</p></article></body></html>"
+    ).encode()
+
+    assert _extract_published_at(html, "text/html") is None
+
+
+def test_reader_publication_date_requires_matching_original_article_url() -> None:
+    content = (
+        "Title: Current article\n"
+        "URL Source: https://publisher.example/news/story-1\n"
+        "Published Time: 2026-10-27T08:00:00-03:00\n"
+        "Markdown Content:\n"
+        "Article body with enough text to be readable and useful."
+    ).encode()
+
+    assert _extract_reader_published_at(
+        content,
+        "https://publisher.example/news/story-1",
+    ) == "2026-10-27T11:00:00+00:00"
+    assert _extract_reader_published_at(
+        content,
+        "https://publisher.example/news/story-2",
+    ) is None
