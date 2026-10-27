@@ -123,3 +123,27 @@ def test_current_news_rejects_unresolved_google_news_wrapper():
         page,
     )
 
+
+
+def test_current_news_rejects_wrapper_resolved_to_publisher_channel():
+    now = datetime.now(timezone.utc).isoformat()
+    source_url = "https://news.google.com/rss/articles/current-signed-wrapper"
+    resolved_url = "https://www.latercera.com/canal/nacional/"
+    source = _news_source(
+        published_at=now,
+        url=source_url,
+    )
+    source["title"] = (
+        "Kast reúne a ministros para discutir ingreso de Chile a coalición contra el crimen organizado"
+    )
+    page = _fetched_page(
+        published_at=now,
+        url=resolved_url,
+        title="Nacional - La Tercera",
+    )
+
+    assert not _is_publishable_realtime_news_source(
+        "política Chile hoy últimas noticias",
+        source,
+        page,
+    )
