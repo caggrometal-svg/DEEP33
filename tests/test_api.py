@@ -105,14 +105,10 @@ def test_vercel_deployment_sha_has_priority_for_exact_release_gate(monkeypatch) 
     assert main._resolve_git_sha() == "vercel-tested-sha"
 
 
-def test_other_runtime_sha_fallbacks_remain_available(monkeypatch) -> None:
+def test_configured_sha_is_only_fallback_when_vercel_sha_is_absent(monkeypatch) -> None:
     monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
-    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railway-sha")
-    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-sha")
-    assert main._resolve_git_sha() == "railway-sha"
-
-    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
-    assert main._resolve_git_sha() == "render-sha"
+    monkeypatch.setenv("DEEP33_GIT_SHA", "configured-sha")
+    assert main._resolve_git_sha() == "configured-sha"
 
 
 def test_ready(monkeypatch) -> None:
