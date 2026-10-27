@@ -175,6 +175,13 @@ def requires_web_verification(query: str) -> bool:
         return True
     if _STABLE_EXPLANATION_RE.search(cleaned):
         return False
+    if re.fullmatch(
+        r"(?:¿?\s*)?(?:cu[aá]nto(?:\s+es)?|what(?:\s+is)?)\s+"
+        r"(?:[-+*/().\d\s]+|\d+\s+(?:por|times|x)\s+\d+)\??",
+        cleaned,
+        re.I,
+    ):
+        return False
     # Lookup-style factual questions are externally verifiable even when the
     # user writes names in lowercase. Prefer web verification over guessing from
     # model memory. Keep simple arithmetic/local computation internal.
