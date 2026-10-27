@@ -121,11 +121,38 @@ def _is_publishable_realtime_news_source(
     if path in landing_paths:
         return False
 
+    # A resolver can follow a signed news wrapper to a publisher section/channel
+    # instead of the original article. These are navigation pages, not evidence.
+    path_segments = [segment for segment in path.split("/") if segment]
+    disallowed_section_segments = {
+        "canal", "category", "categories", "categoria", "categorias",
+        "tag", "tags", "search", "buscar", "autor", "author",
+        "autores", "seccion", "secciones", "section", "sections",
+    }
+    if any(segment in disallowed_section_segments for segment in path_segments[:4]):
+        return False
+
     page_text = str(fetched_page.get("text") or "").strip()
     if len(page_text) < 80:
         return False
 
     title = str(fetched_page.get("title") or source.get("title") or "").casefold()
+    source_title = str(source.get("title") or "").strip()
+    # If the fetcher changed the URL (for example wrapper -> publisher section),
+    # the resolved page must still identify the same article. A generic section
+    # title with no overlap to the discovered article title is rejected.
+    resolved_url = page_url.rstrip("/")
+    original_url = str(source.get("url") or "").strip().rstrip("/")
+    if source_title and resolved_url != original_url:
+        source_title_tokens = {
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", source_title.casefold())
+        }
+        resolved_title_tokens = {
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", title)
+        }
+        if len(source_title_tokens) >= 3 and not (source_title_tokens & resolved_title_tokens):
+            return False
+
     if any(marker in title for marker in (
         "capital, mapa, bandera, población",
         "capital, map, flag",
