@@ -59,7 +59,7 @@ CONTROVERSIAL_TERMS = (
 _STOPWORDS = {
     "para", "como", "que", "qué", "una", "uno", "los", "las", "del", "de", "la", "al",
     "el", "a", "y", "e", "o", "u", "se", "su", "sus", "mi", "tu", "lo", "le", "les",
-    "es", "con", "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
+    "es", "son", "con", "por", "en", "sobre", "the", "and", "for", "with", "from", "this", "that",
 }
 
 _REALTIME_QUERY_FILLERS = {
@@ -68,6 +68,8 @@ _REALTIME_QUERY_FILLERS = {
     "publicada", "publicado", "publicadas", "publicados",
     "publicación", "publicacion", "publicaciones", "fuente", "fuentes",
     "oficialmente", "más", "mas", "cuál", "cual", "cuáles", "cuales",
+    "importante", "importantes", "principal", "principales",
+    "relevante", "relevantes", "relevancia", "destacada", "destacadas",
     # Release descriptors describe the requested fact, not the subject being searched.
     "versión", "version", "versiones", "estable", "stable", "stability", "release", "releases",
     "real", "reales", "actualizada", "actualizado", "actualizadas", "actualizados",
