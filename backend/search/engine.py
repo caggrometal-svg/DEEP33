@@ -495,8 +495,7 @@ _LEXICAL_PATH_MARKERS = (
 )
 _REALTIME_NEWS_SIGNALS = (
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
-    "última hora", "ultima hora", "actualidad", "situación actual",
-    "situacion actual", "qué pasó", "que paso", "qué está pasando",
+    "última hora", "ultima hora", "actualidad", "qué pasó", "que paso", "qué está pasando",
     "que esta pasando", "qué ocurre", "que ocurre", "qué pasa", "que pasa",
     "noticias recientes", "noticia reciente", "últimos cambios",
     "ultimos cambios", "últimas novedades", "ultimas novedades",
