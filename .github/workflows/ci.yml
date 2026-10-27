@@ -1072,8 +1072,8 @@ jobs:
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_PRIMARY_URL: https://deep33-backend-iac33.vercel.app
+          DEEP33_SECONDARY_URL: https://deep33-backend-git-main-iac33.vercel.app
           DEEP33_E2E_ATTEMPT: "1"
           DEEP33_REQUIRE_REDUNDANCY: "false"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1104,8 +1104,8 @@ jobs:
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_PRIMARY_URL: https://deep33-backend-iac33.vercel.app
+          DEEP33_SECONDARY_URL: https://deep33-backend-git-main-iac33.vercel.app
           DEEP33_E2E_ATTEMPT: "2"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1136,8 +1136,8 @@ jobs:
         continue-on-error: true
         env:
           DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
+          DEEP33_PRIMARY_URL: https://deep33-backend-iac33.vercel.app
+          DEEP33_SECONDARY_URL: https://deep33-backend-git-main-iac33.vercel.app
           DEEP33_E2E_ATTEMPT: "3"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
