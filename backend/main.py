@@ -93,6 +93,32 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("deep33")
 
 
+def _looks_like_realtime_news_candidate_url(url: str) -> bool:
+    """Reject obvious listing, admin, ad-template and account URLs before spending a fetch slot."""
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if host in {"news.google.com", "news.googleusercontent.com"}:
+        return parsed.path.startswith(("/rss/articles/", "/articles/", "/read/"))
+    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
+    landing_paths = {
+        "/", "/noticias", "/news", "/chile", "/actualidad", "/ultimas", "/últimas",
+        "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
+        "/ultimo-momento", "/latest", "/latest-news", "/breaking-news",
+    }
+    if path in landing_paths:
+        return False
+    blocked_segments = {
+        "admin", "au_creatives", "template", "templates", "login", "signin",
+        "sign-in", "search", "tag", "tags", "author", "authors", "profile",
+        "user", "users", "sitemap", "contact", "contacto", "subscribe",
+        "subscription", "newsletter", "newsletters", "publicidad", "advertising",
+        "ads", "feed", "feeds",
+    }
+    return not any(segment in blocked_segments for segment in path.split("/") if segment)
+
+
 def _is_publishable_realtime_news_source(
     query: str,
     source: dict[str, Any],
@@ -124,15 +150,7 @@ def _is_publishable_realtime_news_source(
     # A signed Google News wrapper is not an independently readable publisher article.
     if page_host in {"news.google.com", "news.googleusercontent.com"}:
         return False
-
-    path = re.sub(r"/+", "/", parsed.path.casefold()).rstrip("/") or "/"
-    landing_paths = {
-        "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
-        "/noticias", "/chile", "/actualidad", "/politica", "/política",
-        "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news", "/ultimo-momento",
-    }
-    if path in landing_paths:
+    if not _looks_like_realtime_news_candidate_url(page_url):
         return False
 
     page_text = str(fetched_page.get("text") or "").strip()
@@ -3410,6 +3428,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             != "news.google.com"
+            and (
+                not is_realtime_news_query(q)
+                or _looks_like_realtime_news_candidate_url(str(item.get("url") or ""))
+            )
         ]
         wrapper_sources = [
             item for item in ordered_sources
