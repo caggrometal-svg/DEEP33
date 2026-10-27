@@ -3303,23 +3303,19 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in ranked_sources
             if item["relevance_score"] >= minimum_relevance_score
         ]
-        # WebOrchestrator has already ranked/deduplicated these sources against the
-        # untouched user query. A second heuristic score can under-rate synonym-rich
-        # product/current queries (for example "smartphone actual especificaciones")
-        # even when the orchestrator selected real result URLs. If every selected
-        # source falls below this endpoint-only threshold, keep them as *fetch
-        # candidates only*. They still become public evidence only after a real page
-        # is successfully fetched and extracted below.
-        candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
-            candidate_sources = ranked_sources
-            logger.warning(
-                "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
-                "threshold=%.3f max_score=%.3f",
+        # Search-result relevance is a discovery heuristic, not evidence. Do not
+        # discard lower-scoring independent candidates before navigation: snippets
+        # can be sparse or misleading. Keep the orchestrator-selected set ordered
+        # by score, then require the fetched page itself to pass relevance checks.
+        candidate_sources = ranked_sources if search_ok else []
+        if search_ok and ranked_sources and len(relevant_sources) < len(ranked_sources):
+            logger.info(
+                "web_search_kept_low_score_candidates_for_fetch request_id=%s total=%s "
+                "above_threshold=%s threshold=%.3f",
                 request_id,
-                len(candidate_sources),
+                len(ranked_sources),
+                len(relevant_sources),
                 minimum_relevance_score,
-                max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
 
         # If the ranked primary result set collapses to one host, run one bounded
