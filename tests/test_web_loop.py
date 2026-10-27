@@ -389,6 +389,28 @@ def test_web_routing_skips_stable_chat_and_uses_fresh_external_signals():
     assert main.should_force_web(explicit_messages) is True
 
 
+def test_web_routing_covers_external_web_without_topic_specific_keywords():
+    external_queries = (
+        "¿Quién es el CEO de NVIDIA?",
+        "¿Cuál es la versión estable de Python?",
+        "¿Cuál es el horario del Museo del Prado?",
+        "¿Qué dice la documentación de FastAPI sobre lifespan?",
+        "¿Cuál es la normativa de equipaje de LATAM?",
+    )
+    for query in external_queries:
+        assert main.should_force_web([{"role": "user", "content": query}]) is True, query
+
+
+def test_web_routing_does_not_browse_for_stable_explanations_by_default():
+    stable_queries = (
+        "¿Qué es la fotosíntesis?",
+        "Explica cómo funciona la recursión",
+        "¿Por qué el cielo se ve azul?",
+    )
+    for query in stable_queries:
+        assert main.should_force_web([{"role": "user", "content": query}]) is False, query
+
+
 def test_runtime_clock_is_authoritative():
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
