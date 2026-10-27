@@ -247,7 +247,7 @@ def test_google_news_recovery_keeps_realtime_marker(monkeypatch):
     orchestrator = WebOrchestrator(max_results=5)
     asyncio.run(
         orchestrator._google_news(
-            "situación actual de la comuna de Las Condes en Chile",
+            "noticias actuales de la comuna de Las Condes en Chile",
             1.0,
             5,
         )
