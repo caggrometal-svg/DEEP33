@@ -31,7 +31,7 @@ GLOBAL_BUDGET_SECONDS = 5.0
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
-MAX_CONCURRENT_PROVIDER_CALLS = 10
+MAX_CONCURRENT_PROVIDER_CALLS = 16
 CIRCUIT_OPEN_SECONDS = 5.0
 CACHE_TTL_SECONDS = 60.0
 CACHE_MAX_ENTRIES = 256
@@ -372,7 +372,7 @@ class WebOrchestrator:
         self.cache = TTLRUCache()
         self._inflight: dict[str, asyncio.Task[dict]] = {}
         # All normal and targeted provider probes share one bounded slot pool.
-        # This keeps publisher-discovery fan-out below the shared HTTPX pool size.
+        # Leave four connections of headroom in the shared 20-connection HTTPX pool.
         self._provider_semaphore: asyncio.Semaphore | None = None
         self._provider_semaphore_loop: asyncio.AbstractEventLoop | None = None
         self.circuits: dict[str, CircuitState] = {
