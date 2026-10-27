@@ -3356,6 +3356,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 ).casefold().removeprefix("www.")
                 for item in candidate_sources
                 if str(item.get("url") or "").startswith("https://")
+                and _looks_like_realtime_news_candidate_url(str(item.get("url") or ""))
                 and item.get("published_at")
                 and _is_recently_published(item, q)
             } - {""}
