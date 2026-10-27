@@ -73,9 +73,21 @@ def _resolve_git_sha() -> str:
         pass
     return "unknown"
 
+def _resolve_git_branch() -> str:
+    # Vercel's branch is the source of truth for preview/production identity.
+    vercel_ref = os.getenv("VERCEL_GIT_COMMIT_REF", "").strip()
+    if vercel_ref:
+        return vercel_ref
+    configured_ref = os.getenv("DEEP33_GIT_BRANCH", "").strip()
+    if configured_ref:
+        return configured_ref
+    # Keep a fallback for old deployment metadata when running outside Vercel.
+    return os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+
+
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = _resolve_git_branch()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
