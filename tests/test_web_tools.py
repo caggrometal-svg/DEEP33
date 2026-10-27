@@ -127,7 +127,7 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
          "snippet": "Python asyncio event loop design and APIs"},
     ]
 
-    async def fake_call_provider(provider, query):
+    async def fake_call_provider(provider, query, **_kwargs):
         if "official" in query.casefold():
             return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
         recovered.append(provider)
