@@ -3493,8 +3493,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 2.4,
                 min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
             ),
-            min_timeout_seconds=1.0,
-            max_timeout_seconds=4.2,
+            min_timeout_seconds=3.3,
+            max_timeout_seconds=4.0,
             global_budget_seconds=max(
                 4.5,
                 min(8.0, float(os.getenv("WEB_SEARCH_FETCH_BUDGET_SECONDS", "6.2"))),
