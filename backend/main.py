@@ -2161,25 +2161,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
-            snippet_fallback_used = True
-            logger.warning(
-                "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
-                "snippet_sources=%s snippet_domains=%s",
-                request_id or "unknown", required_pages, len(fetched_pages),
-                len(snippet_evidence), len(snippet_evidence_domains),
-            )
-        else:
-            logger.warning(
-                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-                request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
-            )
-            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-            return None, [], [], []
+        logger.warning(
+            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
+            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -2202,10 +2189,6 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
     ]
     evidence_fragments = [
-        str(item.get("snippet") or "")
-        for item in (snippet_evidence if snippet_fallback_used else [])
-        if str(item.get("snippet") or "").strip()
-    ] + [
         str(item.get("text") or "")
         for item in compact_fetched_pages
         if str(item.get("text") or "").strip()
@@ -2216,9 +2199,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
         for item in compact_fetched_pages
     } - {""}
-    domains_used = len(
-        extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
-    )
+    domains_used = len(extracted_domains)
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
@@ -2282,16 +2263,6 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "url": url,
                 "provider": str(item.get("provider") or "web_fetch"),
             }
-    if snippet_fallback_used:
-        for item in snippet_evidence:
-            url = str(item.get("url") or "").strip()
-            if url and url not in source_links:
-                source_links[url] = {
-                    "title": str(item.get("title") or url),
-                    "url": url,
-                    "snippet": str(item.get("snippet") or ""),
-                    "provider": str(item.get("provider") or "web_search"),
-                }
     return working, safe_web_sources(list(source_links.values())), evidence_fragments, compact_web_evidence
 
 
@@ -3568,85 +3539,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         )
         has_extracted_content = extracted_text_chars >= 80 and domains_used > 0
 
-        # Live search providers can return relevant, timestamped publisher snippets
-        # even when every publisher blocks or times out full-page extraction. Preserve
-        # those results as explicitly degraded search evidence instead of converting a
-        # successful realtime discovery into an empty 503. This never claims that the
-        # underlying page was fetched: callers can distinguish evidence_type and
-        # fetched=false from fully extracted pages.
+        # Search snippets are discovery metadata only. A successful public web
+        # result requires readable page extraction; otherwise fail closed.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
-            for item in candidate_sources:
-                snippet = str(item.get("snippet") or "").strip()
-                url = str(item.get("url") or "").strip()
-                domain = str(
-                    item.get("source_domain")
-                    or (urlparse(url).hostname or "")
-                ).casefold().removeprefix("www.")
-                if not url.startswith("https://") or not domain or len(snippet) < 24:
-                    continue
-                snippet_fallback_results.append({
-                    **item,
-                    "evidence_type": "search_snippet",
-                    "fetched": False,
-                    "source_domain": domain,
-                })
-                if len(snippet_fallback_results) >= 5:
-                    break
-
-        # Realtime discovery can produce more independent domains than the
-        # short extraction window can fully read. When at least one real page was
-        # extracted but fewer than three public results survived, retain additional
-        # already-ranked live snippets from distinct domains. They are explicitly
-        # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
-            extracted_result_domains = {
-                (urlparse(str(item.get("url") or "")).hostname or "")
-                .casefold().removeprefix("www.")
-                for item in resolved_results
-                if item.get("url")
-            }
-            extracted_result_urls = {
-                str(item.get("url") or "").strip()
-                for item in resolved_results
-                if str(item.get("url") or "").strip()
-            }
-            for item in candidate_sources:
-                snippet = str(item.get("snippet") or "").strip()
-                url = str(item.get("url") or "").strip()
-                domain = str(
-                    item.get("source_domain")
-                    or (urlparse(url).hostname or "")
-                ).casefold().removeprefix("www.")
-                if (
-                    not url.startswith("https://")
-                    or not domain
-                    or len(snippet) < 24
-                    or url in extracted_result_urls
-                    or domain in extracted_result_domains
-                ):
-                    continue
-                supplemental_snippet_results.append({
-                    **item,
-                    "evidence_type": "search_snippet",
-                    "fetched": False,
-                    "source_domain": domain,
-                })
-                extracted_result_domains.add(domain)
-                if len(resolved_results) + len(supplemental_snippet_results) >= 5:
-                    break
-
-        has_snippet_evidence = bool(snippet_fallback_results or supplemental_snippet_results)
-        # domains_used remains the count of pages actually fetched/extracted.
-        # Search-snippet diversity is represented by verification/source_domain,
-        # so callers can distinguish navigated pages from degraded live evidence.
-        if has_snippet_evidence and not has_extracted_content:
-            domains_used = len({
-                str(item.get("source_domain") or "")
-                for item in snippet_fallback_results
-                if str(item.get("source_domain") or "")
-            })
+        has_snippet_evidence = False
 
         valid_news_domains = {
             (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -3670,18 +3567,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and len(valid_news_providers) >= 2
             )
         )
-        final_ok = (
-            search_ok
-            and (has_extracted_content or has_snippet_evidence)
-            and news_quorum_met
-        )
-        if (
-            not search_ok
-            or (not has_extracted_content and not has_snippet_evidence)
-            or not news_quorum_met
-        ):
+        final_ok = search_ok and has_extracted_content and news_quorum_met
+        if not final_ok:
             status = "failed"
-        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
+        elif fetch_failures:
             status = "degraded"
         else:
             status = "success"
@@ -3703,19 +3592,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 "none",
                 result.get("winner_provider") or result.get("provider") or "unknown",
             )
-        elif not has_extracted_content and not has_snippet_evidence:
+        elif not has_extracted_content:
             errors.append("NO_USEFUL_EXTRACTED_CONTENT")
-        elif has_snippet_evidence and not has_extracted_content:
-            errors.append("PAGE_EXTRACTION_UNAVAILABLE_USING_SEARCH_SNIPPETS")
 
         response_payload = dict(result)
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
-        public_results = (
-            [*resolved_results, *supplemental_snippet_results]
-            if has_extracted_content
-            else snippet_fallback_results
-        )
+        public_results = resolved_results if has_extracted_content else []
         response_payload["results"] = public_results
         response_payload["sources"] = public_results
         response_payload.update({
