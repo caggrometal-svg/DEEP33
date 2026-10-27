@@ -1612,10 +1612,10 @@ def test_direct_chile_news_recovery_rejects_cached_cooperativa_issue_archive():
 def test_resilient_search_bounds_shared_provider_fanout():
     from backend.search.resilient import (
         MAX_CONCURRENT_PROVIDER_CALLS,
-        ResilientSearch,
+        WebOrchestrator,
     )
 
-    engine = ResilientSearch()
+    engine = WebOrchestrator()
     active = 0
     peak = 0
 
@@ -1649,9 +1649,9 @@ def test_resilient_search_bounds_shared_provider_fanout():
 
 
 def test_targeted_provider_probe_failures_do_not_trip_shared_circuit():
-    from backend.search.resilient import ResilientSearch
+    from backend.search.resilient import WebOrchestrator
 
-    engine = ResilientSearch()
+    engine = WebOrchestrator()
 
     async def pool_exhausted_provider(_query, _timeout, _limit):
         raise httpx.PoolTimeout("simulated shared HTTP pool exhaustion")
