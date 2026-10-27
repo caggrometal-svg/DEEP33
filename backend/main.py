@@ -3322,6 +3322,79 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
 
+        # If the ranked primary result set collapses to one host, run one bounded
+        # provider-independent diversity query. This is not a source allowlist: the
+        # second query only broadens discovery vocabulary, then every candidate is
+        # ranked again against the untouched user query and must still be fetched.
+        candidate_domains_before_recovery = {
+            str(
+                item.get("source_domain")
+                or (urlparse(str(item.get("url") or "")).hostname or "")
+            ).casefold().rstrip(".").removeprefix("www.")
+            for item in candidate_sources
+            if item.get("url")
+        } - {""}
+        if (
+            search_ok
+            and not is_realtime_news_query(q)
+            and len(candidate_domains_before_recovery) < 2
+        ):
+            try:
+                diversity_query = (
+                    re.sub(
+                        r"\b(?:official|oficial|documentation|documentación|documentacion|"
+                        r"docs?|source|fuente)\b",
+                        " ",
+                        q,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    + " independent reference"
+                ).strip()
+                diversity_result = await search_web(
+                    diversity_query,
+                    timeout_seconds=2.4,
+                    max_results=6,
+                    fast=True,
+                    fresh=True,
+                )
+                diversity_raw = _source_from_result(diversity_result) if isinstance(diversity_result, dict) else []
+                existing_urls = {str(item.get("url") or "").strip() for item in candidate_sources}
+                for raw in diversity_raw:
+                    if not isinstance(raw, dict):
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    host = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().rstrip(".").removeprefix("www.")
+                    if not url.startswith("https://") or not host or url in existing_urls:
+                        continue
+                    candidate = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": str(raw.get("provider") or "diversity_recovery"),
+                        "source_domain": host[:255],
+                        "published_at": raw.get("published_at"),
+                    }
+                    candidate["relevance_score"] = score_result(q, candidate)
+                    if candidate["relevance_score"] < minimum_relevance_score:
+                        continue
+                    candidate_sources.append(candidate)
+                    existing_urls.add(url)
+                logger.info(
+                    "web_search_general_diversity_recovery request_id=%s before_domains=%s candidates=%s",
+                    request_id,
+                    len(candidate_domains_before_recovery),
+                    len(candidate_sources),
+                )
+            except Exception as diversity_exc:
+                logger.warning(
+                    "web_search_general_diversity_recovery_failed request_id=%s error=%s",
+                    request_id,
+                    type(diversity_exc).__name__,
+                )
+
         # The cross-provider orchestrator intentionally compresses candidates before
         # this endpoint performs page reads. For realtime-news queries that can leave
         # fewer than three editorial domains even though the recent-news feed contains
