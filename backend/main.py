@@ -1913,11 +1913,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Any externally verified answer must open real pages, not stop at SERP snippets.
+    # General web verification requires at least two independently hosted pages;
+    # deeper research may fetch more, but one readable page alone is not enough
+    # to present an external fact as corroborated.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    corroboration_required = bool(explicitly_forced or contrast_required or realtime)
+    required_pages = 2 if corroboration_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
