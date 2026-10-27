@@ -1044,7 +1044,7 @@ jobs:
   android_e2e:
     # On a PR, run the real Android app against that PR's protected Vercel preview
     # using a short-lived GitHub OIDC token; on main, test the public production alias.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/chat-realtime-news-evidence-quorum-251026'))) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1052,7 +1052,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+      DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/chat-realtime-news-evidence-quorum-251026' && 'https://deep33-backend-git-fix-chat-realtime-news-evidence-869f34-iac33.vercel.app' || github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
