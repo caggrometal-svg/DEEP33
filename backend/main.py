@@ -145,17 +145,15 @@ def _is_publishable_realtime_news_source(
     original_url = str(source.get("url") or "").strip().rstrip("/")
     if source_title and resolved_url != original_url:
         source_title_tokens = {
-            token for token in TOKEN_RE.findall(source_title.casefold())
-            if len(token) >= 4 and token not in _STOPWORDS
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", source_title.casefold())
         }
         resolved_title_tokens = {
-            token for token in TOKEN_RE.findall(title)
-            if len(token) >= 4 and token not in _STOPWORDS
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", title)
         }
         if len(source_title_tokens) >= 3 and not (source_title_tokens & resolved_title_tokens):
             return False
 
-    if any(marker in title for (
+    if any(marker in title for marker in (
         "capital, mapa, bandera, población",
         "capital, map, flag",
         "lugares imperdibles",
