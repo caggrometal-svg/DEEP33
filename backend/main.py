@@ -2829,6 +2829,7 @@ def normalize_shared_generation_output(
         },
         "sources": output.get("sources") if isinstance(output.get("sources"), list) else [],
         "web_navigation": bool(output.get("web_navigation")),
+        "web_required": bool(output.get("web_required")),
     }
     return sanitize_generation_output(normalized)
 
@@ -4369,6 +4370,16 @@ async def generate(
             bool(evidence and evidence.ok),
             decision.reason,
         )
+        web_required_for_request = bool(
+            decision.route in {
+                DecisionRoute.WEB,
+                DecisionRoute.WEATHER,
+                DecisionRoute.SEISMIC,
+                DecisionRoute.FINANCE,
+            }
+            or should_force_web(messages)
+            or should_deep_web(messages, personality)
+        )
         if is_connectivity_question(raw_query):
             logger.info("backend_connectivity_question request_id=%s session_id=%s", request_id, session_id)
             data = {
@@ -4525,6 +4536,7 @@ async def generate(
             "response": data,
             "sources": sources,
             "web_navigation": bool(sources),
+            "web_required": web_required_for_request,
         }
         output = sanitize_generation_output(output)
         cache_put(session_id, idempotency_key, request_hash, output)
@@ -5319,7 +5331,11 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             )
         )
         try:
-            yield _sse_status("thinking", request_id)
+            yield _sse_status(
+                "thinking",
+                request_id,
+                web_required=web_required,
+            )
 
             stream_answer_override: str | None = None
             router_evidence = None
