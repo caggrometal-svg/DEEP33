@@ -180,8 +180,11 @@ def requires_web_verification(query: str) -> bool:
     # first word is used only as an externality signal, never as a domain allowlist.
     tokens = cleaned.replace("¿", "").split()
     has_named_entity = any(
-        (token[:1].isupper() and token[1:].islower()) or (len(token) >= 2 and token.isupper())
+        token[:1].isupper()
+        or (len(token) >= 2 and token.isupper())
+        or any(char.isupper() for char in token[1:])
         for token in tokens[1:]
+        if any(char.isalpha() for char in token)
     )
     if has_named_entity and _EXTERNAL_QUESTION_RE.search(cleaned):
         return True
