@@ -1607,3 +1607,67 @@ def test_direct_chile_news_recovery_rejects_cached_cooperativa_issue_archive():
 
     assert not _is_direct_chile_news_article_candidate(archive)
     assert _is_direct_chile_news_article_candidate(article)
+
+
+def test_resilient_search_bounds_shared_provider_fanout():
+    from backend.search.resilient import (
+        MAX_CONCURRENT_PROVIDER_CALLS,
+        ResilientSearch,
+    )
+
+    engine = ResilientSearch()
+    active = 0
+    peak = 0
+
+    async def bounded_provider(query, _timeout, _limit):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.02)
+            return [{
+                "title": f"Result for {query}",
+                "url": f"https://provider.example/{query.replace(' ', '-')}",
+                "source_domain": "provider.example",
+                "snippet": "Live provider result.",
+            }]
+        finally:
+            active -= 1
+
+    engine.providers["bing"] = bounded_provider
+
+    async def run():
+        results = await asyncio.gather(*(
+            engine._bounded_call_provider("bing", f"parallel query {index}")
+            for index in range(30)
+        ))
+        assert all(result.ok for result in results)
+
+    asyncio.run(run())
+    assert 1 < peak <= MAX_CONCURRENT_PROVIDER_CALLS
+    assert peak == MAX_CONCURRENT_PROVIDER_CALLS
+
+
+def test_targeted_provider_probe_failures_do_not_trip_shared_circuit():
+    from backend.search.resilient import ResilientSearch
+
+    engine = ResilientSearch()
+
+    async def pool_exhausted_provider(_query, _timeout, _limit):
+        raise httpx.PoolTimeout("simulated shared HTTP pool exhaustion")
+
+    engine.providers["bing"] = pool_exhausted_provider
+
+    async def run():
+        for index in range(8):
+            outcome = await engine._bounded_call_provider(
+                "bing",
+                f"publisher probe {index}",
+                record_failure=False,
+            )
+            assert outcome.ok is False
+            assert outcome.error_code == "PROVIDER_ERROR:POOLTIMEOUT"
+
+    asyncio.run(run())
+    assert engine.circuits["bing"].consecutive_failures == 0
+    assert engine.circuits["bing"].opened_until == 0.0
