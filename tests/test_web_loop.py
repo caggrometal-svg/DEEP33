@@ -90,7 +90,10 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
     )
 
     assert result["choices"][0]["message"]["content"] == "Respuesta verificada."
-    assert sources[0]["url"] == "https://example.com/"
+    assert {item["url"] for item in sources} == {
+        "https://example.com/",
+        "https://example.org/deep33",
+    }
     assert calls == {"gateway": 1, "search": 1, "fetch": 2}
 
 def test_source_metadata_never_leaks_into_final_text() -> None:
