@@ -495,11 +495,12 @@ _LEXICAL_PATH_MARKERS = (
 )
 _REALTIME_NEWS_SIGNALS = (
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
-    "última hora", "ultima hora", "actualidad", "situación actual",
-        "noticias recientes", "noticia reciente", "últimos cambios",
+    "última hora", "ultima hora", "actualidad",
+    "noticias recientes", "noticia reciente", "últimos cambios",
     "ultimos cambios", "últimas novedades", "ultimas novedades",
     "cambios recientes", "actualización reciente", "actualizaciones recientes",
-    "latest news", "current events", "current affairs",     "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
+    "latest news", "current events", "current affairs",
+    "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
     "acontecimientos actuales", "acontecimiento actual",
     "eventos actuales", "eventos recientes", "últimos acontecimientos",
     "ultimos acontecimientos", "hechos recientes",
