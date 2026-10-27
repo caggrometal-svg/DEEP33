@@ -128,6 +128,7 @@ class HTMLTextExtractor(HTMLParser):
         self.title_parts: list[str] = []
         self.meta_titles: dict[str, str] = {}
         self.meta_descriptions: dict[str, str] = {}
+        self.meta_published_at: dict[str, str] = {}
         self.jsonld_blocks: list[str] = []
         self._skip_depth = 0
         self._in_title = False
@@ -162,7 +163,23 @@ class HTMLTextExtractor(HTMLParser):
                 "article:description",
             }:
                 self.meta_descriptions.setdefault(key, value)
+            elif value and key in {
+                "article:published_time", "og:published_time", "datepublished",
+                "date.published", "pubdate", "publish_date", "publish-date",
+                "parsely-pub-date", "dc.date.issued", "sailthru.date",
+            }:
+                self.meta_published_at.setdefault(key, value)
             return
+
+        if (
+            tag == "time"
+            and values.get("datetime")
+            and values.get("itemprop", "").strip().casefold() in {"datepublished"}
+        ):
+            self.meta_published_at.setdefault(
+                "itemprop:datepublished",
+                " ".join(values["datetime"].split()),
+            )
 
         if tag == "title":
             self._in_title = True
@@ -332,6 +349,142 @@ def _structured_article_fields(blocks: list[str]) -> tuple[str, str, str]:
         descriptions[0][1] if descriptions else "",
         headlines[0][1] if headlines else "",
     )
+
+def _normalize_published_timestamp(value: object) -> str | None:
+    """Normalize a publisher-supplied timestamp without substituting retrieval time."""
+    raw = " ".join(html.unescape(str(value or "")).split()).strip()
+    if not raw:
+        return None
+    candidate = raw.replace("Z", "+00:00")
+    parsed = None
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        for pattern in ("%Y/%m/%d", "%B %d, %Y", "%b %d, %Y"):
+            try:
+                parsed = datetime.strptime(raw, pattern)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc).isoformat()
+    except (OverflowError, ValueError):
+        return None
+
+
+def _structured_article_published_at(blocks: list[str]) -> str | None:
+    """Read datePublished from JSON-LD Article objects, never dateModified."""
+    candidates: list[tuple[int, str]] = []
+
+    def visit(value) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        raw_type = value.get("@type", [])
+        if isinstance(raw_type, str):
+            types = [raw_type]
+        elif isinstance(raw_type, list):
+            types = [str(item) for item in raw_type]
+        else:
+            types = []
+        is_article = any(
+            marker in item.casefold()
+            for item in types
+            for marker in ("article", "blogposting", "liveblogposting")
+        )
+        published = value.get("datePublished")
+        if is_article and isinstance(published, str):
+            normalized = _normalize_published_timestamp(published)
+            if normalized:
+                candidates.append((0, normalized))
+        for key, child in value.items():
+            if key not in {"articleBody", "description"}:
+                visit(child)
+
+    for block in blocks:
+        try:
+            visit(json.loads(block))
+        except (TypeError, ValueError):
+            continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _extract_published_at(content: bytes, content_type: str) -> str | None:
+    """Extract publication date from the final page's own HTML/JSON-LD metadata."""
+    mime = str(content_type or "").split(";", 1)[0].strip().casefold()
+    if mime not in {"text/html", "application/xhtml+xml"}:
+        return None
+    charset = "utf-8"
+    lower = str(content_type or "").casefold()
+    if "charset=" in lower:
+        charset = lower.split("charset=", 1)[1].split(";", 1)[0].strip() or charset
+    decoded = content.decode(charset, errors="replace")
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+
+    # Prefer JSON-LD's explicit Article.datePublished, then explicit publication
+    # metadata. Do not use dateModified, the SERP/RSS timestamp, or retrieval time.
+    structured_date = _structured_article_published_at(parser.jsonld_blocks)
+    if structured_date:
+        return structured_date
+    for key in (
+        "article:published_time",
+        "og:published_time",
+        "itemprop:datepublished",
+        "datepublished",
+        "date.published",
+        "parsely-pub-date",
+        "pubdate",
+        "publish_date",
+        "publish-date",
+        "dc.date.issued",
+        "sailthru.date",
+    ):
+        timestamp = _normalize_published_timestamp(parser.meta_published_at.get(key))
+        if timestamp:
+            return timestamp
+    return None
+
+
+def _extract_reader_published_at(content: bytes, original_url: str) -> str | None:
+    """Accept Reader's publication date only when its declared source is the same URL."""
+    source_url = ""
+    published_raw = ""
+    for line in content.decode("utf-8", errors="replace").splitlines()[:16]:
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        if key.strip().casefold() == "url source":
+            source_url = value.strip()
+        elif key.strip().casefold() == "published time":
+            published_raw = value.strip()
+    if not source_url or not published_raw:
+        return None
+    source = urlparse(source_url)
+    original = urlparse(original_url)
+    source_host = (source.hostname or "").casefold().removeprefix("www.")
+    original_host = (original.hostname or "").casefold().removeprefix("www.")
+    source_path = source.path.rstrip("/") or "/"
+    original_path = original.path.rstrip("/") or "/"
+    if (
+        source.scheme.casefold() not in {"http", "https"}
+        or source_host != original_host
+        or source_path != original_path
+    ):
+        return None
+    return _normalize_published_timestamp(published_raw)
+
 
 def _is_public_ip(value):
     try: return ipaddress.ip_address(value).is_global
@@ -583,6 +736,7 @@ async def _fetch_with_reader_fallback(
             "final_url": original_url,
             "title": title or original_url,
             "text": text,
+            "published_at": _extract_reader_published_at(content, original_url),
             "content_type": mime,
             "bytes": len(content),
             "redirects": 0,
@@ -820,6 +974,7 @@ async def _fetch_page_uncached(
                 content=await _read_limited(response,_max_response_bytes())
             try:
                 title, text = _extract_text(content, content_type, max_text_chars)
+                published_at = _extract_published_at(content, content_type)
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
@@ -833,6 +988,7 @@ async def _fetch_page_uncached(
                 "final_url":current_url,
                 "title":title or current_url,
                 "text":text,
+                "published_at":published_at,
                 "content_type":mime,
                 "bytes":len(content),
                 "redirects":len(redirects),
