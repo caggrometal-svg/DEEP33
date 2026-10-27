@@ -584,8 +584,14 @@ def test_verified_sources_are_not_emitted_as_links_without_safe_urls() -> None:
 
 
 def test_fetched_page_relevance_rejects_irrelevant_redirect_content():
+    source = {
+        "title": "NVIDIA leadership",
+        "url": "https://www.nvidia.com/en-us/about-nvidia/",
+        "snippet": "NVIDIA leadership and executive team",
+    }
     assert main._is_relevant_fetched_web_source(
         "¿quién dirige actualmente NVIDIA como CEO?",
+        source,
         {
             "title": "NVIDIA leadership",
             "url": "https://www.nvidia.com/en-us/about-nvidia/",
@@ -595,6 +601,7 @@ def test_fetched_page_relevance_rejects_irrelevant_redirect_content():
 
     assert main._is_relevant_fetched_web_source(
         "¿quién dirige actualmente NVIDIA como CEO?",
+        source,
         {
             "title": "Sign in",
             "url": "https://example.com/login",
