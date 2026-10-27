@@ -50,18 +50,10 @@ from backend.decision_router import DecisionRoute, classify_query, format_struct
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
-    # Prefer Vercel's immutable source revision for the currently active Vercel
-    # backend. This value is what CI compares with the exact tested commit.
+    # Vercel's immutable source revision is the canonical deployment identity.
     vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
     if vercel_sha:
         return vercel_sha
-    # Preserve revision reporting for the existing non-Vercel fallback runtimes.
-    railway_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
-    if railway_sha:
-        return railway_sha
-    runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
-    if runtime:
-        return runtime
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
@@ -75,7 +67,11 @@ def _resolve_git_sha() -> str:
 
 GIT_SHA = _resolve_git_sha()
 BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
+GIT_BRANCH = (
+    os.getenv("VERCEL_GIT_COMMIT_REF", "").strip()
+    or os.getenv("DEEP33_GIT_BRANCH", "").strip()
+    or "main"
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("deep33")
@@ -904,7 +900,7 @@ def session_id_from_request(request: Request) -> str:
 
 
 def scope_session_for_user(user_id: str | None, session_id: str) -> str:
-    """Normalize direct Render and JWT-scoped Edge session IDs to one namespace."""
+    """Normalize direct backend and JWT-scoped session IDs to one namespace."""
     owner = str(user_id or "").strip()
     value = str(session_id or "").strip()
     if not owner:
@@ -912,7 +908,7 @@ def scope_session_for_user(user_id: str | None, session_id: str) -> str:
 
     prefix = f"{owner}:"
     # Edge has already scoped this session. Preserve its exact bounded form so the
-    # same request keeps its idempotency key when Android switches to direct Render.
+    # the same request keeps its idempotency key across authenticated backend paths.
     if value.startswith(prefix):
         return value[:128]
 
@@ -1076,7 +1072,7 @@ def payload_hash(value: dict) -> str:
 
 
 def generation_request_hash(request: ChatRequest, personality: str | None = None) -> str:
-    """Preserve Render's historical request fingerprint while sharing it with Edge."""
+    """Preserve the public request fingerprint across backend execution paths."""
     selected_personality = normalize_personality(
         personality if personality is not None else request.personality
     )
@@ -2826,7 +2822,7 @@ def normalize_shared_generation_output(
     request_id: str,
     personality: str,
 ) -> dict:
-    """Adapt Edge's compact shared-cache record to Render's public response schema."""
+    """Adapt a compact shared-cache record to the public backend response schema."""
     if not isinstance(output, dict):
         raise HTTPException(status_code=502, detail="IDEMPOTENCY_RESPONSE_INVALID")
 
@@ -2920,7 +2916,7 @@ async def liveness() -> dict:
         "version": APP_VERSION,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": os.getenv("VERCEL_DEPLOYMENT_ID", "local"),
         "timestamp": utc_now(),
     }
 
@@ -2934,7 +2930,7 @@ async def health() -> dict:
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "git_branch": GIT_BRANCH,
-        "instance_id": os.getenv("RENDER_INSTANCE_ID", "local"),
+        "instance_id": os.getenv("VERCEL_DEPLOYMENT_ID", "local"),
         "timestamp": utc_now(),
     }
 
