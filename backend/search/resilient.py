@@ -823,8 +823,13 @@ class WebOrchestrator:
             self.global_budget_seconds,
         )
         try:
+            provider_call = (
+                self._call_provider(provider, query)
+                if record_failure
+                else self._call_provider(provider, query, record_failure=False)
+            )
             return await asyncio.wait_for(
-                self._call_provider(provider, query, record_failure=record_failure),
+                provider_call,
                 timeout=max(0.05, timeout),
             )
         except asyncio.TimeoutError:
