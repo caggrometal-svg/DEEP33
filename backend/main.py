@@ -4949,6 +4949,7 @@ async def _finalize_stream(
     memory_profile_id: str | None = None,
     access_token: str | None = None,
     sources: list[dict] | None = None,
+    web_required: bool = False,
 ) -> None:
     safe_sources = safe_web_sources(sources)
     output = {
@@ -4963,6 +4964,7 @@ async def _finalize_stream(
         },
         "sources": safe_sources,
         "web_navigation": bool(safe_sources),
+        "web_required": bool(web_required),
     }
     await persist_messages(
         session_id,
@@ -5562,6 +5564,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                             temperature=request.temperature,
                         )
                 runtime_state["payload"] = payload
+                runtime_state["web_required"] = web_required
                 yield _sse_status(
                     "sources_ready",
                     request_id,
@@ -5678,6 +5681,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
             memory_profile_id=memory_profile_id,
             access_token=access_token,
             sources=runtime_state.get("sources") or [],
+            web_required=bool(runtime_state.get("web_required")),
         )
 
     return StreamingResponse(
