@@ -31,6 +31,7 @@ GLOBAL_BUDGET_SECONDS = 5.0
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
+MAX_CONCURRENT_PROVIDER_CALLS = 10
 CIRCUIT_OPEN_SECONDS = 5.0
 CACHE_TTL_SECONDS = 60.0
 CACHE_MAX_ENTRIES = 256
@@ -370,6 +371,10 @@ class WebOrchestrator:
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
         self._inflight: dict[str, asyncio.Task[dict]] = {}
+        # All normal and targeted provider probes share one bounded slot pool.
+        # This keeps publisher-discovery fan-out below the shared HTTPX pool size.
+        self._provider_semaphore: asyncio.Semaphore | None = None
+        self._provider_semaphore_loop: asyncio.AbstractEventLoop | None = None
         self.circuits: dict[str, CircuitState] = {
             "bing": CircuitState(),
             "google": CircuitState(),
@@ -725,7 +730,21 @@ class WebOrchestrator:
             return compact
         return cleaned
 
-    async def _call_provider(self, provider: str, query: str) -> ProviderOutcome:
+    def _provider_slots(self) -> asyncio.Semaphore:
+        """Return a concurrency limiter tied to the active ASGI event loop."""
+        loop = asyncio.get_running_loop()
+        if self._provider_semaphore is None or self._provider_semaphore_loop is not loop:
+            self._provider_semaphore = asyncio.Semaphore(MAX_CONCURRENT_PROVIDER_CALLS)
+            self._provider_semaphore_loop = loop
+        return self._provider_semaphore
+
+    async def _call_provider(
+        self,
+        provider: str,
+        query: str,
+        *,
+        record_failure: bool = True,
+    ) -> ProviderOutcome:
         state = self.circuits[provider]
         now = time.monotonic()
         if state.is_open(now):
@@ -740,14 +759,18 @@ class WebOrchestrator:
             provider_function = self.providers.get(provider) or self.fallback_providers.get(provider)
             if provider_function is None:
                 raise RuntimeError("SEARCH_PROVIDER_NOT_REGISTERED")
-            results = await asyncio.wait_for(
-                provider_function(
-                    query,
-                    self.provider_total_seconds,
-                    self.max_results,
-                ),
-                timeout=self.provider_total_seconds,
-            )
+            # The semaphore is shared across all in-flight queries on this search
+            # engine, not just one fan-out wave. This prevents one large news query
+            # from monopolizing the shared HTTP client and starving the next query.
+            async with self._provider_slots():
+                results = await asyncio.wait_for(
+                    provider_function(
+                        query,
+                        self.provider_total_seconds,
+                        self.max_results,
+                    ),
+                    timeout=self.provider_total_seconds,
+                )
             latency_ms = (time.perf_counter() - started) * 1000.0
             if results:
                 state.success()
@@ -767,7 +790,8 @@ class WebOrchestrator:
                 latency_ms=round(latency_ms, 2),
             )
         except asyncio.TimeoutError:
-            state.failure(time.monotonic())
+            if record_failure:
+                state.failure(time.monotonic())
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
@@ -775,7 +799,8 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
         except Exception as exc:
-            state.failure(time.monotonic())
+            if record_failure:
+                state.failure(time.monotonic())
             name = type(exc).__name__.upper()
             return ProviderOutcome(
                 provider=provider,
@@ -784,8 +809,14 @@ class WebOrchestrator:
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
-    async def _bounded_call_provider(self, provider: str, query: str) -> ProviderOutcome:
-        """Enforce the provider deadline even if a provider adapter is replaced or misbehaves."""
+    async def _bounded_call_provider(
+        self,
+        provider: str,
+        query: str,
+        *,
+        record_failure: bool = True,
+    ) -> ProviderOutcome:
+        """Enforce provider deadlines without letting fan-out probes trip the shared circuit."""
         started = time.perf_counter()
         timeout = min(
             self.provider_total_seconds + 0.05,
@@ -793,11 +824,12 @@ class WebOrchestrator:
         )
         try:
             return await asyncio.wait_for(
-                self._call_provider(provider, query),
+                self._call_provider(provider, query, record_failure=record_failure),
                 timeout=max(0.05, timeout),
             )
         except asyncio.TimeoutError:
-            self.circuits[provider].failure(time.monotonic())
+            if record_failure:
+                self.circuits[provider].failure(time.monotonic())
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
@@ -1065,7 +1097,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-economy-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(economic_queries)
@@ -1076,6 +1108,7 @@ class WebOrchestrator:
                     self._bounded_call_provider(
                         "google_news",
                         "artificial intelligence AI technology research latest news",
+                        record_failure=False,
                     ),
                     name="search:google-news-ai",
                 )
@@ -1100,7 +1133,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-general-news:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(general_news_queries)
@@ -1120,7 +1153,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-current-events:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(current_events_queries)
@@ -1140,7 +1173,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-weather:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(weather_queries)
@@ -1182,7 +1215,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-political-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_primary_queries)
@@ -1200,7 +1233,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    self._bounded_call_provider(provider, official_query, record_failure=False),
                     name=f"search:official-primary:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1212,7 +1245,7 @@ class WebOrchestrator:
             who_query = "site:who.int/news-room/fact-sheets/detail dengue and severe dengue"
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, who_query),
+                    self._bounded_call_provider(provider, who_query, record_failure=False),
                     name=f"search:who-dengue:{provider}",
                 )
                 for provider in ("bing", "google", "duckduckgo", "cl0q")
@@ -1225,7 +1258,7 @@ class WebOrchestrator:
             company_queries = _commercial_technology_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, company_query),
+                    self._bounded_call_provider(provider, company_query, record_failure=False),
                     name=f"search:commercial-tech:{provider}:{index}",
                 )
                 for index, (provider, company_query) in enumerate(company_queries)
@@ -1237,7 +1270,7 @@ class WebOrchestrator:
             academic_queries = _academic_ai_research_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, academic_query),
+                    self._bounded_call_provider(provider, academic_query, record_failure=False),
                     name=f"search:academic-ai:{provider}:{index}",
                 )
                 for index, (provider, academic_query) in enumerate(academic_queries)
@@ -1372,7 +1405,7 @@ class WebOrchestrator:
             )
             official_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    self._bounded_call_provider(provider, official_query, record_failure=False),
                     name=f"search-official:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1480,7 +1513,7 @@ class WebOrchestrator:
             # The same end-to-end deadline covers the primary and recovery phases.
             recovery_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, recovery_query),
+                    self._bounded_call_provider(provider, recovery_query, record_failure=False),
                     name=f"search-recovery:{provider}",
                 )
                 for provider in self.providers
@@ -1604,7 +1637,7 @@ class WebOrchestrator:
             )
             political_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    self._bounded_call_provider(provider, targeted_query, record_failure=False),
                     name=f"search:chile-political-diversity:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_source_queries)
@@ -1892,7 +1925,7 @@ class WebOrchestrator:
                 general_news_tasks = (
                     {
                         asyncio.create_task(
-                            self._bounded_call_provider(provider, targeted_query),
+                            self._bounded_call_provider(provider, targeted_query, record_failure=False),
                             name=f"search:chile-general-news:{provider}:{index}",
                         )
                         for index, (provider, targeted_query) in enumerate(general_news_source_queries)
