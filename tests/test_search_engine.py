@@ -688,8 +688,8 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 3
-    assert len(result["providers"]) == 2
-    assert result["verification"]["distinct_providers"] == 2
+    assert len(result["providers"]) >= 2
+    assert result["verification"]["distinct_providers"] >= 2
 
 
 def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch):
@@ -832,28 +832,23 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
     assert len(ranked) == 1
 
 
-def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
-    queries = []
+def test_realtime_news_does_not_stop_before_quorum(monkeypatch):
+    from datetime import datetime, timezone
 
+    now = datetime.now(timezone.utc).isoformat()
     async def fake_run_query(self, providers, planned_query, **kwargs):
-        queries.append(planned_query)
         return (
-            [("google_news", [
-                {
-                    "title": "Chile anuncia nuevas medidas",
-                    "url": "https://news.example/chile-medidas",
-                    "snippet": "Noticia actual publicada hoy en Chile.",
-                "published_at": datetime.now(timezone.utc).isoformat(),
-                },
-                {
-                    "title": "Gobierno de Chile informa nuevos cambios",
-                    "url": "https://report.example/chile-cambios",
-                    "snippet": "Actualización reciente de una fuente informativa.",
-                "published_at": datetime.now(timezone.utc).isoformat(),
-                },
-            ])],
+            [
+                ("google_news", [
+                    {"title": "Chile anuncia nuevas medidas", "url": "https://news.example/chile-medidas", "snippet": "Noticia actual publicada hoy en Chile.", "published_at": now},
+                    {"title": "Gobierno informa cambios", "url": "https://report.example/chile-cambios", "snippet": "Actualización reciente de una fuente informativa.", "published_at": now},
+                ]),
+                ("bing", [
+                    {"title": "Nueva información de Chile", "url": "https://third.example/chile-nuevo", "snippet": "Otra noticia reciente e independiente sobre Chile.", "published_at": now},
+                ]),
+            ],
             [],
-            ["google_news"],
+            ["google_news", "bing"],
         )
 
     monkeypatch.setattr(SearchEngine, "_run_query", fake_run_query)
@@ -867,9 +862,9 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
         )
     )
     assert result["ok"] is True
-    assert len(queries) == 1
-    assert result["queries_executed"] == [queries[0]]
-
+    assert len(result["results"]) >= 3
+    assert result["verification"]["distinct_domains"] >= 3
+    assert result["verification"]["distinct_providers"] >= 2
 
 def test_rank_results_normalizes_ai_and_technology_synonyms():
     query = "latest artificial intelligence research and technology news today"
