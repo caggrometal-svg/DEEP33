@@ -95,7 +95,23 @@ object Deep33Api {
         else BuildConfig.DEEP33_VERCEL_URL
 
     private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
-        if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
+        if (!BuildConfig.DEBUG) return
+
+        // API calls append paths (for example /health or /v1/chat/stream) to the
+        // configured base URL. Compare only the HTTPS origin so the short-lived
+        // OIDC token is attached to requests for this protected preview, not to
+        // a different host or to production.
+        val configuredBase = e2eBackendUrl ?: return
+        val configuredOrigin = runCatching { URI(configuredBase) }.getOrNull() ?: return
+        val requestOrigin = runCatching { URI(endpoint) }.getOrNull() ?: return
+        val sameHttpsOrigin =
+            configuredOrigin.scheme.equals("https", ignoreCase = true) &&
+                requestOrigin.scheme.equals("https", ignoreCase = true) &&
+                configuredOrigin.host?.equals(requestOrigin.host ?: "", ignoreCase = true) == true &&
+                (if (configuredOrigin.port == -1) 443 else configuredOrigin.port) ==
+                    (if (requestOrigin.port == -1) 443 else requestOrigin.port)
+        if (!sameHttpsOrigin) return
+
         e2eVercelOidcToken?.takeIf { it.isNotBlank() }?.let {
             connection.setRequestProperty("x-vercel-trusted-oidc-idp-token", it)
         }
