@@ -39,8 +39,8 @@ REALTIME_TERMS = (
 
 REALTIME_NEWS_TERMS = (
     "noticia", "noticias", "última hora", "ultima hora", "actualidad", "actual",
-    "situación actual", "situacion actual", "estado actual",
-    "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+    "estado actual",
+    "qué pasó", "que paso", "qué está pasando", "que esta pasando",
     "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
     "incidentes", "contingencia", "contingencias", "suceso", "sucesos",
     "ocurre", "ocurriendo", "sucede", "sucediendo", "alerta", "afectado", "afectada",
@@ -496,11 +496,11 @@ _LEXICAL_PATH_MARKERS = (
 _REALTIME_NEWS_SIGNALS = (
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
     "última hora", "ultima hora", "actualidad", "situación actual",
-    "situacion actual",     "noticias recientes", "noticia reciente", "últimos cambios",
+        "noticias recientes", "noticia reciente", "últimos cambios",
     "ultimos cambios", "últimas novedades", "ultimas novedades",
     "cambios recientes", "actualización reciente", "actualizaciones recientes",
     "latest news", "current events", "current affairs",     "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
-    "en desarrollo", "acontecimientos actuales", "acontecimiento actual",
+    "acontecimientos actuales", "acontecimiento actual",
     "eventos actuales", "eventos recientes", "últimos acontecimientos",
     "ultimos acontecimientos", "hechos recientes",
 )
