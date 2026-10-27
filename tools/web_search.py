@@ -478,12 +478,12 @@ def _looks_realtime_news(query: str) -> bool:
     return any(
         term in lowered
         for term in (
-            "situación actual", "situacion actual", "estado actual",
             "noticia", "noticias", "última hora", "ultima hora", "actualidad",
             "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
-            "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
-            "incidentes", "contingencia", "suceso", "sucesos", "alerta", "ocurriendo",
-            "sucede", "sucediendo", "último", "últimos", "última", "últimas",
+            "qué ocurre", "que ocurre", "qué pasa", "que pasa", "breaking news",
+            "latest news", "current events", "current affairs",
+            "acontecimiento actual", "acontecimientos actuales",
+            "incidente reciente", "incidentes recientes",
         )
     )
 
