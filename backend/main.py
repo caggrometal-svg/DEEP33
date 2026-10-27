@@ -351,6 +351,93 @@ def _verified_realtime_news_published_at(
     return str(published_at)
 
 
+def _realtime_news_has_query_topic_match(query: str, fetched_page: dict[str, Any]) -> bool:
+    """Reject fresh extracted articles that do not cover the requested news topic."""
+    raw_query = " ".join(str(query or "").split())
+    # Separate evidence instructions from the actual subject being searched.
+    subject_query = re.split(
+        r"(?<=[.!?])\s+(?=(?:si\s+no\s+hay\b|si\s+no\s+existen\b|"
+        r"si\s+no\s+se\s+encuentran\b|si\s+no\s+puedes\b|no\s+inventes\b|"
+        r"no\s+afirmes\b|no\s+supongas\b|if\s+there\s+are\s+not\b|"
+        r"if\s+fewer\s+than\b|do\s+not\s+invent\b))",
+        raw_query,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    evidence_text = " ".join(
+        str(fetched_page.get(key) or "")
+        for key in ("title", "text")
+    ).casefold()
+    evidence_tokens = set(re.findall(r"[0-9a-záéíóúüñ]+", evidence_text))
+
+    # A structured identifier is a high-confidence subject anchor. Current
+    # headlines about unrelated events must never substantiate an unknown ID.
+    identifiers = re.findall(
+        r"(?<![A-Za-z0-9])[A-Z]{2,}(?:-[A-Z0-9]{2,})+(?![A-Za-z0-9])",
+        subject_query,
+        flags=re.IGNORECASE,
+    )
+    if identifiers:
+        generic_identifier_parts = {
+            "chile", "noticia", "noticias", "news", "latest", "current",
+            "release", "version", "update", "today",
+        }
+        normalized_evidence = re.sub(r"[^a-z0-9]+", "", evidence_text)
+        for identifier in identifiers:
+            strong_parts = {
+                part.casefold()
+                for part in identifier.split("-")
+                if len(part) >= 4
+                and not part.isdigit()
+                and part.casefold() not in generic_identifier_parts
+            }
+            if strong_parts:
+                if not (strong_parts & evidence_tokens):
+                    return False
+            else:
+                normalized_identifier = re.sub(
+                    r"[^a-z0-9]+", "", identifier.casefold()
+                )
+                if normalized_identifier not in normalized_evidence:
+                    return False
+        return True
+
+    # General country-wide headlines have no single subject anchor by design.
+    if _is_broad_current_news_query(subject_query):
+        return True
+
+    topic_stopwords = {
+        "busca", "buscar", "consulta", "consultar", "internet", "web",
+        "noticia", "noticias", "news", "latest", "breaking", "ultimas",
+        "últimas", "ultima", "última", "actualidad", "actual", "actualmente",
+        "reciente", "recientes", "hoy", "ayer", "ahora", "today", "current",
+        "publicada", "publicadas", "publicado", "publicados", "verificada",
+        "verificadas", "verificado", "verificados", "fuente", "fuentes",
+        "independiente", "independientes", "articulo", "artículos", "articulos",
+        "sobre", "segun", "según", "de", "del", "la", "las", "el", "los",
+        "en", "a", "y", "o", "para", "por", "con", "una", "un", "que", "qué",
+        "si", "no", "hay", "tres", "medio", "medios", "distinto", "distintos",
+        "valido", "validos", "válido", "válidos", "indica", "indicar", "puedes",
+        "puede", "verificar", "verificarlo", "inventa", "inventes", "sintesis",
+        "síntesis", "resumen", "datos", "informacion", "información", "chile",
+        "supuesto", "supuesta", "supuestos", "supuestas", "evento", "eventos",
+        "hecho", "hechos", "suceso", "sucesos", "precio", "valor", "cual", "cuál",
+        "cuales", "cuáles", "principales", "presenta", "entrega", "incluye",
+        "explica", "explicar", "informa", "informar", "responde",
+    }
+    topic_tokens = {
+        token
+        for token in re.findall(r"[0-9a-záéíóúüñ]+", subject_query.casefold())
+        if len(token) >= 3 and not token.isdigit() and token not in topic_stopwords
+    }
+    # A fresh timestamp and trusted domain are not proof of relevance: require
+    # at least one actual subject term in the extracted publisher text.
+    if not topic_tokens:
+        return False
+    return bool(topic_tokens & evidence_tokens)
+
+
 def _is_publishable_realtime_news_source(
     query: str,
     source: dict[str, Any],
@@ -383,6 +470,9 @@ def _is_publishable_realtime_news_source(
         "ingresa a tu cuenta", "acceso a tu cuenta", "consulta tus servicios",
         "login isapre", "servicios en línea", "servicios en linea",
     )):
+        return False
+
+    if not _realtime_news_has_query_topic_match(query, fetched_page):
         return False
 
     relevance_item = {
