@@ -925,45 +925,22 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_web_evidence_blocks_when_publishers_cannot_be_extracted(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
     results = [
-        {
-            "title": "Chile actualidad uno",
-            "url": "https://fuente-uno.example/chile/actualidad-uno",
-            "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2,
-            "provider": "bing",
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        },
-        {
-            "title": "Chile actualidad dos",
-            "url": "https://fuente-dos.example/noticias/chile-dos",
-            "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2,
-            "provider": "google_news",
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        },
-        {
-            "title": "Chile actualidad tres",
-            "url": "https://fuente-tres.example/politica/chile-tres",
-            "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2,
-            "provider": "bing",
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        },
+        {"title": "Chile actualidad uno", "url": "https://fuente-uno.example/chile/actualidad-uno", "snippet": "Actualización verificable sobre Chile hoy con contexto suficiente para una síntesis degradada. " * 2, "provider": "bing", "published_at": datetime.now(timezone.utc).isoformat()},
+        {"title": "Chile actualidad dos", "url": "https://fuente-dos.example/noticias/chile-dos", "snippet": "Segunda actualización independiente sobre Chile hoy con detalles actuales y verificables. " * 2, "provider": "google_news", "published_at": datetime.now(timezone.utc).isoformat()},
+        {"title": "Chile actualidad tres", "url": "https://fuente-tres.example/politica/chile-tres", "snippet": "Tercera fuente independiente con información reciente de Chile para corroborar los hechos. " * 2, "provider": "bing", "published_at": datetime.now(timezone.utc).isoformat()},
     ]
 
     async def fake_search(*_args, **_kwargs):
         return {
             "ok": True,
-            "status": "success",
             "results": results,
             "sources": results,
-            "provider": "multi",
-            "winner_provider": "multi",
             "providers_attempted": ["bing", "google_news"],
-            "queries": [query],
-            "retrieved_at": "2026-10-18T08:03:00Z",
             "verification": {"distinct_domains": 3, "distinct_providers": 2},
             "fresh_request": True,
         }
@@ -977,18 +954,15 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
     working, sources, evidence_fragments, compact = asyncio.run(
         main.prepare_web_evidence(
             [{"role": "user", "content": query}],
-            request_id="realtime-snippet-fallback",
+            request_id="realtime-strict-news",
             deep=True,
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
-
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
     from pathlib import Path
