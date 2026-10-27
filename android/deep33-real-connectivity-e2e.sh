@@ -33,7 +33,8 @@ echo "=== ENDPOINT PREFLIGHT ==="
 : "${DEEP33_PRIMARY_URL:=https://deep33-backend-iac33.vercel.app}"
 : "${DEEP33_SECONDARY_URL:=https://deep33-backend-git-main-iac33.vercel.app}"
 : "${DEEP33_TERTIARY_URL:=https://deep33-backend.vercel.app}"
-if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]] && {
+if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ||
+      "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-chat-realtime-news-evidence-869f34"* ]] && {
   [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ];
 }; then
   echo "ANDROID_E2E_OIDC_REQUEST_UNAVAILABLE"
@@ -60,7 +61,8 @@ test -n "$TEST_APK"
 adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
-if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ]]; then
+if [[ "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-vercel-android-route-221026"* ||
+      "$DEEP33_E2E_VERCEL_URL" == *"-git-fix-chat-realtime-news-evidence-869f34"* ]]; then
   oidc_request_url="$ACTIONS_ID_TOKEN_REQUEST_URL"
   separator='?'
   [[ "$oidc_request_url" == *\?* ]] && separator='&'
