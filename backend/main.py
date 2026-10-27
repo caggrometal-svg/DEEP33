@@ -2939,16 +2939,21 @@ async def ready(response: Response) -> dict:
 
 @app.get("/v1/connectivity/audit")
 async def connectivity_audit() -> dict:
+    """Exercise network -> search -> open pages -> extract text, not search alone."""
     network = await network_probe()
     gateway_status = await gateway_probe()
+    audit_query = os.getenv(
+        "WEB_NAVIGATION_AUDIT_QUERY",
+        "HTTP status code documentation standard",
+    ).strip() or "HTTP status code documentation standard"
 
     search: dict[str, Any]
     try:
         search = await search_web(
-            "DEEP33",
+            audit_query,
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
-            max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
-            fast=True,
+            max_results=max(4, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "5"))),
+            fast=False,
             fresh=True,
         )
     except Exception as exc:
@@ -2963,17 +2968,83 @@ async def connectivity_audit() -> dict:
             "error": "WEB_SEARCH_FAILED",
         }
 
+    search_ok = (
+        bool(search.get("ok"))
+        and isinstance(search.get("results"), list)
+        and len(search["results"]) >= 2
+    )
+    navigation = {
+        "ok": False,
+        "status": "SEARCH_UNAVAILABLE",
+        "fetched_pages": 0,
+        "distinct_domains": 0,
+        "extracted_text_chars": 0,
+    }
+    if search_ok:
+        audit_sources = _source_from_result(search)
+        try:
+            async def audit_fetcher(
+                source: dict[str, Any],
+                adaptive_timeout: float,
+            ) -> dict[str, Any] | None:
+                return await _fetch_web_source(
+                    source,
+                    request_id="connectivity-audit",
+                    timeout_seconds=adaptive_timeout,
+                )
+
+            audit_batch = await fetch_source_quorum(
+                audit_sources,
+                audit_fetcher,
+                policy=FetchPolicy(
+                    base_timeout_seconds=2.8,
+                    min_timeout_seconds=1.0,
+                    max_timeout_seconds=4.0,
+                    global_budget_seconds=6.0,
+                    concurrency=4,
+                    target_sources=2,
+                    max_sources=3,
+                    min_text_chars=120,
+                    min_total_chars=500,
+                ),
+            )
+            navigation = {
+                "ok": bool(audit_batch.quorum_reached),
+                "status": audit_batch.status,
+                "fetched_pages": audit_batch.fetched,
+                "distinct_domains": audit_batch.distinct_domains,
+                "extracted_text_chars": audit_batch.total_text_chars,
+                "failures": audit_batch.failures[:3],
+            }
+        except Exception as exc:
+            logger.warning(
+                "connectivity_audit_navigation_failed error=%s detail=%s",
+                type(exc).__name__,
+                str(exc)[:300],
+            )
+            navigation = {
+                "ok": False,
+                "status": "NAVIGATION_FAILED",
+                "fetched_pages": 0,
+                "distinct_domains": 0,
+                "extracted_text_chars": 0,
+            }
+
     gateway_pass = gateway_status.get("gateway") == "PASS"
     upstream_ready = (
         gateway_pass
         and bool(gateway_status.get("model"))
         and bool(gateway.config.providers)
     )
-    search_ok = bool(search.get("ok")) and isinstance(search.get("results"), list) and len(search["results"]) >= 1
     internet_pass = bool(network.get("internet_available"))
+    navigation_ok = bool(navigation.get("ok"))
 
     return {
-        "status": "PASS" if internet_pass and upstream_ready and search_ok else "FAIL",
+        "status": (
+            "PASS"
+            if internet_pass and upstream_ready and search_ok and navigation_ok
+            else "FAIL"
+        ),
         "edge": "PASS",
         "internet": "PASS" if internet_pass else "FAIL",
         "upstream": {
@@ -2981,6 +3052,7 @@ async def connectivity_audit() -> dict:
             "gateway": gateway_status,
         },
         "search": search,
+        "navigation": navigation,
         "git_sha": GIT_SHA,
         "build_id": BUILD_ID,
         "timestamp": utc_now(),
