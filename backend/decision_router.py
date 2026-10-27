@@ -116,7 +116,7 @@ _SEISMIC_RE = re.compile(
 )
 _FINANCE_RE = re.compile(
     r"\b(?:d[oó]lar|dolar|tipo de cambio|cotizaci[oó]n|divisa|divisas|"
-    r"euro|uf|utm|bitcoin|btc|usd|clp|precio de|valor de)\b",
+    r"euro|uf|utm|bitcoin|btc|usd|clp)\b",
     re.I,
 )
 _REALTIME_RE = re.compile(
@@ -173,6 +173,28 @@ def requires_web_verification(query: str) -> bool:
         return True
     if _EXTERNAL_FACT_RE.search(cleaned):
         return True
+    if re.search(
+        r"^(?:¿?\s*)?(?:what is|qu[eé] es)\s+(?:the\s+|el\s+|la\s+)?"
+        r".+\s+(?:of|de)\s+.+",
+        cleaned,
+        re.I,
+    ):
+        return True
+    if re.search(
+        r"^(?:¿?\s*)?(?:how many|how much|how old|how long|"
+        r"cu[aá]ntos?|cu[aá]ntas?|qu[eé] edad)\b",
+        cleaned,
+        re.I,
+    ):
+        # Pure arithmetic is handled below; external quantities are verified.
+        arithmetic_words = re.fullmatch(
+            r"(?:¿?\s*)?(?:cu[aá]nto(?:\s+es)?|how much(?:\s+is)?)\s+"
+            r"(?:[-+*/().\d\s]+|\d+\s+(?:por|times|x)\s+\d+)\??",
+            cleaned,
+            re.I,
+        )
+        if arithmetic_words is None:
+            return True
     if _STABLE_EXPLANATION_RE.search(cleaned):
         return False
     if re.fullmatch(
