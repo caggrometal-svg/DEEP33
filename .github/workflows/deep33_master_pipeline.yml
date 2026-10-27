@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   checks: read
+  statuses: read
   id-token: write
 
 concurrency:
@@ -44,10 +45,11 @@ jobs:
           }
           echo "CHECKOUT_SHA_PASS=$actual"
 
-      - name: Resolve exact Vercel deployment for this commit
+      - name: Resolve exact Vercel preview for this commit
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
 
@@ -57,37 +59,45 @@ jobs:
             exit 0
           fi
 
-          api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
-          alias=""
-          for attempt in $(seq 1 36); do
-            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+          # Vercel's GitHub integration publishes a commit status named "Vercel".
+          # Preview aliases are deterministic for this project/team. The next
+          # gate proves that the alias actually serves CURRENT_SHA before tests run.
+          branch_slug="$(printf '%s' "$PR_BRANCH" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+          test -n "$branch_slug" || { echo "VERCEL_BRANCH_ALIAS_SLUG_EMPTY branch=$PR_BRANCH"; exit 1; }
+          alias="deep33-backend-git-${branch_slug}-iac33.vercel.app"
+          status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status"
+
+          for attempt in $(seq 1 12); do
+            status_payload="$(curl -fsS --connect-timeout 8 --max-time 20 \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$api" || true)"
+              "$status_api" || true)"
 
-            alias="$(printf '%s' "$checks" | jq -r '
-              [
-                .check_runs[]?
-                | select((.app.slug // "") == "vercel")
-                | (.output.summary // ""),
-                  (.output.text // "")
-              ]
-              | map(select(length > 0))
-              | join("\n")
-            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
+            vercel_state="$(printf '%s' "$status_payload" | jq -r '([.statuses[]? | select(.context == "Vercel")] | sort_by(.updated_at // .created_at) | last) as $v | ($v.state // empty)' 2>/dev/null || true)"
+            vercel_description="$(printf '%s' "$status_payload" | jq -r '([.statuses[]? | select(.context == "Vercel")] | sort_by(.updated_at // .created_at) | last) as $v | ($v.description // empty)' 2>/dev/null || true)"
 
-            if [ -n "$alias" ]; then
+            if [ "$vercel_state" = "failure" ] || [ "$vercel_state" = "error" ]; then
+              if printf '%s' "$vercel_description" | grep -Eiq 'rate.?limit|retry in 24 hours|build-rate-limit'; then
+                echo "VERCEL_DEPLOY_RATE_LIMITED sha=$CURRENT_SHA description=$vercel_description"
+              else
+                echo "VERCEL_DEPLOY_STATUS_FAIL sha=$CURRENT_SHA state=$vercel_state description=$vercel_description"
+              fi
+              exit 1
+            fi
+
+            if [ "$vercel_state" = "success" ]; then
               echo "VERCEL_URL=https://$alias" >> "$GITHUB_ENV"
               echo "VERCEL_TARGET_RESOLVED=$alias"
+              echo "VERCEL_STATUS_PASS sha=$CURRENT_SHA"
               exit 0
             fi
 
-            echo "WAITING_FOR_VERCEL_COMMIT_ALIAS attempt=$attempt sha=$CURRENT_SHA"
-            [ "$attempt" -lt 36 ] && sleep 5
+            echo "WAITING_FOR_VERCEL_STATUS attempt=$attempt sha=$CURRENT_SHA state=${vercel_state:-missing} description=${vercel_description:-none}"
+            [ "$attempt" -lt 12 ] && sleep 5
           done
 
-          echo "VERCEL_COMMIT_ALIAS_NOT_FOUND sha=$CURRENT_SHA"
+          echo "VERCEL_STATUS_NOT_READY sha=$CURRENT_SHA"
           exit 1
 
       - name: Run authenticated Vercel, live-web, and SSE gates
