@@ -90,9 +90,11 @@ def _is_publishable_realtime_news_source(
     if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
 
-    published_at = fetched_page.get("published_at") or source.get("published_at")
+    # Publication time must be verified on the fetched final publisher page.
+    # Search-result metadata cannot be inherited into article evidence.
+    published_at = fetched_page.get("published_at")
     if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
+        {"published_at": published_at},
         query,
     ):
         return False
@@ -2080,10 +2082,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 timeout_seconds=adaptive_timeout,
             )
             if page is not None and is_realtime_news_query(query):
-                page_published_at = str(page.get("published_at") or "").strip()
-                if not page_published_at or not _is_recently_published(page, query):
+                if not _is_publishable_realtime_news_source(query, source, page):
                     logger.info(
-                        "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future_page_date",
+                        "web_evidence_source_rejected request_id=%s url=%s reason=not_publishable_realtime_article",
                         request_id or "unknown",
                         str(page.get("url") or source.get("url") or "")[:500],
                     )
