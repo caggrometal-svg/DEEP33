@@ -418,14 +418,14 @@ def _extract_text(content, content_type, max_text_chars):
     mime = content_type.split(";", 1)[0].strip().lower()
     if mime == "text/plain":
         plain = "\n".join(line.strip() for line in decoded.splitlines() if line.strip())
-        return "", _clean_extracted_text(plain, max_chars=max_text_chars), ""
+        return "", _clean_extracted_text(plain, max_chars=max_text_chars)
     if mime == "application/json":
         try:
             parsed = json.loads(decoded)
             plain = json.dumps(parsed, ensure_ascii=False, indent=2)
         except json.JSONDecodeError:
             plain = decoded
-        return "", plain[:max_text_chars], ""
+        return "", plain[:max_text_chars]
 
     parser = HTMLTextExtractor()
     parser.feed(decoded)
@@ -440,20 +440,40 @@ def _extract_text(content, content_type, max_text_chars):
     # Visible text remains the primary evidence. Metadata is only a bounded
     # fallback for publisher pages whose main article is rendered in JavaScript.
     if len(visible_text) >= 80:
-        return title, visible_text, published_at
+        return title, visible_text
 
     structured_body = _usable_fallback_text(article_body, minimum=80)
     if structured_body:
-        return title, structured_body[:max_text_chars], published_at
+        return title, structured_body[:max_text_chars]
 
     for candidate in (structured_description, parser.meta_description):
         usable = _usable_fallback_text(candidate)
         if usable:
-            return title, usable[:max_text_chars], published_at
+            return title, usable[:max_text_chars]
 
     if len(visible_text) >= 24:
-        return title, visible_text, published_at
-    return title, visible_text, published_at
+        return title, visible_text
+    return title, visible_text
+
+
+def _extract_published_at(content: bytes, content_type: str) -> str:
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime not in {"text/html", "application/xhtml+xml"}:
+        return ""
+    decoded = content.decode("utf-8", errors="replace")
+    parser = HTMLTextExtractor()
+    parser.feed(decoded)
+    parser.close()
+    _body, _description, _title, structured_published_at = _structured_article_fields(parser.jsonld_blocks)
+    return (parser.published_at or structured_published_at).strip()
+
+
+def _reader_published_at(content: bytes) -> str:
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.casefold().startswith("published time:"):
+            return stripped.partition(":")[2].strip()
+    return ""
 
 
 def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, str] | None:
@@ -605,6 +625,7 @@ async def _fetch_with_reader_fallback(
         if parsed is None:
             raise WebFetchError("WEB_FETCH_READER_EMPTY_OR_BLOCKED")
         title, text = parsed
+        published_at = _reader_published_at(content)
         return {
             "ok": True,
             "url": original_url,
@@ -848,7 +869,8 @@ async def _fetch_page_uncached(
                 # start; _read_limited enforces the same hard byte ceiling.
                 content=await _read_limited(response,_max_response_bytes())
             try:
-                title, text, published_at = _extract_text(content, content_type, max_text_chars)
+                title, text = _extract_text(content, content_type, max_text_chars)
+            published_at = _extract_published_at(content, content_type)
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
