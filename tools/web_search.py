@@ -812,16 +812,143 @@ async def search_recent_news_candidates(
     timeout_seconds: float = 2.0,
     max_results: int = 8,
 ) -> list[dict]:
-    """Return dated recent-news candidates for realtime diversity recovery."""
+    """Find dated recent-news candidates across independent providers with a hard time budget."""
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
+
     limit = max(1, min(8, int(max_results)))
-    return await _google_news_search(
-        cleaned,
-        min(2.5, max(0.8, float(timeout_seconds))),
-        limit,
-    )
+    budget = min(2.2, max(0.8, float(timeout_seconds)))
+    folded = cleaned.casefold()
+    if "chile" in folded or "chileno" in folded or "chilena" in folded:
+        variants = [
+            cleaned,
+            "Chile últimas noticias hoy economía gobierno seguridad sociedad",
+            "Chile noticias nacionales recientes política economía salud",
+        ]
+    else:
+        variants = [
+            cleaned,
+            f"{cleaned} últimas noticias hoy",
+            f"{cleaned} latest news today",
+        ]
+    variants = list(dict.fromkeys(" ".join(item.split()) for item in variants if item.strip()))
+
+    # Do not let one empty or blocked index consume the whole recovery window.
+    # Google News, Bing, and DuckDuckGo are independent discovery paths; the
+    # final article validator still verifies dates, identity, relevance, and text.
+    calls = [
+        ("google_news", variants[0]),
+        ("google_news", variants[min(1, len(variants) - 1)]),
+        ("google_news", variants[min(2, len(variants) - 1)]),
+        ("bing", variants[0]),
+        ("bing", variants[min(1, len(variants) - 1)]),
+        ("duckduckgo", variants[0]),
+        ("duckduckgo", variants[min(2, len(variants) - 1)]),
+    ]
+
+    async def collect(provider_name: str, search_query: str) -> tuple[str, list[dict]]:
+        try:
+            per_call = min(1.8, budget)
+            if provider_name == "google_news":
+                items = await asyncio.wait_for(
+                    _google_news_search(search_query, per_call, limit),
+                    timeout=per_call,
+                )
+            elif provider_name == "bing":
+                items = await asyncio.wait_for(
+                    _bing_search(search_query, per_call, limit, preserve_candidates=True),
+                    timeout=per_call,
+                )
+            else:
+                items = await asyncio.wait_for(
+                    _duckduckgo_search(search_query, per_call, limit),
+                    timeout=per_call,
+                )
+            return provider_name, [
+                {**item, "provider": provider_name}
+                for item in items
+                if isinstance(item, dict)
+            ]
+        except (asyncio.TimeoutError, httpx.HTTPError, WebSearchError, ValueError):
+            return provider_name, []
+        except Exception:
+            return provider_name, []
+
+    tasks = [
+        asyncio.create_task(collect(provider_name, search_query))
+        for provider_name, search_query in calls
+    ]
+    done, pending = await asyncio.wait(tasks, timeout=budget)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    batches: list[tuple[str, list[dict]]] = []
+    for task in done:
+        try:
+            batches.append(task.result())
+        except Exception:
+            continue
+
+    # Round-robin across providers and publisher domains so the first feed cannot
+    # crowd out all candidates from a second independent search provider.
+    by_provider: dict[str, list[dict]] = {}
+    for provider_name, items in batches:
+        normalized_items = []
+        seen_in_provider: set[str] = set()
+        for item in items:
+            url = str(item.get("url") or "").strip()
+            parsed = urlparse(url)
+            domain = str(item.get("source_domain") or parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+            if parsed.scheme.casefold() != "https" or not parsed.hostname or not domain:
+                continue
+            key = url.split("#", 1)[0]
+            if key in seen_in_provider:
+                continue
+            seen_in_provider.add(key)
+            normalized_items.append({**item, "provider": provider_name, "source_domain": domain})
+        by_provider.setdefault(provider_name, []).extend(normalized_items)
+
+    output: list[dict] = []
+    seen_urls: set[str] = set()
+    seen_provider_domain_counts: dict[str, set[str]] = {}
+    provider_names = list(by_provider)
+    while provider_names and len(output) < min(16, limit * 2):
+        remaining: list[str] = []
+        for provider_name in provider_names:
+            queue = by_provider.get(provider_name, [])
+            chosen_index = next(
+                (
+                    index for index, item in enumerate(queue)
+                    if str(item.get("url") or "").split("#", 1)[0] not in seen_urls
+                    and (
+                        str(item.get("source_domain") or "") not in seen_provider_domain_counts.get(provider_name, set())
+                        or len(seen_provider_domain_counts.get(provider_name, set())) >= limit
+                    )
+                ),
+                next(
+                    (
+                        index for index, item in enumerate(queue)
+                        if str(item.get("url") or "").split("#", 1)[0] not in seen_urls
+                    ),
+                    -1,
+                ),
+            )
+            if chosen_index >= 0:
+                item = queue.pop(chosen_index)
+                url_key = str(item.get("url") or "").split("#", 1)[0]
+                domain = str(item.get("source_domain") or "")
+                seen_urls.add(url_key)
+                seen_provider_domain_counts.setdefault(provider_name, set()).add(domain)
+                output.append(item)
+            if queue:
+                remaining.append(provider_name)
+            if len(output) >= min(16, limit * 2):
+                break
+        provider_names = remaining
+    return output
 
 
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
