@@ -1919,7 +1919,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Research/contrast intent requires extracted text from two independent domains.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    realtime_news_required = is_realtime_news_query(query)
+    required_pages = 3 if realtime_news_required else (2 if contrast_required else 1)
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -2078,17 +2079,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 request_id=str(request_id or "unknown"),
                 timeout_seconds=adaptive_timeout,
             )
-            if (
-                page is not None
-                and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
-            ):
-                logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
-                    request_id or "unknown",
-                    str(page.get("url") or source.get("url") or "")[:500],
-                )
-                return None
+            if page is not None and is_realtime_news_query(query):
+                page_published_at = str(page.get("published_at") or "").strip()
+                if not page_published_at or not _is_recently_published(page, query):
+                    logger.info(
+                        "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future_page_date",
+                        request_id or "unknown",
+                        str(page.get("url") or source.get("url") or "")[:500],
+                    )
+                    return None
             return page
 
         fetch_batch = await fetch_source_quorum(
@@ -2111,6 +2110,28 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
 
     snippet_fallback_used = False
+    fetched_domains = {
+        str(item.get("domain") or "").casefold().removeprefix("www.")
+        for item in fetched_pages
+        if str(item.get("domain") or "").strip()
+    }
+    fetched_providers = {
+        str(item.get("provider") or "").strip()
+        for item in fetched_pages
+        if str(item.get("provider") or "").strip()
+    }
+    if realtime_news_required and (
+        len(fetched_pages) < 3
+        or len(fetched_domains) < 3
+        or len(fetched_providers) < 2
+    ):
+        logger.warning(
+            "web_evidence_realtime_news_gate_failed request_id=%s pages=%s domains=%s providers=%s",
+            request_id or "unknown", len(fetched_pages), len(fetched_domains), len(fetched_providers),
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
+
     if must_fetch and len(fetched_pages) < required_pages:
         # Realtime/current-event searches must not claim that web search failed
         # merely because publisher pages reject automated readers. Require at
