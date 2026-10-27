@@ -132,6 +132,61 @@ _RESEARCH_RE = re.compile(
 )
 _PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
 
+# External facts that are commonly mutable or source-dependent even when the user
+# does not explicitly say "today" or "search the web". Keep this provider- and
+# topic-agnostic: these patterns identify *externality*, not preferred websites.
+_EXTERNAL_FACT_RE = re.compile(
+    r"\b(?:ceo|director(?:a)? ejecutivo|presidente de|ministro de|alcalde de|gobernador de|"
+    r"versi[oó]n(?: estable)?|release|lanzamiento|changelog|estado del servicio|status page|"
+    r"horario|direcci[oó]n|tel[eé]fono|contacto|disponibilidad|stock|reserva|vuelo|hotel|"
+    r"restaurante|tienda|empresa|producto|modelo|precio|tarifa|entrada|evento|partido|"
+    r"ley|decreto|reglamento|normativa|resoluci[oó]n|licitaci[oó]n|convocatoria|"
+    r"documentaci[oó]n|manual|sitio oficial|p[aá]gina oficial|fuente oficial)\b",
+    re.I,
+)
+_EXTERNAL_QUESTION_RE = re.compile(
+    r"^(?:¿?\s*)?(?:qui[eé]n|who|d[oó]nde|where|cu[aá]ndo|when|cu[aá]l|which|"
+    r"cu[aá]nto|how much|qu[eé] dice|what does|seg[uú]n)\b",
+    re.I,
+)
+_STABLE_EXPLANATION_RE = re.compile(
+    r"^(?:¿?\s*)?(?:qu[eé] es|what is|explica|explain|c[oó]mo funciona|how does|"
+    r"por qu[eé]|why|define|definici[oó]n)\b",
+    re.I,
+)
+
+
+def requires_web_verification(query: str) -> bool:
+    """Return True when a user query should be externally verified.
+
+    This is deliberately broader than realtime/news routing. DEEP33 must search
+    the public web for mutable, source-based, named-entity or explicitly external
+    facts, while leaving stable explanations and purely local reasoning internal.
+    """
+    cleaned = " ".join(str(query or "").split()).strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.casefold()
+    if _RESEARCH_RE.search(cleaned) or _REALTIME_RE.search(cleaned):
+        return True
+    if re.search(r"https?://|\b[a-z0-9-]+\.(?:com|org|net|io|ai|dev|gov|gob|cl|edu)\b", lowered):
+        return True
+    if _EXTERNAL_FACT_RE.search(cleaned):
+        return True
+    if _STABLE_EXPLANATION_RE.search(cleaned):
+        return False
+    # Factual interrogatives about a named entity are safer to verify than to
+    # answer silently from model memory. A capitalized/acronym token beyond the
+    # first word is used only as an externality signal, never as a domain allowlist.
+    tokens = cleaned.replace("¿", "").split()
+    has_named_entity = any(
+        (token[:1].isupper() and token[1:].islower()) or (len(token) >= 2 and token.isupper())
+        for token in tokens[1:]
+    )
+    if has_named_entity and _EXTERNAL_QUESTION_RE.search(cleaned):
+        return True
+    return False
+
 
 def classify_query(query: str) -> Decision:
     cleaned = " ".join(str(query or "").split()).strip()
@@ -163,10 +218,10 @@ def classify_query(query: str) -> Decision:
             DecisionRoute.FINANCE, 0.95,
             "financial_indicator_should_use_live_data", cleaned, 20.0,
         )
-    if _RESEARCH_RE.search(cleaned) or _REALTIME_RE.search(cleaned):
+    if requires_web_verification(cleaned):
         return Decision(
             DecisionRoute.WEB, 0.92,
-            "explicit_current_or_web_request", cleaned, 20.0,
+            "external_fact_requires_web_verification", cleaned, 20.0,
         )
     return Decision(
         DecisionRoute.INTERNAL, 0.86,
