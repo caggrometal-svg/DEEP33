@@ -217,7 +217,7 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
 
     assert captured
     assert captured[0][0] == "google_news"
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert "google_news" in result["providers"]
     assert result["verification"]["distinct_providers"] == 1
 
