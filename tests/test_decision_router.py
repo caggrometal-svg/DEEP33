@@ -47,6 +47,17 @@ def test_classifier_routes_external_mutable_facts_to_web_without_magic_words():
         assert classify_query(query).route == DecisionRoute.WEB, query
 
 
+def test_classifier_routes_generic_external_prices_and_attributes_to_web():
+    cases = (
+        "¿Cuál es el precio de PlayStation 5?",
+        "What is the population of France?",
+        "¿Qué es la capital de Japón?",
+        "How old is the Eiffel Tower?",
+    )
+    for query in cases:
+        assert classify_query(query).route == DecisionRoute.WEB, query
+
+
 def test_classifier_keeps_stable_explanations_internal():
     cases = (
         "¿Qué es la fotosíntesis?",
