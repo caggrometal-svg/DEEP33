@@ -50,14 +50,19 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
                 {
                     "title": "Example",
                     "url": "https://example.com/",
-                    "snippet": "Snippet",
-                }
+                    "snippet": "Example source evidence with enough context for discovery.",
+                },
+                {
+                    "title": "Example Two",
+                    "url": "https://example.org/",
+                    "snippet": "Independent source evidence with enough context for discovery.",
+                },
             ],
         }
 
     async def fake_fetch(url, **kwargs):
         calls["fetch"] += 1
-        assert url == "https://example.com/"
+        assert url in {"https://example.com/", "https://example.org/"}
         return {
             "ok": True,
             "url": url,
@@ -86,7 +91,7 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
 
     assert result["choices"][0]["message"]["content"] == "Respuesta verificada."
     assert sources[0]["url"] == "https://example.com/"
-    assert calls == {"gateway": 1, "search": 1, "fetch": 1}
+    assert calls == {"gateway": 1, "search": 1, "fetch": 2}
 
 def test_source_metadata_never_leaks_into_final_text() -> None:
     final = main.sanitize_assistant_text(
@@ -199,8 +204,13 @@ def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
                 {
                     "title": "Solar",
                     "url": "https://example.com/solar",
-                    "snippet": "Fuente de evidencia.",
-                }
+                    "snippet": "Fuente de evidencia sobre energía solar.",
+                },
+                {
+                    "title": "Solar independiente",
+                    "url": "https://example.org/solar",
+                    "snippet": "Segunda fuente independiente sobre energía solar.",
+                },
             ],
         }
 
@@ -210,7 +220,7 @@ def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
             "url": url,
             "final_url": url,
             "title": "Solar",
-            "text": "Texto de evidencia.",
+            "text": "Texto de evidencia sobre energía solar, paneles fotovoltaicos y generación eléctrica. " * 4,
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
@@ -255,7 +265,12 @@ def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: p
                     "title": "Example",
                     "url": "https://example.com/",
                     "snippet": "Raw source wording.",
-                }
+                },
+                {
+                    "title": "Example independent",
+                    "url": "https://example.org/",
+                    "snippet": "Independent raw source wording.",
+                },
             ],
         }
 
