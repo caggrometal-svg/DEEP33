@@ -581,3 +581,23 @@ def test_verified_sources_are_not_emitted_as_links_without_safe_urls() -> None:
         {"title": "unsafe", "url": "http://example.com/"}
     ]) == ""
 
+
+
+def test_fetched_page_relevance_rejects_irrelevant_redirect_content():
+    assert main._is_relevant_fetched_web_source(
+        "¿quién dirige actualmente NVIDIA como CEO?",
+        {
+            "title": "NVIDIA leadership",
+            "url": "https://www.nvidia.com/en-us/about-nvidia/",
+            "text": "NVIDIA leadership and executive team. Jensen Huang is founder, president and CEO. " * 6,
+        },
+    ) is True
+
+    assert main._is_relevant_fetched_web_source(
+        "¿quién dirige actualmente NVIDIA como CEO?",
+        {
+            "title": "Sign in",
+            "url": "https://example.com/login",
+            "text": "Sign in to your account. Manage preferences and recover your password. " * 8,
+        },
+    ) is False
