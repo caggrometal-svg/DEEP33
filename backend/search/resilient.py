@@ -566,6 +566,19 @@ class WebOrchestrator:
                     + " WHO CDC PAHO public health fact sheet"
                 )
 
+        release_version_intent = (
+            any(term in lowered for term in ("version", "versión", "release", "releases"))
+            and any(term in lowered for term in ("latest", "stable", "estable", "actual", "current", "reciente"))
+        )
+        if release_version_intent and compact:
+            # When an official-source query collapses to one vendor/project domain,
+            # broaden the recovery wave to independent release/version references.
+            # Final ranking still uses the untouched user query.
+            return (
+                f"{compact} latest stable version release notes "
+                "independent reference package index changelog"
+            )
+
         wikipedia_asyncio_intent = (
             "wikipedia" in lowered
             and "asyncio" in lowered
