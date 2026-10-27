@@ -2200,6 +2200,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in compact_fetched_pages
     } - {""}
     domains_used = len(extracted_domains)
+    discovery_metadata = [
+        {
+            "title": item.get("title"),
+            "url": item.get("url"),
+            "published_at": item.get("published_at"),
+            "provider": item.get("provider"),
+        }
+        for item in verified_search_results[:5]
+    ]
     evidence = {
         "realtime": realtime,
         "fresh_request": bool(search_result.get("fresh_request")),
@@ -2207,7 +2216,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
-        "search_results": verified_search_results,
+        "search_results": discovery_metadata,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
@@ -2215,10 +2224,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "snippet_fallback": snippet_fallback_used,
     }
     compact_web_evidence = {
-        "search_results": [
-            {**item, "snippet": str(item.get("snippet") or "")[:300]}
-            for item in verified_search_results[:4]
-        ],
+        "search_results": discovery_metadata[:4],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
             for item in compact_fetched_pages[:2]
