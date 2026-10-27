@@ -175,19 +175,18 @@ def requires_web_verification(query: str) -> bool:
         return True
     if _STABLE_EXPLANATION_RE.search(cleaned):
         return False
-    # Factual interrogatives about a named entity are safer to verify than to
-    # answer silently from model memory. A capitalized/acronym token beyond the
-    # first word is used only as an externality signal, never as a domain allowlist.
-    tokens = cleaned.replace("¿", "").split()
-    has_named_entity = any(
-        token[:1].isupper()
-        or (len(token) >= 2 and token.isupper())
-        or any(char.isupper() for char in token[1:])
-        for token in tokens[1:]
-        if any(char.isalpha() for char in token)
-    )
-    if has_named_entity and _EXTERNAL_QUESTION_RE.search(cleaned):
-        return True
+    # Lookup-style factual questions are externally verifiable even when the
+    # user writes names in lowercase. Prefer web verification over guessing from
+    # model memory. Keep simple arithmetic/local computation internal.
+    if _EXTERNAL_QUESTION_RE.search(cleaned):
+        arithmetic = re.fullmatch(
+            r"(?:¿?\s*)?(?:cu[aá]l(?:\s+es)?|what(?:\s+is)?)?\s*"
+            r"[-+*/().\d\s]+\??",
+            cleaned,
+            re.I,
+        )
+        if arithmetic is None:
+            return True
     return False
 
 
