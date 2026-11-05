@@ -437,7 +437,7 @@ def test_default_model_is_explicitly_free(monkeypatch):
 
     config = GatewayConfig.from_env()
 
-    assert config.model == "dots-studio/dots-3-note-preview:free"
+    assert config.model == "nvidia/nemotron-3.5-lightning:free"
 
 
 def test_stream_fails_over_after_empty_200_without_forwarding_empty_chunks() -> None:
