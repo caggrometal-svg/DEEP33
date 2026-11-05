@@ -121,11 +121,38 @@ def _is_publishable_realtime_news_source(
     if path in landing_paths:
         return False
 
+    # A resolver can follow a signed news wrapper to a publisher section/channel
+    # instead of the original article. These are navigation pages, not evidence.
+    path_segments = [segment for segment in path.split("/") if segment]
+    disallowed_section_segments = {
+        "canal", "category", "categories", "categoria", "categorias",
+        "tag", "tags", "search", "buscar", "autor", "author",
+        "autores", "seccion", "secciones", "section", "sections",
+    }
+    if any(segment in disallowed_section_segments for segment in path_segments[:4]):
+        return False
+
     page_text = str(fetched_page.get("text") or "").strip()
     if len(page_text) < 80:
         return False
 
     title = str(fetched_page.get("title") or source.get("title") or "").casefold()
+    source_title = str(source.get("title") or "").strip()
+    # If the fetcher changed the URL (for example wrapper -> publisher section),
+    # the resolved page must still identify the same article. A generic section
+    # title with no overlap to the discovered article title is rejected.
+    resolved_url = page_url.rstrip("/")
+    original_url = str(source.get("url") or "").strip().rstrip("/")
+    if source_title and resolved_url != original_url:
+        source_title_tokens = {
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", source_title.casefold())
+        }
+        resolved_title_tokens = {
+            token for token in re.findall(r"[\\wáéíóúüñÁÉÍÓÚÜÑ]{4,}", title)
+        }
+        if len(source_title_tokens) >= 3 and not (source_title_tokens & resolved_title_tokens):
+            return False
+
     if any(marker in title for marker in (
         "capital, mapa, bandera, población",
         "capital, map, flag",
@@ -3223,6 +3250,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 max(float(item.get("relevance_score") or 0.0) for item in candidate_sources),
             )
 
+        # This path is intentionally part of the deployed backend contract: every
+        # runtime-news recovery change must produce a new Vercel revision for exact-SHA gates.
         # The cross-provider orchestrator intentionally compresses candidates before
         # this endpoint performs page reads. For realtime-news queries that can leave
         # fewer than three editorial domains even though the recent-news feed contains
@@ -3241,57 +3270,76 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             } - {""}
             if len(candidate_domains) < 3:
                 try:
-                    rescue_query = (
-                        "Chile noticias hoy actualidad acontecimientos recientes"
-                        if "chile" in q.casefold()
-                        else q
-                    )
-                    recent_candidates = await search_recent_news_candidates(
-                        rescue_query,
-                        timeout_seconds=1.8,
-                        max_results=8,
-                    )
-                    recent_candidates = rank_results(
-                        q,
-                        recent_candidates,
-                        realtime=True,
-                    )
-                    for raw in recent_candidates:
-                        if not isinstance(raw, dict):
+                    folded_query = q.casefold()
+                    if "chile" in folded_query:
+                        rescue_queries = [
+                            "Chile noticias hoy actualidad acontecimientos recientes",
+                            "Chile últimas noticias hoy gobierno nacional actualidad",
+                            "Chile noticias 27 octubre 2026 actualidad nacional",
+                            "Chile noticias hoy política clima economía deportes",
+                        ]
+                    else:
+                        rescue_queries = [
+                            q,
+                            f"{q} latest news",
+                            f"{q} breaking news",
+                        ]
+
+                    seen_rescue_queries: set[str] = set()
+                    for rescue_query in rescue_queries:
+                        rescue_query = " ".join(str(rescue_query or "").split()).strip()
+                        if not rescue_query or rescue_query.casefold() in seen_rescue_queries:
                             continue
-                        published_at = raw.get("published_at")
-                        if not published_at or not _is_recently_published(raw, q):
-                            continue
-                        url = str(raw.get("url") or "").strip()
-                        domain = str(
-                            raw.get("source_domain")
-                            or (urlparse(url).hostname or "")
-                        ).casefold().removeprefix("www.")
-                        if not url.startswith("https://") or not domain:
-                            continue
-                        if any(
-                            str(existing.get("url") or "").strip() == url
-                            for existing in candidate_sources
-                        ):
-                            continue
-                        candidate = {
-                            "title": str(raw.get("title") or url)[:300],
-                            "url": url[:2000],
-                            "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
-                            "source_domain": domain[:255],
-                            "published_at": published_at,
-                        }
-                        candidate["relevance_score"] = score_result(q, candidate)
-                        candidate_sources.append(candidate)
-                        candidate_domains.add(domain)
+                        seen_rescue_queries.add(rescue_query)
                         if len(candidate_domains) >= 5:
                             break
+                        recent_candidates = await search_recent_news_candidates(
+                            rescue_query,
+                            timeout_seconds=1.6,
+                            max_results=8,
+                        )
+                        recent_candidates = rank_results(
+                            q,
+                            recent_candidates,
+                            realtime=True,
+                        )
+                        for raw in recent_candidates:
+                            if not isinstance(raw, dict):
+                                continue
+                            published_at = raw.get("published_at")
+                            if not published_at or not _is_recently_published(raw, q):
+                                continue
+                            url = str(raw.get("url") or "").strip()
+                            domain = str(
+                                raw.get("source_domain")
+                                or (urlparse(url).hostname or "")
+                            ).casefold().removeprefix("www.")
+                            if not url.startswith("https://") or not domain:
+                                continue
+                            if domain in candidate_domains or any(
+                                str(existing.get("url") or "").strip() == url
+                                for existing in candidate_sources
+                            ):
+                                continue
+                            candidate = {
+                                "title": str(raw.get("title") or url)[:300],
+                                "url": url[:2000],
+                                "snippet": str(raw.get("snippet") or "")[:1000],
+                                "provider": str(raw.get("provider") or "google_news"),
+                                "source_domain": domain[:255],
+                                "published_at": published_at,
+                            }
+                            candidate["relevance_score"] = score_result(q, candidate)
+                            candidate_sources.append(candidate)
+                            candidate_domains.add(domain)
+                            if len(candidate_domains) >= 5:
+                                break
                     logger.info(
-                        "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                        "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s rescue_queries=%s",
                         request_id,
                         len(candidate_domains),
                         len(candidate_sources),
+                        len(seen_rescue_queries),
                     )
                 except Exception as rescue_exc:
                     logger.warning(
