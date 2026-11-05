@@ -39,8 +39,8 @@ REALTIME_TERMS = (
 
 REALTIME_NEWS_TERMS = (
     "noticia", "noticias", "última hora", "ultima hora", "actualidad", "actual",
-    "situación actual", "situacion actual", "estado actual",
-    "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+    "estado actual",
+    "qué pasó", "que paso", "qué está pasando", "que esta pasando",
     "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
     "incidentes", "contingencia", "contingencias", "suceso", "sucesos",
     "ocurre", "ocurriendo", "sucede", "sucediendo", "alerta", "afectado", "afectada",
@@ -495,16 +495,13 @@ _LEXICAL_PATH_MARKERS = (
 )
 _REALTIME_NEWS_SIGNALS = (
     "noticia", "noticias", " news", "news ", "breaking news", "breaking",
-    "última hora", "ultima hora", "actualidad", "situación actual",
-    "situacion actual", "qué pasó", "que paso", "qué está pasando",
-    "que esta pasando", "qué ocurre", "que ocurre", "qué pasa", "que pasa",
+    "última hora", "ultima hora", "actualidad",
     "noticias recientes", "noticia reciente", "últimos cambios",
     "ultimos cambios", "últimas novedades", "ultimas novedades",
     "cambios recientes", "actualización reciente", "actualizaciones recientes",
-    "latest news", "current events", "current affairs", "release notes",
-    "latest release", "latest version", "security advisory",
+    "latest news", "current events", "current affairs",
     "vulnerabilidades recientes", "incidente reciente", "incidentes recientes",
-    "en desarrollo", "acontecimientos actuales", "acontecimiento actual",
+    "acontecimientos actuales", "acontecimiento actual",
     "eventos actuales", "eventos recientes", "últimos acontecimientos",
     "ultimos acontecimientos", "hechos recientes",
 )
@@ -1269,6 +1266,13 @@ class SearchEngine:
             if fast_mode:
                 return bool(ranked)
             if plan_depth == "realtime":
+                if is_realtime_news_query(planned_query):
+                    provider_count = len({name for name, _batch in successful})
+                    return (
+                        provider_count >= 2
+                        and len(urls) >= min(3, self.max_results)
+                        and len(domains) >= min(3, self.max_results)
+                    )
                 if _requires_realtime_multidomain(planned_query):
                     return len(domains) >= min(3, self.max_results)
                 return bool(ranked)
@@ -1473,7 +1477,19 @@ class SearchEngine:
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
             if plan.depth == "realtime":
-                if _requires_realtime_multidomain(plan.original_query):
+                if is_realtime_news_query(plan.original_query):
+                    first_domains = {
+                        _host(str(item.get("url") or ""))
+                        for _name, items in first_relevant_by_provider
+                        for item in items
+                        if _host(str(item.get("url") or ""))
+                    }
+                    sufficiently_verified = (
+                        first_provider_count >= 2
+                        and first_result_count >= 3
+                        and len(first_domains) >= 3
+                    )
+                elif _requires_realtime_multidomain(plan.original_query):
                     first_domains = {
                         _host(str(item.get("url") or ""))
                         for _name, items in first_relevant_by_provider
@@ -1569,7 +1585,21 @@ class SearchEngine:
             for item in selected
             if _host(str(item.get("url") or ""))
         })
+        distinct_provider_names = sorted({
+            str(item.get("provider") or "").strip()
+            for item in selected
+            if str(item.get("provider") or "").strip()
+        })
         corroborated = sum(1 for item in selected if item.get("corroborated"))
+        realtime_news_insufficient = (
+            plan.depth == "realtime"
+            and is_realtime_news_query(plan.original_query)
+            and (
+                len(selected) < 3
+                or len(distinct_domains) < 3
+                or len(distinct_provider_names) < 2
+            )
+        )
         if corroborated:
             verification_level = "corroborated"
         elif len(distinct_domains) >= 2:
@@ -1580,7 +1610,7 @@ class SearchEngine:
             verification_level = "none"
 
         return {
-            "ok": bool(selected),
+            "ok": bool(selected) and not realtime_news_insufficient,
             "realtime": plan.depth == "realtime",
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "engine": "DEEP33 Search Engine",
@@ -1603,6 +1633,13 @@ class SearchEngine:
                 "distinct_domains": len(distinct_domains),
                 "distinct_providers": len(providers_used),
                 "corroborated_results": corroborated,
+                "realtime_news_gate": {
+                    "required": is_realtime_news_query(plan.original_query),
+                    "passed": not realtime_news_insufficient,
+                    "minimum_domains": 3,
+                    "minimum_providers": 2,
+                    "minimum_results": 3,
+                } if is_realtime_news_query(plan.original_query) else None,
             },
             "errors": errors[:8],
         }

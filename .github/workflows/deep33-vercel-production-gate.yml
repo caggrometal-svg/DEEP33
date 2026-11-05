@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: read
+  statuses: read
 
 concurrency:
   group: deep33-vercel-production-gate
@@ -50,10 +51,28 @@ jobs:
 
       - name: Wait for exact Vercel revision to become healthy
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/status"
           ready=0
           for attempt in $(seq 1 36); do
+            status_payload="$(curl -fsS --connect-timeout 5 --max-time 15 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$status_api" || true)"
+            vercel_state="$(printf '%s' "$status_payload" | jq -r '([.statuses[]? | select(.context == "Vercel")] | sort_by(.updated_at // .created_at) | last) as $v | ($v.state // empty)' 2>/dev/null || true)"
+            vercel_description="$(printf '%s' "$status_payload" | jq -r '([.statuses[]? | select(.context == "Vercel")] | sort_by(.updated_at // .created_at) | last) as $v | ($v.description // empty)' 2>/dev/null || true)"
+            if [ "$vercel_state" = "failure" ] || [ "$vercel_state" = "error" ]; then
+              if printf '%s' "$vercel_description" | grep -Eiq 'rate.?limit|retry in 24 hours|build-rate-limit'; then
+                echo "VERCEL_DEPLOY_RATE_LIMITED expected=$GITHUB_SHA description=$vercel_description"
+              else
+                echo "VERCEL_DEPLOY_STATUS_FAIL expected=$GITHUB_SHA state=$vercel_state description=$vercel_description"
+              fi
+              exit 1
+            fi
             code="$(curl -sS --connect-timeout 5 --max-time 15 -o /tmp/vercel-ready.json -w '%{http_code}' "$VERCEL_BASE_URL/health" || true)"
             live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-ready.json 2>/dev/null || true)"
             live_status="$(jq -r '.status // empty' /tmp/vercel-ready.json 2>/dev/null || true)"

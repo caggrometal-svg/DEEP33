@@ -39,6 +39,17 @@ def test_current_news_accepts_recent_relevant_extracted_article():
     )
 
 
+def test_current_news_does_not_inherit_search_timestamp_when_page_is_undated():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    page = _fetched_page(published_at=None)
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
 def test_current_news_rejects_undated_evergreen_geography_page():
     source = _news_source(
         published_at=None,
