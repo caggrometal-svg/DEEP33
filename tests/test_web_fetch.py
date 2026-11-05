@@ -5,6 +5,58 @@ import json
 from tools.web_fetch import _extract_text
 
 
+def test_extracts_json_ld_article_publication_timestamp() -> None:
+    from tools.web_fetch import _extract_published_at
+
+    html = b"""
+    <html><head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "Chile current report",
+        "datePublished": "2026-10-25T09:30:00-03:00",
+        "dateModified": "2026-10-25T16:30:00-03:00"
+      }
+      </script>
+    </head><body><article><p>Original article text.</p></article></body></html>
+    """
+
+    assert _extract_published_at(html, "text/html; charset=utf-8") == "2026-10-25T12:30:00+00:00"
+
+
+def test_extracts_explicit_article_published_meta_timestamp() -> None:
+    from tools.web_fetch import _extract_published_at
+
+    html = b"""
+    <html><head>
+      <meta property="article:published_time" content="2026-10-25T10:15:00-03:00">
+      <meta property="article:modified_time" content="2026-10-25T18:15:00-03:00">
+    </head><body><article><p>Original article text.</p></article></body></html>
+    """
+
+    assert _extract_published_at(html, "text/html") == "2026-10-25T13:15:00+00:00"
+
+
+def test_does_not_infer_publication_time_from_modified_date_or_retrieval() -> None:
+    from tools.web_fetch import _extract_published_at
+
+    html = b"""
+    <html><head>
+      <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "Chile current report",
+        "dateModified": "2026-10-25T16:30:00-03:00"
+      }
+      </script>
+    </head><body><article><p>Article text with no explicit publication date.</p></article></body></html>
+    """
+
+    assert _extract_published_at(html, "text/html") is None
+
+
 def test_extracts_open_graph_description_from_client_rendered_article() -> None:
     html = b"""
     <!doctype html>
