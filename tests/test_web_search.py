@@ -247,7 +247,7 @@ def test_google_news_recovery_keeps_realtime_marker(monkeypatch):
     orchestrator = WebOrchestrator(max_results=5)
     asyncio.run(
         orchestrator._google_news(
-            "situación actual de la comuna de Las Condes en Chile",
+            "noticias actuales de la comuna de Las Condes en Chile",
             1.0,
             5,
         )
@@ -1405,3 +1405,71 @@ def test_spanish_python_release_query_rejects_off_topic_debian_page():
     assert rank_results(query, [unrelated], realtime=True) == []
     ranked = rank_results(query, [unrelated, relevant], realtime=True)
     assert [item["url"] for item in ranked] == [relevant["url"]]
+
+
+def test_release_version_recovery_broadens_beyond_official_domain():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "latest stable Python release official documentation"
+    primary = WebOrchestrator._provider_query(query)
+    recovery = WebOrchestrator._recovery_query(query)
+
+    assert recovery.casefold() != primary.casefold()
+    assert "python" in recovery.casefold()
+    assert "independent" in recovery.casefold()
+    assert "version" in recovery.casefold()
+
+
+
+def test_recent_news_recovery_fans_out_across_independent_search_providers(monkeypatch):
+    from tools import web_search
+
+    calls = {}
+    published = datetime.now(timezone.utc).isoformat()
+
+    def fake_provider(provider_name):
+        async def search(query, timeout_seconds, max_results, **kwargs):
+            provider_calls = calls.setdefault(provider_name, [])
+            provider_calls.append({
+                "query": query,
+                "timeout_seconds": timeout_seconds,
+                "max_results": max_results,
+                "kwargs": kwargs,
+            })
+            index = len(provider_calls)
+            return [{
+                "title": f"{provider_name} noticia reciente sobre Chile {index}",
+                "url": f"https://{provider_name}.example/noticias/2026/10/27/{index}",
+                "snippet": "Noticia reciente sobre Chile publicada por una fuente editorial.",
+                "source_domain": f"{provider_name}.example",
+                "published_at": published,
+            }]
+
+        return search
+
+    monkeypatch.setattr(web_search, "_google_news_search", fake_provider("google_news"))
+    monkeypatch.setattr(web_search, "_bing_search", fake_provider("bing"))
+    monkeypatch.setattr(web_search, "_google_search", fake_provider("google"))
+    monkeypatch.setattr(web_search, "_cl0q_search", fake_provider("cl0q"))
+    monkeypatch.setattr(web_search, "_mojeek_search", fake_provider("mojeek"))
+    monkeypatch.setattr(web_search, "_duckduckgo_search", fake_provider("duckduckgo"))
+    monkeypatch.setattr(web_search, "_yahoo_search", fake_provider("yahoo"))
+
+    candidates = asyncio.run(web_search.search_recent_news_candidates(
+        "últimas noticias de Chile hoy",
+        timeout_seconds=4.0,
+        max_results=8,
+    ))
+
+    expected_providers = {
+        "google_news", "bing", "google", "cl0q", "mojeek", "duckduckgo", "yahoo",
+    }
+    assert set(calls) == expected_providers
+    assert expected_providers.issubset({item["provider"] for item in candidates})
+    assert all(
+        0 < call["timeout_seconds"] <= 2.5
+        for provider_calls in calls.values()
+        for call in provider_calls
+    )
+    assert all(item["url"].startswith("https://") for item in candidates)
+    assert len({item["source_domain"] for item in candidates}) >= 7

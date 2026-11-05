@@ -241,13 +241,13 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun repeatedCurrentWebQuestionsUseSearchSourcesAndMemory() {
+    fun externalFactsNavigateOpenWebWithoutMagicKeywords() {
         if (BuildConfig.DEEP33_PRIMARY_URL.endsWith(".invalid")) return
 
         val prompts = listOf(
-            "Busca en internet las últimas noticias de Chile hoy y responde brevemente con fuentes reales.",
-            "Busca en internet el clima actual de Santiago de Chile y responde brevemente con fuentes reales.",
-            "Busca en internet información actual de tecnología en Chile hoy y responde brevemente con fuentes reales."
+            "¿Cuál es la versión estable de Python y qué documentación oficial confirma esa versión?",
+            "¿Quién dirige actualmente NVIDIA como CEO y qué fuentes verificables lo confirman?",
+            "¿Cuál es la política vigente de equipaje de mano de LATAM y qué páginas verificables la respaldan?"
         )
 
         prompts.forEachIndexed { index, prompt ->
@@ -258,10 +258,10 @@ class Deep33ConnectivityTest {
             val body = Deep33Api.generate(payload, sessionId)
             val generationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
             assertTrue(
-                "current-web round ${index + 1} exceeded the 180-second generation deadline: ${generationMs}ms",
+                "open-web round ${index + 1} exceeded the 180-second generation deadline: ${generationMs}ms",
                 generationMs < 180_000
             )
-            assertGenerationEnvelope(body, "current-web-round-${index + 1}")
+            assertGenerationEnvelope(body, "open-web-round-${index + 1}")
             assertTrue(
                 "web navigation was not used in round ${index + 1}: $body",
                 body.optBoolean("web_navigation", false)
@@ -286,10 +286,10 @@ class Deep33ConnectivityTest {
                 Thread.sleep(500)
             }
             assertTrue(
-                "current web round ${index + 1} was not persisted in memory",
+                "open web round ${index + 1} was not persisted in memory",
                 persisted
             )
-            println("ANDROID_CURRENT_WEB_E2E_PASS round=${index + 1} sources=${sources.length()} total_ms=${generationMs}")
+            println("ANDROID_OPEN_WEB_E2E_PASS round=${index + 1} sources=${sources.length()} total_ms=${generationMs}")
         }
     }
 

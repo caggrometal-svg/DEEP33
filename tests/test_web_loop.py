@@ -50,14 +50,19 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
                 {
                     "title": "Example",
                     "url": "https://example.com/",
-                    "snippet": "Snippet",
-                }
+                    "snippet": "Example source evidence with enough context for discovery.",
+                },
+                {
+                    "title": "Example Two",
+                    "url": "https://example.org/",
+                    "snippet": "Independent source evidence with enough context for discovery.",
+                },
             ],
         }
 
     async def fake_fetch(url, **kwargs):
         calls["fetch"] += 1
-        assert url == "https://example.com/"
+        assert url in {"https://example.com/", "https://example.org/"}
         return {
             "ok": True,
             "url": url,
@@ -85,8 +90,11 @@ def test_web_tool_loop_server_side_search_then_normal_generation(monkeypatch: py
     )
 
     assert result["choices"][0]["message"]["content"] == "Respuesta verificada."
-    assert sources[0]["url"] == "https://example.com/"
-    assert calls == {"gateway": 1, "search": 1, "fetch": 1}
+    assert {source["url"] for source in sources} == {
+        "https://example.com/",
+        "https://example.org/",
+    }
+    assert calls == {"gateway": 1, "search": 1, "fetch": 2}
 
 def test_source_metadata_never_leaks_into_final_text() -> None:
     final = main.sanitize_assistant_text(
@@ -199,8 +207,13 @@ def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
                 {
                     "title": "Solar",
                     "url": "https://example.com/solar",
-                    "snippet": "Fuente de evidencia.",
-                }
+                    "snippet": "Fuente de evidencia sobre energía solar.",
+                },
+                {
+                    "title": "Solar independiente",
+                    "url": "https://example.org/solar",
+                    "snippet": "Segunda fuente independiente sobre energía solar.",
+                },
             ],
         }
 
@@ -210,7 +223,7 @@ def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
             "url": url,
             "final_url": url,
             "title": "Solar",
-            "text": "Texto de evidencia.",
+            "text": "Texto de evidencia sobre energía solar, paneles fotovoltaicos y generación eléctrica. " * 4,
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
@@ -255,7 +268,12 @@ def test_web_loop_final_style_lock_preserves_selected_personality(monkeypatch: p
                     "title": "Example",
                     "url": "https://example.com/",
                     "snippet": "Raw source wording.",
-                }
+                },
+                {
+                    "title": "Example independent",
+                    "url": "https://example.org/",
+                    "snippet": "Independent raw source wording.",
+                },
             ],
         }
 
@@ -387,6 +405,28 @@ def test_web_routing_skips_stable_chat_and_uses_fresh_external_signals():
     assert main.should_force_web(stable_messages) is False
     assert main.should_force_web(current_messages) is True
     assert main.should_force_web(explicit_messages) is True
+
+
+def test_web_routing_covers_external_web_without_topic_specific_keywords():
+    external_queries = (
+        "¿Quién es el CEO de NVIDIA?",
+        "¿Cuál es la versión estable de Python?",
+        "¿Cuál es el horario del Museo del Prado?",
+        "¿Qué dice la documentación de FastAPI sobre lifespan?",
+        "¿Cuál es la normativa de equipaje de LATAM?",
+    )
+    for query in external_queries:
+        assert main.should_force_web([{"role": "user", "content": query}]) is True, query
+
+
+def test_web_routing_does_not_browse_for_stable_explanations_by_default():
+    stable_queries = (
+        "¿Qué es la fotosíntesis?",
+        "Explica cómo funciona la recursión",
+        "¿Por qué el cielo se ve azul?",
+    )
+    for query in stable_queries:
+        assert main.should_force_web([{"role": "user", "content": query}]) is False, query
 
 
 def test_runtime_clock_is_authoritative():
@@ -559,3 +599,30 @@ def test_verified_sources_are_not_emitted_as_links_without_safe_urls() -> None:
         {"title": "unsafe", "url": "http://example.com/"}
     ]) == ""
 
+
+
+def test_fetched_page_relevance_rejects_irrelevant_redirect_content():
+    source = {
+        "title": "NVIDIA leadership",
+        "url": "https://www.nvidia.com/en-us/about-nvidia/",
+        "snippet": "NVIDIA leadership and executive team",
+    }
+    assert main._is_relevant_fetched_web_source(
+        "¿quién dirige actualmente NVIDIA como CEO?",
+        source,
+        {
+            "title": "NVIDIA leadership",
+            "url": "https://www.nvidia.com/en-us/about-nvidia/",
+            "text": "NVIDIA leadership and executive team. Jensen Huang is founder, president and CEO. " * 6,
+        },
+    ) is True
+
+    assert main._is_relevant_fetched_web_source(
+        "¿quién dirige actualmente NVIDIA como CEO?",
+        source,
+        {
+            "title": "Sign in",
+            "url": "https://example.com/login",
+            "text": "Sign in to your account. Manage preferences and recover your password. " * 8,
+        },
+    ) is False

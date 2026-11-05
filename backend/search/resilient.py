@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _extract_realtime_locality, _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -566,6 +566,19 @@ class WebOrchestrator:
                     + " WHO CDC PAHO public health fact sheet"
                 )
 
+        release_version_intent = (
+            any(term in lowered for term in ("version", "versión", "release", "releases"))
+            and any(term in lowered for term in ("latest", "stable", "estable", "actual", "current", "reciente"))
+        )
+        if release_version_intent and compact:
+            # When an official-source query collapses to one vendor/project domain,
+            # broaden the recovery wave to independent release/version references.
+            # Final ranking still uses the untouched user query.
+            return (
+                f"{compact} latest stable version release notes "
+                "independent reference package index changelog"
+            )
+
         wikipedia_asyncio_intent = (
             "wikipedia" in lowered
             and "asyncio" in lowered
@@ -643,12 +656,12 @@ class WebOrchestrator:
                 "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
             )
         if news_intent and "chile" in lowered:
+            locality = _extract_realtime_locality(cleaned)
+            if locality:
+                return f"{locality} Chile noticias hoy actualidad"
             if current_events_intent:
-                # Generic current-events phrasing ("acontecimientos actuales",
-                # "what is happening") was not classified as news here. The
-                # primary engines then repeated a narrow query and recovery could
-                # collapse to country-only tokens. Broaden discovery across topics
-                # and providers without restricting results to named sites.
+                # Broad country-level current events can be widened, but a named
+                # locality must never be discarded by recovery.
                 return "Chile noticias hoy actualidad acontecimientos recientes"
             return "Chile últimas noticias hoy"
         if news_intent and compact:
@@ -1281,7 +1294,7 @@ class WebOrchestrator:
         # Chilean domains, still through the live provider and still ranked against
         # the user's untouched query. This is discovery, not synthetic evidence.
         selected_domains_before_official = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
             for item in selected
             if item.get("url")
         }
@@ -1339,7 +1352,7 @@ class WebOrchestrator:
                         self.max_results,
                     )
                     distinct_domains_now = {
-                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
                         for item in selected_now
                         if item.get("url")
                     }
@@ -1365,10 +1378,13 @@ class WebOrchestrator:
 
         recovery_query = self._recovery_query(cleaned)
         selected_domains = {
-            item.get("source_domain") or ""
+            str(
+                item.get("source_domain")
+                or (urlparse(str(item.get("url") or "")).hostname or "")
+            ).casefold().rstrip(".").removeprefix("www.")
             for item in selected
-            if item.get("source_domain")
-        }
+            if item.get("source_domain") or item.get("url")
+        } - {""}
         news_intent = any(
             term in cleaned.casefold()
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
@@ -1500,7 +1516,7 @@ class WebOrchestrator:
         # three distinct domains. These are real site-scoped provider queries; final
         # relevance ranking remains anchored to the user's original question.
         selected_domains_before_politics_recovery = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
             for item in selected
             if item.get("url")
         }
@@ -1572,7 +1588,7 @@ class WebOrchestrator:
                     )
                     selected_now = deduplicate(ranked_now, self.max_results)
                     domains_now = {
-                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                        str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
                         for item in selected_now
                         if item.get("url")
                     } - {""}
@@ -1648,7 +1664,7 @@ class WebOrchestrator:
             if len(diverse_selected) >= min(3, self.max_results):
                 selected = diverse_selected[: self.max_results]
             recovered_domains = {
-                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
                 for item in selected
                 if item.get("url")
             } - {""}
@@ -1693,7 +1709,7 @@ class WebOrchestrator:
 
         minimum_coverage = min(3, self.max_results)
         selected_domains = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
             for item in selected
             if item.get("url")
         }
@@ -1746,7 +1762,7 @@ class WebOrchestrator:
                 ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains = {
-                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
+                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.")
                     for item in selected
                     if item.get("url")
                 }
@@ -1800,7 +1816,7 @@ class WebOrchestrator:
 
         if chile_public_info_intent:
             selected_domains_before_portal_fallback = {
-                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
+                str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.").removeprefix("www.")
                 for item in selected
                 if item.get("url")
             }
@@ -1820,7 +1836,7 @@ class WebOrchestrator:
                 ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains_after_portal_fallback = {
-                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
+                    str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().rstrip(".").removeprefix("www.").removeprefix("www.")
                     for item in selected
                     if item.get("url")
                 } - {""}

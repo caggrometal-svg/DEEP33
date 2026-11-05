@@ -110,7 +110,7 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.3.0"
+    assert result["engine_version"] == "1.4.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
@@ -1209,3 +1209,20 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
+
+
+def test_realtime_general_web_queries_do_not_inherit_newsroom_constraints():
+    from backend.search.engine import is_realtime_news_query, is_realtime_query
+
+    general_realtime = (
+        "¿Cuál es la situación actual de Python 3.14?",
+        "¿Cuál es la última versión estable de FastAPI?",
+        "Revisa las release notes recientes de Android.",
+        "¿Cuál es el estado actual del servicio de GitHub?",
+        "Busca el security advisory vigente de este paquete.",
+    )
+    for query in general_realtime:
+        assert is_realtime_query(query) is True
+        assert is_realtime_news_query(query) is False
+
+    assert is_realtime_news_query("¿Cuáles son las noticias más importantes de Chile hoy?") is True

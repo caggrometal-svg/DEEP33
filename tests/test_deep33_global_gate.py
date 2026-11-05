@@ -406,8 +406,14 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
                     "snippet": "Documento original sobre el tema solicitado; este snippet por sí solo no cuenta como extracción real.",
                     "provider": "test-search",
                 },
+                {
+                    "title": "Segunda fuente independiente verificable",
+                    "url": "https://publisher-two.example/article",
+                    "snippet": "Segunda fuente independiente sobre el mismo documento y tema solicitado.",
+                    "provider": "test-search",
+                },
             ],
-            "verification": {"distinct_domains": 1},
+            "verification": {"distinct_domains": 2},
         }
 
     async def fake_fetch(url: str, **kwargs):
@@ -441,7 +447,7 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
     payload = response.json()
     assert payload["ok"] is True
     assert payload["status"] == "success"
-    assert payload["domains_used"] >= 1
+    assert payload["domains_used"] >= 2
     assert payload["extracted_text_chars"] >= 80
     assert payload["fetched_pages"]
     assert len(payload["fetched_pages"][0]["text"]) >= 80

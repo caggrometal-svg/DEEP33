@@ -168,7 +168,7 @@ def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
     monkeypatch.setattr(web_search, "_search_http_client", fake_get_client)
     result = asyncio.run(
         web_search._google_news_search(
-            "situación actual de la comuna de Las Condes en Chile",
+            "noticias actuales de la comuna de Las Condes en Chile",
             timeout_seconds=5.0,
             max_results=5,
         )
@@ -207,7 +207,7 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
     monkeypatch.setattr(engine, "_run_query", fake_run_query)
     result = asyncio.run(
         engine.search(
-            "situación actual de la comuna de Las Condes en Chile",
+            "noticias actuales de la comuna de Las Condes en Chile",
             provider="auto",
             api_key="",
             timeout_seconds=3.0,
@@ -217,7 +217,7 @@ def test_realtime_news_search_uses_google_news_before_slow_html_fallback(monkeyp
 
     assert captured
     assert captured[0][0] == "google_news"
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert "google_news" in result["providers"]
     assert result["verification"]["distinct_providers"] == 1
 

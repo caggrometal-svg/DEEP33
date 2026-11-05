@@ -478,12 +478,12 @@ def _looks_realtime_news(query: str) -> bool:
     return any(
         term in lowered
         for term in (
-            "situación actual", "situacion actual", "estado actual",
             "noticia", "noticias", "última hora", "ultima hora", "actualidad",
             "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
-            "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
-            "incidentes", "contingencia", "suceso", "sucesos", "alerta", "ocurriendo",
-            "sucede", "sucediendo", "último", "últimos", "última", "últimas",
+            "qué ocurre", "que ocurre", "qué pasa", "que pasa", "breaking news",
+            "latest news", "current events", "current affairs",
+            "acontecimiento actual", "acontecimientos actuales",
+            "incidente reciente", "incidentes recientes",
         )
     )
 
@@ -812,16 +812,152 @@ async def search_recent_news_candidates(
     timeout_seconds: float = 2.0,
     max_results: int = 8,
 ) -> list[dict]:
-    """Return dated recent-news candidates for realtime diversity recovery."""
+    """Find dated recent-news candidates across independent providers with a hard time budget."""
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
+
     limit = max(1, min(8, int(max_results)))
-    return await _google_news_search(
-        cleaned,
-        min(2.5, max(0.8, float(timeout_seconds))),
-        limit,
-    )
+    budget = min(4.0, max(2.0, float(timeout_seconds)))
+    folded = cleaned.casefold()
+    if "chile" in folded or "chileno" in folded or "chilena" in folded:
+        variants = [
+            cleaned,
+            "Chile últimas noticias hoy economía gobierno seguridad sociedad",
+            "Chile noticias nacionales recientes política economía salud",
+        ]
+    else:
+        variants = [
+            cleaned,
+            f"{cleaned} últimas noticias hoy",
+            f"{cleaned} latest news today",
+        ]
+    variants = list(dict.fromkeys(" ".join(item.split()) for item in variants if item.strip()))
+
+    # Current-news recovery must fan out across the independent indexes already
+    # used by the general-web orchestrator. The caller's original article
+    # validator still decides which pages count as evidence; candidates alone
+    # never satisfy a news quorum.
+    calls = [
+        ("google_news", variants[0]),
+        ("google_news", variants[min(1, len(variants) - 1)]),
+        ("bing", variants[0]),
+        ("bing", variants[min(1, len(variants) - 1)]),
+        ("google", variants[min(2, len(variants) - 1)]),
+        ("cl0q", variants[0]),
+        ("mojeek", variants[min(1, len(variants) - 1)]),
+        ("duckduckgo", variants[min(2, len(variants) - 1)]),
+        ("yahoo", variants[min(1, len(variants) - 1)]),
+    ]
+
+    async def collect(provider_name: str, search_query: str) -> tuple[str, list[dict]]:
+        try:
+            per_call = min(2.5, budget)
+            if provider_name == "google_news":
+                search = _google_news_search(search_query, per_call, limit)
+            elif provider_name == "bing":
+                search = _bing_search(
+                    search_query, per_call, limit, preserve_candidates=True
+                )
+            elif provider_name == "google":
+                search = _google_search(
+                    search_query, per_call, limit, preserve_candidates=True
+                )
+            elif provider_name == "cl0q":
+                search = _cl0q_search(search_query, per_call, limit)
+            elif provider_name == "mojeek":
+                search = _mojeek_search(search_query, per_call, limit)
+            elif provider_name == "duckduckgo":
+                search = _duckduckgo_search(search_query, per_call, limit)
+            else:
+                search = _yahoo_search(
+                    search_query, per_call, limit, preserve_candidates=True
+                )
+            items = await asyncio.wait_for(search, timeout=per_call)
+            return provider_name, [
+                {**item, "provider": provider_name}
+                for item in items
+                if isinstance(item, dict)
+            ]
+        except (asyncio.TimeoutError, httpx.HTTPError, WebSearchError, ValueError):
+            return provider_name, []
+        except Exception:
+            return provider_name, []
+
+    tasks = [
+        asyncio.create_task(collect(provider_name, search_query))
+        for provider_name, search_query in calls
+    ]
+    done, pending = await asyncio.wait(tasks, timeout=budget)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    batches: list[tuple[str, list[dict]]] = []
+    for task in done:
+        try:
+            batches.append(task.result())
+        except Exception:
+            continue
+
+    # Round-robin across providers and publisher domains so the first feed cannot
+    # crowd out all candidates from a second independent search provider.
+    by_provider: dict[str, list[dict]] = {}
+    for provider_name, items in batches:
+        normalized_items = []
+        seen_in_provider: set[str] = set()
+        for item in items:
+            url = str(item.get("url") or "").strip()
+            parsed = urlparse(url)
+            domain = str(item.get("source_domain") or parsed.hostname or "").casefold().rstrip(".").removeprefix("www.")
+            if parsed.scheme.casefold() != "https" or not parsed.hostname or not domain:
+                continue
+            key = url.split("#", 1)[0]
+            if key in seen_in_provider:
+                continue
+            seen_in_provider.add(key)
+            normalized_items.append({**item, "provider": provider_name, "source_domain": domain})
+        by_provider.setdefault(provider_name, []).extend(normalized_items)
+
+    output: list[dict] = []
+    seen_urls: set[str] = set()
+    seen_provider_domain_counts: dict[str, set[str]] = {}
+    provider_names = list(by_provider)
+    while provider_names and len(output) < min(16, limit * 2):
+        remaining: list[str] = []
+        for provider_name in provider_names:
+            queue = by_provider.get(provider_name, [])
+            chosen_index = next(
+                (
+                    index for index, item in enumerate(queue)
+                    if str(item.get("url") or "").split("#", 1)[0] not in seen_urls
+                    and (
+                        str(item.get("source_domain") or "") not in seen_provider_domain_counts.get(provider_name, set())
+                        or len(seen_provider_domain_counts.get(provider_name, set())) >= limit
+                    )
+                ),
+                next(
+                    (
+                        index for index, item in enumerate(queue)
+                        if str(item.get("url") or "").split("#", 1)[0] not in seen_urls
+                    ),
+                    -1,
+                ),
+            )
+            if chosen_index >= 0:
+                item = queue.pop(chosen_index)
+                url_key = str(item.get("url") or "").split("#", 1)[0]
+                domain = str(item.get("source_domain") or "")
+                seen_urls.add(url_key)
+                seen_provider_domain_counts.setdefault(provider_name, set()).add(domain)
+                output.append(item)
+            if queue:
+                remaining.append(provider_name)
+            if len(output) >= min(16, limit * 2):
+                break
+        provider_names = remaining
+    return output
 
 
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
@@ -1136,7 +1272,7 @@ def web_search_status():
     return {
         "enabled": True,
         "engine": "DEEP33 Search Engine",
-        "engine_version": "1.3.0",
+        "engine_version": "1.4.0",
         "configured_provider": provider,
         "active_provider": active,
         "tavily_configured": key,
