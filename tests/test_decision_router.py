@@ -35,6 +35,7 @@ def test_classifier_routes_named_people_and_organizations_to_web_without_current
     queries = (
         "¿Quién es Donald Trump?",
         "¿Qué sabemos de OpenAI?",
+        "qué es openai",
         "Información sobre el Hospital Veterinario de Santiago",
         "¿Dónde queda el Museo Nacional de Bellas Artes?",
         "¿Qué hospitales públicos están operativos?",
