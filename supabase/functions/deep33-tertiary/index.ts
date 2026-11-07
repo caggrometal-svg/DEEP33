@@ -3420,10 +3420,11 @@ function edgeFilterSearchResults(
 function edgeProviderFamily(provider: string): string {
   const name = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
   if (name.includes("google")) return "google";
-  if (name.includes("bing") || name.includes("microsoft") || name.includes("yahoo")) return "bing";
+  if (name.includes("bing") || name.includes("microsoft")) return "bing";
   if (name.includes("duckduckgo") || name.startsWith("ddg")) return "duckduckgo";
   if (name.includes("mojeek")) return "mojeek";
   if (name.includes("marginalia")) return "marginalia";
+  if (name.includes("yahoo")) return "yahoo";
   if (name.includes("tavily")) return "tavily";
   if (name.includes("cl0q")) return "cl0q";
   if (name.includes("wikipedia")) return "wikipedia";
