@@ -88,6 +88,7 @@ def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
 
 def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
 
     async def fake_tavily(query, api_key, timeout_seconds, max_results):
         return [
