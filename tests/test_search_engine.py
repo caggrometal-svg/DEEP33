@@ -1199,9 +1199,12 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
             fallback_delay_seconds=0,
             cache_ttl_seconds=120,
         )
-        orchestrator.providers = {"bing": provider}
+        orchestrator.providers = {"bing": provider, "mojeek": provider}
         orchestrator.fallback_providers = {}
-        orchestrator.circuits = {"bing": orchestrator.circuits["bing"]}
+        orchestrator.circuits = {
+            "bing": orchestrator.circuits["bing"],
+            "mojeek": orchestrator.circuits["mojeek"],
+        }
 
         first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
         second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
@@ -1212,7 +1215,7 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
     assert second["ok"] is True
     # Each top-level realtime search executes two planned query variants. Both
     # variants must execute again on the second call because realtime is cache-free.
-    assert calls["count"] == 4
+    assert calls["count"] == 8
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
