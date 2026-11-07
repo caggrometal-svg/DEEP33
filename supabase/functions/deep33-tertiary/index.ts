@@ -3691,7 +3691,7 @@ async function publicWebSearchUncached(
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
   const providerNames = edgeProvidersForResults(finalResults);
-  const requiredProviderCount = 2;
+  const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;
   const providerQuorumMet = providerNames.length >= requiredProviderCount;
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
