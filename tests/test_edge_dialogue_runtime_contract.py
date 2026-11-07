@@ -232,7 +232,9 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "recoverySearch," in chat
         assert "!excludedDomains.has(hostname)" in chat
         assert "const sources = readableSources;" in chat
-        assert "if (sources.length < 1)" in chat
+        assert "sources.length < requiredReadableSources" in chat
+        assert "readableProviderNames.length < requiredProviderCount" in chat
+        assert "readableDomains.size < requiredProviderCount" in chat
 
 
 def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritative_source():
@@ -248,7 +250,7 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         expected_recovery = "backend-recovery" if path.parent.name == "deep33-proxy" else "railway-recovery"
         assert f'fallback_path: "{expected_recovery}"' in generate
 
-def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
+def test_web_recovery_rejects_single_provider_evidence() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
@@ -257,10 +259,12 @@ def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
         generate_start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
         generate_end = source.index('if (path === "/v1/web/status"', generate_start)
         generate = source[generate_start:generate_end]
-        assert "if (sources.length < 1)" in chat
-        assert "if (!search.ok || sources.length < 1)" in generate
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in chat
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in generate
+        assert "readableProviderNames.length < requiredProviderCount" in chat
+        assert "readableProviderNames.length < requiredProviderCount" in generate
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in chat
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in generate
+        assert "distinct_providers: readableProviderNames.length" in chat
+        assert "distinct_providers: readableProviderNames.length" in generate
         assert "ok: true," in chat
         assert "ok: true," in generate
 
