@@ -148,6 +148,53 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
     assert result["latency_ms"] < 250
 
 
+def test_web_orchestrator_does_not_count_google_news_as_a_second_google_provider():
+    from backend.search.resilient import WebOrchestrator
+
+    candidates = [
+        {
+            "title": "NASA Artemis mission lunar exploration",
+            "url": f"https://space{i}.example/artemis",
+            "snippet": "NASA Artemis mission and lunar exploration research.",
+        }
+        for i in range(3)
+    ]
+
+    async def google_provider(query, timeout, limit):
+        return candidates
+
+    async def empty_provider(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.05,
+            global_budget_seconds=0.18,
+            fallback_delay_seconds=0.0,
+        )
+        orchestrator.providers = {
+            "google": google_provider,
+            "google_news": google_provider,
+            "bing": empty_provider,
+            "mojeek": empty_provider,
+        }
+        orchestrator.fallback_providers = {"yahoo": empty_provider}
+        orchestrator.circuits = {
+            name: orchestrator.circuits[name]
+            for name in orchestrator.providers
+        } | {"yahoo": orchestrator.circuits["yahoo"]}
+        return await orchestrator.search("NASA Artemis mission", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert set(result["providers"]) == {"google", "google_news"}
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
+
+
 def test_web_orchestrator_fails_closed_when_only_one_provider_has_relevant_results():
     from backend.search.resilient import ProviderOutcome, WebOrchestrator
 
