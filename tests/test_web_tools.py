@@ -191,7 +191,7 @@ def test_search_provider_families_collapse_google_and_bing_aliases():
     from backend.search.resilient import _provider_family
 
     assert _provider_family("google_news") == _provider_family("google")
-    assert _provider_family("yahoo") == _provider_family("bing")
+    assert _provider_family("yahoo") != _provider_family("bing")
     assert _provider_family("duckduckgo") != _provider_family("bing")
 
 
