@@ -352,7 +352,8 @@ def test_edge_search_requires_independent_provider_provenance():
         assert "provider_sources" in source
         assert "function edgeProviderFamily(" in source
         assert 'if (name.includes("google")) return "google";' in source
-        assert 'if (name.includes("bing") || name.includes("microsoft") || name.includes("yahoo")) return "bing";' in source
+        assert 'if (name.includes("bing") || name.includes("microsoft")) return "bing";' in source
+        assert 'if (name.includes("yahoo")) return "yahoo";' in source
         assert "independentOnly = false" in source
         assert 'provider.name !== "google_public"' in source
         assert "const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;" in source
