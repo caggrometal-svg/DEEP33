@@ -3167,7 +3167,7 @@ async function runPublicWebSearchQuery(
   const activeProviders = independentOnly || (forceFullSearch && currentNewsRequest)
     // Corroboration must use independent public indexes, not a replay of Bing,
     // Google News, or Wikipedia results from the primary search wave.
-    ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
+    ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
     // News queries use several independent public-web providers in the same
     // bounded race. Google News is one candidate, never the exclusive source.
     : fastNewsQuery
@@ -3524,13 +3524,27 @@ function edgeFilterSearchResults(
   });
 }
 
+function edgeProviderFamily(provider: string): string {
+  const name = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
+  if (name.includes("google")) return "google";
+  if (name.includes("bing") || name.includes("microsoft")) return "bing";
+  if (name.includes("duckduckgo") || name.startsWith("ddg")) return "duckduckgo";
+  if (name.includes("mojeek")) return "mojeek";
+  if (name.includes("marginalia")) return "marginalia";
+  if (name.includes("yahoo")) return "yahoo";
+  if (name.includes("tavily")) return "tavily";
+  if (name.includes("cl0q")) return "cl0q";
+  if (name.includes("wikipedia")) return "wikipedia";
+  return name;
+}
+
 function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
   const names: string[] = [];
   for (const item of items) {
     if (Array.isArray(item.provider_sources)) {
-      names.push(...item.provider_sources.map((value) => String(value || "").trim()).filter(Boolean));
+      names.push(...item.provider_sources.map((value) => edgeProviderFamily(String(value || ""))).filter(Boolean));
     }
-    const provider = String(item.provider || "").trim();
+    const provider = edgeProviderFamily(String(item.provider || ""));
     if (provider) names.push(provider);
   }
   return [...new Set(names)];
