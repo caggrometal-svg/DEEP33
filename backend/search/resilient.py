@@ -847,6 +847,21 @@ class WebOrchestrator:
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
+
+        def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
+            # Provider success only counts when that provider independently
+            # returned evidence relevant to the user's original query.
+            return {
+                outcome.provider
+                for outcome in candidate_outcomes
+                if outcome.ok
+                and outcome.results
+                and rank_results(
+                    cleaned,
+                    outcome.results,
+                    realtime=is_realtime_query(cleaned),
+                )
+            }
         chile_public_info_intent = (
             "chile" in lowered_cleaned
             and any(term in lowered_cleaned for term in (
@@ -1215,9 +1230,7 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                distinct_providers = {
-                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                }
+                distinct_providers = relevant_provider_names(outcomes)
                 enough_sources = (
                     len(selected_now) >= min(3, self.max_results)
                     and len(distinct_domains) >= min(3, len(selected_now))
@@ -1378,12 +1391,9 @@ class WebOrchestrator:
             and news_intent
             and len(selected_domains) < min(5, self.max_results)
         )
-        successful_providers = {
-            outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-        }
+        successful_providers = relevant_provider_names(outcomes)
         needs_provider_diversity = (
-            (is_realtime_query(cleaned) or news_intent)
-            and len(successful_providers) < min(2, len(self.providers))
+            len(successful_providers) < min(2, len(self.providers))
         )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
@@ -1464,9 +1474,7 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
-                    distinct_providers_now = {
-                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                    }
+                    distinct_providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
@@ -1576,11 +1584,7 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("url")
                     } - {""}
-                    providers_now = {
-                        outcome.provider
-                        for outcome in outcomes
-                        if outcome.ok and outcome.results
-                    }
+                    providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(domains_now) >= min(3, self.max_results)
@@ -1701,12 +1705,10 @@ class WebOrchestrator:
             len(selected) < minimum_coverage
             or len(selected_domains - {""}) < minimum_coverage
         )
-        selected_providers = {
-            str(item.get("provider") or "").strip()
-            for item in selected
-            if str(item.get("provider") or "").strip()
-        }
-        insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
+        selected_providers = relevant_provider_names(outcomes)
+        insufficient_provider_diversity = (
+            len(selected_providers) < min(2, len(self.providers))
+        )
         yahoo_available = (
             "yahoo" in self.fallback_providers
             and "yahoo" in self.circuits
