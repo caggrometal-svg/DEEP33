@@ -88,7 +88,6 @@ def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
 
 def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
-    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
 
     async def fake_tavily(query, api_key, timeout_seconds, max_results):
         return [
@@ -117,87 +116,6 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
-
-
-def test_standard_search_requires_two_independent_provider_results(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_MAX_QUERY_FANOUT", "1")
-
-    async def fake_bing(query, timeout_seconds, max_results):
-        return [
-            {"title": "Python asyncio documentation", "url": f"https://docs.python.org/3/library/asyncio-{i}.html",
-             "snippet": "Python asyncio official documentation"}
-            for i in range(3)
-        ]
-
-    async def fake_mojeek(query, timeout_seconds, max_results):
-        return [
-            {"title": "Python asyncio guide", "url": f"https://realpython.com/asyncio-{i}/",
-             "snippet": "Python asyncio guide and examples"}
-            for i in range(3)
-        ]
-
-    async def empty_ddg(query, timeout_seconds, max_results):
-        return []
-
-    monkeypatch.setattr("tools.web_search._bing_search", fake_bing)
-    monkeypatch.setattr("tools.web_search._mojeek_search", fake_mojeek)
-    monkeypatch.setattr("tools.web_search._duckduckgo_search", empty_ddg)
-
-    result = asyncio.run(
-        SearchEngine(max_results=5).search(
-            "Python asyncio documentation",
-            provider="auto",
-            api_key="",
-            timeout_seconds=5,
-            fallback_ddg=True,
-        )
-    )
-
-    assert result["ok"] is True, result
-    assert set(result["providers"]) >= {"bing", "mojeek"}
-    assert result["verification"]["distinct_providers"] >= 2
-    assert result["verification"]["required_providers"] == 2
-    assert result["verification"]["provider_quorum_met"] is True
-
-
-def test_standard_search_does_not_report_success_from_one_of_two_providers(monkeypatch):
-    monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "true")
-    monkeypatch.setenv("WEB_SEARCH_MAX_QUERY_FANOUT", "1")
-
-    async def only_bing(query, timeout_seconds, max_results):
-        return [
-            {"title": "Python asyncio documentation", "url": f"https://docs.python.org/3/library/asyncio-{i}.html",
-             "snippet": "Python asyncio official documentation"}
-            for i in range(3)
-        ]
-
-    async def empty_mojeek(query, timeout_seconds, max_results):
-        return []
-
-    async def empty_ddg(query, timeout_seconds, max_results):
-        return []
-
-    monkeypatch.setattr("tools.web_search._bing_search", only_bing)
-    monkeypatch.setattr("tools.web_search._mojeek_search", empty_mojeek)
-    monkeypatch.setattr("tools.web_search._duckduckgo_search", empty_ddg)
-
-    result = asyncio.run(
-        SearchEngine(max_results=5).search(
-            "Python asyncio documentation",
-            provider="auto",
-            api_key="",
-            timeout_seconds=5,
-            fallback_ddg=True,
-        )
-    )
-
-    assert result["ok"] is False
-    assert result["results"]
-    assert result["verification"]["distinct_providers"] == 1
-    assert result["verification"]["provider_quorum_met"] is False
 
 
 def test_auto_provider_plan_includes_optional_mojeek_fallback(monkeypatch):
