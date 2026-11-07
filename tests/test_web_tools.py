@@ -148,6 +148,45 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
     assert result["latency_ms"] < 250
 
 
+def test_web_orchestrator_never_certifies_a_single_configured_provider():
+    from backend.search.resilient import WebOrchestrator
+
+    async def only_provider(query, timeout, limit):
+        return [
+            {
+                "title": "NASA Artemis mission",
+                "url": f"https://nasa{i}.example/artemis",
+                "snippet": "NASA Artemis mission and lunar exploration.",
+            }
+            for i in range(3)
+        ]
+
+    async def empty_provider(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.05,
+            global_budget_seconds=0.18,
+            fallback_delay_seconds=0.0,
+        )
+        orchestrator.providers = {"bing": only_provider}
+        orchestrator.fallback_providers = {"yahoo": empty_provider}
+        orchestrator.circuits = {
+            "bing": orchestrator.circuits["bing"],
+            "yahoo": orchestrator.circuits["yahoo"],
+        }
+        return await orchestrator.search("NASA Artemis mission", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
+
+
 def test_web_orchestrator_does_not_count_google_news_as_a_second_google_provider():
     from backend.search.resilient import WebOrchestrator
 
