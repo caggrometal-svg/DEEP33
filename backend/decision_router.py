@@ -132,7 +132,9 @@ _RESEARCH_RE = re.compile(
 )
 _PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
 _EXTERNAL_LOOKUP_RE = re.compile(
-    r"\b(?:qui[eé]nes?\s+(?:es|son|fue|fueron|ser[aá])|who\s+(?:is|are)|where\s+is|"
+    r"\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|qu[eé]\s+sabemos\s+(?:de|sobre)|"
+    r"what\s+do\s+you\s+know\s+about|qui[eé]nes?\s+(?:es|son|fue|fueron|ser[aá])|"
+    r"who\s+(?:is|are)|where\s+is|"
     r"d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|"
     r"informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|qu[eé]\s+pas[oó]\s+con|"
     r"empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|"
