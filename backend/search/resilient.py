@@ -32,7 +32,8 @@ def _provider_family(provider: str) -> str:
     name = str(provider or "").strip().casefold().replace("-", "_")
     if "google" in name:
         return "google"
-    if "bing" in name or "microsoft" in name:
+    if "bing" in name or "microsoft" in name or "yahoo" in name:
+        # Yahoo's general web index is not counted separately from Bing-backed search.
         return "bing"
     if "duckduckgo" in name or name.startswith("ddg"):
         return "duckduckgo"
@@ -40,8 +41,6 @@ def _provider_family(provider: str) -> str:
         return "mojeek"
     if "marginalia" in name:
         return "marginalia"
-    if "yahoo" in name:
-        return "yahoo"
     if "tavily" in name:
         return "tavily"
     if "cl0q" in name:
