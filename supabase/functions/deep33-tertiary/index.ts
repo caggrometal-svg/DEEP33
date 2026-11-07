@@ -4398,12 +4398,26 @@ Deno.serve(async (req) => {
 
         const sources = readableSources;
         verifiedSourcesForOutput = sources;
-        if (sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(query) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          readableSources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(readableSources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return new Response(
             "event: error\ndata: " +
               JSON.stringify({
                 status: "FAIL",
-                error: "WEB_SEARCH_NO_RESULTS",
+                error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+                  ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+                  : "WEB_SEARCH_NO_RESULTS",
               }) +
               "\n\ndata: [DONE]\n\n",
             {
@@ -4421,10 +4435,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {
@@ -4947,10 +4962,25 @@ Deno.serve(async (req) => {
         }
 
         const sources = readableSources;
-        if (!search.ok || sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(searchQuery) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          sources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(sources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          !search.ok ||
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return json({
             status: "FAIL",
-            error: "WEB_SEARCH_NO_RESULTS",
+            error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+              ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+              : "WEB_SEARCH_NO_RESULTS",
             web_navigation: false,
             sources: [],
           }, 503);
@@ -4959,10 +4989,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {
