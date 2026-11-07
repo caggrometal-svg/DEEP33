@@ -3106,7 +3106,7 @@ async function runPublicWebSearchQuery(
   const diversified: Array<Record<string, unknown>> = [];
   const seenDomains = new Set<string>();
   for (const result of all) {
-    const domain = result.domain;
+    const domain = String(result.domain || "");
     if (seenDomains.has(domain)) continue;
     seenDomains.add(domain);
     diversified.push(result);
