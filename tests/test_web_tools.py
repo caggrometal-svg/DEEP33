@@ -1041,9 +1041,9 @@ def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_b
             root / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "snippet_fallback: true" in source
-        assert "snippetFallback.length < snippetRequired" in source
-        assert "snippetDomains.size < snippetRequired" in source
-        assert "snippetProviders.length < snippetRequired" in source
+        assert "snippetFallback.length < requiredProviders" in source
+        assert "snippetDomains.size < requiredProviders" in source
+        assert "snippetProviders.length < requiredProviders" in source
         assert "item.snippet.length >= 80" in source
         assert 'status: "degraded"' in source
         assert 'fallbackPath + "-snippet-fallback"' in source
