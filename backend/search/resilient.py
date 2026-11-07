@@ -872,10 +872,8 @@ class WebOrchestrator:
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
-        required_provider_count = min(
-            2,
-            len({_provider_family(name) for name in self.providers}),
-        )
+        # A single configured provider is never enough to certify a web answer.
+        required_provider_count = 2
 
         def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
             # Provider success only counts when that provider independently
@@ -1981,10 +1979,7 @@ class WebOrchestrator:
         provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
         attempted = list(dict.fromkeys(o.provider for o in outcomes))
         winner = next((o.provider for o in relevant_outcomes), None)
-        required_providers = min(
-            2,
-            len({_provider_family(name) for name in self.providers}),
-        )
+        required_providers = 2
         provider_quorum_met = len(provider_families) >= required_providers
         final_ok = bool(selected) and provider_quorum_met
         final_status = (
