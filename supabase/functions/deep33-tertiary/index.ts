@@ -97,6 +97,9 @@ type NavigatedWebSource = {
   title: string;
   url: string;
   snippet: string;
+  provider?: string;
+  provider_sources?: string[];
+  source_domain?: string;
   page_text?: string;
   final_url?: string;
   retrieved_at?: string;
@@ -134,6 +137,11 @@ async function buildNavigatedWebEvidence(
           title: String(item.title ?? item.url).slice(0, 300),
           url: String(item.url).slice(0, 2000),
           snippet: String(item.snippet ?? "").slice(0, 900),
+          source_domain: String(item.source_domain ?? "").slice(0, 255),
+          provider: String(item.provider ?? ""),
+          provider_sources: Array.isArray(item.provider_sources)
+            ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(item.provider || "")].filter(Boolean),
         }))
     : [];
 
@@ -3794,6 +3802,9 @@ async function edgeSearch(
     const realtime = candidatePayload.realtime === true || edgeRealtimeQuery(q);
     const filtered = edgeFilterSearchResults(q, candidateItems, realtime).slice(0, MAX_WEB_SEARCH_RESULTS);
     if (!filtered.length) return null;
+    const requiredProviders = edgeCurrentDateTimeQuery(q) ? 1 : 2;
+    const candidateProviders = edgeProvidersForResults(filtered);
+    if (candidateProviders.length < requiredProviders) return null;
 
     const navigation = await buildNavigatedWebEvidence(
       { ...candidatePayload, results: filtered },
@@ -3836,6 +3847,9 @@ async function edgeSearch(
                 snippet,
                 source_domain: editorialDomain,
                 provider: String(item.provider || candidatePayload.provider || "unknown"),
+                provider_sources: Array.isArray(item.provider_sources)
+                  ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+                  : [String(item.provider || candidatePayload.provider || "")].filter(Boolean),
               };
             })
             .filter((item) =>
@@ -3850,7 +3864,12 @@ async function edgeSearch(
             )
         : [];
       const snippetDomains = new Set(snippetFallback.map((item) => item.source_domain));
-      if (snippetFallback.length < 2 || snippetDomains.size < 2) return null;
+      const snippetProviders = edgeProvidersForResults(snippetFallback);
+      if (
+        snippetFallback.length < requiredProviders ||
+        snippetDomains.size < requiredProviders ||
+        snippetProviders.length < requiredProviders
+      ) return null;
 
       const diversifiedSnippets: Array<Record<string, unknown>> = [];
       const usedDomains = new Set<string>();
@@ -3905,14 +3924,18 @@ async function edgeSearch(
         text: pageText.slice(0, 2200),
         text_chars: pageText.length,
         source_domain: domain || String(original.source_domain || ""),
-        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "railway"),
+        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "unknown"),
+        provider_sources: Array.isArray(original.provider_sources)
+          ? original.provider_sources.map((value) => String(value || "")).filter(Boolean)
+          : [String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "")].filter(Boolean),
         retrieved_at: String(source.retrieved_at || new Date().toISOString()),
       };
     }).filter((item) => item.source_domain && item.text_chars >= 80);
     if (!results.length) return null;
 
     const providers = edgeProvidersForResults(results);
-    const domains = [...new Set(results.map((item) => item.source_domain))];
+    const domains = [...new Set(results.map((item) => item.source_domain || (new URL(item.url).hostname.toLowerCase().replace(/^www\./, ""))))];
+    if (providers.length < requiredProviders || domains.length < requiredProviders) return null;
     const extractedTextChars = results.reduce((sum, item) => sum + item.text_chars, 0);
     const retrievedAt = new Date().toISOString();
     const fetchedPages = results.map((item) => ({
