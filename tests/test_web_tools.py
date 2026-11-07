@@ -1041,13 +1041,15 @@ def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_b
             root / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "snippet_fallback: true" in source
-        assert "snippetFallback.length < 2 || snippetDomains.size < 2" in source
+        assert "snippetFallback.length < snippetRequired" in source
+        assert "snippetDomains.size < snippetRequired" in source
+        assert "snippetProviders.length < snippetRequired" in source
         assert "item.snippet.length >= 80" in source
         assert 'status: "degraded"' in source
         assert 'fallbackPath + "-snippet-fallback"' in source
 
 
-def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable() -> None:
+def test_edge_web_navigation_requires_multiple_readable_independent_sources() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -1062,7 +1064,10 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "const fetchedDomains = new Set<string>();" in source
         assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
-        assert "if (!search.ok || sources.length < 1)" in source
+        assert "sources.length < requiredReadableSources" in source
+        assert "readableProviderNames.length < requiredProviderCount" in source
+        assert "readableDomains.size < requiredProviderCount" in source
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
         expected_recovery = "backend-recovery" if function_name == "deep33-proxy" else "railway-recovery"
         assert f'fallback_path: "{expected_recovery}"' in source
         assert "async function buildNavigatedWebEvidence(" in source
