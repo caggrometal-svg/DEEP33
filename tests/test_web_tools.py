@@ -501,6 +501,7 @@ def test_bing_rss_failure_does_not_leak_off_topic_html_results(monkeypatch):
 
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
 
@@ -530,6 +531,7 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setenv("WEB_SEARCH_PROVIDER", "bing")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_MAX_QUERIES", "1")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     module._SEARCH_CACHE.clear()
@@ -581,6 +583,7 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
             api_key="",
             timeout_seconds=5,
             fresh=True,
+            fallback_ddg=False,
         )
     )
 
@@ -648,6 +651,7 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
             api_key="",
             timeout_seconds=3,
             fresh=True,
+            fallback_ddg=False,
         )
     )
 
