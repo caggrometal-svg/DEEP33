@@ -160,7 +160,7 @@ def test_smartphone_recovery_query_uses_common_web_search_terms():
     )
 
 
-def test_current_chile_politics_search_recovers_when_only_three_domains_are_found():
+def test_current_chile_politics_search_requires_independent_provider_quorum():
     from backend.search.resilient import WebOrchestrator
 
     initial_query = "política Chile hoy últimas noticias"
@@ -203,7 +203,7 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
         )
         orchestrator.providers = {
             "bing": provider,
-            "google": empty,
+            "google": provider,
             "cl0q": empty,
             "mojeek": empty,
             "duckduckgo": empty,
@@ -211,12 +211,10 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
         return await orchestrator.search(initial_query, fresh=True)
 
     result = asyncio.run(exercise())
-    assert result["ok"] is True
-    assert any(
-        query.startswith("Chile política gobierno Congreso elecciones actualidad noticias")
-        for query in recovered_queries
-    )
-    assert result["verification"]["distinct_domains"] >= 5
+    assert result["ok"] is True, result
+    assert result["verification"]["distinct_providers"] >= 2
+    assert {"bing", "google"}.issubset(set(result["providers"]))
+    assert result["verification"]["distinct_domains"] >= 3
 
 
 def test_chile_government_site_recovery_uses_official_portal_terms():
@@ -432,7 +430,7 @@ def test_yahoo_search_parses_general_web_destinations(monkeypatch):
     assert any(item["url"].startswith("https://docs.python.org/") for item in results)
 
 
-def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_are_empty():
+def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provider():
     from backend.search.resilient import WebOrchestrator
 
     candidates = [
@@ -472,8 +470,11 @@ def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_ar
         return await orchestrator.search("Wikipedia asyncio Python", fresh=True)
 
     result = asyncio.run(exercise())
-    assert result["ok"] is True, result
-    assert "yahoo" in result["providers"]
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["yahoo"]
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
     assert any("wikipedia.org" in item["url"] for item in result["results"])
     assert result["verification"]["distinct_domains"] >= 3
 

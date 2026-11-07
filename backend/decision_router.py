@@ -131,6 +131,27 @@ _RESEARCH_RE = re.compile(
     re.I,
 )
 _PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
+_EXTERNAL_LOOKUP_RE = re.compile(
+    r"\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|qu[eé]\s+sabemos\s+(?:de|sobre)|"
+    r"what\s+do\s+you\s+know\s+about|qui[eé]nes?\s+(?:es|son|fue|fueron|ser[aá])|"
+    r"who\s+(?:is|are)|where\s+is|"
+    r"d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|"
+    r"informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|qu[eé]\s+pas[oó]\s+con|"
+    r"empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|"
+    r"organizaci[oó]nes?|instituciones?|organismos?|ministerios?|municipalidades?|"
+    r"hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|"
+    r"leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?|"
+    r"apis?|software|versiones?|fecha\s+de\s+lanzamiento|"
+    r"cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|"
+    r"compar(?:a|ar|aci[oó]n)|versus|vs|alternativas?|"
+    r"estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|"
+    r"estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b",
+    re.I,
+)
+_PROPER_NAME_PAIR_RE = re.compile(
+    r"\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b"
+)
+_CAMEL_OR_ACRONYM_RE = re.compile(r"\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b")
 
 
 def classify_query(query: str) -> Decision:
@@ -167,6 +188,15 @@ def classify_query(query: str) -> Decision:
         return Decision(
             DecisionRoute.WEB, 0.92,
             "explicit_current_or_web_request", cleaned, 20.0,
+        )
+    if (
+        _EXTERNAL_LOOKUP_RE.search(cleaned)
+        or _PROPER_NAME_PAIR_RE.search(cleaned)
+        or _CAMEL_OR_ACRONYM_RE.search(cleaned)
+    ):
+        return Decision(
+            DecisionRoute.WEB, 0.90,
+            "external_entity_or_factual_lookup", cleaned, 15.0,
         )
     return Decision(
         DecisionRoute.INTERNAL, 0.86,

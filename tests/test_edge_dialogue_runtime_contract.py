@@ -232,7 +232,9 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         assert "recoverySearch," in chat
         assert "!excludedDomains.has(hostname)" in chat
         assert "const sources = readableSources;" in chat
-        assert "if (sources.length < 1)" in chat
+        assert "sources.length < requiredReadableSources" in chat
+        assert "readableProviderNames.length < requiredProviderCount" in chat
+        assert "readableDomains.size < requiredProviderCount" in chat
 
 
 def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritative_source():
@@ -248,7 +250,7 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         expected_recovery = "backend-recovery" if path.parent.name == "deep33-proxy" else "railway-recovery"
         assert f'fallback_path: "{expected_recovery}"' in generate
 
-def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
+def test_web_recovery_rejects_single_provider_evidence() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
@@ -257,10 +259,12 @@ def test_web_recovery_accepts_one_readable_source_without_false_empty() -> None:
         generate_start = source.index('if (path === "/v1/ai/generate" && req.method === "POST")')
         generate_end = source.index('if (path === "/v1/web/status"', generate_start)
         generate = source[generate_start:generate_end]
-        assert "if (sources.length < 1)" in chat
-        assert "if (!search.ok || sources.length < 1)" in generate
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in chat
-        assert 'level: sources.length >= 2 ? "multi-source" : "single-source"' in generate
+        assert "readableProviderNames.length < requiredProviderCount" in chat
+        assert "readableProviderNames.length < requiredProviderCount" in generate
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in chat
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in generate
+        assert "distinct_providers: readableProviderNames.length" in chat
+        assert "distinct_providers: readableProviderNames.length" in generate
         assert "ok: true," in chat
         assert "ok: true," in generate
 
@@ -325,6 +329,37 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert 'publisherHost.endsWith(".cl")' in result_filter
         assert "const googleNewsStory = host === \"news.google.com\"" in result_filter
         assert "const ChileanNationalSection = !googleNewsStory" in result_filter
+
+
+def test_edge_router_detects_external_entity_and_product_lookups():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        query_start = source.index("function requiresFreshWeb(")
+        query_end = source.index("\n}\n", query_start) + 2
+        router = source[query_start:query_end]
+        assert "const externalLookup =" in router
+        assert "const properNamePair =" in router
+        assert "const camelCaseOrAcronym =" in router
+        assert "qu[eé]\\s+es" in router
+        assert "documentaci" in router
+        assert "hospitales?" in router
+        assert "productos?" in router
+
+
+def test_edge_search_requires_independent_provider_provenance():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "provider_sources" in source
+        assert "function edgeProviderFamily(" in source
+        assert 'if (name.includes("google")) return "google";' in source
+        assert 'if (name.includes("bing") || name.includes("microsoft")) return "bing";' in source
+        assert 'if (name.includes("yahoo")) return "yahoo";' in source
+        assert "independentOnly = false" in source
+        assert 'provider.name !== "google_public"' in source
+        assert "const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;" in source
+        assert "provider_quorum_met: providerQuorumMet" in source
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
+        assert "providerSources" not in source
 
 
 def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pages():

@@ -98,6 +98,8 @@ type NavigatedWebSource = {
   url: string;
   snippet: string;
   source_domain?: string;
+  provider?: string;
+  provider_sources?: string[];
   page_text?: string;
   final_url?: string;
   retrieved_at?: string;
@@ -136,6 +138,10 @@ async function buildNavigatedWebEvidence(
           url: String(item.url).slice(0, 2000),
           snippet: String(item.snippet ?? "").slice(0, 900),
           source_domain: String(item.source_domain ?? "").slice(0, 255),
+          provider: String(item.provider ?? ""),
+          provider_sources: Array.isArray(item.provider_sources)
+            ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(item.provider || "")].filter(Boolean),
         }))
     : [];
 
@@ -430,7 +436,10 @@ function buildWebSearchQuery(query: string): string {
 
 function requiresFreshWeb(query: string): boolean {
   const normalized = query.toLowerCase();
-  return [
+  const externalLookup = /\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|what\s+does|qu[eé]\s+sabemos\s+(?:de|sobre)|what\s+do\s+you\s+know\s+about|qui[eé]n\s+(?:es|fue|ser[aá])|who\s+(?:is|are)|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
+  const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
+  const camelCaseOrAcronym = /\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/.test(query);
+  return externalLookup || properNamePair || camelCaseOrAcronym || [
     "internet", "web", "online", "actual", "actualmente", "hoy", "ayer", "mañana",
     "último", "última", "últimos", "últimas", "noticia", "noticias", "fuentes",
     "verifica", "verificar", "comprueba", "comprobar", "precio", "cotización",
@@ -2999,6 +3008,7 @@ async function runPublicWebSearchQuery(
   query: string,
   forceFullSearch = false,
   providerTimeoutMs?: number,
+  independentOnly = false,
 ) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
@@ -3047,7 +3057,7 @@ async function runPublicWebSearchQuery(
     },
   ];
 
-  const merged = new Map<string, Record<string, string>>();
+  const merged = new Map<string, Record<string, unknown>>();
   const providerNames: string[] = [];
 
   const fetchProvider = async (provider: typeof providers[number]) => {
@@ -3154,13 +3164,14 @@ async function runPublicWebSearchQuery(
     return { name: provider.name, results };
   };
 
-  const activeProviders = fastNewsQuery
+  const activeProviders = independentOnly || (forceFullSearch && currentNewsRequest)
+    // Corroboration must use independent public indexes, not a replay of Bing,
+    // Google News, or Wikipedia results from the primary search wave.
+    ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
     // News queries use several independent public-web providers in the same
     // bounded race. Google News is one candidate, never the exclusive source.
-    ? providers.filter((provider) => provider.name !== "wikipedia_public")
-    // Corroboration uses independent web indexes, not a replay of Bing/Google RSS.
-    : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
+    : fastNewsQuery
+      ? providers.filter((provider) => provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
@@ -3169,12 +3180,19 @@ async function runPublicWebSearchQuery(
     for (const result of item.value.results) {
       try {
         const domain = new URL(result.url).hostname;
-        if (!merged.has(result.url)) {
+        const existing = merged.get(result.url);
+        if (existing) {
+          const priorProviders = Array.isArray(existing.provider_sources)
+            ? existing.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(existing.provider || "")].filter(Boolean);
+          existing.provider_sources = [...new Set([...priorProviders, item.value.name])];
+        } else {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
             url: String(result.url).slice(0, 2000),
             snippet: String(result.snippet || "").slice(0, 1500),
             provider: item.value.name,
+            provider_sources: [item.value.name],
             domain,
             source_domain: String(result.source_domain || "").slice(0, 255),
           });
@@ -3186,10 +3204,10 @@ async function runPublicWebSearchQuery(
   }
 
   const all = [...merged.values()];
-  const diversified: Array<Record<string, string>> = [];
+  const diversified: Array<Record<string, unknown>> = [];
   const seenDomains = new Set<string>();
   for (const result of all) {
-    const domain = result.domain;
+    const domain = String(result.domain || "");
     if (seenDomains.has(domain)) continue;
     seenDomains.add(domain);
     diversified.push(result);
@@ -3208,7 +3226,7 @@ async function runPublicWebSearchQuery(
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) => new URL(String(item.url)).hostname)).size,
       },
     };
   }
@@ -3506,8 +3524,30 @@ function edgeFilterSearchResults(
   });
 }
 
+function edgeProviderFamily(provider: string): string {
+  const name = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
+  if (name.includes("google")) return "google";
+  if (name.includes("bing") || name.includes("microsoft")) return "bing";
+  if (name.includes("duckduckgo") || name.startsWith("ddg")) return "duckduckgo";
+  if (name.includes("mojeek")) return "mojeek";
+  if (name.includes("marginalia")) return "marginalia";
+  if (name.includes("yahoo")) return "yahoo";
+  if (name.includes("tavily")) return "tavily";
+  if (name.includes("cl0q")) return "cl0q";
+  if (name.includes("wikipedia")) return "wikipedia";
+  return name;
+}
+
 function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
-  return [...new Set(items.map((item) => String(item.provider || "").trim()).filter(Boolean))];
+  const names: string[] = [];
+  for (const item of items) {
+    if (Array.isArray(item.provider_sources)) {
+      names.push(...item.provider_sources.map((value) => edgeProviderFamily(String(value || ""))).filter(Boolean));
+    }
+    const provider = edgeProviderFamily(String(item.provider || ""));
+    if (provider) names.push(provider);
+  }
+  return [...new Set(names)];
 }
 
 function edgeSearchVerification(
@@ -3684,7 +3724,23 @@ async function publicWebSearchUncached(
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
       const url = String(value.url || "").trim();
-      if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
+      if (!url) continue;
+      const incomingProviders = Array.isArray(value.provider_sources)
+        ? value.provider_sources.map((item) => String(item || "")).filter(Boolean)
+        : [String(value.provider || "")].filter(Boolean);
+      const existing = merged.get(url);
+      if (existing) {
+        const priorProviders = Array.isArray(existing.provider_sources)
+          ? existing.provider_sources.map((item) => String(item || "")).filter(Boolean)
+          : [String(existing.provider || "")].filter(Boolean);
+        existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];
+      } else {
+        merged.set(url, {
+          ...value,
+          search_query: batch.query,
+          provider_sources: [...new Set(incomingProviders)],
+        });
+      }
     }
   };
   for (const batch of batches) mergeBatch(batch);
@@ -3692,18 +3748,15 @@ async function publicWebSearchUncached(
     edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
-  // Fresh news from a single provider is usable, but not yet independently corroborated.
-  // Give public secondary providers one short bounded window before returning.
-  if (
-    realtimeNewsPlan &&
-    finalResults.length > 0 &&
-    edgeProvidersForResults(finalResults).length < 2
-  ) {
+  // A single useful index is not independent corroboration. Give every lookup
+  // one bounded second wave against different public indexes before failing closed.
+  if (finalResults.length > 0 && edgeProvidersForResults(finalResults).length < 2) {
     const corroborationQuery = plan.queries[0] || plan.original;
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(1100, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      true,
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
@@ -3761,9 +3814,11 @@ async function publicWebSearchUncached(
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
   const providerNames = edgeProvidersForResults(finalResults);
+  const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;
+  const providerQuorumMet = providerNames.length >= requiredProviderCount;
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
-    ok: publicResults.length > 0,
+    ok: publicResults.length > 0 && providerQuorumMet,
     realtime: plan.depth === "realtime",
     fresh_request: true,
     realtime_news: /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|alerta|guerra)\b/i.test(plan.original),
@@ -3778,7 +3833,11 @@ async function publicWebSearchUncached(
     provider: providerNames.length === 1 ? providerNames[0] : providerNames.length > 1 ? "multi" : null,
     results: publicResults,
     sources: publicResults,
-    verification: edgeSearchVerification(finalResults, providerNames),
+    verification: {
+      ...edgeSearchVerification(finalResults, providerNames),
+      required_providers: requiredProviderCount,
+      provider_quorum_met: providerQuorumMet,
+    },
     latency_ms: Math.round(performance.now() - started),
   };
 }
@@ -3790,7 +3849,7 @@ function edgeSearchCacheKey(plan: { original: string; depth: string }): string {
 async function publicWebSearch(query: string): Promise<Record<string, unknown>> {
   const plan = edgeSearchQueries(query);
   const key = edgeSearchCacheKey(plan);
-  const cacheable = plan.depth === "standard" && EDGE_SEARCH_CACHE_TTL_MS > 0;
+  const cacheable = plan.depth === "standard" && !requiresFreshWeb(query) && EDGE_SEARCH_CACHE_TTL_MS > 0;
   const now = Date.now();
 
   if (cacheable) {
@@ -3866,6 +3925,9 @@ async function edgeSearch(
     const realtime = candidatePayload.realtime === true || edgeRealtimeQuery(q);
     const filtered = edgeFilterSearchResults(q, candidateItems, realtime).slice(0, MAX_WEB_SEARCH_RESULTS);
     if (!filtered.length) return null;
+    const requiredProviders = edgeCurrentDateTimeQuery(q) ? 1 : 2;
+    const candidateProviders = edgeProvidersForResults(filtered);
+    if (candidateProviders.length < requiredProviders) return null;
 
     const navigation = await buildNavigatedWebEvidence(
       { ...candidatePayload, results: filtered },
@@ -3908,6 +3970,9 @@ async function edgeSearch(
                 snippet,
                 source_domain: editorialDomain,
                 provider: String(item.provider || candidatePayload.provider || "unknown"),
+                provider_sources: Array.isArray(item.provider_sources)
+                  ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+                  : [String(item.provider || candidatePayload.provider || "")].filter(Boolean),
               };
             })
             .filter((item) =>
@@ -3922,7 +3987,12 @@ async function edgeSearch(
             )
         : [];
       const snippetDomains = new Set(snippetFallback.map((item) => item.source_domain));
-      if (snippetFallback.length < 2 || snippetDomains.size < 2) return null;
+      const snippetProviders = edgeProvidersForResults(snippetFallback);
+      if (
+        snippetFallback.length < requiredProviders ||
+        snippetDomains.size < requiredProviders ||
+        snippetProviders.length < requiredProviders
+      ) return null;
 
       const diversifiedSnippets: Array<Record<string, unknown>> = [];
       const usedDomains = new Set<string>();
@@ -3977,7 +4047,10 @@ async function edgeSearch(
         text: pageText.slice(0, 2200),
         text_chars: pageText.length,
         source_domain: domain || String(original.source_domain || ""),
-        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "railway"),
+        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "unknown"),
+        provider_sources: Array.isArray(original.provider_sources)
+          ? original.provider_sources.map((value) => String(value || "")).filter(Boolean)
+          : [String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "")].filter(Boolean),
         retrieved_at: String(source.retrieved_at || new Date().toISOString()),
       };
     }).filter((item) => item.source_domain && item.text_chars >= 80);
@@ -3985,6 +4058,7 @@ async function edgeSearch(
 
     const providers = edgeProvidersForResults(results);
     const domains = [...new Set(results.map((item) => item.source_domain))];
+    if (providers.length < requiredProviders || domains.length < requiredProviders) return null;
     const extractedTextChars = results.reduce((sum, item) => sum + item.text_chars, 0);
     const retrievedAt = new Date().toISOString();
     const fetchedPages = results.map((item) => ({
@@ -4447,12 +4521,26 @@ Deno.serve(async (req) => {
 
         const sources = readableSources;
         verifiedSourcesForOutput = sources;
-        if (sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(query) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          readableSources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(readableSources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return new Response(
             "event: error\ndata: " +
               JSON.stringify({
                 status: "FAIL",
-                error: "WEB_SEARCH_NO_RESULTS",
+                error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+                  ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+                  : "WEB_SEARCH_NO_RESULTS",
               }) +
               "\n\ndata: [DONE]\n\n",
             {
@@ -4470,10 +4558,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {
@@ -4881,8 +4970,7 @@ Deno.serve(async (req) => {
         .filter((item) => item.role === "user")
         .map((item) => String(item.content ?? "").trim())
         .join("\n")
-        .trim()
-        .toLowerCase();
+        .trim();
 
       const webTrigger = requiresFreshWeb(query);
 
@@ -4996,10 +5084,25 @@ Deno.serve(async (req) => {
         }
 
         const sources = readableSources;
-        if (!search.ok || sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(searchQuery) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          sources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(sources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          !search.ok ||
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return json({
             status: "FAIL",
-            error: "WEB_SEARCH_NO_RESULTS",
+            error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+              ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+              : "WEB_SEARCH_NO_RESULTS",
             web_navigation: false,
             sources: [],
           }, 503);
@@ -5008,10 +5111,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {

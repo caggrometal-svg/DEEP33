@@ -26,6 +26,31 @@ from tools.web_search import (
 
 logger = logging.getLogger(__name__)
 
+
+def _provider_family(provider: str) -> str:
+    """Collapse aliases from the same search company into one independent source."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    if "google" in name:
+        return "google"
+    if "bing" in name or "microsoft" in name:
+        return "bing"
+    if "yahoo" in name:
+        return "yahoo"
+    if "duckduckgo" in name or name.startswith("ddg"):
+        return "duckduckgo"
+    if "mojeek" in name:
+        return "mojeek"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    if "wikipedia" in name:
+        return "wikipedia"
+    return name
+
+
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
 FALLBACK_DELAY_SECONDS = 0.35
@@ -847,6 +872,23 @@ class WebOrchestrator:
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
+        # A single configured provider is never enough to certify a web answer.
+        required_provider_count = 2
+
+        def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
+            # Provider success only counts when that provider independently
+            # returned evidence relevant to the user's original query.
+            return {
+                _provider_family(outcome.provider)
+                for outcome in candidate_outcomes
+                if outcome.ok
+                and outcome.results
+                and rank_results(
+                    cleaned,
+                    outcome.results,
+                    realtime=is_realtime_query(cleaned),
+                )
+            }
         chile_public_info_intent = (
             "chile" in lowered_cleaned
             and any(term in lowered_cleaned for term in (
@@ -1215,9 +1257,7 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                distinct_providers = {
-                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                }
+                distinct_providers = relevant_provider_names(outcomes)
                 enough_sources = (
                     len(selected_now) >= min(3, self.max_results)
                     and len(distinct_domains) >= min(3, len(selected_now))
@@ -1242,7 +1282,7 @@ class WebOrchestrator:
                 )
                 if (
                     enough_sources
-                    and len(distinct_providers) >= min(2, len(self.providers))
+                    and len(distinct_providers) >= required_provider_count
                 ):
                     break
                 if (
@@ -1378,12 +1418,9 @@ class WebOrchestrator:
             and news_intent
             and len(selected_domains) < min(5, self.max_results)
         )
-        successful_providers = {
-            outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-        }
+        successful_providers = relevant_provider_names(outcomes)
         needs_provider_diversity = (
-            (is_realtime_query(cleaned) or news_intent)
-            and len(successful_providers) < min(2, len(self.providers))
+            len(successful_providers) < required_provider_count
         )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
@@ -1464,13 +1501,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
-                    distinct_providers_now = {
-                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                    }
+                    distinct_providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
-                        and len(distinct_providers_now) >= min(2, len(self.providers))
+                        and len(distinct_providers_now) >= required_provider_count
                         and (
                             not who_dengue_source_intent
                             or _has_who_dengue_item(selected_now)
@@ -1576,15 +1611,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("url")
                     } - {""}
-                    providers_now = {
-                        outcome.provider
-                        for outcome in outcomes
-                        if outcome.ok and outcome.results
-                    }
+                    providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(domains_now) >= min(3, self.max_results)
-                        and len(providers_now) >= min(2, len(self.providers))
+                        and len(providers_now) >= required_provider_count
                     ):
                         break
             finally:
@@ -1701,12 +1732,10 @@ class WebOrchestrator:
             len(selected) < minimum_coverage
             or len(selected_domains - {""}) < minimum_coverage
         )
-        selected_providers = {
-            str(item.get("provider") or "").strip()
-            for item in selected
-            if str(item.get("provider") or "").strip()
-        }
-        insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
+        selected_providers = relevant_provider_names(outcomes)
+        insufficient_provider_diversity = (
+            len(selected_providers) < required_provider_count
+        )
         yahoo_available = (
             "yahoo" in self.fallback_providers
             and "yahoo" in self.circuits
@@ -1938,10 +1967,26 @@ class WebOrchestrator:
         executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
-        providers_used = list(dict.fromkeys(o.provider for o in outcomes if o.ok))
-        attempted = list(dict.fromkeys(o.provider for o in outcomes))
-        winner = next((o.provider for o in outcomes if o.ok and o.results), None)
         realtime = is_realtime_query(query)
+        relevant_outcomes = [
+            outcome
+            for outcome in outcomes
+            if outcome.ok
+            and outcome.results
+            and rank_results(query, outcome.results, realtime=realtime)
+        ]
+        providers_used = list(dict.fromkeys(o.provider for o in relevant_outcomes))
+        provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
+        attempted = list(dict.fromkeys(o.provider for o in outcomes))
+        winner = next((o.provider for o in relevant_outcomes), None)
+        required_providers = 2
+        provider_quorum_met = len(provider_families) >= required_providers
+        final_ok = bool(selected) and provider_quorum_met
+        final_status = (
+            status
+            if final_ok or not selected
+            else "INSUFFICIENT_PROVIDER_QUORUM"
+        )
         domains = sorted({
             (urlparse(str(item.get("url") or "")).hostname or "").casefold()
             for item in selected
@@ -1955,9 +2000,9 @@ class WebOrchestrator:
             else "none"
         )
         return {
-            "ok": bool(selected),
-            "status": status,
-            "diagnostic_code": None if selected else status,
+            "ok": final_ok,
+            "status": final_status,
+            "diagnostic_code": None if final_ok else final_status,
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
@@ -1973,7 +2018,7 @@ class WebOrchestrator:
             "providers_attempted": attempted,
             "provider": (
                 providers_used[0]
-                if len(providers_used) == 1
+                if len(provider_families) == 1
                 else "multi"
                 if providers_used
                 else None
@@ -1982,7 +2027,9 @@ class WebOrchestrator:
             "verification": {
                 "level": verification_level,
                 "distinct_domains": len(domains),
-                "distinct_providers": len(set(providers_used)),
+                "distinct_providers": len(provider_families),
+                "required_providers": required_providers,
+                "provider_quorum_met": provider_quorum_met,
                 "corroborated_results": 0,
             },
             "errors": errors[:8],
