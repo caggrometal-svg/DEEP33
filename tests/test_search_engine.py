@@ -966,8 +966,12 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
         result = await orchestrator.search("Python asyncio official documentation", fresh=True)
         elapsed = asyncio.get_running_loop().time() - started
 
-        assert result["ok"] is True
-        assert len({item["source_domain"] for item in result["results"]}) >= 3
+        # One fast index may provide discovery candidates, but it cannot satisfy
+        # the independent-provider evidence contract while sibling indexes are down.
+        assert result["ok"] is False, result
+        assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+        assert result["verification"]["distinct_providers"] == 1
+        assert result["verification"]["provider_quorum_met"] is False
         assert elapsed < 0.8
         assert cancelled["count"] >= 1
 
@@ -1064,7 +1068,11 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
             "https://www.bcn.cl/leychile",
             "https://www.consejotransparencia.cl/",
         }
-        assert result["ok"] is True, result
+        # Official portal candidates are not a substitute for a second
+        # independent search provider.
+        assert result["ok"] is False, result
+        assert result["diagnostic_code"] == "INSUFFICIENT_PROVIDER_QUORUM"
+        assert result["verification"]["provider_quorum_met"] is False
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.gob.cl/" not in urls
