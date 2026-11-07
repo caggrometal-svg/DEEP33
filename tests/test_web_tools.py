@@ -642,7 +642,6 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
             api_key="",
             timeout_seconds=5,
             fresh=True,
-            fallback_ddg=False,
         )
     )
 
