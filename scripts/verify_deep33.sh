@@ -142,19 +142,21 @@ request_file web_search "$VERCEL_URL/v1/web/search" 75 \
 [ "$HTTP_CODE" = "200" ] || { show_redirect web_search; cat "$TMP_DIR/web_search.body"; fail "WEB_SEARCH_HTTP_$HTTP_CODE"; }
 jq -e '
   .ok == true and
-  ((.results // []) | length) >= 1 and
-  ((.fetched_pages // []) | length) >= 1 and
-  ((.sources // .results // []) | length) >= 1 and
-  ([.results[]? | select((.url // "") | startswith("https://"))] | length) >= 1 and
-  ([.fetched_pages[]? | select((.url // .final_url // "") | startswith("https://"))] | length) >= 1 and
-  (.domains_used // 0) >= 1 and
-  (.extracted_text_chars // 0) >= 80
+  ((.verification.provider_quorum_met // false) == true) and
+  ((.verification.distinct_providers // 0) >= 2) and
+  ((.results // []) | length) >= 2 and
+  ((.fetched_pages // []) | length) >= 2 and
+  ((.sources // .results // []) | length) >= 2 and
+  ([.results[]? | select((.url // "") | startswith("https://"))] | length) >= 2 and
+  ([.fetched_pages[]? | select((.url // .final_url // "") | startswith("https://"))] | length) >= 2 and
+  (.domains_used // 0) >= 2 and
+  (.extracted_text_chars // 0) >= 160
 ' "$TMP_DIR/web_search.body" >/dev/null || {
-  jq -c '{ok,status,code,errors,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length)}' "$TMP_DIR/web_search.body" 2>/dev/null || true
-  fail "SEARCH=FAIL web_navigation_or_extraction_not_verified"
+  jq -c '{ok,status,code,errors,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length)}' "$TMP_DIR/web_search.body" 2>/dev/null || true
+  fail "SEARCH=FAIL independent_provider_quorum_or_multi_domain_extraction_not_verified"
 }
-jq -c '{ok,realtime,providers,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
-echo "SEARCH=PASS web_navigation=true results>=1 fetched_pages>=1 sources>=1"
+jq -c '{ok,realtime,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
+echo "SEARCH=PASS independent_providers>=2 independent_domains>=2 fetched_pages>=2"
 
 request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
   --no-buffer -X POST \
