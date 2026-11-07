@@ -638,7 +638,7 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
                             b"<link>https://news-independent.example/las-condes/actualizacion</link>"
                             b"<description>Situación actual de Las Condes en Chile; otra fuente independiente de hoy.</description>"
                             b"<source url=\"https://www.elpais.com/\">El País</source>"
-                            + pub_date.encode("ascii")
+                            + b"<pubDate>" + pub_date.encode("ascii") + b"</pubDate>"
                             + b"</item></channel></rss>"
                         ),
                     )
