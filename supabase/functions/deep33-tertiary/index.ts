@@ -3125,7 +3125,7 @@ async function runPublicWebSearchQuery(
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) => new URL(String(item.url)).hostname)).size,
       },
     };
   }
