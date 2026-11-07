@@ -327,6 +327,31 @@ def test_current_chile_news_preserves_topic_and_rejects_unrelated_headlines():
         assert "const ChileanNationalSection = !googleNewsStory" in result_filter
 
 
+def test_edge_router_detects_external_entity_and_product_lookups():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        query_start = source.index("function requiresFreshWeb(")
+        query_end = source.index("\n}\n", query_start) + 2
+        router = source[query_start:query_end]
+        assert "const externalLookup =" in router
+        assert "const properNamePair =" in router
+        assert "const camelCaseOrAcronym =" in router
+        assert "documentaci" in router
+        assert "hospitales?" in router
+        assert "productos?" in router
+
+
+def test_edge_search_requires_independent_provider_provenance():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert "provider_sources" in source
+        assert "independentOnly = false" in source
+        assert "requiredProviderCount = 2" in source
+        assert "provider_quorum_met: providerQuorumMet" in source
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
+        assert "providerSources" not in source
+
+
 def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pages():
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
