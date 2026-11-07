@@ -131,6 +131,25 @@ _RESEARCH_RE = re.compile(
     re.I,
 )
 _PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
+_EXTERNAL_LOOKUP_RE = re.compile(
+    r"\\b(?:qui[eé]n\\s+(?:es|fue|ser[aá])|who\\s+is|where\\s+is|"
+    r"d[oó]nde\\s+(?:queda|est[aá]|se\\s+encuentra)|ubicaci[oó]n\\s+de|"
+    r"informaci[oó]n\\s+(?:sobre|de)|datos\\s+(?:sobre|de)|"
+    r"empresa|compa[nñ][ií]a|marca|producto|modelo|fabricante|"
+    r"organizaci[oó]n|instituci[oó]n|organismo|ministerio|municipalidad|"
+    r"hospital|cl[ií]nica|universidad|servicio\\s+p[uú]blico|"
+    r"ley\\s+vigente|normativa|reglamento|documentaci[oó]n|"
+    r"\\bapi\\b|software|versi[oó]n|fecha\\s+de\\s+lanzamiento|"
+    r"cu[aá]nto\\s+cuesta|precio|disponible|stock|horario|"
+    r"compar(?:a|ar|aci[oó]n)|versus|\\bvs\\b|alternativas|"
+    r"estudio\\s+cient[ií]fico|investigaci[oó]n\\s+cient[ií]fica|"
+    r"estad[ií]sticas?\\s+de|autor\\s+de|libro\\s+de|pel[ií]cula\\s+de)\\b",
+    re.I,
+)
+_PROPER_NAME_PAIR_RE = re.compile(
+    r"\\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\\b"
+)
+_CAMEL_OR_ACRONYM_RE = re.compile(r"\\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\\b")
 
 
 def classify_query(query: str) -> Decision:
@@ -167,6 +186,15 @@ def classify_query(query: str) -> Decision:
         return Decision(
             DecisionRoute.WEB, 0.92,
             "explicit_current_or_web_request", cleaned, 20.0,
+        )
+    if (
+        _EXTERNAL_LOOKUP_RE.search(cleaned)
+        or _PROPER_NAME_PAIR_RE.search(cleaned)
+        or _CAMEL_OR_ACRONYM_RE.search(cleaned)
+    ):
+        return Decision(
+            DecisionRoute.WEB, 0.90,
+            "external_entity_or_factual_lookup", cleaned, 15.0,
         )
     return Decision(
         DecisionRoute.INTERNAL, 0.86,
