@@ -31,6 +31,30 @@ def test_classifier_routes_explicit_web_request_to_web():
     assert classify_query("Busca en internet quién ganó la elección hoy").route == DecisionRoute.WEB
 
 
+def test_classifier_routes_named_people_and_organizations_to_web_without_currentness_words():
+    queries = (
+        "¿Quién es Donald Trump?",
+        "¿Qué sabemos de OpenAI?",
+        "Información sobre el Hospital Veterinario de Santiago",
+        "¿Dónde queda el Museo Nacional de Bellas Artes?",
+    )
+    assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
+
+
+def test_classifier_routes_products_companies_and_technical_docs_to_web():
+    queries = (
+        "Compara Samsung Galaxy S26 con iPhone 17",
+        "¿Cuánto cuesta un Toyota Corolla?",
+        "Documentación de Python asyncio",
+        "¿Qué versión de Android tiene el Samsung Galaxy?",
+    )
+    assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
+
+
+def test_classifier_keeps_stable_general_knowledge_internal():
+    assert classify_query("¿Por qué el cielo se ve azul?").route == DecisionRoute.INTERNAL
+
+
 def test_validation_rejects_missing_metadata():
     evidence = Evidence(ok=True, route=DecisionRoute.FINANCE, data={"value": 900, "date": "2026-10-15"})
     validated = __import__("asyncio").run(validate_evidence(evidence))
