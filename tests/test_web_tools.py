@@ -717,10 +717,11 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
                         request=request,
                         headers={"content-type": "text/html"},
                         content=(
-                            b'<html><body><a class="ob" href="https://news-independent.example/las-condes/actualizacion">'
+                            b'<html><body><ul class="results-standard"><li><h2>'
+                            b'<a class="ob" href="https://news-independent.example/las-condes/actualizacion">'
                             b'Las Condes otra actualizacion local publicada hoy</a>'
-                            b'<p class="s">Situacion actual de Las Condes en Chile; otra fuente independiente de hoy.</p>'
-                            b"</body></html>"
+                            b'</h2><p class="s">Situacion actual de Las Condes en Chile; otra fuente independiente de hoy.</p>'
+                            b"</li></ul></body></html>"
                         ),
                     )
                 if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
