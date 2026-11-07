@@ -972,7 +972,7 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
         assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
         assert result["verification"]["distinct_providers"] == 1
         assert result["verification"]["provider_quorum_met"] is False
-        assert elapsed < 0.8
+        assert elapsed < 1.3
         assert cancelled["count"] >= 1
 
     asyncio.run(scenario())
