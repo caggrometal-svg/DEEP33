@@ -37,6 +37,8 @@ def test_classifier_routes_named_people_and_organizations_to_web_without_current
         "¿Qué sabemos de OpenAI?",
         "Información sobre el Hospital Veterinario de Santiago",
         "¿Dónde queda el Museo Nacional de Bellas Artes?",
+        "¿Qué hospitales públicos están operativos?",
+        "¿Qué empresas venden paneles solares en Chile?",
     )
     assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
 
