@@ -1940,10 +1940,25 @@ class WebOrchestrator:
         executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
-        providers_used = list(dict.fromkeys(o.provider for o in outcomes if o.ok))
-        attempted = list(dict.fromkeys(o.provider for o in outcomes))
-        winner = next((o.provider for o in outcomes if o.ok and o.results), None)
         realtime = is_realtime_query(query)
+        relevant_outcomes = [
+            outcome
+            for outcome in outcomes
+            if outcome.ok
+            and outcome.results
+            and rank_results(query, outcome.results, realtime=realtime)
+        ]
+        providers_used = list(dict.fromkeys(o.provider for o in relevant_outcomes))
+        attempted = list(dict.fromkeys(o.provider for o in outcomes))
+        winner = next((o.provider for o in relevant_outcomes), None)
+        required_providers = min(2, len(self.providers))
+        provider_quorum_met = len(providers_used) >= required_providers
+        final_ok = bool(selected) and provider_quorum_met
+        final_status = (
+            status
+            if final_ok or not selected
+            else "INSUFFICIENT_PROVIDER_QUORUM"
+        )
         domains = sorted({
             (urlparse(str(item.get("url") or "")).hostname or "").casefold()
             for item in selected
@@ -1957,9 +1972,9 @@ class WebOrchestrator:
             else "none"
         )
         return {
-            "ok": bool(selected),
-            "status": status,
-            "diagnostic_code": None if selected else status,
+            "ok": final_ok,
+            "status": final_status,
+            "diagnostic_code": None if final_ok else final_status,
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
@@ -1985,6 +2000,8 @@ class WebOrchestrator:
                 "level": verification_level,
                 "distinct_domains": len(domains),
                 "distinct_providers": len(set(providers_used)),
+                "required_providers": required_providers,
+                "provider_quorum_met": provider_quorum_met,
                 "corroborated_results": 0,
             },
             "errors": errors[:8],
