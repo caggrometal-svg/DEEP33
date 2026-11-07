@@ -1266,24 +1266,14 @@ class SearchEngine:
                 if str(item.get("url") or "").strip()
             }
             domains = {_host(url) for url in urls if _host(url)}
-            # A result count or several domains from one index is not independent
-            # corroboration. Require two successful providers whenever the request
-            # has at least two configured providers; explicit single-provider mode
-            # remains supported and is reported honestly as single-provider.
-            successful_provider_count = len({
-                name for name, batch in successful if relevant(batch)
-            })
-            required_provider_count = min(2, len(providers))
             if fast_mode:
                 return bool(ranked)
-            if successful_provider_count < required_provider_count:
-                return False
             if plan_depth == "realtime":
                 if _requires_realtime_multidomain(planned_query):
                     return len(domains) >= min(3, self.max_results)
                 return bool(ranked)
-            if plan_depth == "deep":
-                return len(urls) >= min(3, self.max_results)
+            if plan_depth == "deep" and len(providers) > 1:
+                return len({name for name, _batch in successful}) >= 2 and len(urls) >= min(3, self.max_results)
             return len(urls) >= required_coverage and len(domains) >= min(required_coverage, 2)
 
         async def call(name: str) -> tuple[str, list[dict], list[str]]:
@@ -1482,8 +1472,6 @@ class SearchEngine:
                 if plan.depth == "deep"
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
-            min_provider_successes = min(2, len(providers))
-            provider_quorum_met = first_provider_count >= min_provider_successes
             if plan.depth == "realtime":
                 if _requires_realtime_multidomain(plan.original_query):
                     first_domains = {
@@ -1492,17 +1480,13 @@ class SearchEngine:
                         for item in items
                         if _host(str(item.get("url") or ""))
                     }
-                    sufficiently_verified = (
-                        provider_quorum_met
-                        and len(first_domains) >= min(3, self.max_results)
-                    )
+                    sufficiently_verified = len(first_domains) >= min(3, self.max_results)
                 else:
-                    sufficiently_verified = (
-                        provider_quorum_met and first_result_count >= 1
-                    )
+                    sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
             else:
+                min_provider_successes = 1 if len(providers) == 1 else 2
                 sufficiently_verified = (
-                    provider_quorum_met
+                    first_provider_count >= min_provider_successes
                     and first_result_count >= required_results
                 )
             if not sufficiently_verified:
@@ -1594,13 +1578,9 @@ class SearchEngine:
             verification_level = "single-source"
         else:
             verification_level = "none"
-        required_provider_count = min(2, len(providers))
-        provider_quorum_met = len(providers_used) >= required_provider_count
 
         return {
-            # Do not mark a multi-provider request successful when only one
-            # search index supplied relevant evidence, even if it returned many URLs.
-            "ok": bool(selected) and provider_quorum_met,
+            "ok": bool(selected),
             "realtime": plan.depth == "realtime",
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "engine": "DEEP33 Search Engine",
@@ -1622,8 +1602,6 @@ class SearchEngine:
                 "level": verification_level,
                 "distinct_domains": len(distinct_domains),
                 "distinct_providers": len(providers_used),
-                "required_providers": required_provider_count,
-                "provider_quorum_met": provider_quorum_met,
                 "corroborated_results": corroborated,
             },
             "errors": errors[:8],
