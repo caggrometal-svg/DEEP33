@@ -9,6 +9,15 @@ from backend import main
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_master_gate_requires_independent_provider_quorum_and_multiple_readable_domains():
+    script = (ROOT / "scripts" / "verify_deep33.sh").read_text(encoding="utf-8")
+    assert "(.verification.provider_quorum_met // false) == true" in script
+    assert "(.verification.distinct_providers // 0) >= 2" in script
+    assert "(.domains_used // 0) >= 2" in script
+    assert "((.fetched_pages // []) | length) >= 2" in script
+    assert "independent_provider_quorum_or_multi_domain_extraction_not_verified" in script
+
+
 def test_chat_stream_uses_live_streaming_path():
     source = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
     route = source[source.index('@app.post("/v1/chat/stream")'):]
