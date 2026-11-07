@@ -326,7 +326,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name !== "wikipedia_public"' in source
-        assert 'provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
+        assert 'provider.name !== "bing_public" && provider.name !== "google_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "const recoveryPlan = [" in source
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
