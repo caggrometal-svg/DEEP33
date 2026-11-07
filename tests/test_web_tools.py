@@ -721,7 +721,6 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
             api_key="",
             timeout_seconds=3,
             fresh=True,
-            fallback_ddg=False,
         )
     )
 
