@@ -131,7 +131,7 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
         if "official" in query.casefold():
             return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
         recovered.append(provider)
-        if provider == "bing":
+        if provider in {"bing", "mojeek"}:
             return ProviderOutcome(provider=provider, ok=True, results=results)
         await asyncio.sleep(0.5)
         return ProviderOutcome(provider=provider, ok=False, error_code="PROVIDER_TIMEOUT")
@@ -146,6 +146,48 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
     assert len({item["source_domain"] for item in result["results"]}) >= 3
     assert "bing" in recovered
     assert result["latency_ms"] < 250
+
+
+def test_web_orchestrator_fails_closed_when_only_one_provider_has_relevant_results():
+    from backend.search.resilient import ProviderOutcome, WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=3,
+        provider_total_seconds=0.05,
+        global_budget_seconds=0.18,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    relevant = [
+        {"title": "Python asyncio documentation", "url": f"https://docs.python.org/3/asyncio-{i}.html",
+         "snippet": "Python asyncio documentation and event loop"}
+        for i in range(3)
+    ]
+    unrelated = [
+        {"title": "Gardening guide", "url": "https://gardening.example/soil",
+         "snippet": "Plants, soil and garden care"}
+    ]
+
+    async def fake_call_provider(provider, query):
+        if provider == "bing":
+            return ProviderOutcome(provider=provider, ok=True, results=relevant)
+        if provider == "mojeek":
+            # A transport-successful response is not a relevant evidence provider.
+            return ProviderOutcome(provider=provider, ok=True, results=unrelated)
+        return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
+
+    orchestrator._call_provider = fake_call_provider
+    result = asyncio.run(
+        orchestrator.search("Python asyncio documentation", fresh=True)
+    )
+
+    assert result["results"], result
+    assert result["ok"] is False
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
 
 
 def test_recovery_broadens_provider_query_but_ranks_against_original_question():
