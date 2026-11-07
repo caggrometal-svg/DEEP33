@@ -340,6 +340,7 @@ def test_edge_router_detects_external_entity_and_product_lookups():
         assert "const externalLookup =" in router
         assert "const properNamePair =" in router
         assert "const camelCaseOrAcronym =" in router
+        assert "qu[eé]\\s+es" in router
         assert "documentaci" in router
         assert "hospitales?" in router
         assert "productos?" in router
@@ -350,7 +351,7 @@ def test_edge_search_requires_independent_provider_provenance():
         source = path.read_text(encoding="utf-8")
         assert "provider_sources" in source
         assert "independentOnly = false" in source
-        assert "requiredProviderCount = 2" in source
+        assert "const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;" in source
         assert "provider_quorum_met: providerQuorumMet" in source
         assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
         assert "providerSources" not in source
