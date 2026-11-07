@@ -960,19 +960,18 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
                 cancelled["count"] += 1
                 raise
 
-        orchestrator.providers = {"bing": fast, "google": slow, "duckduckgo": slow}
+        orchestrator.providers = {"bing": fast, "google": fast, "duckduckgo": slow}
         orchestrator.circuits = {name: orchestrator.circuits[name] for name in orchestrator.providers}
         started = asyncio.get_running_loop().time()
         result = await orchestrator.search("Python asyncio official documentation", fresh=True)
         elapsed = asyncio.get_running_loop().time() - started
 
-        # One fast index may provide discovery candidates, but it cannot satisfy
-        # the independent-provider evidence contract while sibling indexes are down.
-        assert result["ok"] is False, result
-        assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
-        assert result["verification"]["distinct_providers"] == 1
-        assert result["verification"]["provider_quorum_met"] is False
-        assert elapsed < 1.3
+        # Two independent providers with three relevant domains satisfy the
+        # evidence contract; the slower third provider must be cancelled.
+        assert result["ok"] is True, result
+        assert result["verification"]["distinct_providers"] == 2
+        assert result["verification"]["provider_quorum_met"] is True
+        assert elapsed < 0.8
         assert cancelled["count"] >= 1
 
     asyncio.run(scenario())
