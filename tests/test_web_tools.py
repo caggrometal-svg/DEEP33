@@ -508,11 +508,17 @@ def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     class Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
             async def handler(request):
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
                         content=b"""<?xml version="1.0"?><rss><channel><item><title>DEEP33</title><link>https://example.org/deep33</link><description>Search result</description></item></channel></rss>""",
+                    )
+                if request.url.host == "www.google.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        text='<html><body><a href="https://independent.example/deep33"><h3>DEEP33 independent reference</h3></a></body></html>',
                     )
                 return httpx.Response(502, request=request)
             kwargs["transport"] = httpx.MockTransport(handler)
@@ -544,7 +550,13 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
         def __init__(self, *args, **kwargs):
             async def handler(request):
                 requested.append(str(request.url))
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "www.google.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        text='<html><body><a href="https://peps.python.org/pep-3156/"><h3>Python asyncio PEP 3156</h3></a></body></html>',
+                    )
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
@@ -614,7 +626,21 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
         def __init__(self, *args, **kwargs):
             async def handler(request):
                 requested.append(str(request.url))
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "news.google.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        headers={"content-type": "application/rss+xml"},
+                        content=(
+                            b"<?xml version=\"1.0\"?><rss><channel><item>"
+                            b"<title>Las Condes: otra actualización local publicada hoy</title>"
+                            b"<link>https://news-independent.example/las-condes/actualizacion</link>"
+                            b"<description>Situación actual de Las Condes en Chile; otra fuente independiente de hoy.</description>"
+                            b"<source url=\"https://www.elpais.com/\">El País</source>"
+                            b"</item></channel></rss>"
+                        ),
+                    )
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
