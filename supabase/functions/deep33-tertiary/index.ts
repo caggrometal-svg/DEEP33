@@ -434,7 +434,7 @@ function buildWebSearchQuery(query: string): string {
 
 function requiresFreshWeb(query: string): boolean {
   const normalized = query.toLowerCase();
-  const externalLookup = /\b(?:qui[eé]n\s+(?:es|fue|ser[aá])|who\s+is|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
+  const externalLookup = /\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|what\s+does|qu[eé]\s+sabemos\s+(?:de|sobre)|what\s+do\s+you\s+know\s+about|qui[eé]n\s+(?:es|fue|ser[aá])|who\s+(?:is|are)|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
   const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
   const camelCaseOrAcronym = /\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/.test(query);
   return externalLookup || properNamePair || camelCaseOrAcronym || [
@@ -4847,8 +4847,7 @@ Deno.serve(async (req) => {
         .filter((item) => item.role === "user")
         .map((item) => String(item.content ?? "").trim())
         .join("\n")
-        .trim()
-        .toLowerCase();
+        .trim();
 
       const webTrigger = requiresFreshWeb(query);
 
