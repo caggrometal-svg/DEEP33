@@ -187,6 +187,14 @@ def test_web_orchestrator_never_certifies_a_single_configured_provider():
     assert result["verification"]["provider_quorum_met"] is False
 
 
+def test_search_provider_families_collapse_google_and_bing_aliases():
+    from backend.search.resilient import _provider_family
+
+    assert _provider_family("google_news") == _provider_family("google")
+    assert _provider_family("yahoo") == _provider_family("bing")
+    assert _provider_family("duckduckgo") != _provider_family("bing")
+
+
 def test_web_orchestrator_does_not_count_google_news_as_a_second_google_provider():
     from backend.search.resilient import WebOrchestrator
 
