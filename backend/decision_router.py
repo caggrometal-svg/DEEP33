@@ -132,18 +132,18 @@ _RESEARCH_RE = re.compile(
 )
 _PRICE_RE = re.compile(r"\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\b", re.I)
 _EXTERNAL_LOOKUP_RE = re.compile(
-    r"\b(?:qui[eé]n\s+(?:es|fue|ser[aá])|who\s+is|where\s+is|"
+    r"\b(?:qui[eé]nes?\s+(?:es|son|fue|fueron|ser[aá])|who\s+(?:is|are)|where\s+is|"
     r"d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|"
-    r"informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|"
-    r"empresa|compa[nñ][ií]a|marca|producto|modelo|fabricante|"
-    r"organizaci[oó]n|instituci[oó]n|organismo|ministerio|municipalidad|"
-    r"hospital|cl[ií]nica|universidad|servicio\s+p[uú]blico|"
-    r"ley\s+vigente|normativa|reglamento|documentaci[oó]n|"
-    r"\bapi\b|software|versi[oó]n|fecha\s+de\s+lanzamiento|"
-    r"cu[aá]nto\s+cuesta|precio|disponible|stock|horario|"
-    r"compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas|"
-    r"estudio\s+cient[ií]fico|investigaci[oó]n\s+cient[ií]fica|"
-    r"estad[ií]sticas?\s+de|autor\s+de|libro\s+de|pel[ií]cula\s+de)\b",
+    r"informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|qu[eé]\s+pas[oó]\s+con|"
+    r"empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|"
+    r"organizaci[oó]nes?|instituciones?|organismos?|ministerios?|municipalidades?|"
+    r"hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|"
+    r"leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?|"
+    r"apis?|software|versiones?|fecha\s+de\s+lanzamiento|"
+    r"cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|"
+    r"compar(?:a|ar|aci[oó]n)|versus|vs|alternativas?|"
+    r"estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|"
+    r"estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b",
     re.I,
 )
 _PROPER_NAME_PAIR_RE = re.compile(
