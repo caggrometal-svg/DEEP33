@@ -743,6 +743,14 @@ class WebOrchestrator:
         except Exception as exc:
             state.failure(time.monotonic())
             name = type(exc).__name__.upper()
+            # Keep the public payload stable and credential-free while retaining
+            # the sanitized exception detail in server diagnostics for live audits.
+            logger.warning(
+                "web_search_provider_error provider=%s error_type=%s detail=%s",
+                provider,
+                name,
+                str(exc).replace("\\n", " ")[:240],
+            )
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
