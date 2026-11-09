@@ -11,6 +11,26 @@ def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvide
     return GatewayProvider(name=name, url=url, health_url=health_url, api_key="", model=model)
 
 
+def test_dots_payload_disables_hidden_reasoning_and_sets_visible_output_budget() -> None:
+    dots = provider(
+        "kilo",
+        "https://gateway.test/chat",
+        "https://gateway.test/models",
+        "dots-studio/dots-3-note-preview:free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Summarize these sources."}],
+            "reasoning_effort": "low",
+            "max_tokens": None,
+        },
+        dots,
+    )
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in payload
+
+
 def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
     calls: list[str] = []
 
