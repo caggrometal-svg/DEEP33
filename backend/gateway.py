@@ -29,11 +29,20 @@ _PROVIDER_POLICY_BLOCK_PHRASES = (
 
 
 class GatewayTimeoutError(Exception):
-    pass
+    def __init__(self, attempts: list[dict] | None = None) -> None:
+        super().__init__("gateway provider timeout")
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 class GatewayHTTPError(Exception):
-    pass
+    def __init__(
+        self,
+        status_code: int | None = None,
+        attempts: list[dict] | None = None,
+    ) -> None:
+        super().__init__(f"gateway provider HTTP failure: {status_code or 'unknown'}")
+        self.status_code = status_code
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 class GatewayInvalidResponseError(Exception):
@@ -674,7 +683,7 @@ class AIGateway:
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            raise GatewayHTTPError
+                            raise GatewayHTTPError(status_code=status, attempts=attempts)
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
@@ -884,9 +893,9 @@ class AIGateway:
                 )
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
-            raise GatewayTimeoutError
+            raise GatewayTimeoutError(attempts=attempts)
         if saw_http_error:
-            raise GatewayHTTPError
+            raise GatewayHTTPError(status_code=last_status, attempts=attempts)
         raise GatewayInvalidResponseError(attempts=attempts)
 
     async def diagnostic_inference(
