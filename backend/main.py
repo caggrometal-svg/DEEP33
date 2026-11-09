@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published, rank_results
+from backend.search.engine import is_realtime_query, is_strict_news_query, _is_recently_published, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -158,7 +158,7 @@ def _recent_news_quorum_summary(
     pages: list[dict[str, Any]],
     search_result: dict[str, Any],
 ) -> dict[str, Any]:
-    if not is_realtime_news_query(query):
+    if not is_strict_news_query(query):
         return {"required": False, "met": True, "articles": len(pages), "domains": 0, "providers": 0}
     valid_pages = [
         page for page in pages
@@ -1960,7 +1960,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Research/contrast intent requires extracted text from two independent domains.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 3 if is_realtime_news_query(query) else 2 if contrast_required else 1
+    required_pages = 3 if is_strict_news_query(query) else 2 if contrast_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -2028,7 +2028,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in list(search_result.get("results") or [])[:5]
         if isinstance(item, dict)
     ]
-    if is_realtime_news_query(query):
+    if is_strict_news_query(query):
         recent_domains = {
             str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
             .casefold().removeprefix("www.")
@@ -2118,7 +2118,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         if str(item.get("url") or "").strip()
         and len(str(item.get("snippet") or "").strip()) >= 80
         and (
-            not is_realtime_news_query(query)
+            not is_strict_news_query(query)
             or _is_recently_published(item, query)
         )
     ]
@@ -2196,7 +2196,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             if (
                 page is not None
-                and is_realtime_news_query(query)
+                and is_strict_news_query(query)
                 and not _is_publishable_realtime_news_source(query, source, page)
             ):
                 logger.info(
@@ -2214,7 +2214,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
         fetched_pages = list(fetch_batch.documents)
         news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
-        if is_realtime_news_query(query) and not news_quorum["met"]:
+        if is_strict_news_query(query) and not news_quorum["met"]:
             logger.warning(
                 "web_evidence_recent_news_quorum_not_met request_id=%s articles=%s domains=%s providers=%s",
                 request_id or "unknown",
@@ -2243,7 +2243,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # merely because publisher pages reject automated readers. Require at
         # least two independently hosted live search results before degrading to
         # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and not is_realtime_news_query(query) and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+        if realtime and not is_strict_news_query(query) and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
             snippet_fallback_used = True
             logger.warning(
                 "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
@@ -2283,11 +2283,11 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             }
             for page in compact_fetched_pages
         ]
-        if is_realtime_news_query(query)
+        if is_strict_news_query(query)
         else [
             item for item in compact_search_results
             if (
-                not is_realtime_news_query(query)
+                not is_strict_news_query(query)
                 or _is_recently_published(item, query)
             )
         ]
@@ -3369,7 +3369,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_realtime_news_query(q):
+        if search_ok and is_strict_news_query(q):
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3546,7 +3546,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if not direct_url or not fetched_page:
                 continue
 
-            if is_realtime_news_query(q):
+            if is_strict_news_query(q):
                 if not _is_publishable_realtime_news_source(q, item, fetched_page):
                     continue
                 published_at = fetched_page.get("published_at") or item.get("published_at")
@@ -3571,7 +3571,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         evidence_fetched_pages = (
             list(valid_news_pages_by_url.values())
-            if is_realtime_news_query(q)
+            if is_strict_news_query(q)
             else fetched_pages
         )
         fetched_domains = {
@@ -3594,7 +3594,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # underlying page was fetched: callers can distinguish evidence_type and
         # fetched=false from fully extracted pages.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and not has_extracted_content:
             for item in candidate_sources:
                 snippet = str(item.get("snippet") or "").strip()
                 url = str(item.get("url") or "").strip()
@@ -3619,7 +3619,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # already-ranked live snippets from distinct domains. They are explicitly
         # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and has_extracted_content and len(resolved_results) < 3:
             extracted_result_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "")
                 .casefold().removeprefix("www.")
@@ -3682,7 +3682,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
         news_quorum_met = (
-            not is_realtime_news_query(q)
+            not is_strict_news_query(q)
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
@@ -3706,7 +3706,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
-        if is_realtime_news_query(q) and not news_quorum_met:
+        if is_strict_news_query(q) and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
             errors.append("SEARCH_RESULT_NOT_OK")
