@@ -474,9 +474,10 @@ def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provide
             global_budget_seconds=0.5,
             fallback_delay_seconds=0,
         )
+        orchestrator.fallback_providers["mwmbl"] = empty_provider
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
-        orchestrator.providers["yahoo"] = yahoo_provider
+        orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search("Wikipedia asyncio Python", fresh=True)
 
     result = asyncio.run(exercise())
@@ -529,9 +530,10 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
             global_budget_seconds=0.5,
             fallback_delay_seconds=0,
         )
+        orchestrator.fallback_providers["mwmbl"] = empty_provider
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = two_domains
-        orchestrator.providers["yahoo"] = yahoo_provider
+        orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search(
             "sitio gubernamental Chile información pública",
             fresh=True,
