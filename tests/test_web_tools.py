@@ -1090,7 +1090,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_news_fails_closed_when_publishers_block(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
@@ -1147,12 +1147,10 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
 
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
@@ -1552,15 +1550,16 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
             deep=False,
         )
 
-    evidence, source_links, pages, _snippets = asyncio.run(exercise())
-    assert evidence is not None
-    assert evidence["news_quorum"]["met"] is True
-    assert evidence["news_quorum"]["articles"] == 3
-    assert evidence["news_quorum"]["domains"] == 3
-    assert evidence["news_quorum"]["providers"] == 2
-    assert len(pages) == 3
+    working, source_links, evidence_fragments, compact = asyncio.run(exercise())
+    assert working is not None
+    assert compact["news_quorum"]["met"] is True
+    assert compact["news_quorum"]["articles"] == 3
+    assert compact["news_quorum"]["domains"] == 3
+    assert compact["news_quorum"]["providers"] == 2
+    assert len(evidence_fragments) == 3
     assert len(source_links) == 3
-    assert len(evidence["search_results"]) == 3
+    assert len(compact["fetched_pages"]) == 3
+    assert len(compact["search_results"]) == 3
 
 
 def test_chat_realtime_news_fails_closed_without_three_publishers(monkeypatch):
