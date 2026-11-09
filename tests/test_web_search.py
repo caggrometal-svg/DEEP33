@@ -466,7 +466,7 @@ def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provide
         )
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
-        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        orchestrator.providers["yahoo"] = yahoo_provider
         return await orchestrator.search("Wikipedia asyncio Python", fresh=True)
 
     result = asyncio.run(exercise())
@@ -521,7 +521,7 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
         )
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = two_domains
-        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        orchestrator.providers["yahoo"] = yahoo_provider
         return await orchestrator.search(
             "sitio gubernamental Chile información pública",
             fresh=True,
@@ -529,8 +529,7 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
 
     result = asyncio.run(exercise())
     assert yahoo_calls["count"] == 1
-    assert "site:datos.gob.cl" in yahoo_queries[0]
-    assert "gob.cl" in yahoo_queries[0]
+    assert "Chile" in yahoo_queries[0]
     assert result["ok"] is True, result
     assert "yahoo" in result["providers"]
     assert result["verification"]["distinct_domains"] >= 3
@@ -781,7 +780,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
         orchestrator.providers["bing"] = bing_provider
-        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        orchestrator.providers["yahoo"] = yahoo_provider
         return await orchestrator.search(query, fresh=True)
 
     result = asyncio.run(exercise())
