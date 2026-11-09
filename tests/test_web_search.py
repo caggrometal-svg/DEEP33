@@ -343,7 +343,7 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
                     item("cooperativa.cl", "Política Chile últimas noticias"),
                     item("emol.com", "Política Chile noticias de hoy"),
                 ]
-            if name == "duckduckgo":
+            if name == "mojeek":
                 return [
                     item("latercera.com", "Política Chile últimas noticias del gobierno"),
                     item("24horas.cl", "Noticias política en Chile hoy"),
@@ -428,6 +428,16 @@ def test_yahoo_search_parses_general_web_destinations(monkeypatch):
     assert results[0]["title"] == "asyncio - Wikipedia"
     assert results[0]["url"] == "https://en.wikipedia.org/wiki/Asyncio"
     assert any(item["url"].startswith("https://docs.python.org/") for item in results)
+
+
+def test_provider_aliases_do_not_count_as_independent_search_indexes():
+    from backend.search.resilient import _provider_family
+
+    assert _provider_family("yahoo") == "bing"
+    assert _provider_family("duckduckgo") == "bing"
+    assert _provider_family("google_news") == "google"
+    assert _provider_family("mojeek") == "mojeek"
+    assert _provider_family("cl0q") == "cl0q"
 
 
 def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provider():
@@ -750,7 +760,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
         }
         for index in range(5)
     ]
-    yahoo_results = [
+    mojeek_results = [
         {
             "title": "Artificial intelligence research technology news today independent",
             "url": "https://independent-ai.example.org/article",
@@ -758,7 +768,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
     ]
-    yahoo_calls = {"count": 0}
+    mojeek_calls = {"count": 0}
 
     async def bing_provider(_query, _timeout, _limit):
         return bing_results
@@ -766,9 +776,9 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
     async def empty_provider(_query, _timeout, _limit):
         return []
 
-    async def yahoo_provider(_query, _timeout, _limit):
-        yahoo_calls["count"] += 1
-        return yahoo_results
+    async def mojeek_provider(_query, _timeout, _limit):
+        mojeek_calls["count"] += 1
+        return mojeek_results
 
     async def exercise():
         orchestrator = WebOrchestrator(
@@ -780,15 +790,15 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
         orchestrator.providers["bing"] = bing_provider
-        orchestrator.providers["yahoo"] = yahoo_provider
+        orchestrator.providers["mojeek"] = mojeek_provider
         return await orchestrator.search(query, fresh=True)
 
     result = asyncio.run(exercise())
     assert result["ok"] is True, result
-    assert yahoo_calls["count"] == 1
+    assert mojeek_calls["count"] == 1
     assert result["verification"]["distinct_domains"] >= 3
     assert result["verification"]["distinct_providers"] >= 2
-    assert {"bing", "yahoo"}.issubset(set(result["providers"]))
+    assert {"bing", "mojeek"}.issubset(set(result["providers"]))
 
 
 def test_wikipedia_asyncio_ranking_accepts_independent_async_io_sources():
