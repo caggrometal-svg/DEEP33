@@ -21,6 +21,7 @@ from tools.web_search import (
     _google_search,
     _looks_realtime_news,
     _mojeek_search,
+    _mwmbl_search,
     _yahoo_search,
 )
 
@@ -341,6 +342,7 @@ class WebOrchestrator:
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
             "yahoo": CircuitState(),
+            "mwmbl": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
@@ -349,13 +351,13 @@ class WebOrchestrator:
             "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
-            # Yahoo is a free independent index. Start it in the primary wave
-            # instead of waiting until the five-second global budget is nearly
-            # exhausted; otherwise the only independent fallback often times out.
-            "yahoo": self._yahoo,
         }
-        # Yahoo is a last-resort general-web fallback, not part of every request fan-out.
+        # Mwmbl is a genuinely independent index. Its anonymous endpoint has a
+        # 1,000-request monthly cap and 1 req/s limit, so reserve it for quorum
+        # recovery rather than spending the free quota on every query. Yahoo is
+        # only a Bing-family coverage fallback, never independent corroboration.
         self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
+            "mwmbl": self._mwmbl,
             "yahoo": self._yahoo,
         }
 
@@ -397,6 +399,9 @@ class WebOrchestrator:
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
+
+    async def _mwmbl(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _mwmbl_search(query, timeout, limit)
 
     async def _yahoo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _yahoo_search(query, timeout, limit, preserve_candidates=True)
@@ -1756,40 +1761,46 @@ class WebOrchestrator:
         insufficient_provider_diversity = (
             len(selected_providers) < required_provider_count
         )
-        yahoo_already_completed = any(
-            outcome.provider == "yahoo" for outcome in outcomes
-        )
-        yahoo_available = (
+        fallback_order = []
+        if (
+            "mwmbl" in self.fallback_providers
+            and "mwmbl" in self.circuits
+            and not any(outcome.provider == "mwmbl" for outcome in outcomes)
+        ):
+            fallback_order.append("mwmbl")
+        # Yahoo is powered by Bing's algorithmic index. Use it only when no
+        # Bing-family result exists; it may improve coverage but cannot add quorum.
+        yahoo_already_completed = any(outcome.provider == "yahoo" for outcome in outcomes)
+        if (
             "yahoo" in self.fallback_providers
             and "yahoo" in self.circuits
             and not yahoo_already_completed
-        )
-        if (
-            yahoo_available
-            and (insufficient_evidence or insufficient_provider_diversity)
-            and loop.time() < deadline
+            and "bing" not in selected_providers
         ):
-            # Reserve one independent general-web fallback when either evidence
-            # coverage OR provider diversity is incomplete. Several domains from
-            # one index are useful, but they are not independent provider failover.
-            # This preserves the latency-first primary wave while guaranteeing a
-            # second provider attempt only when the final evidence still needs it.
+            fallback_order.append("yahoo")
+
+        for fallback_name in fallback_order:
+            if loop.time() >= deadline:
+                break
+            if (
+                len(selected) >= minimum_coverage
+                and len(selected_domains - {""}) >= minimum_coverage
+                and len(selected_providers) >= required_provider_count
+            ):
+                break
             remaining = deadline - loop.time()
-            # Reuse the normalized, broadened query already sent to the primary
-            # providers. The user's raw phrasing can be too narrow or noisy for a
-            # fallback index, especially for official/non-news sources.
             fallback_query = provider_query or cleaned
             try:
-                yahoo_outcome = await asyncio.wait_for(
-                    self._bounded_call_provider("yahoo", fallback_query),
+                fallback_outcome = await asyncio.wait_for(
+                    self._bounded_call_provider(fallback_name, fallback_query),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
-                yahoo_outcome = ProviderOutcome(
-                    provider="yahoo", ok=False, error_code="PROVIDER_TIMEOUT"
+                fallback_outcome = ProviderOutcome(
+                    provider=fallback_name, ok=False, error_code="PROVIDER_TIMEOUT"
                 )
-            outcomes.append(yahoo_outcome)
-            if yahoo_outcome.ok and yahoo_outcome.results:
+            outcomes.append(fallback_outcome)
+            if fallback_outcome.ok and fallback_outcome.results:
                 merged = [
                     {**item, "provider": outcome.provider}
                     for outcome in outcomes
@@ -1803,6 +1814,7 @@ class WebOrchestrator:
                     for item in selected
                     if item.get("url")
                 }
+                selected_providers = relevant_provider_names(outcomes)
                 if selected:
                     provider_query = fallback_query
 
