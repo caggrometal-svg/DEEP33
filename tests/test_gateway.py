@@ -632,8 +632,8 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv(
         "AI_GATEWAY_FALLBACKS_JSON",
@@ -667,14 +667,14 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
 def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models() -> None:
     dots = provider(
         "kilo-dots-fallback",
-        "https://api.kilo.ai/api/gateway/chat/completions",
-        "https://api.kilo.ai/api/gateway/models",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
         "dots-studio/dots-3-note-preview:free",
     )
     laguna = provider(
         "kilo",
-        "https://api.kilo.ai/api/gateway/chat/completions",
-        "https://api.kilo.ai/api/gateway/models",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
         "poolside/laguna-s-2.1:free",
     )
 
@@ -731,8 +731,8 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
@@ -761,15 +761,15 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
         {
             "name": "configured-fallback",
-            "url": "https://api.kilo.ai/api/gateway/chat/completions",
-            "health_url": "https://api.kilo.ai/api/gateway/models",
+            "url": "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+            "health_url": "https://ai-gateway.kilo.ai/api/v1/models",
             "api_key": "",
             "model": "some-provider/fast-model:free",
         }
@@ -790,8 +790,8 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
 
 def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
