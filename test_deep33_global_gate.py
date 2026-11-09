@@ -62,6 +62,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             fallback_delay_seconds=0.02,
             cache_ttl_seconds=30,
         )
+        orchestrator.fallback_providers = {}
 
         async def offline(_query: str, _timeout: float, _limit: int) -> list[dict]:
             await asyncio.sleep(0.2)
@@ -96,6 +97,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             fallback_delay_seconds=0.0,
             cache_ttl_seconds=30,
         )
+        orchestrator.fallback_providers = {}
 
         async def offline(_query: str, _timeout: float, _limit: int) -> list[dict]:
             return []
@@ -128,6 +130,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             fallback_delay_seconds=0.0,
             cache_ttl_seconds=30,
         )
+        orchestrator.fallback_providers = {}
 
         async def empty(_query: str, _timeout: float, _limit: int) -> list[dict]:
             return []
