@@ -2154,6 +2154,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
+    news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
     if must_fetch or not snippets_sufficient:
         fast_path = required_pages == 1 and not contrast_required
         configured_target = int(os.getenv(
