@@ -308,7 +308,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             for name in orchestrator.providers
         } | {"yahoo": orchestrator.circuits["yahoo"]}
         return await orchestrator.search(
-            "Python official documentation and release notes",
+            "sitio gubernamental Chile información pública",
             fresh=True,
         )
 
@@ -651,7 +651,7 @@ def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
         orchestrator.fallback_providers["mwmbl"] = empty_provider
         orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search(
-            "sitio gubernamental Chile información pública",
+            "Python official documentation and release notes",
             fresh=True,
         )
 
