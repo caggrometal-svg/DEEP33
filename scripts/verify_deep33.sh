@@ -212,13 +212,13 @@ printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
 echo "CHAT_STREAM_PASS first_visible_text=true"
 
 previous_session_id="$SESSION_ID"
-SESSION_ID="deep33-master-news-\${GITHUB_RUN_ID:-local}"
+SESSION_ID="deep33-master-news-${GITHUB_RUN_ID:-local}"
 NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume únicamente hechos respaldados por tres artículos recientes de tres medios distintos y termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
 request_file news_chat_stream "$VERCEL_URL/v1/chat/stream" 75 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \
   -H 'Content-Type: application/json' \
-  -H "X-Idempotency-Key: deep33-master-news-stream-\${GITHUB_RUN_ID:-local}" \
+  -H "X-Idempotency-Key: deep33-master-news-stream-${GITHUB_RUN_ID:-local}" \
   -H 'X-DEEP33-Personality: NEUTRO' \
   --data "$NEWS_CHAT_BODY"
 SESSION_ID="$previous_session_id"
