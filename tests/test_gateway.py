@@ -684,7 +684,7 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
 
 
 
-def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models() -> None:
+def test_dots_fallback_disables_hidden_reasoning_without_changing_other_models() -> None:
     dots = provider(
         "kilo-dots-fallback",
         "https://ai-gateway.kilo.ai/api/v1/chat/completions",
@@ -707,8 +707,10 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
         laguna,
     )
 
-    assert dots_payload["reasoning_effort"] == "low"
-    assert "reasoning_effort" not in laguna_payload
+    assert dots_payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert dots_payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in dots_payload
+    assert "chat_template_kwargs" not in laguna_payload
 
 
 def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
