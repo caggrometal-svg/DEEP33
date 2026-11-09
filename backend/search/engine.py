@@ -515,6 +515,23 @@ _REALTIME_MARKERS = (
     "latest", "current", "breaking", "this week", "recent",
 )
 
+# Strict publisher-article quorum applies only to explicit news/current-events
+# intent. Product releases, documentation updates and generic "situación actual"
+# questions remain realtime searches but do not require three news articles.
+_STRICT_NEWS_SIGNALS = (
+    "noticia", "noticias", "news", "breaking", "última hora", "ultima hora",
+    "actualidad", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+    "qué ocurre", "que ocurre", "qué pasa", "que pasa", "current events",
+    "current affairs", "acontecimientos actuales", "acontecimiento actual",
+    "eventos actuales", "eventos recientes", "últimos acontecimientos",
+    "ultimos acontecimientos", "hechos recientes",
+)
+
+
+def is_strict_news_query(query: str) -> bool:
+    lowered = " ".join(str(query or "").split()).casefold()
+    return bool(lowered) and any(signal in lowered for signal in _STRICT_NEWS_SIGNALS)
+
 
 def is_realtime_news_query(query: str) -> bool:
     """Return True for explicit current-news/recent-change requests."""
