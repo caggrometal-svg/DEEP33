@@ -430,6 +430,116 @@ def test_yahoo_search_parses_general_web_destinations(monkeypatch):
     assert any(item["url"].startswith("https://docs.python.org/") for item in results)
 
 
+def test_mwmbl_adapter_only_accepts_its_own_independent_index(monkeypatch):
+    from tools import web_search
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "url": "https://docs.python.org/3/library/asyncio.html",
+                        "title": "Python asyncio documentation",
+                        "content": "Python asyncio task groups and asynchronous I/O.",
+                        "engine": "mwmbl",
+                        "score": 0.9,
+                    },
+                    {
+                        "url": "https://www.python.org/",
+                        "title": "Python",
+                        "content": "Python programming language.",
+                        "engine": "google",
+                        "score": 0.8,
+                    },
+                    {
+                        "url": "https://en.wikipedia.org/wiki/Asyncio",
+                        "title": "Asyncio",
+                        "content": "Asynchronous I/O in Python.",
+                        "engine": "wikipedia",
+                        "score": 0.7,
+                    },
+                ]
+            }
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url == "https://api.mwmbl.org/api/v2/search/"
+            assert kwargs["params"]["q"] == "Python asyncio official documentation"
+            return FakeResponse()
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(web_search, "_search_http_client", fake_client)
+    results = asyncio.run(
+        web_search._mwmbl_search("Python asyncio official documentation", 1.0, 5)
+    )
+    assert len(results) == 1
+    assert results[0]["url"] == "https://docs.python.org/3/library/asyncio.html"
+
+
+def test_mwmbl_independent_fallback_can_complete_provider_quorum():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "Python asyncio TaskGroup official documentation"
+    bing_results = [
+        {
+            "title": "Python asyncio TaskGroup documentation",
+            "url": "https://docs.python.org/3/library/asyncio-task.html",
+            "snippet": "Python asyncio TaskGroup and task cancellation.",
+        },
+        {
+            "title": "Python asyncio concurrency guide",
+            "url": "https://realpython.com/async-io-python/",
+            "snippet": "Python asyncio concurrency and structured tasks.",
+        },
+        {
+            "title": "Python asynchronous programming",
+            "url": "https://peps.python.org/pep-0654/",
+            "snippet": "Python exception groups and asynchronous programming.",
+        },
+    ]
+    mwmbl_results = [
+        {
+            "title": "Python asyncio documentation and task groups",
+            "url": "https://docs.python.org/3/library/asyncio.html",
+            "snippet": "Official Python documentation for asyncio.",
+        }
+    ]
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def bing_provider(_query, _timeout, _limit):
+        return bing_results
+
+    async def mwmbl_provider(_query, _timeout, _limit):
+        return mwmbl_results
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.7,
+            fallback_delay_seconds=0,
+        )
+        for name in tuple(orchestrator.providers):
+            orchestrator.providers[name] = empty_provider
+        orchestrator.providers["bing"] = bing_provider
+        orchestrator.fallback_providers["mwmbl"] = mwmbl_provider
+        orchestrator.fallback_providers["yahoo"] = empty_provider
+        return await orchestrator.search(query, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True, result
+    assert {"bing", "mwmbl"}.issubset(set(result["providers"]))
+    assert result["verification"]["distinct_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is True
+
+
 def test_provider_aliases_do_not_count_as_independent_search_indexes():
     from backend.search.resilient import _provider_family
 
