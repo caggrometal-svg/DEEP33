@@ -288,6 +288,9 @@ def test_chile_public_information_fans_out_distinct_official_domains():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -299,6 +302,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
@@ -1054,6 +1058,9 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -1065,6 +1072,7 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = make_provider("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
