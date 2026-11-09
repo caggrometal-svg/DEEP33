@@ -385,12 +385,18 @@ class AIGateway:
         elif not result.get("model"):
             result.pop("model", None)
 
-        # Dots3 is a reasoning model. On failover it can emit transport/reasoning
-        # frames several seconds before the first assistant text. Keep reasoning
-        # enabled, but bound it to the provider-supported low effort so fallback
-        # remains useful for interactive chat instead of becoming the TTFT bottleneck.
+        # Dots3 defaults to an internal reasoning phase. DEEP33 needs the
+        # user-visible answer stream, so explicitly disable thinking as documented
+        # by the model and provide a bounded visible-output budget.
         if "dots-studio/dots-3-note-preview" in provider.model.casefold():
-            result["reasoning_effort"] = "low"
+            result.pop("reasoning_effort", None)
+            template_kwargs = result.get("chat_template_kwargs")
+            if not isinstance(template_kwargs, dict):
+                template_kwargs = {}
+            template_kwargs["enable_thinking"] = False
+            result["chat_template_kwargs"] = template_kwargs
+            if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1:
+                result["max_tokens"] = 1024
         return result
 
     @staticmethod
