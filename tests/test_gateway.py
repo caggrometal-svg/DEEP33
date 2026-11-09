@@ -35,7 +35,7 @@ def test_stream_gateway_uses_nonstream_completion_when_provider_stream_is_empty(
     from backend import main
 
     async def empty_stream(_payload, **_kwargs):
-        yield b"data: [DONE]\\n\\n"
+        yield b"data: [DONE]\n\n"
 
     async def nonstream_completion(_payload, **_kwargs):
         return {
