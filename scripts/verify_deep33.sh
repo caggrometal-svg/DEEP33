@@ -178,6 +178,12 @@ stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/chat_stream.body" |
 printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
   echo "CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$stream_text" | cut -c1-300)"
   tail -c 3000 "$TMP_DIR/chat_stream.body" 2>/dev/null || true
+  request_file inference_check "$VERCEL_URL/v1/ai/inference-check" 55
+  if [ "$HTTP_CODE" = "200" ]; then
+    jq -c '{status,provider,model,text_ok,attempts}' "$TMP_DIR/inference_check.body" 2>/dev/null || true
+  else
+    tail -c 2000 "$TMP_DIR/inference_check.body" 2>/dev/null || true
+  fi
   fail "CHAT_STREAM_EMPTY_OR_EXPECTED_TEXT_MISSING"
 }
 echo "CHAT_STREAM_PASS first_visible_text=true"
