@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_strict_news_query, _is_recently_published, rank_results
+from backend.search.engine import is_realtime_query, is_realtime_news_query, is_strict_news_query, _is_recently_published, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -2205,6 +2205,18 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
                 return None
+            if (
+                page is not None
+                and is_realtime_news_query(query)
+                and not is_strict_news_query(query)
+                and not _is_recently_published(page, query)
+            ):
+                logger.info(
+                    "web_evidence_current_page_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    request_id or "unknown",
+                    str(page.get("url") or source.get("url") or "")[:500],
+                )
+                return None
             return page
 
         fetch_batch = await fetch_source_quorum(
@@ -2287,7 +2299,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         else [
             item for item in compact_search_results
             if (
-                not is_strict_news_query(query)
+                not is_realtime_news_query(query)
                 or _is_recently_published(item, query)
             )
         ]
@@ -3603,7 +3615,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     item.get("source_domain")
                     or (urlparse(url).hostname or "")
                 ).casefold().removeprefix("www.")
-                if not url.startswith("https://") or not domain or len(snippet) < 24:
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
+                ):
                     continue
                 snippet_fallback_results.append({
                     **item,
@@ -3643,6 +3660,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     not url.startswith("https://")
                     or not domain
                     or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
                     or url in extracted_result_urls
                     or domain in extracted_result_domains
                 ):
