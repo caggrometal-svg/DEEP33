@@ -656,6 +656,45 @@ async def _cl0q_search(query, timeout_seconds, max_results):
     return _cl0q_result_items(payload, max_results)
 
 
+async def _mwmbl_search(query, timeout_seconds, max_results):
+    """Search Mwmbl's independent index using its anonymous no-key free tier."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://api.mwmbl.org/api/v2/search/",
+        params={"q": query},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/json",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.0)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_MWMBL_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_MWMBL_RESPONSE_TOO_LARGE")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WebSearchError("WEB_SEARCH_MWMBL_INVALID_JSON") from exc
+    raw = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        raise WebSearchError("WEB_SEARCH_MWMBL_INVALID_RESULTS")
+
+    # Mwmbl can expose seed/partner results in the same response. Only accept
+    # hits explicitly indexed by Mwmbl itself so it cannot masquerade as Google
+    # or another external engine and inflate independent-provider quorum.
+    own_index = []
+    for item in raw:
+        if not isinstance(item, dict) or str(item.get("engine") or "").casefold() != "mwmbl":
+            continue
+        own_index.append({
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "content": item.get("content") or "",
+        })
+    return _normalise_results(own_index, max_results)
+
+
 async def _duckduckgo_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
     realtime_news = _looks_realtime_news(query)
