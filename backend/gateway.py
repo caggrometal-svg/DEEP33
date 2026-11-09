@@ -108,11 +108,11 @@ class GatewayConfig:
             name=os.getenv("AI_GATEWAY_PROVIDER", "kilo").strip() or "kilo",
             url=os.getenv(
                 "AI_GATEWAY_URL",
-                "https://api.kilo.ai/api/gateway/chat/completions",
+                "https://ai-gateway.kilo.ai/api/v1/chat/completions",
             ).strip(),
             health_url=os.getenv(
                 "AI_GATEWAY_HEALTH_URL",
-                "https://api.kilo.ai/api/gateway/models",
+                "https://ai-gateway.kilo.ai/api/v1/models",
             ).strip(),
             api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
             model=os.getenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free").strip(),
