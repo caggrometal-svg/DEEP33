@@ -744,18 +744,25 @@ class WebOrchestrator:
         except Exception as exc:
             state.failure(time.monotonic())
             name = type(exc).__name__.upper()
-            # Keep the public payload stable and credential-free while retaining
-            # the sanitized exception detail in server diagnostics for live audits.
+            raw_detail = " ".join(str(exc).split()).upper()
+            # WebSearchError messages are stable diagnostic codes (for example
+            # HTTP_403). Expose only those code-shaped details, never URLs,
+            # queries, headers, or credentials.
+            safe_detail = (
+                raw_detail
+                if re.fullmatch(r"[A-Z0-9_:-]{1,120}", raw_detail)
+                else name
+            )
             logger.warning(
                 "web_search_provider_error provider=%s error_type=%s detail=%s",
                 provider,
                 name,
-                str(exc).replace("\\n", " ")[:240],
+                safe_detail,
             )
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
-                error_code=f"PROVIDER_ERROR:{name}",
+                error_code=f"PROVIDER_ERROR:{name}:{safe_detail}",
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
