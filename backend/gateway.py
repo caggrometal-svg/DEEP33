@@ -799,6 +799,9 @@ class AIGateway:
                     result["_deep33_gateway"] = {
                         "provider": provider.name,
                         "model": provider.model or data.get("model"),
+                        "fallback_used": index > 0,
+                        "attempt": attempt + 1,
+                        "attempts": [dict(item) for item in attempts],
                     }
                     circuit.success()
                     provider_succeeded = True
