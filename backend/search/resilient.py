@@ -1763,7 +1763,9 @@ class WebOrchestrator:
         )
         fallback_order = []
         if (
-            "mwmbl" in self.fallback_providers
+            insufficient_provider_diversity
+            and not _looks_realtime_news(cleaned)
+            and "mwmbl" in self.fallback_providers
             and "mwmbl" in self.circuits
             and not any(outcome.provider == "mwmbl" for outcome in outcomes)
         ):
