@@ -604,7 +604,7 @@ def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provide
     assert result["verification"]["distinct_domains"] >= 3
 
 
-def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
+def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
     from backend.search.resilient import WebOrchestrator
 
     partial_results = [
@@ -627,14 +627,15 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
         }
     ]
     yahoo_calls = {"count": 0}
-    yahoo_queries = []
 
-    async def two_domains(_query, _timeout, _limit):
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def bing_provider(_query, _timeout, _limit):
         return partial_results
 
-    async def yahoo_provider(query, _timeout, _limit):
+    async def yahoo_provider(_query, _timeout, _limit):
         yahoo_calls["count"] += 1
-        yahoo_queries.append(query)
         return yahoo_results
 
     async def exercise():
@@ -644,9 +645,10 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
             global_budget_seconds=0.5,
             fallback_delay_seconds=0,
         )
-        orchestrator.fallback_providers["mwmbl"] = empty_provider
         for provider in tuple(orchestrator.providers):
-            orchestrator.providers[provider] = two_domains
+            orchestrator.providers[provider] = empty_provider
+        orchestrator.providers["bing"] = bing_provider
+        orchestrator.fallback_providers["mwmbl"] = empty_provider
         orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search(
             "sitio gubernamental Chile información pública",
@@ -654,11 +656,13 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
         )
 
     result = asyncio.run(exercise())
-    assert yahoo_calls["count"] == 1
-    assert "Chile" in yahoo_queries[0]
-    assert result["ok"] is True, result
-    assert "yahoo" in result["providers"]
-    assert result["verification"]["distinct_domains"] >= 3
+    assert yahoo_calls["count"] == 0
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["distinct_domains"] == 2
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
 
 
 def test_rss_publisher_metadata_preserves_real_domains_behind_google_news_links():
