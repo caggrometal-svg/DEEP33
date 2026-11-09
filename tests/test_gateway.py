@@ -31,6 +31,51 @@ def test_dots_payload_disables_hidden_reasoning_and_sets_visible_output_budget()
     assert "reasoning_effort" not in payload
 
 
+def test_stream_gateway_uses_nonstream_completion_when_provider_stream_is_empty(monkeypatch) -> None:
+    from backend import main
+
+    async def empty_stream(_payload, **_kwargs):
+        yield b"data: [DONE]\\n\\n"
+
+    async def nonstream_completion(_payload, **_kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Respuesta sintetizada desde el modelo."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "_deep33_gateway": {
+                "provider": "kilo",
+                "model": "dots-studio/dots-3-note-preview:free",
+            },
+        }
+
+    monkeypatch.setattr(main.gateway, "stream", empty_stream)
+    monkeypatch.setattr(main.gateway, "complete", nonstream_completion)
+
+    async def exercise() -> bytes:
+        chunks = [
+            chunk
+            async for chunk in main.stream_gateway(
+                {"model": "dots-studio/dots-3-note-preview:free", "messages": [{"role": "user", "content": "Resume las fuentes."}]},
+                "session-test",
+                "default",
+                request_id="stream-fallback-test",
+                idempotency_key="stream-fallback-test",
+                request_hash="hash",
+                lease_token="lease",
+                completion_state={},
+                sources=[],
+            )
+        ]
+        return b"".join(chunks)
+
+    output = asyncio.run(exercise())
+    assert b"Respuesta sintetizada desde el modelo." in output
+    assert b"No pude completar la s\xc3\xadntesis" not in output
+
+
 def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
     calls: list[str] = []
 
