@@ -2332,10 +2332,11 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         ],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
-            for item in compact_fetched_pages[:2]
+            for item in compact_fetched_pages[:3 if is_strict_news_query(query) else 2]
         ],
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
+        "news_quorum": news_quorum,
         "snippet_fallback": snippet_fallback_used,
     }
 
