@@ -3814,6 +3814,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     last_timeout = False
     transport_failed = False
+    last_gateway_attempts: list[dict] = []
 
     for attempt in range(2):
         remaining = deadline - time.monotonic()
@@ -3856,7 +3857,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 attempt + 1,
             )
             break
-        except GatewayInvalidResponseError:
+        except GatewayInvalidResponseError as exc:
+            last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -3914,6 +3916,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 stream_id,
             )
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
+            if isinstance(exc, GatewayInvalidResponseError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -3928,7 +3932,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
 
-    return ("TIMEOUT" if last_timeout else "FAIL"), None, None
+    diagnostic_data = {"_deep33_gateway": {"attempts": last_gateway_attempts}} if last_gateway_attempts else None
+    return ("TIMEOUT" if last_timeout else "FAIL"), diagnostic_data, None
 
 
 @app.get("/v1/ai/inference-check")
@@ -3941,6 +3946,11 @@ async def inference_check(request: Request) -> dict:
         "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
         "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
         "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
+        "attempts": (
+            data.get("_deep33_gateway", {}).get("attempts", [])
+            if isinstance(data, dict)
+            else []
+        ),
         "timestamp": utc_now(),
     }
 
