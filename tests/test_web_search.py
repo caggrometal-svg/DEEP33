@@ -1117,6 +1117,9 @@ def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -1128,6 +1131,7 @@ def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
