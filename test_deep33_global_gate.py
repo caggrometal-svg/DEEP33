@@ -43,7 +43,7 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
             f"Unretrieved async exception(s): {self.loop_errors}",
         )
 
-    async def test_search_fallback_bing_mojeek_offline_duckduckgo_wins(self) -> None:
+    async def test_search_fallback_bing_mojeek_offline_duckduckgo_fails_closed_without_quorum(self) -> None:
         orchestrator = WebOrchestrator(
             max_results=3,
             provider_total_seconds=0.08,
@@ -70,15 +70,14 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.providers["duckduckgo"] = ddg
 
         result = await orchestrator.search("Python asyncio structured concurrency", fresh=True)
-        self.assertTrue(result["ok"], result)
-        self.assertEqual(result["status"], "OK")
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["status"], "INSUFFICIENT_PROVIDER_QUORUM")
         self.assertEqual(result["winner_provider"], "duckduckgo")
-        self.assertNotIn("bing", result["providers"])
-        self.assertNotIn("mojeek", result["providers"])
-        # Include small event-loop scheduling overhead around the 400 ms mock budget.
+        self.assertEqual(result["providers"], ["duckduckgo"])
+        self.assertEqual(result["verification"]["distinct_providers"], 1)
+        self.assertFalse(result["verification"]["provider_quorum_met"])
         self.assertLess(result["latency_ms"], 500.0)
-
-    async def test_general_google_provider_recovers_when_other_providers_are_empty(self) -> None:
+    async def test_general_google_provider_fails_closed_without_independent_quorum(self) -> None:
         orchestrator = WebOrchestrator(
             max_results=3,
             provider_total_seconds=0.08,
@@ -92,21 +91,9 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
 
         async def google(_query: str, _timeout: float, _limit: int) -> list[dict]:
             return [
-                _result(
-                    "asyncio TaskGroup — Python documentation",
-                    "https://docs.python.org/3/library/asyncio-task.html",
-                    "Python asyncio TaskGroup and task cancellation",
-                ),
-                _result(
-                    "Python asyncio concurrency guide",
-                    "https://realpython.com/async-io-python/",
-                    "Python asyncio concurrency and structured tasks",
-                ),
-                _result(
-                    "Python asyncio TaskGroup exception handling",
-                    "https://peps.python.org/pep-0654/",
-                    "Python asyncio task group exception handling",
-                ),
+                _result("asyncio TaskGroup — Python documentation", "https://docs.python.org/3/library/asyncio-task.html", "Python asyncio TaskGroup and task cancellation"),
+                _result("Python asyncio concurrency guide", "https://realpython.com/async-io-python/", "Python asyncio concurrency and structured tasks"),
+                _result("Python asyncio TaskGroup exception handling", "https://peps.python.org/pep-0654/", "Python asyncio task group exception handling"),
             ]
 
         orchestrator.providers["bing"] = offline
@@ -114,15 +101,15 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.providers["duckduckgo"] = offline
         orchestrator.providers["google"] = google
 
-        result = await orchestrator.search(
-            "Python asyncio TaskGroup official documentation", fresh=True
-        )
-        self.assertTrue(result["ok"], result)
+        result = await orchestrator.search("Python asyncio TaskGroup official documentation", fresh=True)
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["status"], "INSUFFICIENT_PROVIDER_QUORUM")
         self.assertIn("google", result["providers"])
         self.assertEqual(result["winner_provider"], "google")
         self.assertEqual(len({item["source_domain"] for item in result["results"]}), 3)
-
-    async def test_news_orchestrator_uses_dedicated_rss_when_general_providers_are_empty(self) -> None:
+        self.assertEqual(result["verification"]["distinct_providers"], 1)
+        self.assertFalse(result["verification"]["provider_quorum_met"])
+    async def test_news_orchestrator_fails_closed_when_rss_is_the_only_provider(self) -> None:
         orchestrator = WebOrchestrator(
             max_results=3,
             provider_total_seconds=0.08,
@@ -146,10 +133,12 @@ class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
         orchestrator.providers["google_news"] = news
 
         result = await orchestrator.search("noticias económicas Chile hoy", fresh=True)
-        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["status"], "INSUFFICIENT_PROVIDER_QUORUM")
         self.assertEqual(result["winner_provider"], "google_news")
         self.assertGreaterEqual(result["verification"]["distinct_domains"], 3)
-
+        self.assertEqual(result["verification"]["distinct_providers"], 1)
+        self.assertFalse(result["verification"]["provider_quorum_met"])
     async def test_recovery_broadens_query_without_relaxing_original_ranking(self) -> None:
         orchestrator = WebOrchestrator(
             max_results=5,
