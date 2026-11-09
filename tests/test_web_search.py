@@ -609,14 +609,14 @@ def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
 
     partial_results = [
         {
-            "title": "Chile government public data portal",
+            "title": "Portal gubernamental de Chile: información pública y datos abiertos",
             "url": "https://datos.gob.cl/",
-            "snippet": "Government public information and open data services in Chile.",
+            "snippet": "Sitio gubernamental de Chile con información pública, datos abiertos y servicios oficiales.",
         },
         {
-            "title": "Chile government transparency and public information",
+            "title": "Transparencia gubernamental de Chile e información pública",
             "url": "https://www.gobiernotransparentechile.cl/",
-            "snippet": "Public government transparency resources for Chile.",
+            "snippet": "Portal de transparencia e información pública del Gobierno de Chile.",
         },
     ]
     yahoo_results = [
