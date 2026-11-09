@@ -24,6 +24,12 @@ def _result(title: str, url: str, snippet: str) -> dict:
 
 
 class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_free_yahoo_provider_is_started_in_primary_wave(self) -> None:
+        orchestrator = WebOrchestrator()
+        self.assertIn("yahoo", orchestrator.providers)
+        self.assertIn("yahoo", orchestrator.circuits)
+        self.assertTrue(callable(orchestrator.providers["yahoo"]))
+
     async def asyncSetUp(self) -> None:
         self.loop_errors: list[dict] = []
         self.loop = asyncio.get_running_loop()
