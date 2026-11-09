@@ -1740,9 +1740,13 @@ class WebOrchestrator:
         insufficient_provider_diversity = (
             len(selected_providers) < required_provider_count
         )
+        yahoo_already_completed = any(
+            outcome.provider == "yahoo" for outcome in outcomes
+        )
         yahoo_available = (
             "yahoo" in self.fallback_providers
             and "yahoo" in self.circuits
+            and not yahoo_already_completed
         )
         if (
             yahoo_available
