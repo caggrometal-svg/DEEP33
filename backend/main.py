@@ -3847,7 +3847,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 await asyncio.sleep(0.15)
                 continue
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -3868,6 +3870,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except (GatewayHTTPError, HTTPException) as exc:
+            if isinstance(exc, GatewayHTTPError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -3908,7 +3912,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 len(text_value),
             )
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
