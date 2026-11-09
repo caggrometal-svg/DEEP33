@@ -37,7 +37,9 @@ class GatewayHTTPError(Exception):
 
 
 class GatewayInvalidResponseError(Exception):
-    pass
+    def __init__(self, attempts: list[dict] | None = None) -> None:
+        super().__init__("gateway providers returned no usable assistant text")
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 @dataclass(frozen=True)
@@ -396,7 +398,7 @@ class AIGateway:
                 template_kwargs = {}
             template_kwargs["enable_thinking"] = False
             result["chat_template_kwargs"] = template_kwargs
-            if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1:
+            if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1024:
                 result["max_tokens"] = 1024
         return result
 
@@ -546,6 +548,10 @@ class AIGateway:
                         "last_error": None,
                         "fallback_used": index > 0,
                         "circuit_open": False,
+                        "configured_providers": [
+                            {"name": item.name, "model": item.model}
+                            for item in self.config.providers
+                        ],
                     }
 
                 failures.append(f"{provider.name}:http:{response.status_code}")
@@ -563,6 +569,10 @@ class AIGateway:
             "last_error": ";".join(failures) if failures else "no providers configured",
             "fallback_used": False,
             "circuit_open": False,
+            "configured_providers": [
+                {"name": item.name, "model": item.model}
+                for item in self.config.providers
+            ],
         }
 
     async def complete(
@@ -577,12 +587,18 @@ class AIGateway:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
+        attempts: list[dict] = []
 
         ordered_providers = self._ordered_providers(prefer_ttft=prefer_ttft)
         for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             now = time.monotonic()
             if not circuit.available(now):
+                attempts.append({
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "outcome": "circuit_open",
+                })
                 logger.warning(
                     "provider_skipped_circuit_open provider=%s",
                     provider.name,
@@ -625,6 +641,13 @@ class AIGateway:
                     if response.status_code >= 400:
                         status = response.status_code
                         error_class = self._classify_http_status(status)
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": status,
+                            "outcome": "http_error",
+                            "error_class": error_class,
+                        })
                         saw_http_error = True
                         provider_failed_transiently = self._is_retryable_status(status)
                         if status in {404, 410}:
@@ -663,6 +686,12 @@ class AIGateway:
                         data = response.json()
                     except ValueError:
                         saw_invalid_response = True
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "invalid_json",
+                        })
                         logger.warning(
                             "ai_provider_invalid_json request_id=%s provider=%s",
                             request_id,
@@ -672,6 +701,12 @@ class AIGateway:
 
                     if not isinstance(data, dict):
                         saw_invalid_response = True
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "invalid_payload",
+                        })
                         logger.warning(
                             "ai_provider_invalid_payload request_id=%s provider=%s",
                             request_id,
@@ -693,6 +728,33 @@ class AIGateway:
                         # A 200 with no assistant content is not a successful
                         # inference. Fail over instead of exposing an empty reply
                         # or recording a false-positive production health check.
+                        message = (
+                            choices[0].get("message")
+                            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                            else {}
+                        )
+                        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                        finish_reason = (
+                            choices[0].get("finish_reason")
+                            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                            else None
+                        )
+                        reasoning_value = (
+                            message.get("reasoning")
+                            or message.get("reasoning_content")
+                            or message.get("thinking")
+                            or ""
+                        ) if isinstance(message, dict) else ""
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "empty_content",
+                            "message_keys": sorted(str(key) for key in message.keys())[:12] if isinstance(message, dict) else [],
+                            "reasoning_chars": len(str(reasoning_value)),
+                            "finish_reason": str(finish_reason or "")[:40],
+                            "completion_tokens": usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), (int, float)) else None,
+                        })
                         saw_invalid_response = True
                         provider_failed_transiently = True
                         logger.warning(
@@ -725,6 +787,14 @@ class AIGateway:
                             provider,
                             float(completion_tokens) / max(0.001, elapsed_ms / 1000.0),
                         )
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "status_code": 200,
+                        "outcome": "text",
+                        "content_chars": len(provider_text),
+                        "finish_reason": str((choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else "") or "")[:40],
+                    })
                     result = dict(data)
                     result["_deep33_gateway"] = {
                         "provider": provider.name,
@@ -742,6 +812,7 @@ class AIGateway:
                     return result
 
                 except httpx.ConnectTimeout:
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "connect_timeout"})
                     saw_timeout = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -757,6 +828,7 @@ class AIGateway:
                         continue
                     break
                 except (httpx.ReadTimeout, httpx.WriteTimeout):
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "ambiguous_timeout"})
                     # Never retry the same provider after an ambiguous timeout.
                     # If a distinct fallback exists, move to it once so the user
                     # can recover without receiving duplicate assistant output.
@@ -770,6 +842,7 @@ class AIGateway:
                     )
                     break
                 except httpx.TimeoutException:
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "timeout"})
                     saw_timeout = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -785,6 +858,12 @@ class AIGateway:
                         continue
                     break
                 except httpx.HTTPError as exc:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_error",
+                        "error_type": type(exc).__name__,
+                    })
                     saw_http_error = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -805,7 +884,7 @@ class AIGateway:
             raise GatewayTimeoutError
         if saw_http_error:
             raise GatewayHTTPError
-        raise GatewayInvalidResponseError
+        raise GatewayInvalidResponseError(attempts=attempts)
 
     async def diagnostic_inference(
         self,
