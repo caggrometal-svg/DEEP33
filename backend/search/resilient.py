@@ -30,14 +30,15 @@ logger = logging.getLogger(__name__)
 def _provider_family(provider: str) -> str:
     """Collapse aliases from the same search company into one independent source."""
     name = str(provider or "").strip().casefold().replace("-", "_")
+    # Count underlying indexes, not branded front ends. Yahoo Search states
+    # Microsoft is its exclusive algorithmic search provider; DuckDuckGo also
+    # relies on Bing's index. Google News shares Google's index.
     if "google" in name:
         return "google"
-    if "bing" in name or "microsoft" in name:
+    if "bing" in name or "microsoft" in name or "yahoo" in name:
         return "bing"
-    if "yahoo" in name:
-        return "yahoo"
     if "duckduckgo" in name or name.startswith("ddg"):
-        return "duckduckgo"
+        return "bing"
     if "mojeek" in name:
         return "mojeek"
     if "marginalia" in name:
