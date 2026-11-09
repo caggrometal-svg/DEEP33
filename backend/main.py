@@ -152,6 +152,47 @@ def _is_publishable_realtime_news_source(
         minimum_relevance_score = 0.28
     return score_result(query, relevance_item) >= minimum_relevance_score
 
+
+def _recent_news_quorum_summary(
+    query: str,
+    pages: list[dict[str, Any]],
+    search_result: dict[str, Any],
+) -> dict[str, Any]:
+    if not is_realtime_news_query(query):
+        return {"required": False, "met": True, "articles": len(pages), "domains": 0, "providers": 0}
+    valid_pages = [
+        page for page in pages
+        if isinstance(page, dict)
+        and _is_publishable_realtime_news_source(query, page, page)
+    ]
+    domains = {
+        str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+        .casefold().removeprefix("www.")
+        for page in valid_pages
+    } - {""}
+    verification = search_result.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    providers = verification.get("distinct_providers")
+    try:
+        provider_count = int(providers or 0)
+    except (TypeError, ValueError):
+        provider_count = 0
+    provider_quorum = (
+        verification.get("provider_quorum_met") is True
+        and provider_count >= 2
+    )
+    article_count = len(valid_pages)
+    domain_count = len(domains)
+    return {
+        "required": True,
+        "met": article_count >= 3 and domain_count >= 3 and provider_quorum,
+        "articles": article_count,
+        "domains": domain_count,
+        "providers": provider_count,
+        "provider_quorum_met": provider_quorum,
+    }
+
+
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
@@ -1919,7 +1960,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     # Research/contrast intent requires extracted text from two independent domains.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    required_pages = 3 if is_realtime_news_query(query) else 2 if contrast_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -1987,6 +2028,80 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in list(search_result.get("results") or [])[:5]
         if isinstance(item, dict)
     ]
+    if is_realtime_news_query(query):
+        recent_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in sources.values()
+            if item.get("published_at") and _is_recently_published(item, query)
+        } - {""}
+        if len(recent_domains) < 3:
+            try:
+                rescue_query = (
+                    "Chile noticias hoy actualidad acontecimientos recientes"
+                    if "chile" in query.casefold()
+                    else query
+                )
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=1.8,
+                    max_results=8,
+                )
+                recent_candidates = rank_results(
+                    query,
+                    recent_candidates,
+                    realtime=True,
+                )
+                for raw in recent_candidates:
+                    if not isinstance(raw, dict):
+                        continue
+                    published_at = raw.get("published_at")
+                    if not published_at or not _is_recently_published(raw, query):
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    domain = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().removeprefix("www.")
+                    if (
+                        not url.startswith("https://")
+                        or not domain
+                        or domain in recent_domains
+                        or url in sources
+                    ):
+                        continue
+                    recovered = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": "google_news",
+                        "source_domain": domain[:255],
+                        "published_at": published_at,
+                    }
+                    sources[url] = recovered
+                    compact_search_results.append({
+                        "title": recovered["title"],
+                        "url": recovered["url"],
+                        "snippet": recovered["snippet"][:700],
+                        "published_at": published_at,
+                        "provider": "google_news",
+                    })
+                    recent_domains.add(domain)
+                    if len(recent_domains) >= 5:
+                        break
+                logger.info(
+                    "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                    request_id or "unknown",
+                    len(recent_domains),
+                    len(sources),
+                )
+            except Exception as rescue_exc:
+                logger.warning(
+                    "chat_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                    request_id or "unknown",
+                    type(rescue_exc).__name__,
+                )
+
     snippets_sufficient = (
         len(compact_search_results) >= 2
         and sum(
@@ -2081,10 +2196,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if (
                 page is not None
                 and is_realtime_news_query(query)
-                and not _is_recently_published(page, query)
+                and not _is_publishable_realtime_news_source(query, source, page)
             ):
                 logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    "web_evidence_news_article_rejected request_id=%s url=%s reason=stale_generic_or_unreadable",
                     request_id or "unknown",
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
@@ -2097,6 +2212,17 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             policy=fetch_policy,
         )
         fetched_pages = list(fetch_batch.documents)
+        news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
+        if is_realtime_news_query(query) and not news_quorum["met"]:
+            logger.warning(
+                "web_evidence_recent_news_quorum_not_met request_id=%s articles=%s domains=%s providers=%s",
+                request_id or "unknown",
+                news_quorum["articles"],
+                news_quorum["domains"],
+                news_quorum["providers"],
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
         logger.info(
             "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
             "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
@@ -2116,7 +2242,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # merely because publisher pages reject automated readers. Require at
         # least two independently hosted live search results before degrading to
         # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+        if realtime and not is_realtime_news_query(query) and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
             snippet_fallback_used = True
             logger.warning(
                 "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
@@ -2145,13 +2271,26 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     ]
     # Current-news candidates without a verified recent publication time never
     # reach the model through raw SERP metadata.
-    verified_search_results = [
-        item for item in compact_search_results
-        if (
-            not is_realtime_news_query(query)
-            or _is_recently_published(item, query)
-        )
-    ]
+    verified_search_results = (
+        [
+            {
+                "title": page.get("title"),
+                "url": page.get("url"),
+                "snippet": str(page.get("text") or "")[:700],
+                "published_at": page.get("published_at"),
+                "provider": page.get("provider"),
+            }
+            for page in compact_fetched_pages
+        ]
+        if is_realtime_news_query(query)
+        else [
+            item for item in compact_search_results
+            if (
+                not is_realtime_news_query(query)
+                or _is_recently_published(item, query)
+            )
+        ]
+    )
     evidence_fragments = [
         str(item.get("snippet") or "")
         for item in (snippet_evidence if snippet_fallback_used else [])
@@ -2177,6 +2316,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
+        "news_quorum": news_quorum,
         "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
