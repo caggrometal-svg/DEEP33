@@ -5047,9 +5047,14 @@ async def stream_gateway(
             len(collected),
         )
 
-    if not assistant_parts and not tool_markup_filter.suppressed:
+    nonstream_complete = getattr(gateway, "complete", None)
+    if (
+        not assistant_parts
+        and not tool_markup_filter.suppressed
+        and callable(nonstream_complete)
+    ):
         try:
-            fallback_data = await gateway.complete(
+            fallback_data = await nonstream_complete(
                 payload,
                 request_id=request_id,
                 idempotency_key=f"{idempotency_key}:nonstream-fallback",
