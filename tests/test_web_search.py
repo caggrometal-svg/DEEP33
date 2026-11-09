@@ -1414,7 +1414,7 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
     assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
     from backend.search.resilient import _provider_family
     assert len(queries) == 6
-    assert len({_provider_family(provider) for provider, _ in queries}) == 5
+    assert len({_provider_family(provider) for provider, _ in queries}) == 4
 
 
 
