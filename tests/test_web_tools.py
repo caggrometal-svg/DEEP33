@@ -1417,6 +1417,20 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
 
     monkeypatch.setattr(main.gateway, "stream", fake_stream)
 
+    async def fake_complete(_payload, **_kwargs):
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Respuesta recuperada mediante completion normal.",
+                },
+                "finish_reason": "stop",
+            }],
+            "_deep33_gateway": {"provider": "test", "model": "test"},
+        }
+
+    monkeypatch.setattr(main.gateway, "complete", fake_complete)
+
     async def exercise():
         completion_state = {}
         generator = main.stream_gateway(
@@ -1435,9 +1449,10 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
         raw = output.decode("utf-8")
         assert "AI_GATEWAY_INVALID_RESPONSE" not in raw
         assert '"content":' in raw
-        assert "No pude completar la síntesis" in raw
+        assert "Respuesta recuperada mediante completion normal." in raw
+        assert "No pude completar la síntesis" not in raw
         assert raw.endswith("data: [DONE]\n\n")
-        assert completion_state["assistant_text"].startswith("No pude completar la síntesis")
+        assert completion_state["assistant_text"] == "Respuesta recuperada mediante completion normal."
 
     asyncio.run(exercise())
 
