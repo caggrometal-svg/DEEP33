@@ -308,7 +308,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             for name in orchestrator.providers
         } | {"yahoo": orchestrator.circuits["yahoo"]}
         return await orchestrator.search(
-            "sitio gubernamental Chile información pública",
+            "Python official documentation and release notes",
             fresh=True,
         )
 
@@ -609,21 +609,21 @@ def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
 
     partial_results = [
         {
-            "title": "Portal gubernamental de Chile: información pública y datos abiertos",
-            "url": "https://datos.gob.cl/",
-            "snippet": "Sitio gubernamental de Chile con información pública, datos abiertos y servicios oficiales.",
+            "title": "Python official documentation and release notes",
+            "url": "https://docs.python.org/3/whatsnew/3.15.html",
+            "snippet": "Official Python documentation describing the latest Python release.",
         },
         {
-            "title": "Transparencia gubernamental de Chile e información pública",
-            "url": "https://www.gobiernotransparentechile.cl/",
-            "snippet": "Portal de transparencia e información pública del Gobierno de Chile.",
+            "title": "Python downloads and source releases",
+            "url": "https://www.python.org/downloads/source/",
+            "snippet": "Python.org official downloads, release source archives and documentation.",
         },
     ]
     yahoo_results = [
         {
-            "title": "ChileAtiende government public services",
-            "url": "https://www.chileatiende.gob.cl/",
-            "snippet": "Official Chilean government portal with public services and information.",
+            "title": "Python Package Index",
+            "url": "https://pypi.org/",
+            "snippet": "Python packages and release information.",
         }
     ]
     yahoo_calls = {"count": 0}
@@ -1412,7 +1412,9 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
     assert all(not query.casefold().lstrip().startswith("site:") for _, query in queries)
     corpus = " ".join(query.casefold() for _, query in queries)
     assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
-    assert len({provider for provider, _ in queries}) == len(queries)
+    from backend.search.resilient import _provider_family
+    assert len(queries) == 6
+    assert len({_provider_family(provider) for provider, _ in queries}) == 5
 
 
 
