@@ -614,9 +614,9 @@ def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
             "snippet": "Official Python documentation describing the latest Python release.",
         },
         {
-            "title": "Python downloads and source releases",
-            "url": "https://www.python.org/downloads/source/",
-            "snippet": "Python.org official downloads, release source archives and documentation.",
+            "title": "Real Python official documentation and release notes",
+            "url": "https://realpython.com/python-releases/",
+            "snippet": "Python release notes, official documentation references and current release information.",
         },
     ]
     yahoo_results = [
