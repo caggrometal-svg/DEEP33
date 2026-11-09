@@ -24,11 +24,16 @@ def _result(title: str, url: str, snippet: str) -> dict:
 
 
 class GlobalGateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_free_yahoo_provider_is_started_in_primary_wave(self) -> None:
+    async def test_free_mwmbl_is_independent_fallback_and_yahoo_is_bing_alias(self) -> None:
+        from backend.search.resilient import _provider_family
+
         orchestrator = WebOrchestrator()
-        self.assertIn("yahoo", orchestrator.providers)
-        self.assertIn("yahoo", orchestrator.circuits)
-        self.assertTrue(callable(orchestrator.providers["yahoo"]))
+        self.assertNotIn("yahoo", orchestrator.providers)
+        self.assertIn("yahoo", orchestrator.fallback_providers)
+        self.assertIn("mwmbl", orchestrator.fallback_providers)
+        self.assertIn("mwmbl", orchestrator.circuits)
+        self.assertEqual(_provider_family("mwmbl"), "mwmbl")
+        self.assertEqual(_provider_family("yahoo"), "bing")
 
     async def asyncSetUp(self) -> None:
         self.loop_errors: list[dict] = []
