@@ -158,6 +158,29 @@ jq -e '
 jq -c '{ok,realtime,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
 echo "SEARCH=PASS independent_providers>=2 independent_domains>=2 fetched_pages>=2"
 
+request_file news_search "$VERCEL_URL/v1/web/search" 75 \
+  --get --data-urlencode 'q=últimas noticias de Chile hoy'
+[ "$HTTP_CODE" = "200" ] || { show_redirect news_search; tail -c 3000 "$TMP_DIR/news_search.body" 2>/dev/null || true; fail "NEWS_SEARCH_HTTP_$HTTP_CODE"; }
+jq -e '
+  .ok == true and
+  ((.verification.provider_quorum_met // false) == true) and
+  ((.verification.distinct_providers // 0) >= 2) and
+  ((.results // []) | length) >= 3 and
+  ((.fetched_pages // []) | length) >= 3 and
+  (.domains_used // 0) >= 3 and
+  ([.results[]? | select(
+    .evidence_type == "verified_current_news_article" and
+    .fetched == true and
+    ((.published_at // "") | type == "string") and
+    ((.published_at // "") | length) > 0
+  )] | length) >= 3
+' "$TMP_DIR/news_search.body" >/dev/null || {
+  jq -c '{ok,status,errors,providers,verification,domains_used,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),results:((.results // [])|map({title,url,published_at,evidence_type,fetched}))}' "$TMP_DIR/news_search.body" 2>/dev/null || true
+  fail "NEWS_SEARCH=FAIL three_recent_publishers_and_two_provider_quorum_not_verified"
+}
+jq -c '{ok,status,providers,verification,domains_used,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$TMP_DIR/news_search.body"
+echo "NEWS_SEARCH=PASS articles>=3 publishers>=3 providers>=2"
+
 request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \
@@ -187,5 +210,27 @@ printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
   fail "CHAT_STREAM_EMPTY_OR_EXPECTED_TEXT_MISSING"
 }
 echo "CHAT_STREAM_PASS first_visible_text=true"
+
+previous_session_id="$SESSION_ID"
+SESSION_ID="deep33-master-news-\${GITHUB_RUN_ID:-local}"
+NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume únicamente hechos respaldados por tres artículos recientes de tres medios distintos y termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
+request_file news_chat_stream "$VERCEL_URL/v1/chat/stream" 75 \
+  --no-buffer -X POST \
+  -H 'Accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -H "X-Idempotency-Key: deep33-master-news-stream-\${GITHUB_RUN_ID:-local}" \
+  -H 'X-DEEP33-Personality: NEUTRO' \
+  --data "$NEWS_CHAT_BODY"
+SESSION_ID="$previous_session_id"
+[ "$HTTP_CODE" = "200" ] || { show_redirect news_chat_stream; tail -c 3000 "$TMP_DIR/news_chat_stream.body" 2>/dev/null || true; fail "NEWS_CHAT_STREAM_HTTP_$HTTP_CODE"; }
+news_stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/news_chat_stream.body" |
+  jq -Rr 'fromjson? | .choices[]?.delta.content // empty' |
+  tr -d '\r\n')"
+printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS' || {
+  echo "NEWS_CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$news_stream_text" | cut -c1-500)"
+  tail -c 3000 "$TMP_DIR/news_chat_stream.body" 2>/dev/null || true
+  fail "NEWS_CHAT_STREAM=FAIL recent_article_evidence_or_synthesis_missing"
+}
+echo "NEWS_CHAT_STREAM_PASS three_article_chat_path=true"
 
 echo "DEEP33_MASTER_PIPELINE_PASS sha=$CURRENT_SHA"
