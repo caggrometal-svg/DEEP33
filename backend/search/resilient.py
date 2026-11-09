@@ -348,6 +348,10 @@ class WebOrchestrator:
             "cl0q": self._cl0q,
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
+            # Yahoo is a free independent index. Start it in the primary wave
+            # instead of waiting until the five-second global budget is nearly
+            # exhausted; otherwise the only independent fallback often times out.
+            "yahoo": self._yahoo,
         }
         # Yahoo is a last-resort general-web fallback, not part of every request fan-out.
         self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
