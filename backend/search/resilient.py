@@ -1771,11 +1771,17 @@ class WebOrchestrator:
         # Yahoo is powered by Bing's algorithmic index. Use it only when no
         # Bing-family result exists; it may improve coverage but cannot add quorum.
         yahoo_already_completed = any(outcome.provider == "yahoo" for outcome in outcomes)
+        bing_family_has_candidates = any(
+            _provider_family(outcome.provider) == "bing"
+            and outcome.ok
+            and bool(outcome.results)
+            for outcome in outcomes
+        )
         if (
             "yahoo" in self.fallback_providers
             and "yahoo" in self.circuits
             and not yahoo_already_completed
-            and "bing" not in selected_providers
+            and not bing_family_has_candidates
         ):
             fallback_order.append("yahoo")
 
