@@ -158,8 +158,9 @@ class GatewayConfig:
                 provider
                 for provider in secure_providers
                 if (
-                    urlsplit(provider.url).hostname or ""
-                ).casefold() == "api.kilo.ai"
+                    (urlsplit(provider.url).hostname or "").casefold()
+                    in {"api.kilo.ai", "ai-gateway.kilo.ai"}
+                )
             ),
             None,
         )
