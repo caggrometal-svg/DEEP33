@@ -1457,6 +1457,205 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
     asyncio.run(exercise())
 
 
+def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(monkeypatch):
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = "2026-11-09T20:00:00+00:00"
+    fixtures = [
+        {
+            "title": "Últimas noticias de Chile hoy: Congreso aprueba nueva medida",
+            "url": "https://www.biobiochile.cl/noticias/2026/11/09/chile-politica-a.shtml",
+            "snippet": "Últimas noticias de Chile hoy sobre Congreso, gobierno y actualidad nacional.",
+            "provider": "bing",
+            "source_domain": "biobiochile.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: autoridades anuncian cambios",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/09/chile-actualidad.shtml",
+            "snippet": "Noticias de Chile hoy, actualidad nacional y declaraciones de autoridades.",
+            "provider": "duckduckgo",
+            "source_domain": "cooperativa.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: nueva información política",
+            "url": "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
+            "snippet": "Últimas noticias de Chile hoy con información política y nacional.",
+            "provider": "google_news",
+            "source_domain": "latercera.com",
+            "published_at": published_at,
+        },
+    ]
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "realtime": True,
+            "fresh_request": True,
+            "providers": ["bing", "duckduckgo"],
+            "providers_attempted": ["bing", "duckduckgo", "google_news"],
+            "verification": {
+                "provider_quorum_met": True,
+                "distinct_providers": 2,
+            },
+            "sources": fixtures,
+            "results": fixtures,
+            "queries": [query],
+            "retrieved_at": published_at,
+        }
+
+    async def fake_fetch(source, **_kwargs):
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": (
+                "Últimas noticias de Chile hoy. "
+                "Información periodística actualizada sobre Congreso, autoridades, "
+                "gobierno y acontecimientos nacionales. " * 4
+            ),
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "source_domain": source["source_domain"],
+            "published_at": source["published_at"],
+            "retrieved_at": published_at,
+            "text_chars": 400,
+        }
+
+    async def fake_fetch_quorum(candidates, fetcher, *, policy):
+        documents = []
+        for source in candidates:
+            page = await fetcher(source, policy.base_timeout_seconds)
+            if page is not None:
+                documents.append(page)
+        domains = {page["domain"] for page in documents}
+        return type("FetchBatch", (), {
+            "documents": documents,
+            "status": "success" if len(documents) >= 3 else "degraded",
+            "fetched": len(documents),
+            "distinct_domains": len(domains),
+            "total_text_chars": sum(len(page["text"]) for page in documents),
+            "cancelled": 0,
+            "elapsed_ms": 10.0,
+        })()
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    monkeypatch.setattr(main, "fetch_source_quorum", fake_fetch_quorum)
+    monkeypatch.setattr(main, "search_recent_news_candidates", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+
+    async def exercise():
+        return await main.prepare_web_evidence(
+            [{"role": "user", "content": query}],
+            request_id="news-quorum-test",
+            deep=False,
+        )
+
+    evidence, source_links, pages, _snippets = asyncio.run(exercise())
+    assert evidence is not None
+    assert evidence["news_quorum"]["met"] is True
+    assert evidence["news_quorum"]["articles"] == 3
+    assert evidence["news_quorum"]["domains"] == 3
+    assert evidence["news_quorum"]["providers"] == 2
+    assert len(pages) == 3
+    assert len(source_links) == 3
+    assert len(evidence["search_results"]) == 3
+
+
+def test_chat_realtime_news_fails_closed_without_three_publishers(monkeypatch):
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = "2026-11-09T20:00:00+00:00"
+    fixtures = [
+        {
+            "title": "Últimas noticias de Chile hoy: Congreso aprueba nueva medida",
+            "url": "https://www.biobiochile.cl/noticias/2026/11/09/chile-politica-a.shtml",
+            "snippet": "Últimas noticias de Chile hoy sobre Congreso y gobierno.",
+            "provider": "bing",
+            "source_domain": "biobiochile.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: autoridades anuncian cambios",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/09/chile-actualidad.shtml",
+            "snippet": "Noticias de Chile hoy, actualidad nacional y declaraciones.",
+            "provider": "duckduckgo",
+            "source_domain": "cooperativa.cl",
+            "published_at": published_at,
+        },
+    ]
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "realtime": True,
+            "fresh_request": True,
+            "providers": ["bing", "duckduckgo"],
+            "verification": {
+                "provider_quorum_met": True,
+                "distinct_providers": 2,
+            },
+            "sources": fixtures,
+            "results": fixtures,
+            "queries": [query],
+            "retrieved_at": published_at,
+        }
+
+    async def fake_fetch(source, **_kwargs):
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": (
+                "Últimas noticias de Chile hoy. "
+                "Información periodística actualizada sobre Congreso, autoridades "
+                "y acontecimientos nacionales. " * 4
+            ),
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "source_domain": source["source_domain"],
+            "published_at": source["published_at"],
+            "retrieved_at": published_at,
+            "text_chars": 400,
+        }
+
+    async def fake_fetch_quorum(candidates, fetcher, *, policy):
+        documents = []
+        for source in candidates:
+            page = await fetcher(source, policy.base_timeout_seconds)
+            if page is not None:
+                documents.append(page)
+        domains = {page["domain"] for page in documents}
+        return type("FetchBatch", (), {
+            "documents": documents,
+            "status": "degraded",
+            "fetched": len(documents),
+            "distinct_domains": len(domains),
+            "total_text_chars": sum(len(page["text"]) for page in documents),
+            "cancelled": 0,
+            "elapsed_ms": 10.0,
+        })()
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    monkeypatch.setattr(main, "fetch_source_quorum", fake_fetch_quorum)
+    monkeypatch.setattr(main, "search_recent_news_candidates", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+
+    async def exercise():
+        return await main.prepare_web_evidence(
+            [{"role": "user", "content": query}],
+            request_id="news-quorum-insufficient-test",
+            deep=False,
+        )
+
+    evidence, sources, pages, snippets = asyncio.run(exercise())
+    assert evidence is None
+    assert sources == []
+    assert pages == []
+    assert snippets == []
+
+
 def test_chile_current_events_query_gets_broad_news_recovery():
     from backend.search.resilient import WebOrchestrator
 
