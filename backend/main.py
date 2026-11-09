@@ -5047,6 +5047,51 @@ async def stream_gateway(
             len(collected),
         )
 
+    if not assistant_parts and not tool_markup_filter.suppressed:
+        try:
+            fallback_data = await gateway.complete(
+                payload,
+                request_id=request_id,
+                idempotency_key=f"{idempotency_key}:nonstream-fallback",
+                deadline=deadline,
+            )
+            fallback_message = _choice_message(fallback_data)
+            raw_fallback_text = fallback_message.get("content")
+            if isinstance(raw_fallback_text, str) and raw_fallback_text.strip():
+                fallback_filter = _InternalToolMarkupStreamFilter()
+                fallback_text = (
+                    fallback_filter.push(raw_fallback_text)
+                    + fallback_filter.finish()
+                )
+                if fallback_text and not fallback_filter.suppressed:
+                    assistant_parts.append(fallback_text)
+                    saw_done = True
+                    gateway_failure = None
+                    if first_output_at is None:
+                        first_output_at = time.perf_counter()
+                        performance.mark(request_id, "T7_FIRST_TOKEN")
+                        _metric_latency["chat_stream_ttft_ms"].append(
+                            (first_output_at - stream_started) * 1000
+                        )
+                    for piece in _sse_text_chunks(fallback_text):
+                        yield _sse_delta(piece)
+                    gateway_meta = fallback_data.get("_deep33_gateway", {})
+                    logger.info(
+                        "stream_nonstream_fallback_success request_id=%s provider=%s model=%s chars=%s",
+                        request_id,
+                        gateway_meta.get("provider"),
+                        gateway_meta.get("model"),
+                        len(fallback_text),
+                    )
+        except (asyncio.TimeoutError, GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+            logger.warning(
+                "stream_nonstream_fallback_failed request_id=%s error=%s",
+                request_id,
+                type(exc).__name__,
+            )
+            if not gateway_failure:
+                gateway_failure = "nonstream_fallback_failed"
+
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)
         yield _sse_error("AI_GATEWAY_INVALID_RESPONSE")
