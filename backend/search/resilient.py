@@ -298,7 +298,7 @@ def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "WOM Chile internet tecnología empresas servicios digitales"),
         ("cl0q", "Movistar Empresas Chile tecnología servicios digitales"),
         ("mojeek", "empresas tecnológicas Chile software telecomunicaciones SONDA Entel WOM Movistar"),
-        ("yahoo", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
+        ("cl0q", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
     )
 
 
@@ -310,7 +310,7 @@ def _academic_ai_research_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "site:csail.mit.edu artificial intelligence research paper"),
         ("cl0q", "site:berkeley.edu artificial intelligence research machine learning paper"),
         ("mojeek", "site:cmu.edu artificial intelligence research publications"),
-        ("yahoo", "university artificial intelligence research papers academic labs"),
+        ("cl0q", "university artificial intelligence research papers academic labs"),
     )
 
 
@@ -1031,9 +1031,9 @@ class WebOrchestrator:
                 ("bing", "site:bcentral.cl Chile economía mercado informe"),
                 # Direct-web fallbacks reduce dependence on opaque Google News RSS
                 # wrappers and give the fetch/extractor real publisher URLs.
-                ("yahoo", "site:df.cl Chile economía mercados noticias hoy"),
-                ("yahoo", "site:latercera.com/pulso Chile economía mercados hoy"),
-                ("yahoo", "site:emol.com/economia Chile economía mercados hoy"),
+                ("cl0q", "site:df.cl Chile economía mercados noticias hoy"),
+                ("cl0q", "site:latercera.com/pulso Chile economía mercados hoy"),
+                ("cl0q", "site:emol.com/economia Chile economía mercados hoy"),
                 ("google", "site:bcentral.cl Chile economía mercado informe"),
                 # Prefer direct article/category URLs from newsrooms that are
                 # readable by the production fetcher; this avoids opaque Google
@@ -1042,7 +1042,7 @@ class WebOrchestrator:
                 ("bing", "site:meganoticias.cl economía Chile noticias hoy"),
                 ("google", "site:24horas.cl economía Chile noticias hoy"),
                 ("bing", "site:biobiochile.cl economía Chile noticias hoy"),
-                ("yahoo", "site:cooperativa.cl economía Chile noticias hoy"),
+                ("cl0q", "site:cooperativa.cl economía Chile noticias hoy"),
                 ("google", "site:chvnoticias.cl economía Chile noticias hoy"),
                 # Brand-name queries recover direct newsroom URLs when public
                 # indexes ignore or mishandle site: filters.
@@ -1087,7 +1087,7 @@ class WebOrchestrator:
                 ("google_news", "BioBioChile Chile últimas noticias hoy"),
                 ("bing", "Cooperativa Chile últimas noticias hoy"),
                 ("google", "La Tercera Chile últimas noticias hoy"),
-                ("yahoo", "24Horas Chile últimas noticias hoy"),
+                ("cl0q", "24Horas Chile últimas noticias hoy"),
                 ("google_news", "Emol Chile últimas noticias hoy"),
                 ("bing", "CNN Chile últimas noticias hoy"),
             )
@@ -1107,7 +1107,7 @@ class WebOrchestrator:
                 ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
                 ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
                 ("google", "site:latercera.com Chile noticias hoy actualidad"),
-                ("yahoo", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("cl0q", "site:24horas.cl Chile noticias hoy actualidad"),
                 ("google_news", "site:emol.com Chile noticias hoy actualidad"),
                 ("bing", "site:cnnchile.com Chile noticias hoy actualidad"),
             )
@@ -1127,9 +1127,9 @@ class WebOrchestrator:
                 ("google", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("google", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
-                ("yahoo", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
+                ("cl0q", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteoblue.com Santiago Chile weather forecast temperature"),
-                ("yahoo", "site:accuweather.com Santiago Chile weather forecast temperature"),
+                ("cl0q", "site:accuweather.com Santiago Chile weather forecast temperature"),
             )
             tasks.update({
                 asyncio.create_task(
@@ -1150,17 +1150,17 @@ class WebOrchestrator:
                 # is not sufficient when the publisher URL must be fetched.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
@@ -1357,7 +1357,7 @@ class WebOrchestrator:
         ):
             official_queries = (
                 ("mojeek", "site:chileatiende.gob.cl Chile servicios trámites información pública"),
-                ("yahoo", "site:datos.gob.cl Chile datos abiertos información pública"),
+                ("cl0q", "site:datos.gob.cl Chile datos abiertos información pública"),
                 ("google", "site:cplt.cl Chile transparencia información pública"),
                 ("duckduckgo", "site:bcn.cl/leychile Chile ley transparencia información pública"),
             )
@@ -1575,16 +1575,16 @@ class WebOrchestrator:
                 # finish with a single editorial domain.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
