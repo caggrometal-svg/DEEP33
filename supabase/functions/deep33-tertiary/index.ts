@@ -11,8 +11,8 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 // The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
 // an old environment variable still exists in the project.
-const UPSTREAM = isSecureHttpsUrl(RAW_UPSTREAM) &&
-    !/(render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza)/i.test(RAW_UPSTREAM)
+const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&
+    isSecureHttpsUrl(RAW_UPSTREAM)
   ? RAW_UPSTREAM
   : "";
 
