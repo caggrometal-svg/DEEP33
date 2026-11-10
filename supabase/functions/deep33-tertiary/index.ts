@@ -193,7 +193,7 @@ async function buildNavigatedWebEvidence(
   const attemptedDomains = new Set<string>();
   let attempted = 0;
   const batchSize = 4;
-  // Railway /v1/web/fetch is bounded to about 3.3s, with a 4s caller deadline.
+  // Vercel /v1/web/fetch is bounded to about 3.3s, with a 4s caller deadline.
   // The extra headroom lets the backend return extracted text or a graceful
   // timeout result instead of aborting the request and producing HTTP 499.
   const sourceReadTimeoutMs = 4000;
@@ -1064,7 +1064,7 @@ async function buildEdgeIdempotencyContext(
   if (!key || !session) return null;
 
   // Match backend/main.py generation_request_hash(): the shared key must have one
-  // request fingerprint across Edge, direct Render, /v1/ai/generate and /v1/chat/stream.
+  // request fingerprint across Edge, direct Vercel backend, /v1/ai/generate and /v1/chat/stream.
   // System prompts injected by Edge are excluded exactly as Vercel backend excludes system
   // messages; provider, operation and transport mode must not change request identity.
   const messages = (Array.isArray(payload.messages) ? payload.messages : [])
