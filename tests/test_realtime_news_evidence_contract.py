@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.main import _is_publishable_realtime_news_source
+from backend.main import _compact_model_web_evidence, _is_publishable_realtime_news_source
 
 
 def _news_source(*, published_at, url="https://noticias.example/2026/10/25/gobierno-medidas-chile.html"):
@@ -140,3 +140,49 @@ def test_current_news_relevance_ignores_chat_output_instructions():
         source,
         page,
     )
+
+
+def test_strict_news_model_context_is_compact_but_keeps_full_quorum_metadata():
+    pages = [
+        {
+            "title": f"Artículo {index}",
+            "url": f"https://medio{index}.example/noticia",
+            "text": ("contenido comprobable " * 200),
+            "published_at": "2026-11-10T02:00:00Z",
+        }
+        for index in range(1, 5)
+    ]
+    evidence = {
+        "fetched_pages": pages,
+        "search_results": [{"title": f"Artículo {index}"} for index in range(1, 5)],
+        "domains_used": 4,
+        "news_quorum": {
+            "status": "OK",
+            "fetched": 4,
+            "domains": 4,
+            "required": 3,
+        },
+        "extracted_text_chars": sum(len(page["text"]) for page in pages),
+    }
+
+    compact = _compact_model_web_evidence(evidence, strict_news=True)
+
+    assert len(compact["fetched_pages"]) == 3
+    assert len(compact["search_results"]) == 3
+    assert all(len(page["text"]) <= 1000 for page in compact["fetched_pages"])
+    assert compact["domains_used"] == 4
+    assert compact["news_quorum"] == evidence["news_quorum"]
+    assert compact["extracted_text_chars"] == evidence["extracted_text_chars"]
+    assert compact["model_context_compacted"] is True
+
+
+def test_non_news_model_evidence_is_not_truncated():
+    evidence = {
+        "fetched_pages": [{"text": "x" * 2500}],
+        "search_results": [{"title": "A"}, {"title": "B"}, {"title": "C"}, {"title": "D"}],
+        "domains_used": 4,
+    }
+
+    compact = _compact_model_web_evidence(evidence, strict_news=False)
+
+    assert compact == evidence
