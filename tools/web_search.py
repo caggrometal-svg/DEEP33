@@ -1066,7 +1066,7 @@ async def search_web(
     if not cleaned:
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
-    max_results = max(1, min(8, int(max_results)))
+    max_results = max(1, min(12, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
     # The fast flag was previously accepted but ignored. A bounded budget on
     # this path protects first-token latency; fallback still has a reserved slice.
