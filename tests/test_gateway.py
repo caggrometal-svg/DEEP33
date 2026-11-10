@@ -959,7 +959,7 @@ def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monke
             200,
             request=request,
             headers={"content-type": "text/event-stream"},
-            text="data: [DONE]\\n\\n",
+            text="data: [DONE]\n\n",
         )
 
     transport = httpx.MockTransport(handler)
@@ -973,8 +973,6 @@ def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monke
         max_retries=0,
     )
     gateway = AIGateway(config)
-    original = httpx.AsyncClient
-
     class Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
             kwargs["transport"] = transport
@@ -997,6 +995,6 @@ def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monke
         "status_code": 200,
         "outcome": "empty_visible_stream",
         "content_type": "text/event-stream",
-        "buffered_bytes": len(b"data: [DONE]\\n\\n"),
+        "buffered_bytes": len(b"data: [DONE]\n\n"),
         "sse_data_frames": 1,
     }]
