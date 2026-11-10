@@ -326,7 +326,7 @@ class WebOrchestrator:
         fallback_delay_seconds: float = FALLBACK_DELAY_SECONDS,
         cache_ttl_seconds: float = CACHE_TTL_SECONDS,
     ) -> None:
-        self.max_results = max(1, min(8, int(max_results)))
+        self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
         self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
         self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
