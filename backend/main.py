@@ -1377,6 +1377,32 @@ WEB_NAVIGATION_PROMPT = (
     "Do not dump raw source metadata or internal retrieval JSON. When the user requests sources, or current/research claims need traceability, include concise source names and direct URLs present in retrieved evidence; never invent links."
 )
 
+def _compact_model_web_evidence(evidence: dict[str, Any], *, strict_news: bool) -> dict[str, Any]:
+    """Bound inference input without weakening server-side retrieval or source quorum."""
+    compact = dict(evidence)
+    if not strict_news:
+        return compact
+
+    # Keep three independently fetched publisher articles for synthesis. All
+    # validated sources remain in the separately returned source list; this
+    # limits prompt tokens on free inference providers without reducing quorum.
+    pages = evidence.get("fetched_pages")
+    if isinstance(pages, list):
+        compact["fetched_pages"] = [
+            {
+                **page,
+                "text": str(page.get("text") or "")[:1000],
+            }
+            for page in pages[:3]
+            if isinstance(page, dict)
+        ]
+    results = evidence.get("search_results")
+    if isinstance(results, list):
+        compact["search_results"] = results[:3]
+    compact["model_context_compacted"] = True
+    return compact
+
+
 WEB_EVIDENCE_SYNTHESIS_PROMPT = (
     "Server-side retrieval has already completed for this request. No web tools or function-call interface are available in this inference. "
     "Do not attempt to invoke, simulate, or print internal tool-call markup. "
@@ -2376,7 +2402,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "Prefer the newest independently corroborated evidence. Explicitly stale evidence must not support a current claim. "
             "If publication time is unavailable, do not invent one and do not describe that source as freshly published; use it only when other current evidence corroborates the claim. "
             "Write an original synthesis grounded in the retrieved evidence. Use the newest publication dates available, distinguish confirmed facts from uncertainty, and never state a current fact that the evidence does not support. Do not copy source phrasing or reproduce paragraphs or generate source URLs; DEEP33 will append verified direct source links from retrieval metadata.\n"
-            + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(
+                _compact_model_web_evidence(
+                    evidence,
+                    strict_news=is_strict_news_query(query),
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         ),
     })
     # Expose URLs that actually contributed fetched text. Only use result snippets
