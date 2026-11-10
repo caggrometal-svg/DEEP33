@@ -210,7 +210,7 @@ def test_web_loop_uses_single_synthesis_pass(monkeypatch: pytest.MonkeyPatch):
             "url": url,
             "final_url": url,
             "title": "Solar",
-            "text": "Texto de evidencia.",
+            "text": "La página explica cómo funciona la energía solar y describe sus componentes principales, el proceso de conversión fotovoltaica y sus aplicaciones prácticas. Incluye información técnica suficiente para una síntesis verificable.",
         }
 
     monkeypatch.setattr(main, "call_gateway", fake_gateway)
