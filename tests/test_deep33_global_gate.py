@@ -728,7 +728,7 @@ def test_global_gate_does_not_probe_live_without_explicit_flag(monkeypatch, caps
         gate,
         "parse_args",
         lambda: SimpleNamespace(
-            base_url="https://deep33-backend.onrender.com",
+            base_url="https://deep33-backend.vercel.app",
             token="",
             session_id="unit-test-session",
             require_live=False,
@@ -764,7 +764,7 @@ def test_global_gate_requires_authenticated_token_for_live_mode(monkeypatch, cap
         gate,
         "parse_args",
         lambda: SimpleNamespace(
-            base_url="https://deep33-backend.onrender.com",
+            base_url="https://deep33-backend.vercel.app",
             token="",
             session_id="unit-test-session",
             require_live=True,
