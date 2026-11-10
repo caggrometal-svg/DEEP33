@@ -123,3 +123,20 @@ def test_current_news_rejects_unresolved_google_news_wrapper():
         page,
     )
 
+
+
+def test_current_news_relevance_ignores_chat_output_instructions():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    page = _fetched_page(published_at=now)
+    chat_prompt = (
+        "Busca las últimas noticias de Chile hoy. "
+        "Resume únicamente hechos respaldados por tres artículos recientes "
+        "de tres medios distintos y termina con NEWS_STREAM_PASS."
+    )
+
+    assert _is_publishable_realtime_news_source(
+        chat_prompt,
+        source,
+        page,
+    )
