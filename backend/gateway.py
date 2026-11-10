@@ -404,7 +404,12 @@ class AIGateway:
         # Dots3 defaults to an internal reasoning phase. DEEP33 needs the
         # user-visible answer stream, so explicitly disable thinking as documented
         # by the model and provide a bounded visible-output budget.
-        if "dots-studio/dots-3-note-preview" in provider.model.casefold():
+        if (
+            "dots-studio/dots-3-note-preview" in provider.model.casefold()
+            or "nvidia/nemotron-3.5-lightning" in provider.model.casefold()
+        ):
+            # Both models otherwise spend the beginning of a short stream on
+            # hidden reasoning. Disable it so the first chunk is user-visible text.
             result.pop("reasoning_effort", None)
             template_kwargs = result.get("chat_template_kwargs")
             if not isinstance(template_kwargs, dict):
