@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_realtime_news_query, is_strict_news_query, _is_recently_published, rank_results
+from backend.search.engine import is_realtime_query, is_realtime_news_query, is_strict_news_query, _is_recently_published, _normalise_lookup_query, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -150,7 +150,10 @@ def _is_publishable_realtime_news_source(
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
-    return score_result(query, relevance_item) >= minimum_relevance_score
+    # Chat prompts often append output constraints after the actual search intent.
+    # Score the publisher article against the normalized topic, not those instructions.
+    evidence_query = _normalise_lookup_query(query) or query
+    return score_result(evidence_query, relevance_item) >= minimum_relevance_score
 
 
 def _recent_news_quorum_summary(
