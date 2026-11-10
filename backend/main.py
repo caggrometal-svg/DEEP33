@@ -90,17 +90,18 @@ def _is_publishable_realtime_news_source(
     if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
 
-    published_at = fetched_page.get("published_at") or source.get("published_at")
+    # A SERP timestamp describes the index candidate, not necessarily the page
+    # opened by DEEP33. Only publisher metadata extracted from that page qualifies.
+    published_at = fetched_page.get("published_at")
     if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
+        {"published_at": published_at},
         query,
     ):
         return False
 
     page_url = str(
-        fetched_page.get("url")
-        or fetched_page.get("final_url")
-        or source.get("url")
+        fetched_page.get("final_url")
+        or fetched_page.get("url")
         or ""
     ).strip()
     parsed = urlparse(page_url)
@@ -116,7 +117,8 @@ def _is_publishable_realtime_news_source(
         "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news", "/ultimo-momento",
+        "/latest-news", "/breaking-news", "/ultimo-momento", "/ultimas",
+        "/ultima", "/últimas", "/últimas-noticias",
     }
     if path in landing_paths:
         return False
@@ -169,7 +171,7 @@ def _recent_news_quorum_summary(
         and _is_publishable_realtime_news_source(query, page, page)
     ]
     domains = {
-        str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+        str(page.get("domain") or (urlparse(str(page.get("final_url") or page.get("url") or "")).hostname or ""))
         .casefold().removeprefix("www.")
         for page in valid_pages
     } - {""}
@@ -1991,7 +1993,10 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Publication timestamp remains page-derived; SERP dates are discovery
+        # hints only and must not be promoted to verified article metadata.
+        "published_at": result.get("published_at"),
+        "final_url": final_url,
         "text_chars": len(page_text),
     }
 

@@ -241,3 +241,77 @@ def test_news_synthesis_fallback_payload_is_bounded_for_free_inference():
     assert len(compact_evidence["fetched_pages"]) == 3
     assert all(len(page["text"]) <= 450 for page in compact_evidence["fetched_pages"])
     assert compact_evidence["news_quorum"]["met"] is True
+
+
+
+def test_current_news_never_inherits_recent_serp_timestamp_when_page_has_no_date():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    page = _fetched_page(published_at=None)
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_current_news_rejects_additional_news_index_landing_path_even_with_page_date():
+    now = datetime.now(timezone.utc).isoformat()
+    url = "https://www.df.cl/ultimas"
+    source = _news_source(published_at=now, url=url)
+    page = _fetched_page(published_at=now, url=url, title="Últimas noticias")
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_html_fetch_extracts_article_published_time_meta():
+    from tools.web_fetch import _extract_text
+
+    body = (
+        "El Gobierno informó nuevas medidas para el país y detalló el calendario "
+        "de implementación, las instituciones responsables y los próximos pasos. "
+    ) * 5
+    html_doc = (
+        '<html><head><meta property="article:published_time" '
+        'content="2026-11-10T02:15:00Z"><title>Medidas anunciadas</title></head>'
+        f"<body><article><p>{body}</p></article></body></html>"
+    )
+    title, text, published_at = _extract_text(
+        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000
+    )
+    assert title == "Medidas anunciadas"
+    assert len(text) >= 80
+    assert published_at == "2026-11-10T02:15:00Z"
+
+
+def test_html_fetch_extracts_date_published_from_news_article_jsonld():
+    from tools.web_fetch import _extract_text
+    import json
+
+    body = (
+        "La autoridad publicó el informe y confirmó los resultados del proceso "
+        "con detalles sobre las medidas, los plazos y la implementación nacional. "
+    ) * 5
+    structured = {
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": "Informe oficial publicado",
+        "datePublished": "2026-11-10T01:45:00Z",
+        "articleBody": body,
+    }
+    html_doc = (
+        '<html><head><script type="application/ld+json">'
+        + json.dumps(structured)
+        + "</script></head><body></body></html>"
+    )
+    title, text, published_at = _extract_text(
+        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000
+    )
+    assert title == "Informe oficial publicado"
+    assert len(text) >= 80
+    assert published_at == "2026-11-10T01:45:00Z"
