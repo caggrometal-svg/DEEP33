@@ -226,7 +226,17 @@ SESSION_ID="$previous_session_id"
 news_stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/news_chat_stream.body" |
   jq -Rr 'fromjson? | .choices[]?.delta.content // empty' |
   tr -d '\r\n')"
-printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS' || {
+if printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS'; then
+  echo "NEWS_CHAT_STREAM_PASS three_article_chat_path=true mode=model"
+elif printf '%s' "$news_stream_text" | grep -Fq 'extractos breves de las páginas verificadas'; then
+  news_source_count="$(printf '%s' "$news_stream_text" |
+    grep -Eo 'https?://[^[:space:])>]+' | sed 's/[.,]$//' | sort -u | wc -l | tr -d ' ')"
+  [ "$news_source_count" -ge 3 ] || {
+    echo "NEWS_CHAT_STREAM_EXTRACTED_FALLBACK_SOURCE_COUNT=$news_source_count"
+    fail "NEWS_CHAT_STREAM=FAIL extractive_fallback_missing_three_verified_sources"
+  }
+  echo "NEWS_CHAT_STREAM_EXTRACTIVE_FALLBACK_PASS distinct_source_urls=$news_source_count"
+else
   echo "NEWS_CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$news_stream_text" | cut -c1-500)"
   tail -c 3000 "$TMP_DIR/news_chat_stream.body" 2>/dev/null || true
   # Separate provider health from evidence-prompt failures. This diagnostic uses
@@ -240,7 +250,6 @@ printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS' || {
     tail -c 2000 "$TMP_DIR/news_inference_diagnostic.body" 2>/dev/null || true
   fi
   fail "NEWS_CHAT_STREAM=FAIL recent_article_evidence_or_synthesis_missing"
-}
-echo "NEWS_CHAT_STREAM_PASS three_article_chat_path=true"
+fi
 
 echo "DEEP33_MASTER_PIPELINE_PASS sha=$CURRENT_SHA"

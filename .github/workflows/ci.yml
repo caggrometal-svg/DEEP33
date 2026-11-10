@@ -1045,6 +1045,8 @@ jobs:
     permissions:
       contents: read
       checks: read
+      issues: read
+      statuses: read
       id-token: write
     env:
       DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
@@ -1056,38 +1058,55 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
         run: |
           set -euo pipefail
-          api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
+          status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status"
+          comments_api="https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100"
           alias=""
           for attempt in $(seq 1 36); do
-            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+            statuses="$(curl -fsS --connect-timeout 8 --max-time 20 \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$api" || true)"
-            candidate="$(printf '%s' "$checks" | jq -r '
-              [
-                .check_runs[]?
-                | select((.app.slug // "") == "vercel")
-                | (.output.summary // ""),
-                  (.output.text // "")
-              ]
-              | map(select(length > 0))
+              "$status_api" || true)"
+            deployment_url="$(printf '%s' "$statuses" | jq -r '
+              [.statuses[]?
+               | select(.context == "Vercel" and .state == "success")
+               | .target_url]
+              | last // empty
+            ' 2>/dev/null || true)"
+            deployment_id="${deployment_url##*/}"
+
+            comments="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$comments_api" || true)"
+            vercel_comments="$(printf '%s' "$comments" | jq -r '
+              [.[]?
+               | select((.performed_via_github_app.slug // "") == "vercel")
+               | (.body // "")]
               | join("\n")
-            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
+            ' 2>/dev/null || true)"
+            candidate="$(printf '%s' "$vercel_comments" | grep -Eo \
+              'https://deep33-backend-git-(fix-vercel-android-route-221026|fix-phase1-routing-provider-quo)-[a-f0-9]{6}-iac33\.vercel\.app' \
+              | tail -n 1 | sed 's#^https://##' || true)"
+
             case "$candidate" in
               deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
-                alias="$candidate"
-                break
+                if [ -n "$deployment_id" ] && [[ "$vercel_comments" == *"$deployment_id"* ]]; then
+                  alias="$candidate"
+                  break
+                fi
                 ;;
             esac
-            echo "WAITING_FOR_APPROVED_VERCEL_PREVIEW attempt=$attempt sha=$CURRENT_SHA"
+            echo "WAITING_FOR_VERCEL_COMMIT_STATUS_AND_PR_COMMENT attempt=$attempt sha=$CURRENT_SHA"
             [ "$attempt" -lt 36 ] && sleep 5
           done
           test -n "$alias" || {
-            echo "ANDROID_E2E_VERCEL_PREVIEW_NOT_FOUND sha=$CURRENT_SHA"
+            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_FOUND sha=$CURRENT_SHA"
             exit 1
           }
           echo "DEEP33_E2E_VERCEL_URL=https://$alias" >> "$GITHUB_ENV"

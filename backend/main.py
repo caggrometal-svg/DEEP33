@@ -1478,6 +1478,10 @@ def should_force_web(messages):
     query = latest_user_query(messages)
     if not query:
         return False
+    # The decision router's WEB route is itself an explicit external-evidence
+    # requirement. Keep the router and evidence acquisition contract aligned.
+    if classify_query(query).route == DecisionRoute.WEB:
+        return True
     if is_realtime_query(query):
         return True
     lowered = query.lower()
@@ -1985,11 +1989,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Every routed external lookup must be grounded in multiple readable pages.
+    # Current-news requests keep the stricter three-publisher requirement.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 3 if is_strict_news_query(query) else 2 if contrast_required else 1
+    required_pages = (
+        3 if is_strict_news_query(query)
+        else 2 if (contrast_required or explicitly_forced or realtime)
+        else 1
+    )
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -5134,6 +5142,216 @@ async def _finalize_stream(
             )
 
 
+
+def _web_evidence_from_payload(payload: dict[str, Any]) -> tuple[int, dict[str, Any], str] | None:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return None
+    marker = "Server-side web evidence for this request follows."
+    decoder = json.JSONDecoder()
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        marker_at = content.find(marker)
+        if marker_at < 0:
+            continue
+        json_start = content.find("{", marker_at + len(marker))
+        if json_start < 0:
+            continue
+        try:
+            evidence, _consumed = decoder.raw_decode(content[json_start:])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(evidence, dict):
+            return index, evidence, content[:json_start]
+    return None
+
+
+def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    message_index, evidence, prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+
+    compact_pages = []
+    for page in pages[:3]:
+        if not isinstance(page, dict):
+            continue
+        compact_pages.append({
+            "title": str(page.get("title") or "")[:180],
+            "url": str(page.get("url") or "")[:1000],
+            "domain": str(page.get("domain") or "")[:180],
+            "provider": str(page.get("provider") or "")[:80],
+            "published_at": page.get("published_at"),
+            "text": str(page.get("text") or "")[:650],
+        })
+    if not compact_pages:
+        return None
+
+    results = evidence.get("search_results")
+    compact_results = []
+    if isinstance(results, list):
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            compact_results.append({
+                "title": str(item.get("title") or "")[:180],
+                "url": str(item.get("url") or "")[:1000],
+                "provider": str(item.get("provider") or "")[:80],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:180],
+            })
+
+    compact_verification = {
+        key: verification.get(key)
+        for key in (
+            "provider_quorum_met",
+            "distinct_providers",
+            "distinct_domains",
+            "relevant_results",
+        )
+        if key in verification
+    }
+    compact_evidence = {
+        "realtime": bool(evidence.get("realtime")),
+        "retrieved_at": evidence.get("retrieved_at"),
+        "providers_attempted": list(evidence.get("providers_attempted") or [])[:8],
+        "verification": compact_verification,
+        "news_quorum": news_quorum,
+        "search_results": compact_results,
+        "fetched_pages": compact_pages,
+        "domains_used": evidence.get("domains_used"),
+        "extracted_text_chars": evidence.get("extracted_text_chars"),
+        "snippet_fallback": bool(evidence.get("snippet_fallback")),
+        "model_context_compacted": True,
+    }
+    compact_payload = dict(payload)
+    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
+    compact_messages[message_index] = {
+        **compact_messages[message_index],
+        "content": prefix + json.dumps(
+            compact_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
+    compact_payload["messages"] = compact_messages
+    compact_payload["max_tokens"] = min(
+        768,
+        max(384, int(payload.get("max_tokens") or 768)),
+    )
+    return compact_payload
+
+
+def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    _message_index, evidence, _prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+
+    try:
+        provider_count = int(
+            verification.get("distinct_providers")
+            or news_quorum.get("providers")
+            or 0
+        )
+    except (TypeError, ValueError):
+        provider_count = 0
+    provider_quorum_met = (
+        verification.get("provider_quorum_met") is True
+        or news_quorum.get("provider_quorum_met") is True
+    )
+    if provider_count < 2 or not provider_quorum_met:
+        return None
+
+    strict_news = news_quorum.get("required") is True
+    if strict_news and (
+        news_quorum.get("met") is not True
+        or int(news_quorum.get("articles") or 0) < 3
+        or int(news_quorum.get("domains") or 0) < 3
+    ):
+        return None
+
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+    minimum_sources = 3 if strict_news else 2
+    selected: list[tuple[str, str, str]] = []
+    seen_domains: set[str] = set()
+    junk_sentence = re.compile(
+        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
+        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
+        r"ignore all previous instructions|system prompt)\b",
+        re.IGNORECASE,
+    )
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        url = str(page.get("url") or "").strip()
+        parsed_url = urlparse(url)
+        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
+            continue
+        domain = str(page.get("domain") or parsed_url.hostname).casefold()
+        domain = domain.removeprefix("www.").rstrip(".")
+        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
+        if not domain or domain in seen_domains or len(page_text) < 80:
+            continue
+        sentences = [
+            sentence.strip(" \t\r\n-•")
+            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
+            if sentence.strip()
+        ]
+        sentence = next(
+            (
+                item for item in sentences
+                if 8 <= len(item.split()) <= 45
+                and not junk_sentence.search(item)
+            ),
+            "",
+        )
+        if not sentence:
+            sentence = page_text
+        words = sentence.split()
+        excerpt = " ".join(words[:20]).strip()
+        if len(words) > 20:
+            excerpt += "…"
+        if len(excerpt) < 40:
+            continue
+        title = str(page.get("title") or domain).strip()[:160]
+        selected.append((domain, title, excerpt))
+        seen_domains.add(domain)
+        if len(selected) >= 3:
+            break
+
+    required_domains = 3 if strict_news else 2
+    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
+        return None
+
+    lines = [
+        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
+    ]
+    lines.extend(
+        f"• {title}: «{excerpt}»"
+        for _domain, title, excerpt in selected
+    )
+    return "\n".join(lines)
+
+
 async def stream_gateway(
     payload: dict,
     session_id: str,
@@ -5264,49 +5482,101 @@ async def stream_gateway(
         and not tool_markup_filter.suppressed
         and callable(nonstream_complete)
     ):
-        try:
-            fallback_data = await nonstream_complete(
-                payload,
-                request_id=request_id,
-                idempotency_key=f"{idempotency_key}:nonstream-fallback",
-                deadline=deadline,
-            )
-            fallback_message = _choice_message(fallback_data)
-            raw_fallback_text = fallback_message.get("content")
-            if isinstance(raw_fallback_text, str) and raw_fallback_text.strip():
+        compact_payload = _compact_web_synthesis_payload(payload)
+        candidates = []
+        if compact_payload is not None:
+            candidates.append((compact_payload, "compact"))
+        candidates.append((payload, "standard"))
+
+        for candidate_payload, fallback_kind in candidates:
+            try:
+                fallback_data = await nonstream_complete(
+                    candidate_payload,
+                    request_id=request_id,
+                    idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
+                    deadline=deadline,
+                )
+                fallback_message = _choice_message(fallback_data)
+                raw_fallback_text = fallback_message.get("content")
+                if not isinstance(raw_fallback_text, str) or not raw_fallback_text.strip():
+                    logger.warning(
+                        "stream_nonstream_fallback_empty request_id=%s mode=%s",
+                        request_id,
+                        fallback_kind,
+                    )
+                    continue
                 fallback_filter = _InternalToolMarkupStreamFilter()
                 fallback_text = (
                     fallback_filter.push(raw_fallback_text)
                     + fallback_filter.finish()
                 )
-                if fallback_text and not fallback_filter.suppressed:
-                    assistant_parts.append(fallback_text)
-                    saw_done = True
-                    gateway_failure = None
-                    if first_output_at is None:
-                        first_output_at = time.perf_counter()
-                        performance.mark(request_id, "T7_FIRST_TOKEN")
-                        _metric_latency["chat_stream_ttft_ms"].append(
-                            (first_output_at - stream_started) * 1000
-                        )
-                    for piece in _sse_text_chunks(fallback_text):
-                        yield _sse_delta(piece)
-                    gateway_meta = fallback_data.get("_deep33_gateway", {})
-                    logger.info(
-                        "stream_nonstream_fallback_success request_id=%s provider=%s model=%s chars=%s",
+                if not fallback_text or fallback_filter.suppressed:
+                    logger.warning(
+                        "stream_nonstream_fallback_filtered request_id=%s mode=%s",
                         request_id,
-                        gateway_meta.get("provider"),
-                        gateway_meta.get("model"),
-                        len(fallback_text),
+                        fallback_kind,
                     )
-        except (asyncio.TimeoutError, GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+                    continue
+
+                assistant_parts.append(fallback_text)
+                saw_done = True
+                gateway_failure = None
+                if first_output_at is None:
+                    first_output_at = time.perf_counter()
+                    performance.mark(request_id, "T7_FIRST_TOKEN")
+                    _metric_latency["chat_stream_ttft_ms"].append(
+                        (first_output_at - stream_started) * 1000
+                    )
+                for piece in _sse_text_chunks(fallback_text):
+                    yield _sse_delta(piece)
+                gateway_meta = fallback_data.get("_deep33_gateway", {})
+                logger.info(
+                    "stream_nonstream_fallback_success request_id=%s mode=%s provider=%s model=%s chars=%s",
+                    request_id,
+                    fallback_kind,
+                    gateway_meta.get("provider"),
+                    gateway_meta.get("model"),
+                    len(fallback_text),
+                )
+                break
+            except (asyncio.TimeoutError, GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+                safe_attempts = [
+                    {
+                        key: attempt.get(key)
+                        for key in ("provider", "model", "status_code", "outcome")
+                        if attempt.get(key) is not None
+                    }
+                    for attempt in getattr(exc, "attempts", [])
+                    if isinstance(attempt, dict)
+                ]
+                logger.warning(
+                    "stream_nonstream_fallback_failed request_id=%s mode=%s error=%s attempts=%s",
+                    request_id,
+                    fallback_kind,
+                    type(exc).__name__,
+                    json.dumps(safe_attempts[:6], ensure_ascii=False, separators=(",", ":")),
+                )
+                gateway_failure = gateway_failure or "nonstream_fallback_failed"
+
+    if not assistant_parts and not tool_markup_filter.suppressed:
+        extractive_fallback = _extractive_web_evidence_fallback(payload)
+        if extractive_fallback:
+            assistant_parts.append(extractive_fallback)
+            saw_done = True
+            gateway_failure = None
+            if first_output_at is None:
+                first_output_at = time.perf_counter()
+                performance.mark(request_id, "T7_FIRST_TOKEN")
+                _metric_latency["chat_stream_ttft_ms"].append(
+                    (first_output_at - stream_started) * 1000
+                )
+            for piece in _sse_text_chunks(extractive_fallback):
+                yield _sse_delta(piece)
             logger.warning(
-                "stream_nonstream_fallback_failed request_id=%s error=%s",
+                "stream_extractive_web_evidence_fallback request_id=%s sources=%s",
                 request_id,
-                type(exc).__name__,
+                3 if "extractos breves" in extractive_fallback else 2,
             )
-            if not gateway_failure:
-                gateway_failure = "nonstream_fallback_failed"
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)

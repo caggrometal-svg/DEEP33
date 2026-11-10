@@ -143,3 +143,19 @@ def test_finance_answer_uses_the_validated_value_verbatim():
     assert "965,50 pesos chilenos" in answer
     assert "Fuentes consultadas:" in answer
     assert "https://query1.finance.yahoo.com/v8/finance/chart/CLP=X" in answer
+
+
+
+def test_backend_forces_web_evidence_for_every_external_entity_route():
+    import backend.main as main
+
+    queries = (
+        "¿Quién es Donald Trump?",
+        "¿Qué sabemos de OpenAI?",
+        "¿Qué empresas venden paneles solares en Chile?",
+        "Compara Samsung Galaxy S26 con iPhone 17",
+        "Documentación de Python asyncio",
+    )
+    for query in queries:
+        assert classify_query(query).route == DecisionRoute.WEB, query
+        assert main.should_force_web([{"role": "user", "content": query}]) is True, query
