@@ -855,7 +855,7 @@ async def search_recent_news_candidates(
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
-    limit = max(1, min(8, int(max_results)))
+    limit = max(1, min(12, int(max_results)))
     return await _google_news_search(
         cleaned,
         min(2.5, max(0.8, float(timeout_seconds))),
