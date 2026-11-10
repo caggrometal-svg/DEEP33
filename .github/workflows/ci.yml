@@ -1058,51 +1058,48 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         shell: bash
         run: |
           set -euo pipefail
+          checks_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
           status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status"
-          comments_api="https://api.github.com/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100"
           alias=""
           for attempt in $(seq 1 36); do
+            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$checks_api" || true)"
             statuses="$(curl -fsS --connect-timeout 8 --max-time 20 \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$status_api" || true)"
-            deployment_url="$(printf '%s' "$statuses" | jq -r '
-              [.statuses[]?
-               | select(.context == "Vercel" and .state == "success")
-               | .target_url]
-              | last // empty
-            ' 2>/dev/null || true)"
-            deployment_id="${deployment_url##*/}"
 
-            comments="$(curl -fsS --connect-timeout 8 --max-time 20 \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$comments_api" || true)"
-            vercel_comments="$(printf '%s' "$comments" | jq -r '
-              [.[]?
-               | select((.performed_via_github_app.slug // "") == "vercel")
-               | (.body // "")]
-              | join("\n")
+            vercel_state="$(printf '%s' "$statuses" | jq -r '
+              [.statuses[]? | select(.context == "Vercel") | .state] | last // empty
             ' 2>/dev/null || true)"
-            candidate="$(printf '%s' "$vercel_comments" | grep -Eo \
-              'https://deep33-backend-git-(fix-vercel-android-route-221026|fix-phase1-routing-provider-quo)-[a-f0-9]{6}-iac33\.vercel\.app' \
-              | tail -n 1 | sed 's#^https://##' || true)"
+            candidate="$(printf '%s' "$checks" | jq -r '
+              [
+                .check_runs[]?
+                | select((.app.slug // "") == "vercel")
+                | select(.conclusion == "success")
+                | (.output.summary // ""),
+                  (.output.text // "")
+              ]
+              | map(select(length > 0))
+              | join("\n")
+            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
 
             case "$candidate" in
               deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
-                if [ -n "$deployment_id" ] && [[ "$vercel_comments" == *"$deployment_id"* ]]; then
+                if [ "$vercel_state" = "success" ]; then
                   alias="$candidate"
                   break
                 fi
                 ;;
             esac
-            echo "WAITING_FOR_VERCEL_COMMIT_STATUS_AND_PR_COMMENT attempt=$attempt sha=$CURRENT_SHA"
+            echo "WAITING_FOR_EXACT_VERCEL_CHECK_AND_COMMIT_STATUS attempt=$attempt sha=$CURRENT_SHA status=${vercel_state:-missing}"
             [ "$attempt" -lt 36 ] && sleep 5
           done
           test -n "$alias" || {
