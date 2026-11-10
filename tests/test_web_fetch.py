@@ -14,7 +14,7 @@ def test_extracts_open_graph_description_from_client_rendered_article() -> None:
       <meta property="og:description" content="This article describes the verified events, relevant context, and current developments for readers who need a useful factual summary.">
     </head><body><div id="app"></div></body></html>
     """
-    title, text, _metadata = _extract_text(html, "text/html; charset=utf-8", 5000)
+    title, text = _extract_text(html, "text/html; charset=utf-8", 5000)
 
     assert title == "Publisher shell"
     assert "verified events" in text
@@ -32,7 +32,7 @@ def test_prefers_visible_article_body_over_metadata_description() -> None:
         '</head><body><article><p>' + visible + '</p></article></body></html>'
     ).encode()
 
-    title, text, _metadata = _extract_text(html, "text/html", 5000)
+    title, text = _extract_text(html, "text/html", 5000)
 
     assert title == "Visible report"
     assert text.startswith("Visible article body")
@@ -57,7 +57,7 @@ def test_uses_json_ld_article_body_when_visible_page_is_only_an_app_shell() -> N
         + "</script></head><body><div id='app'></div></body></html>"
     ).encode()
 
-    title, text, _metadata = _extract_text(html, "text/html", 5000)
+    title, text = _extract_text(html, "text/html", 5000)
 
     assert title == "Structured article headline"
     assert text.startswith("Structured article text")
@@ -72,7 +72,7 @@ def test_does_not_treat_browser_challenge_metadata_as_article_content() -> None:
     </head><body><div id="app"></div></body></html>
     """
 
-    title, text, _metadata = _extract_text(html, "text/html", 5000)
+    title, text = _extract_text(html, "text/html", 5000)
 
     assert title == "Security check"
     assert text == ""
@@ -81,7 +81,7 @@ def test_does_not_treat_browser_challenge_metadata_as_article_content() -> None:
 def test_title_alone_is_not_misreported_as_readable_page_text() -> None:
     html = b"<html><head><title>Only a page title</title></head><body></body></html>"
 
-    title, text, _metadata = _extract_text(html, "text/html", 5000)
+    title, text = _extract_text(html, "text/html", 5000)
 
     assert title == "Only a page title"
     assert text == ""
@@ -303,7 +303,7 @@ def test_extracts_json_api_evidence_as_readable_text() -> None:
             "relative_humidity_2m": 40,
         }
     }
-    title, text, _metadata = _extract_text(
+    title, text = _extract_text(
         json.dumps(payload).encode("utf-8"),
         "application/json; charset=utf-8",
         5000,
@@ -366,7 +366,7 @@ def test_extraction_removes_common_chrome_noise() -> None:
       <footer>Privacy Policy Terms of Use All Rights Reserved</footer>
     </body></html>
     """
-    title, text, _metadata = _extract_text(html, "text/html", 5000)
+    title, text = _extract_text(html, "text/html", 5000)
     assert title == "Clean report"
     assert "completed the deployment successfully" in text
     assert "Subscribe Now" not in text
