@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.main import _compact_model_web_evidence, _is_publishable_realtime_news_source
+from backend.main import _compact_model_web_evidence, _compact_web_synthesis_payload, _is_publishable_realtime_news_source
 
 
 def _news_source(*, published_at, url="https://noticias.example/2026/10/25/gobierno-medidas-chile.html"):
@@ -169,7 +169,7 @@ def test_strict_news_model_context_is_compact_but_keeps_full_quorum_metadata():
 
     assert len(compact["fetched_pages"]) == 3
     assert len(compact["search_results"]) == 3
-    assert all(len(page["text"]) <= 1000 for page in compact["fetched_pages"])
+    assert all(len(page["text"]) <= 500 for page in compact["fetched_pages"])\n    assert set(compact["fetched_pages"][0]) == {"title", "url", "domain", "published_at", "text"}\n    assert all(len(item.get("snippet", "")) <= 160 for item in compact["search_results"])
     assert compact["domains_used"] == 4
     assert compact["news_quorum"] == evidence["news_quorum"]
     assert compact["extracted_text_chars"] == evidence["extracted_text_chars"]
@@ -186,3 +186,51 @@ def test_non_news_model_evidence_is_not_truncated():
     compact = _compact_model_web_evidence(evidence, strict_news=False)
 
     assert compact == evidence
+
+
+def test_news_synthesis_fallback_payload_is_bounded_for_free_inference():
+    import json
+
+    evidence = {
+        "realtime": True,
+        "retrieved_at": "2026-11-10T03:00:00Z",
+        "verification": {"provider_quorum_met": True, "distinct_providers": 2},
+        "news_quorum": {"required": True, "met": True, "articles": 3, "domains": 3},
+        "fetched_pages": [
+            {
+                "title": f"Noticia {index}",
+                "url": f"https://medio{index}.example/noticia",
+                "domain": f"medio{index}.example",
+                "published_at": "2026-11-10T02:00:00Z",
+                "text": "Hechos verificados y contexto periodístico. " * 80,
+            }
+            for index in range(1, 4)
+        ],
+        "search_results": [],
+    }
+    payload = {
+        "max_tokens": 1200,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Server-side web evidence for this request follows. "
+                    + json.dumps(evidence, ensure_ascii=False)
+                ),
+            },
+            {"role": "user", "content": "Resume las noticias."},
+        ],
+    }
+
+    compact = _compact_web_synthesis_payload(payload)
+
+    assert compact is not None
+    assert compact["max_tokens"] == 384
+    compact_evidence = json.loads(
+        compact["messages"][0]["content"].split(
+            "Server-side web evidence for this request follows.", 1
+        )[1]
+    )
+    assert len(compact_evidence["fetched_pages"]) == 3
+    assert all(len(page["text"]) <= 450 for page in compact_evidence["fetched_pages"])
+    assert compact_evidence["news_quorum"]["met"] is True
