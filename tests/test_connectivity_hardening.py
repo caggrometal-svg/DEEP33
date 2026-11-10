@@ -176,17 +176,17 @@ def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() ->
     assert "audit_attempts" in source
 
 
-def test_edge_ai_render_fallback_receives_the_authenticated_bearer() -> None:
+def test_edge_vercel_backend_receives_the_authenticated_bearer() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert 'idempotencyContext,\n            req.headers.get("authorization") || "",\n          );' in source
     assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
     assert 'function isInternalBackendProvider(provider: EdgeAIProvider): boolean' in source
     assert 'EDGE_AI_UPSTREAM_URLS.some((base) =>' in source
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
-    assert 'const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")' in source
+    assert 'const internalBackendFallback = isInternalBackendProvider(provider);' in source
+    assert 'const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
-def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
+def test_vercel_backend_fallback_synthesizes_session_for_internal_diagnostics() -> None:
     for path in (
         "supabase/functions/deep33-proxy/index.ts",
         "supabase/functions/deep33-tertiary/index.ts",
@@ -195,7 +195,7 @@ def test_render_fallback_synthesizes_session_for_internal_diagnostics() -> None:
         headers = source.split("function providerRequestHeaders(", 1)[1].split(
             "\\nconst PROVIDER_POLICY_BLOCK_PATTERNS", 1
         )[0]
-        assert "const fallbackSessionId = renderBackendFallback && !sessionId" in headers
+        assert "const fallbackSessionId = internalBackendFallback && !sessionId" in headers
         assert '"X-DEEP33-Session-Id": fallbackSessionId' in headers
         assert '"X-DEEP33-Session-Id": sessionId' in headers
 
@@ -294,7 +294,7 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
         assert f"DEEP33_{gate}_RESULT" in release
     assert '"success success success success success success success success success success"' in release
 
-def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
+def test_secondary_edge_has_authenticated_vercel_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
         "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
@@ -302,22 +302,15 @@ def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     providers = source.split("function edgeProviders()", 1)[1].split(
         "\nfunction edgeAIConfigured()", 1
     )[0]
-    for name in (
-        "render-backend-fallback",
-        "render-api-fallback",
-        "render-backup-fallback",
-    ):
-        assert f'"{name}"' in internal
-    for base in (
-        "https://deep33-backend.onrender.com",
-        "https://deep33-api.onrender.com",
-        "https://deep33-backup.onrender.com",
-    ):
-        assert f'"{base}"' in source
+    assert '"vercel-backend-primary"' in internal
+    assert '"https://deep33-backend.vercel.app"' in source
+    assert ".onrender.com" not in source
+    assert ".railway.app" not in source
+    assert "replit.app" not in source
     assert 'const url = base + "/v1/ai/generate";' in internal
     assert 'requires_auth: true' in internal
     assert 'addInternalInferenceBackends(providers);' in providers
-    assert 'const renderBackendFallback = isInternalBackendProvider(provider);' in source
+    assert 'const internalBackendFallback = isInternalBackendProvider(provider);' in source
 
 def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None:
     source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
@@ -328,7 +321,7 @@ def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None
         '?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }'
     ) == 2
 
-def test_secondary_edge_render_fallback_supports_streaming() -> None:
+def test_secondary_edge_vercel_fallback_supports_streaming() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
         "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
@@ -340,7 +333,7 @@ def test_secondary_edge_render_fallback_supports_streaming() -> None:
     assert 'const stream_url = String(value.stream_url || url).trim();' in source
     assert 'if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url)' in source
 
-def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None:
+def test_edge_vercel_fallback_forwards_session_and_idempotency_headers() -> None:
     primary = read("supabase/functions/deep33-proxy/index.ts")
     secondary = read("supabase/functions/deep33-tertiary/index.ts")
     for source in (primary, secondary):
@@ -354,7 +347,7 @@ def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None
     assert 'leaseContext?.idempotencyKey || ""' in primary
     assert 'requestId + "-stream-fallback"' in primary
 
-def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
+def test_primary_edge_diagnostics_forward_session_to_vercel_fallback() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     signature = source.split("async function callEdgeAI(", 1)[1].split(
         "): Promise<{ body:", 1
