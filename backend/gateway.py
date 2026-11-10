@@ -177,7 +177,7 @@ class GatewayConfig:
         )
         fallback_model = os.getenv(
             "AI_GATEWAY_FALLBACK_MODEL",
-            "kilo-auto/free",
+            "nvidia/nemotron-3.5-lightning:free",
         ).strip()
         has_configured_fallback = any(
             provider.model.casefold() == fallback_model.casefold()
@@ -186,7 +186,7 @@ class GatewayConfig:
         if kilo_provider is not None and fallback_model and not has_configured_fallback:
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-auto-free-fallback",
+                    name="kilo-nemotron-lightning-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
