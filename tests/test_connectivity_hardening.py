@@ -87,7 +87,10 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert '!isSecureHttpsUrl(url)' in source
         assert '!isSecureHttpsUrl(MEMORY_FUNCTION_URL)' in source
         assert '!isSecureHttpsUrl(HYBRID_FUNCTION_URL)' in source
-        assert r'render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza' in source
+        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&' in source
+        assert ".onrender.com" not in source.lower()
+        assert ".railway.app" not in source.lower()
+        assert "replit.app" not in source.lower()
 
 
 def test_transport_workflows_keep_canonical_vercel_endpoint_set() -> None:
