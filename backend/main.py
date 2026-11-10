@@ -4011,6 +4011,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
     last_timeout = False
     transport_failed = False
     last_gateway_attempts: list[dict] = []
+    last_error_type: str | None = None
 
     for attempt in range(2):
         remaining = deadline - time.monotonic()
@@ -4044,6 +4045,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 continue
             return "FAIL", data, text_value
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
                 last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
@@ -4056,6 +4058,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except GatewayInvalidResponseError as exc:
+            last_error_type = type(exc).__name__
             last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
@@ -4066,6 +4069,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except (GatewayHTTPError, HTTPException) as exc:
+            last_error_type = type(exc).__name__
             if isinstance(exc, GatewayHTTPError):
                 last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
@@ -4077,6 +4081,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except Exception as exc:
+            last_error_type = type(exc).__name__
             transport_failed = True
             logger.warning(
                 "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
@@ -4109,6 +4114,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             return "FAIL", data, text_value
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
                 last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
@@ -4118,7 +4124,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 stream_id,
             )
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
-            if isinstance(exc, GatewayInvalidResponseError):
+            last_error_type = type(exc).__name__
+            if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
                 last_gateway_attempts = [dict(item) for item in exc.attempts]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
@@ -4127,6 +4134,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
         except Exception as exc:
+            last_error_type = type(exc).__name__
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -4134,7 +4142,14 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
 
-    diagnostic_data = {"_deep33_gateway": {"attempts": last_gateway_attempts}} if last_gateway_attempts else None
+    diagnostic_data = (
+        {"_deep33_gateway": {
+            "attempts": last_gateway_attempts,
+            "error_type": last_error_type,
+        }}
+        if last_gateway_attempts or last_error_type
+        else None
+    )
     return ("TIMEOUT" if last_timeout else "FAIL"), diagnostic_data, None
 
 
@@ -4152,6 +4167,11 @@ async def inference_check(request: Request) -> dict:
             data.get("_deep33_gateway", {}).get("attempts", [])
             if isinstance(data, dict)
             else []
+        ),
+        "error_type": (
+            data.get("_deep33_gateway", {}).get("error_type")
+            if isinstance(data, dict)
+            else None
         ),
         "timestamp": utc_now(),
     }
