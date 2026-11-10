@@ -818,8 +818,8 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     assert config.providers[0].name == "kilo-dots-fallback"
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
     fallback = config.providers[1]
-    assert fallback.name == "kilo-auto-free-fallback"
-    assert fallback.model == "kilo-auto/free"
+    assert fallback.name == "kilo-nemotron-lightning-fallback"
+    assert fallback.model == "nvidia/nemotron-3.5-lightning:free"
     assert fallback.url == config.providers[0].url
     assert fallback.health_url == config.providers[0].health_url
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
@@ -848,29 +848,29 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert [provider.name for provider in config.providers] == [
         "kilo-dots-fallback",
         "configured-fallback",
-        "kilo-auto-free-fallback",
+        "kilo-nemotron-lightning-fallback",
     ]
-    assert config.providers[-1].model == "kilo-auto/free"
+    assert config.providers[-1].model == "nvidia/nemotron-3.5-lightning:free"
     assert config.providers[-1].url == config.providers[0].url
     assert config.providers[-1].health_url == config.providers[0].health_url
 
 
-def test_kilo_auto_free_primary_does_not_duplicate_itself(monkeypatch) -> None:
+def test_kilo_free_fallback_primary_does_not_duplicate_itself(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
     monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
-    monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
-    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "kilo-auto/free")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "nvidia/nemotron-3.5-lightning:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning:free")
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
 
     config = GatewayConfig.from_env()
 
     assert len(config.providers) == 1
-    assert config.providers[0].model == "kilo-auto/free"
+    assert config.providers[0].model == "nvidia/nemotron-3.5-lightning:free"
 
 
-def test_kilo_gateway_uses_stable_dynamic_free_fallback(monkeypatch) -> None:
+def test_kilo_gateway_uses_configured_free_fallback(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv(
         "AI_GATEWAY_URL",
@@ -882,13 +882,13 @@ def test_kilo_gateway_uses_stable_dynamic_free_fallback(monkeypatch) -> None:
     )
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
-    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "kilo-auto/free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning:free")
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
 
     config = GatewayConfig.from_env()
 
     assert len(config.providers) == 2
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
-    assert config.providers[1].name == "kilo-auto-free-fallback"
-    assert config.providers[1].model == "kilo-auto/free"
+    assert config.providers[1].name == "kilo-nemotron-lightning-fallback"
+    assert config.providers[1].model == "nvidia/nemotron-3.5-lightning:free"
     assert config.providers[1].url == config.providers[0].url
