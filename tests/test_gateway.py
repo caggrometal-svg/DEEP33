@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import pytest
 
-from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayProvider
+from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayInvalidResponseError, GatewayProvider
 
 
 def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvider:
@@ -947,3 +947,56 @@ def test_nemotron_super_vl_disables_hidden_reasoning_for_visible_stream() -> Non
     assert payload["chat_template_kwargs"]["enable_thinking"] is False
     assert payload["max_tokens"] == 1024
     assert "reasoning_effort" not in payload
+
+
+
+def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            text="data: [DONE]\\n\\n",
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        ),
+        timeout_seconds=2,
+        provider_timeout_seconds=2,
+        first_visible_timeout_seconds=1,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> None:
+        async for _ in gateway.stream(
+            {"messages": [{"role": "user", "content": "diagnostic"}]}
+        ):
+            pass
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    with pytest.raises(GatewayInvalidResponseError) as captured:
+        asyncio.run(run_stream())
+
+    assert calls == ["https://primary.test/chat"]
+    assert captured.value.attempts == [{
+        "provider": "primary",
+        "model": "primary-model",
+        "status_code": 200,
+        "outcome": "empty_visible_stream",
+        "content_type": "text/event-stream",
+        "buffered_bytes": len(b"data: [DONE]\\n\\n"),
+        "sse_data_frames": 1,
+    }]
