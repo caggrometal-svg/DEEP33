@@ -169,7 +169,9 @@ def test_strict_news_model_context_is_compact_but_keeps_full_quorum_metadata():
 
     assert len(compact["fetched_pages"]) == 3
     assert len(compact["search_results"]) == 3
-    assert all(len(page["text"]) <= 500 for page in compact["fetched_pages"])\n    assert set(compact["fetched_pages"][0]) == {"title", "url", "domain", "published_at", "text"}\n    assert all(len(item.get("snippet", "")) <= 160 for item in compact["search_results"])
+    assert all(len(page["text"]) <= 500 for page in compact["fetched_pages"])
+    assert set(compact["fetched_pages"][0]) == {"title", "url", "domain", "published_at", "text"}
+    assert all(len(item.get("snippet", "")) <= 160 for item in compact["search_results"])
     assert compact["domains_used"] == 4
     assert compact["news_quorum"] == evidence["news_quorum"]
     assert compact["extracted_text_chars"] == evidence["extracted_text_chars"]
