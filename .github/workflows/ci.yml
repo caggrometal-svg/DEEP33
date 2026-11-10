@@ -1038,17 +1038,60 @@ jobs:
   android_e2e:
     # On a PR, run the real Android app against that PR's protected Vercel preview
     # using a short-lived GitHub OIDC token; on main, test the public production alias.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/phase1-routing-provider-quorum-071126'))) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
+      checks: read
       id-token: write
     env:
       DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Resolve the exact protected Vercel preview for this commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
+          alias=""
+          for attempt in $(seq 1 36); do
+            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$api" || true)"
+            candidate="$(printf '%s' "$checks" | jq -r '
+              [
+                .check_runs[]?
+                | select((.app.slug // "") == "vercel")
+                | (.output.summary // ""),
+                  (.output.text // "")
+              ]
+              | map(select(length > 0))
+              | join("\n")
+            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
+            case "$candidate" in
+              deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
+                alias="$candidate"
+                break
+                ;;
+            esac
+            echo "WAITING_FOR_APPROVED_VERCEL_PREVIEW attempt=$attempt sha=$CURRENT_SHA"
+            [ "$attempt" -lt 36 ] && sleep 5
+          done
+          test -n "$alias" || {
+            echo "ANDROID_E2E_VERCEL_PREVIEW_NOT_FOUND sha=$CURRENT_SHA"
+            exit 1
+          }
+          echo "DEEP33_E2E_VERCEL_URL=https://$alias" >> "$GITHUB_ENV"
+          echo "ANDROID_E2E_TARGET=$alias"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
