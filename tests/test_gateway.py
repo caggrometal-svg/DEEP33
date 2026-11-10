@@ -892,3 +892,25 @@ def test_kilo_gateway_uses_configured_free_fallback(monkeypatch) -> None:
     assert config.providers[1].name == "kilo-nemotron-lightning-fallback"
     assert config.providers[1].model == "nvidia/nemotron-3.5-lightning:free"
     assert config.providers[1].url == config.providers[0].url
+
+
+def test_nemotron_lightning_disables_hidden_reasoning_for_visible_stream() -> None:
+    nemotron = provider(
+        "kilo-nemotron-lightning-fallback",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
+        "nvidia/nemotron-3.5-lightning:free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Resume las fuentes."}],
+            "reasoning_effort": "high",
+            "max_tokens": 256,
+        },
+        nemotron,
+    )
+
+    assert payload["model"] == "nvidia/nemotron-3.5-lightning:free"
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in payload
