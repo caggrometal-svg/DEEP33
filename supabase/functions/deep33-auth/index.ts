@@ -75,7 +75,7 @@ const RPC_RETRY_DELAYS_MS = [150, 350, 750];
 
 async function rpcWithBackoff<T>(
   operation: string,
-  invoke: () => Promise<RpcResponse<T>>,
+  invoke: () => PromiseLike<RpcResponse<T>>,
 ): Promise<RpcResponse<T>> {
   let last: RpcResponse<T> = { data: null, error: new Error("RPC_NOT_ATTEMPTED") };
   for (let attempt = 0; attempt <= RPC_RETRY_DELAYS_MS.length; attempt += 1) {
