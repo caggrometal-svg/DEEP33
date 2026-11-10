@@ -73,7 +73,8 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert 'const UPSTREAM = isSecureHttpsUrl(RAW_UPSTREAM)' in source
+        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&' in source
+        assert 'isSecureHttpsUrl(RAW_UPSTREAM)' in source
         assert 'url.port === "" || url.port === "443"' in source
         assert 'redirect: "error"' in source
         assert 'AbortSignal.timeout(EDGE_INTERNAL_FETCH_TIMEOUT_MS)' in source
