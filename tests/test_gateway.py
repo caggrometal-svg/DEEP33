@@ -968,7 +968,7 @@ def test_kilo_auto_free_disables_hidden_reasoning_for_visible_stream() -> None:
 
     assert payload["model"] == "kilo-auto/free"
     assert payload["chat_template_kwargs"]["enable_thinking"] is False
-    assert payload["max_tokens"] == 1024
+    assert payload["max_tokens"] == 384
     assert "reasoning_effort" not in payload
 
 
