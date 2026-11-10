@@ -229,6 +229,16 @@ news_stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/news_chat_stream.body" |
 printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS' || {
   echo "NEWS_CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$news_stream_text" | cut -c1-500)"
   tail -c 3000 "$TMP_DIR/news_chat_stream.body" 2>/dev/null || true
+  # Separate provider health from evidence-prompt failures. This diagnostic uses
+  # the same protected preview and reports only provider/model/outcome metadata.
+  request_file news_inference_diagnostic "$VERCEL_URL/v1/ai/inference-check" 55
+  if [ "$HTTP_CODE" = "200" ]; then
+    jq -c '{status,provider,model,text_ok,attempts,timestamp}' \
+      "$TMP_DIR/news_inference_diagnostic.body" 2>/dev/null || true
+  else
+    echo "NEWS_INFERENCE_DIAGNOSTIC_HTTP=$HTTP_CODE"
+    tail -c 2000 "$TMP_DIR/news_inference_diagnostic.body" 2>/dev/null || true
+  fi
   fail "NEWS_CHAT_STREAM=FAIL recent_article_evidence_or_synthesis_missing"
 }
 echo "NEWS_CHAT_STREAM_PASS three_article_chat_path=true"
