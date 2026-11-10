@@ -14,7 +14,7 @@ def test_extracts_open_graph_description_from_client_rendered_article() -> None:
       <meta property="og:description" content="This article describes the verified events, relevant context, and current developments for readers who need a useful factual summary.">
     </head><body><div id="app"></div></body></html>
     """
-    title, text = _extract_text(html, "text/html; charset=utf-8", 5000)
+    title, text, _metadata = _extract_text(html, "text/html; charset=utf-8", 5000)
 
     assert title == "Publisher shell"
     assert "verified events" in text
@@ -303,7 +303,7 @@ def test_extracts_json_api_evidence_as_readable_text() -> None:
             "relative_humidity_2m": 40,
         }
     }
-    title, text = _extract_text(
+    title, text, _metadata = _extract_text(
         json.dumps(payload).encode("utf-8"),
         "application/json; charset=utf-8",
         5000,
