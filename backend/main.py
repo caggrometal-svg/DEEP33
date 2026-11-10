@@ -4157,22 +4157,17 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
 async def inference_check(request: Request) -> dict:
     request_id = request_id_from_request(request)
     status, data, text = await run_inference_check(request_id)
+    gateway_meta = data.get("_deep33_gateway", {}) if isinstance(data, dict) else {}
+    attempts = gateway_meta.get("attempts", []) if isinstance(gateway_meta, dict) else []
+    last_attempt = attempts[-1] if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else {}
     return {
         "status": status,
         "request_id": request_id,
-        "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
-        "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
+        "model": gateway_meta.get("model") or last_attempt.get("model"),
+        "provider": gateway_meta.get("provider") or last_attempt.get("provider"),
         "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
-        "attempts": (
-            data.get("_deep33_gateway", {}).get("attempts", [])
-            if isinstance(data, dict)
-            else []
-        ),
-        "error_type": (
-            data.get("_deep33_gateway", {}).get("error_type")
-            if isinstance(data, dict)
-            else None
-        ),
+        "attempts": attempts if isinstance(attempts, list) else [],
+        "error_type": gateway_meta.get("error_type"),
         "timestamp": utc_now(),
     }
 
