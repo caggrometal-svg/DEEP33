@@ -421,11 +421,12 @@ class AIGateway:
         # user-visible answer stream, so explicitly disable thinking as documented
         # by the model and provide a bounded visible-output budget.
         model_id = provider.model.casefold()
-        if (
+        dots_or_nemotron = (
             "dots-studio/dots-3-note-preview" in model_id
             or "nvidia/nemotron-3.5-super-vl" in model_id
-            or "kilo-auto/free" in model_id
-        ):
+        )
+        kilo_auto_free = "kilo-auto/free" in model_id
+        if dots_or_nemotron or kilo_auto_free:
             # These routes may spend most of a short free-inference window on
             # hidden reasoning. Disable it so the gateway can emit user-visible
             # text before the first-visible deadline.
@@ -435,8 +436,15 @@ class AIGateway:
                 template_kwargs = {}
             template_kwargs["enable_thinking"] = False
             result["chat_template_kwargs"] = template_kwargs
-            if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1024:
-                result["max_tokens"] = 1024
+            if dots_or_nemotron:
+                if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1024:
+                    result["max_tokens"] = 1024
+            else:
+                configured_tokens = result.get("max_tokens")
+                result["max_tokens"] = min(
+                    512,
+                    max(256, configured_tokens if isinstance(configured_tokens, int) else 384),
+                )
         return result
 
     @staticmethod
