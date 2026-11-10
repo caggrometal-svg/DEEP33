@@ -1383,22 +1383,36 @@ def _compact_model_web_evidence(evidence: dict[str, Any], *, strict_news: bool) 
     if not strict_news:
         return compact
 
-    # Keep three independently fetched publisher articles for synthesis. All
-    # validated sources remain in the separately returned source list; this
-    # limits prompt tokens on free inference providers without reducing quorum.
+    # Free inference providers have a tight latency budget. Keep the three
+    # independently fetched publisher articles, but send only the fields needed
+    # to synthesize them. Full validated source metadata remains in the separate
+    # response source list; this does not weaken the retrieval quorum.
     pages = evidence.get("fetched_pages")
     if isinstance(pages, list):
         compact["fetched_pages"] = [
             {
-                **page,
-                "text": str(page.get("text") or "")[:1000],
+                "title": str(page.get("title") or "")[:160],
+                "url": str(page.get("url") or "")[:500],
+                "domain": str(page.get("domain") or "")[:120],
+                "published_at": page.get("published_at"),
+                "text": str(page.get("text") or "")[:500],
             }
             for page in pages[:3]
             if isinstance(page, dict)
         ]
     results = evidence.get("search_results")
     if isinstance(results, list):
-        compact["search_results"] = results[:3]
+        compact["search_results"] = [
+            {
+                "title": str(item.get("title") or "")[:160],
+                "url": str(item.get("url") or "")[:500],
+                "source_domain": str(item.get("source_domain") or "")[:120],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:160],
+            }
+            for item in results[:3]
+            if isinstance(item, dict)
+        ]
     compact["model_context_compacted"] = True
     return compact
 
@@ -5191,7 +5205,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
             "domain": str(page.get("domain") or "")[:180],
             "provider": str(page.get("provider") or "")[:80],
             "published_at": page.get("published_at"),
-            "text": str(page.get("text") or "")[:650],
+            "text": str(page.get("text") or "")[:450],
         })
     if not compact_pages:
         return None
@@ -5245,8 +5259,8 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     }
     compact_payload["messages"] = compact_messages
     compact_payload["max_tokens"] = min(
-        768,
-        max(384, int(payload.get("max_tokens") or 768)),
+        384,
+        max(256, int(payload.get("max_tokens") or 384)),
     )
     return compact_payload
 
