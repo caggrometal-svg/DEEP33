@@ -10,6 +10,35 @@ from urllib.parse import urlparse
 from tools.web_search import _parse_bing_rss, _plain_rss_snippet
 
 
+def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch) -> None:
+    import tools.web_search as module
+
+    seen = {}
+
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            return {"ok": True, "query": query, "results": []}
+
+    def factory(max_results):
+        seen["max_results"] = max_results
+        return FakeOrchestrator()
+
+    monkeypatch.setattr(module, "get_web_orchestrator", factory)
+    result = asyncio.run(
+        module.search_web("últimas noticias de Chile hoy", max_results=12, fresh=True)
+    )
+
+    assert seen["max_results"] == 12
+    assert result["ok"] is True
+
+
+def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    assert WebOrchestrator(max_results=12).max_results == 12
+    assert WebOrchestrator(max_results=99).max_results == 12
+
+
 def test_plain_rss_snippet_removes_html_tags_and_decodes_entities() -> None:
     snippet = (
         '<a href="https://news.google.com/rss/articles/example">Headline</a>'
