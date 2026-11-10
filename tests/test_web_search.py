@@ -11,6 +11,7 @@ from tools.web_search import _parse_bing_rss, _plain_rss_snippet
 
 
 def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch) -> None:
+    import backend.search.resilient as resilient
     import tools.web_search as module
 
     seen = {}
@@ -23,7 +24,7 @@ def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch)
         seen["max_results"] = max_results
         return FakeOrchestrator()
 
-    monkeypatch.setattr(module, "get_web_orchestrator", factory)
+    monkeypatch.setattr(resilient, "get_web_orchestrator", factory)
     result = asyncio.run(
         module.search_web("últimas noticias de Chile hoy", max_results=12, fresh=True)
     )
