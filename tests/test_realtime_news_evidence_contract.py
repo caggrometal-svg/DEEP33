@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from backend.main import _compact_model_web_evidence, _compact_web_synthesis_payload, _is_publishable_realtime_news_source
+from backend.main import _compact_model_web_evidence, _compact_web_synthesis_payload, _is_publishable_realtime_news_source, _web_search_result_limit
 
 
 def _news_source(*, published_at, url="https://noticias.example/2026/10/25/gobierno-medidas-chile.html"):
@@ -140,6 +140,11 @@ def test_current_news_relevance_ignores_chat_output_instructions():
         source,
         page,
     )
+
+
+def test_strict_chile_news_uses_expanded_candidate_pool():
+    assert _web_search_result_limit("Busca las últimas noticias de Chile hoy", 5) >= 12
+    assert _web_search_result_limit("documentación oficial de Python", 5) == 5
 
 
 def test_strict_news_model_context_is_compact_but_keeps_full_quorum_metadata():
