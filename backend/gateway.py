@@ -186,7 +186,7 @@ class GatewayConfig:
             not configured_fallback_model
             or configured_fallback_model.casefold() in retired_free_models
             or (
-                not configured_fallback_model.casefold().startswith("kilo-auto/")
+                configured_fallback_model.casefold() != "kilo-auto/free"
                 and not configured_fallback_model.casefold().endswith(":free")
             )
         ):
