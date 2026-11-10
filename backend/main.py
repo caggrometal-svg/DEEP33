@@ -1989,15 +1989,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Every routed external lookup must be grounded in multiple readable pages.
-    # Current-news requests keep the stricter three-publisher requirement.
+    # Explicit external lookups must enter web retrieval. Independent-provider
+    # quorum is enforced by the search engine; page extraction scales with the
+    # requested depth so simple factual lookups remain responsive.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = (
-        3 if is_strict_news_query(query)
-        else 2 if (contrast_required or explicitly_forced or realtime)
-        else 1
-    )
+    required_pages = 3 if is_strict_news_query(query) else 2 if contrast_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
