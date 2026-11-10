@@ -848,7 +848,7 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert [provider.name for provider in config.providers] == [
         "kilo-dots-fallback",
         "configured-fallback",
-        "kilo-nemotron-super-vl-fallback",
+        "kilo-auto-free-fallback",
     ]
     assert config.providers[-1].name == "kilo-auto-free-fallback"
     assert config.providers[-1].model == "kilo-auto/free"
@@ -921,7 +921,7 @@ def test_kilo_gateway_uses_configured_free_fallback(monkeypatch) -> None:
 
     assert len(config.providers) == 2
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
-    assert config.providers[1].name == "kilo-nemotron-super-vl-fallback"
+    assert config.providers[1].name == "kilo-free-model-fallback"
     assert config.providers[1].model == "nvidia/nemotron-3.5-super-vl:free"
     assert config.providers[1].url == config.providers[0].url
 
