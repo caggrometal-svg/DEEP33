@@ -1058,6 +1058,14 @@ class AIGateway:
                         timeout=self._http_timeout(timeout),
                     ) as response:
                             if response.status_code >= 400:
+                                # Streaming responses have not been consumed yet.
+                                # Read the bounded error body before parsing so provider
+                                # diagnostics include the actual 4xx reason, not only
+                                # the generic HTTP reason phrase.
+                                try:
+                                    await response.aread()
+                                except httpx.HTTPError:
+                                    pass
                                 status = response.status_code
                                 error_class = self._classify_http_status(status)
                                 saw_http_error = True
