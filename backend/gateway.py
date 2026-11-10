@@ -175,18 +175,22 @@ class GatewayConfig:
             ),
             None,
         )
-        has_laguna_fallback = any(
-            "poolside/laguna-s-2.1" in provider.model.casefold()
+        fallback_model = os.getenv(
+            "AI_GATEWAY_FALLBACK_MODEL",
+            "kilo-auto/free",
+        ).strip()
+        has_configured_fallback = any(
+            provider.model.casefold() == fallback_model.casefold()
             for provider in secure_providers
         )
-        if kilo_provider is not None and not has_laguna_fallback:
+        if kilo_provider is not None and fallback_model and not has_configured_fallback:
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-laguna-fallback",
+                    name="kilo-auto-free-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
-                    model="poolside/laguna-s-2.1:free",
+                    model=fallback_model,
                 ),
             )
         return cls(
