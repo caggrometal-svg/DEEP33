@@ -142,6 +142,21 @@ def test_current_news_relevance_ignores_chat_output_instructions():
     )
 
 
+def test_news_fetch_policy_allows_eight_attempts_to_reach_three_valid_articles():
+    from backend.search.web_pipeline import FetchPolicy
+
+    policy = FetchPolicy(
+        target_sources=3,
+        max_sources=8,
+        global_budget_seconds=8.5,
+        concurrency=5,
+    )
+
+    assert policy.target_sources == 3
+    assert policy.max_sources == 8
+    assert policy.global_budget_seconds == 8.5
+
+
 def test_strict_chile_news_uses_expanded_candidate_pool():
     assert _web_search_result_limit("Busca las últimas noticias de Chile hoy", 5) >= 12
     assert _web_search_result_limit("documentación oficial de Python", 5) == 5
