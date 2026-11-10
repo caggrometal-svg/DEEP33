@@ -282,7 +282,8 @@ def test_html_fetch_extracts_article_published_time_meta():
         f"<body><article><p>{body}</p></article></body></html>"
     )
     title, text, published_at = _extract_text(
-        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000
+        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000,
+        include_metadata=True,
     )
     assert title == "Medidas anunciadas"
     assert len(text) >= 80
@@ -310,7 +311,8 @@ def test_html_fetch_extracts_date_published_from_news_article_jsonld():
         + "</script></head><body></body></html>"
     )
     title, text, published_at = _extract_text(
-        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000
+        html_doc.encode("utf-8"), "text/html; charset=utf-8", 5000,
+        include_metadata=True,
     )
     assert title == "Informe oficial publicado"
     assert len(text) >= 80
