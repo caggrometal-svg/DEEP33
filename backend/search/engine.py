@@ -1122,7 +1122,7 @@ class SearchEngine:
     """Provider-agnostic DEEP33 web-search orchestration layer."""
 
     def __init__(self, *, max_results: int = 5, max_queries: int = 3) -> None:
-        self.max_results = max(1, min(8, int(max_results)))
+        self.max_results = max(1, min(12, int(max_results)))
         self.max_queries = max(1, min(3, int(max_queries)))
 
     def plan(self, query: str) -> SearchPlan:
