@@ -175,10 +175,24 @@ class GatewayConfig:
             ),
             None,
         )
-        fallback_model = os.getenv(
-            "AI_GATEWAY_FALLBACK_MODEL",
-            "nvidia/nemotron-3.5-super-vl:free",
-        ).strip()
+        configured_fallback_model = os.getenv("AI_GATEWAY_FALLBACK_MODEL", "").strip()
+        # A fixed free-model promotion can expire without a code deployment.
+        # Kilo Auto Free is a stable virtual model that dynamically selects an
+        # active zero-cost model from the live free catalog.
+        retired_free_models = {
+            "nvidia/nemotron-3.5-lightning:free",
+        }
+        if (
+            not configured_fallback_model
+            or configured_fallback_model.casefold() in retired_free_models
+            or (
+                not configured_fallback_model.casefold().startswith("kilo-auto/")
+                and not configured_fallback_model.casefold().endswith(":free")
+            )
+        ):
+            fallback_model = "kilo-auto/free"
+        else:
+            fallback_model = configured_fallback_model
         has_configured_fallback = any(
             provider.model.casefold() == fallback_model.casefold()
             for provider in secure_providers
@@ -186,7 +200,9 @@ class GatewayConfig:
         if kilo_provider is not None and fallback_model and not has_configured_fallback:
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-nemotron-super-vl-fallback",
+                    name="kilo-auto-free-fallback"
+                    if fallback_model.casefold() == "kilo-auto/free"
+                    else "kilo-free-model-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
