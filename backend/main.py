@@ -2224,11 +2224,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             global_budget_seconds=(
                 max(2.0, min(5.0, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "3.6"))))
                 if fast_path
-                else max(3.5, min(9.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "6.2"))))
+                else max(
+                    3.5,
+                    min(
+                        9.0,
+                        float(os.getenv(
+                            "WEB_EVIDENCE_FETCH_BUDGET_SECONDS",
+                            "8.5" if is_strict_news_query(query) else "6.2",
+                        )),
+                    ),
+                )
             ),
             concurrency=4 if fast_path else 5,
             target_sources=min(target_sources, max(1, len(candidates))),
-            max_sources=min(5, max(1, len(candidates))),
+            max_sources=min(
+                8 if is_strict_news_query(query) else 5,
+                max(1, len(candidates)),
+            ),
             min_text_chars=80,
             min_total_chars=360 if fast_path else 720,
         )
@@ -3297,17 +3309,19 @@ async def web_status() -> dict:
     return status
 
 def _web_search_result_limit(query: str, configured_limit: int) -> int:
-    limit = max(1, min(8, int(configured_limit)))
+    limit = max(1, min(12, int(configured_limit)))
     folded = str(query or "").casefold()
-    # Current news needs a wider candidate pool because readable pages can block
-    # automation. Search up to eight independent candidates, without changing the
-    # five-source default for ordinary queries or the endpoint contract.
+    # Strict current-news synthesis needs more candidates than the final quorum:
+    # publisher landing pages, redirects, and blocked articles must be rejected
+    # without leaving fewer than three verified, independent articles.
+    if is_strict_news_query(query):
+        return max(limit, 12)
     chile_current_news = (
         is_realtime_query(query)
         and "chile" in folded
         and any(term in folded for term in ("noticia", "actualidad", "breaking", "latest news", "news"))
     )
-    return max(limit, 8) if chile_current_news else limit
+    return max(limit, 12) if chile_current_news else limit
 
 
 @app.get("/v1/web/search")
