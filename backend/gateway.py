@@ -161,9 +161,9 @@ class GatewayConfig:
             and "gemma-4" not in provider.model.casefold()
         )
         # A 200 response with no visible assistant text is an invalid inference,
-        # not a successful completion. Keep a text-oriented free Kilo model as the
-        # final deterministic fallback for every Kilo gateway primary (including
-        # kilo-auto/free), unless that model is already configured explicitly.
+        # not a successful completion. Keep a currently listed, zero-cost text/vision
+        # model as the final deterministic fallback for every Kilo gateway primary,
+        # unless that model is already configured explicitly.
         kilo_provider = next(
             (
                 provider
@@ -177,7 +177,7 @@ class GatewayConfig:
         )
         fallback_model = os.getenv(
             "AI_GATEWAY_FALLBACK_MODEL",
-            "nvidia/nemotron-3.5-lightning:free",
+            "nvidia/nemotron-3.5-super-vl:free",
         ).strip()
         has_configured_fallback = any(
             provider.model.casefold() == fallback_model.casefold()
@@ -186,7 +186,7 @@ class GatewayConfig:
         if kilo_provider is not None and fallback_model and not has_configured_fallback:
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-nemotron-lightning-fallback",
+                    name="kilo-nemotron-super-vl-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
@@ -406,7 +406,7 @@ class AIGateway:
         # by the model and provide a bounded visible-output budget.
         if (
             "dots-studio/dots-3-note-preview" in provider.model.casefold()
-            or "nvidia/nemotron-3.5-lightning" in provider.model.casefold()
+            or "nvidia/nemotron-3.5-super-vl" in provider.model.casefold()
         ):
             # Both models otherwise spend the beginning of a short stream on
             # hidden reasoning. Disable it so the first chunk is user-visible text.
