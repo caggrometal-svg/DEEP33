@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
 
 
+def test_search_engine_accepts_expanded_live_news_candidate_limit():
+    assert SearchEngine(max_results=12).max_results == 12
+    assert SearchEngine(max_results=99).max_results == 12
+
+
 def test_search_plan_strips_conversational_web_instructions():
     plan = SearchEngine(max_queries=1).plan(
         "Busca en internet la fecha actual en Chile y responde solo: OK"
