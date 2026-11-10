@@ -950,6 +950,28 @@ def test_nemotron_super_vl_disables_hidden_reasoning_for_visible_stream() -> Non
 
 
 
+def test_kilo_auto_free_disables_hidden_reasoning_for_visible_stream() -> None:
+    fallback = provider(
+        "kilo-auto-free-fallback",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
+        "kilo-auto/free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Resume tres noticias verificadas."}],
+            "reasoning_effort": "high",
+            "max_tokens": 384,
+        },
+        fallback,
+    )
+
+    assert payload["model"] == "kilo-auto/free"
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in payload
+
+
 def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monkeypatch) -> None:
     calls: list[str] = []
 
