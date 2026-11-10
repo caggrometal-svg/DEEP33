@@ -1035,11 +1035,17 @@ class AIGateway:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
+        attempts: list[dict] = []
 
         ordered_providers = self._ordered_providers(prefer_ttft=True)
         for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             if not circuit.available(time.monotonic()):
+                attempts.append({
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "outcome": "circuit_open",
+                })
                 continue
 
             provider_succeeded = False
@@ -1089,6 +1095,14 @@ class AIGateway:
                                     pass
                                 status = response.status_code
                                 error_class = self._classify_http_status(status)
+                                attempts.append({
+                                    "provider": provider.name,
+                                    "model": provider.model,
+                                    "status_code": status,
+                                    "outcome": "http_error",
+                                    "error_class": error_class,
+                                    "content_type": response.headers.get("content-type", "")[:80],
+                                })
                                 saw_http_error = True
                                 transient_failure = self._is_retryable_status(status)
                                 if status in {404, 410}:
@@ -1199,6 +1213,17 @@ class AIGateway:
                                             started_output = True
                                             yield chunk
                                 if first_visible_timeout:
+                                    attempts.append({
+                                        "provider": provider.name,
+                                        "model": provider.model,
+                                        "status_code": response.status_code,
+                                        "outcome": "first_visible_timeout",
+                                        "content_type": response.headers.get("content-type", "")[:80],
+                                        "buffered_bytes": len(pending_bytes),
+                                        "first_chunk_ms": round((first_chunk_at - started_request) * 1000, 2)
+                                        if first_chunk_at else None,
+                                        "visible_budget_ms": round(visible_budget * 1000, 2),
+                                    })
                                     saw_timeout = True
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
@@ -1236,6 +1261,18 @@ class AIGateway:
                                         pending_bytes.clear()
 
                                 if not visible_content:
+                                    attempts.append({
+                                        "provider": provider.name,
+                                        "model": provider.model,
+                                        "status_code": response.status_code,
+                                        "outcome": "policy_block" if provider_policy_block else "empty_visible_stream",
+                                        "content_type": response.headers.get("content-type", "")[:80],
+                                        "buffered_bytes": len(pending_bytes),
+                                        "sse_data_frames": sum(
+                                            1 for line in pending_bytes.splitlines()
+                                            if line.lstrip().startswith(b"data:")
+                                        ),
+                                    })
                                     saw_invalid_response = True
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
@@ -1264,6 +1301,14 @@ class AIGateway:
 
                                 provider_succeeded = True
                                 elapsed_ms = (time.perf_counter() - started_request) * 1000
+                                attempts.append({
+                                    "provider": provider.name,
+                                    "model": provider.model,
+                                    "status_code": response.status_code,
+                                    "outcome": "success",
+                                    "elapsed_ms": round(elapsed_ms, 2),
+                                    "content_type": response.headers.get("content-type", "")[:80],
+                                })
                                 self._record_latency(provider, elapsed_ms)
                                 if stream_completion_tokens and stream_completion_tokens > 0:
                                     self._record_throughput(
@@ -1291,6 +1336,11 @@ class AIGateway:
                         continue
                     break
                 except httpx.TimeoutException:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_timeout",
+                    })
                     saw_timeout = True
                     transient_failure = True
                     logger.warning(
@@ -1300,7 +1350,7 @@ class AIGateway:
                         attempt + 1,
                     )
                     if started_output:
-                        raise GatewayTimeoutError
+                        raise GatewayTimeoutError(attempts=attempts)
                     if attempt < self.config.max_retries:
                         delay = self._sleep_budget(attempt, deadline)
                         if delay > 0:
@@ -1308,6 +1358,12 @@ class AIGateway:
                         continue
                     break
                 except httpx.HTTPError as exc:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_error",
+                        "error_type": type(exc).__name__,
+                    })
                     saw_http_error = True
                     logger.warning(
                         "ai_stream_provider_transport_failure request_id=%s provider=%s error=%s",
@@ -1324,10 +1380,10 @@ class AIGateway:
                 )
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
-            raise GatewayTimeoutError
+            raise GatewayTimeoutError(attempts=attempts)
         if saw_http_error:
-            raise GatewayHTTPError
-        raise GatewayInvalidResponseError
+            raise GatewayHTTPError(attempts=attempts)
+        raise GatewayInvalidResponseError(attempts=attempts)
 
 
 def uuid4_short() -> str:
