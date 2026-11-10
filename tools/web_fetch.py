@@ -470,7 +470,7 @@ def _extract_text(content, content_type, max_text_chars, *, include_metadata: bo
 
     if len(visible_text) >= 24:
         return output(title, visible_text, published_at)
-    return title, visible_text, published_at
+    return output(title, visible_text, published_at)
 
 
 def _parse_reader_markdown(
