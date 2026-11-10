@@ -1189,7 +1189,7 @@ def test_edge_web_navigation_requires_multiple_readable_independent_sources() ->
         assert "readableProviderNames.length < requiredProviderCount" in source
         assert "readableDomains.size < requiredProviderCount" in source
         assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
-        expected_recovery = "backend-recovery" if function_name == "deep33-proxy" else "railway-recovery"
+        expected_recovery = "vercel-backend-recovery"
         assert f'fallback_path: "{expected_recovery}"' in source
         assert "async function buildNavigatedWebEvidence(" in source
 
