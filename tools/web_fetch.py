@@ -423,7 +423,10 @@ async def _read_limited(response,limit):
         total+=len(chunk)
     return b"".join(chunks)
 
-def _extract_text(content, content_type, max_text_chars):
+def _extract_text(content, content_type, max_text_chars, *, include_metadata: bool = False):
+    def output(title: str, text: str, published_at: str | None = None):
+        return (title, text, published_at) if include_metadata else (title, text)
+
     charset = "utf-8"
     lower = content_type.lower()
     if "charset=" in lower:
@@ -432,14 +435,14 @@ def _extract_text(content, content_type, max_text_chars):
     mime = content_type.split(";", 1)[0].strip().lower()
     if mime == "text/plain":
         plain = "\n".join(line.strip() for line in decoded.splitlines() if line.strip())
-        return "", _clean_extracted_text(plain, max_chars=max_text_chars), None
+        return output("", _clean_extracted_text(plain, max_chars=max_text_chars))
     if mime == "application/json":
         try:
             parsed = json.loads(decoded)
             plain = json.dumps(parsed, ensure_ascii=False, indent=2)
         except json.JSONDecodeError:
             plain = decoded
-        return "", plain[:max_text_chars], None
+        return output("", plain[:max_text_chars])
 
     parser = HTMLTextExtractor()
     parser.feed(decoded)
@@ -454,23 +457,28 @@ def _extract_text(content, content_type, max_text_chars):
     # Visible text remains the primary evidence. Metadata is only a bounded
     # fallback for publisher pages whose main article is rendered in JavaScript.
     if len(visible_text) >= 80:
-        return title, visible_text, published_at
+        return output(title, visible_text, published_at)
 
     structured_body = _usable_fallback_text(article_body, minimum=80)
     if structured_body:
-        return title, structured_body[:max_text_chars], published_at
+        return output(title, structured_body[:max_text_chars], published_at)
 
     for candidate in (structured_description, parser.meta_description):
         usable = _usable_fallback_text(candidate)
         if usable:
-            return title, usable[:max_text_chars], published_at
+            return output(title, usable[:max_text_chars], published_at)
 
     if len(visible_text) >= 24:
-        return title, visible_text, published_at
+        return output(title, visible_text, published_at)
     return title, visible_text, published_at
 
 
-def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, str, str | None] | None:
+def _parse_reader_markdown(
+    content: bytes,
+    max_text_chars: int,
+    *,
+    include_metadata: bool = False,
+) -> tuple[str, str] | tuple[str, str, str | None] | None:
     """Return article text and explicitly declared Reader publication time."""
     decoded = content.decode("utf-8", errors="replace").strip()
     if not decoded:
@@ -516,7 +524,8 @@ def _parse_reader_markdown(content: bytes, max_text_chars: int) -> tuple[str, st
         return None
     if "cloudflare ray id" in folded[:700] and "checking your browser" in folded[:700]:
         return None
-    return title, body[:max(1000, min(MAX_TEXT_CHARS, max_text_chars))], published_at
+    result = (title, body[:max(1000, min(MAX_TEXT_CHARS, max_text_chars))])
+    return (*result, published_at) if include_metadata else result
 
 
 def _reader_fallback_allowed(exc: WebFetchError) -> bool:
@@ -617,7 +626,9 @@ async def _fetch_with_reader_fallback(
             mime = response.headers.get("content-type", "text/plain").split(";", 1)[0].strip().lower()
         if mime not in {"text/plain", "text/markdown", "text/x-markdown"}:
             raise WebFetchError("WEB_FETCH_READER_CONTENT_TYPE_BLOCKED")
-        parsed = _parse_reader_markdown(content, max_text_chars)
+        parsed = _parse_reader_markdown(
+            content, max_text_chars, include_metadata=True
+        )
         if parsed is None:
             raise WebFetchError("WEB_FETCH_READER_EMPTY_OR_BLOCKED")
         title, text, published_at = parsed
@@ -864,7 +875,9 @@ async def _fetch_page_uncached(
                 # start; _read_limited enforces the same hard byte ceiling.
                 content=await _read_limited(response,_max_response_bytes())
             try:
-                title, text, published_at = _extract_text(content, content_type, max_text_chars)
+                title, text, published_at = _extract_text(
+                    content, content_type, max_text_chars, include_metadata=True
+                )
             except Exception as exc:
                 # Surface parser/charset failures with a stable diagnosis so the
                 # evidence pipeline can log the request ID, original URL and provider.
