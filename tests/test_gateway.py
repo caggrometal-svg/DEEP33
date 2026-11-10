@@ -873,13 +873,14 @@ def test_retired_kilo_free_fallback_is_replaced_with_dynamic_auto_free(monkeypat
     assert all(provider.model != "nvidia/nemotron-3.5-lightning:free" for provider in config.providers)
 
 
-def test_non_free_kilo_fallback_is_replaced_with_dynamic_auto_free(monkeypatch) -> None:
+@pytest.mark.parametrize("configured_fallback", ["openai/gpt-5.4", "kilo-auto/frontier"])
+def test_non_free_kilo_fallback_is_replaced_with_dynamic_auto_free(monkeypatch, configured_fallback: str) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
     monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
-    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "openai/gpt-5.4")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", configured_fallback)
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
 
     config = GatewayConfig.from_env()
