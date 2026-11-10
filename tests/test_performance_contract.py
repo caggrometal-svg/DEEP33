@@ -402,7 +402,7 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "sources.length < requiredReadableSources" in source
     assert "readableProviderNames.length < requiredProviderCount" in source
     assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
-    assert 'fallback_path: "backend-recovery"' in source
+    assert 'fallback_path: "vercel-backend-recovery"' in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
 
