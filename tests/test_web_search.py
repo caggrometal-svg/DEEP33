@@ -32,6 +32,30 @@ def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch)
     assert result["ok"] is True
 
 
+def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> None:
+    import tools.web_search as module
+
+    seen = {}
+
+    async def fake_google_news(query, timeout_seconds, max_results):
+        seen["query"] = query
+        seen["timeout_seconds"] = timeout_seconds
+        seen["max_results"] = max_results
+        return []
+
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    result = asyncio.run(
+        module.search_recent_news_candidates(
+            "Chile noticias hoy",
+            timeout_seconds=2.0,
+            max_results=12,
+        )
+    )
+
+    assert result == []
+    assert seen["max_results"] == 12
+
+
 def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
     from backend.search.resilient import WebOrchestrator
 
