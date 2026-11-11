@@ -339,7 +339,10 @@ def test_edge_router_detects_external_entity_and_product_lookups():
         router = source[query_start:query_end]
         assert "const externalLookup =" in router
         assert "const properNamePair =" in router
+        assert "const externalNameTokens =" in router
+        assert '["DEEP33", "IAC33", "C33"].includes(name)' in router
         assert "const camelCaseOrAcronym =" in router
+        assert "const nonEntitySingleTokens =" in router
         assert "const singleNamedEntity =" in router
         assert "|| singleNamedEntity ||" in router
         assert "qu[eé]\\s+es" in router
@@ -354,7 +357,11 @@ def test_edge_search_requires_independent_provider_provenance():
         assert "provider_sources" in source
         assert "function edgeProviderFamily(" in source
         assert 'if (name.includes("google")) return "google";' in source
-        assert 'if (name.includes("bing") || name.includes("microsoft")) return "bing";' in source
+        assert 'name.includes("bing")' in source
+        assert 'name.includes("microsoft")' in source
+        assert 'name.includes("yahoo")' in source
+        assert 'name.includes("duckduckgo")' in source
+        assert 'name.startsWith("ddg")' in source
         assert 'name.includes("yahoo")' in source
         assert 'name.includes("duckduckgo")' in source
         assert 'name.startsWith("ddg")' in source

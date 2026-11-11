@@ -433,9 +433,14 @@ function requiresFreshWeb(query: string): boolean {
   const normalized = query.toLowerCase();
   const externalLookup = /\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|what\s+does|qu[eé]\s+sabemos\s+(?:de|sobre)|what\s+do\s+you\s+know\s+about|qui[eé]n\s+(?:es|fue|ser[aá])|who\s+(?:is|are)|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
   const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
-  const camelCaseOrAcronym = /\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/.test(query);
+  const externalNameTokens = Array.from(query.matchAll(/\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/g))
+    .map((match) => String(match[0] || "").toUpperCase())
+    .filter((name) => !["DEEP33", "IAC33", "C33"].includes(name));
+  const camelCaseOrAcronym = externalNameTokens.length > 0;
   const standaloneEntity = query.trim().replace(/^[¿¡]+|[?!.,;:]+$/g, "").trim();
-  const singleNamedEntity = /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$/.test(standaloneEntity);
+  const nonEntitySingleTokens = new Set(["hola", "hello", "hi", "hey", "buenas", "buenos", "gracias", "thanks", "please", "favor", "ayuda", "ok", "okay", "sí", "si", "no", "adiós", "adios", "chao", "chau", "listo", "perfecto", "prueba", "test"]);
+  const singleNamedEntity = /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$/.test(standaloneEntity) &&
+    !nonEntitySingleTokens.has(standaloneEntity.toLowerCase());
   return externalLookup || properNamePair || camelCaseOrAcronym || singleNamedEntity || [
     "internet", "web", "online", "actual", "actualmente", "hoy", "ayer", "mañana",
     "último", "última", "últimos", "últimas", "noticia", "noticias", "fuentes",

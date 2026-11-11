@@ -1459,7 +1459,7 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
     import backend.main as main
 
     query = "últimas noticias de Chile hoy"
-    published_at = "2026-11-09T20:00:00+00:00"
+    published_at = datetime.now(timezone.utc).isoformat()
     fixtures = [
         {
             "title": "Últimas noticias de Chile hoy: Congreso aprueba nueva medida",

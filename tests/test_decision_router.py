@@ -60,6 +60,11 @@ def test_classifier_routes_standalone_named_entities_to_web():
         assert classify_query(query).route == DecisionRoute.WEB, query
 
 
+def test_classifier_routes_conversation_and_own_product_name_internally():
+    for query in ("Hola", "Hola DEEP33", "Gracias", "OK"):
+        assert classify_query(query).route == DecisionRoute.INTERNAL, query
+
+
 def test_classifier_keeps_stable_general_knowledge_internal():
     assert classify_query("¿Por qué el cielo se ve azul?").route == DecisionRoute.INTERNAL
 

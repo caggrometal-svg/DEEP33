@@ -153,6 +153,13 @@ _PROPER_NAME_PAIR_RE = re.compile(
 )
 _CAMEL_OR_ACRONYM_RE = re.compile(r"\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b")
 _SINGLE_NAMED_ENTITY_RE = re.compile(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$")
+_NON_ENTITY_SINGLE_TOKENS = frozenset({
+    "hola", "hello", "hi", "hey", "buenas", "buenos", "gracias",
+    "thanks", "thank", "please", "favor", "ayuda", "ok", "okay",
+    "sí", "si", "no", "adiós", "adios", "chao", "chau", "listo",
+    "perfecto", "prueba", "test",
+})
+_INTERNAL_PROJECT_IDENTIFIERS = frozenset({"deep33", "iac33", "c33"})
 
 
 def classify_query(query: str) -> Decision:
@@ -191,12 +198,18 @@ def classify_query(query: str) -> Decision:
             "explicit_current_or_web_request", cleaned, 20.0,
         )
     standalone_entity = cleaned.strip("¿¡?!. ,;:")
+    external_acronym_or_camel_case = any(
+        match.group(0).casefold() not in _INTERNAL_PROJECT_IDENTIFIERS
+        for match in _CAMEL_OR_ACRONYM_RE.finditer(cleaned)
+    )
+    single_entity_token = standalone_entity.casefold()
     if (
         _EXTERNAL_LOOKUP_RE.search(cleaned)
         or _PROPER_NAME_PAIR_RE.search(cleaned)
-        or _CAMEL_OR_ACRONYM_RE.search(cleaned)
+        or external_acronym_or_camel_case
         or (
             len(standalone_entity.split()) == 1
+            and single_entity_token not in _NON_ENTITY_SINGLE_TOKENS
             and _SINGLE_NAMED_ENTITY_RE.fullmatch(standalone_entity) is not None
         )
     ):
