@@ -54,11 +54,13 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: v2.9.6
-      - name: Type-check primary, secondary, and hybrid-search Edge functions
+      - name: Type-check primary, secondary, hybrid-search, and auth Edge functions
         run: |
           deno check supabase/functions/deep33-proxy/index.ts
           deno check supabase/functions/deep33-tertiary/index.ts
           deno check supabase/functions/deep33-hybrid-search/index.ts
+          deno check supabase/functions/deep33-auth/index.ts
+          deno test supabase/functions/deep33-auth/rate_limit_test.ts
 
   production_realtime_search:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -1036,17 +1038,76 @@ jobs:
   android_e2e:
     # On a PR, run the real Android app against that PR's protected Vercel preview
     # using a short-lived GitHub OIDC token; on main, test the public production alias.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/phase1-routing-provider-quorum-071126'))) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
+      checks: read
+      issues: read
+      statuses: read
       id-token: write
     env:
       DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Resolve the exact protected Vercel preview for this commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          checks_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
+          status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status"
+          alias=""
+          for attempt in $(seq 1 36); do
+            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$checks_api" || true)"
+            statuses="$(curl -fsS --connect-timeout 8 --max-time 20 \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$status_api" || true)"
+
+            vercel_state="$(printf '%s' "$statuses" | jq -r '
+              [.statuses[]? | select(.context == "Vercel") | .state] | last // empty
+            ' 2>/dev/null || true)"
+            candidate="$(printf '%s' "$checks" | jq -r '
+              [
+                .check_runs[]?
+                | select((.app.slug // "") == "vercel")
+                | select(.conclusion == "success")
+                | (.output.summary // ""),
+                  (.output.text // "")
+              ]
+              | map(select(length > 0))
+              | join("\n")
+            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
+
+            case "$candidate" in
+              deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
+                if [ "$vercel_state" = "success" ]; then
+                  alias="$candidate"
+                  break
+                fi
+                ;;
+            esac
+            echo "WAITING_FOR_EXACT_VERCEL_CHECK_AND_COMMIT_STATUS attempt=$attempt sha=$CURRENT_SHA status=${vercel_state:-missing}"
+            [ "$attempt" -lt 36 ] && sleep 5
+          done
+          test -n "$alias" || {
+            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_FOUND sha=$CURRENT_SHA"
+            exit 1
+          }
+          echo "DEEP33_E2E_VERCEL_URL=https://$alias" >> "$GITHUB_ENV"
+          echo "ANDROID_E2E_TARGET=$alias"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:

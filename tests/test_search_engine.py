@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
 
 
+def test_search_engine_accepts_expanded_live_news_candidate_limit():
+    assert SearchEngine(max_results=12).max_results == 12
+    assert SearchEngine(max_results=99).max_results == 12
+
+
 def test_search_plan_strips_conversational_web_instructions():
     plan = SearchEngine(max_queries=1).plan(
         "Busca en internet la fecha actual en Chile y responde solo: OK"
@@ -960,14 +965,17 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
                 cancelled["count"] += 1
                 raise
 
-        orchestrator.providers = {"bing": fast, "google": slow, "duckduckgo": slow}
+        orchestrator.providers = {"bing": fast, "google": fast, "duckduckgo": slow}
         orchestrator.circuits = {name: orchestrator.circuits[name] for name in orchestrator.providers}
         started = asyncio.get_running_loop().time()
         result = await orchestrator.search("Python asyncio official documentation", fresh=True)
         elapsed = asyncio.get_running_loop().time() - started
 
-        assert result["ok"] is True
-        assert len({item["source_domain"] for item in result["results"]}) >= 3
+        # Two independent providers with three relevant domains satisfy the
+        # evidence contract; the slower third provider must be cancelled.
+        assert result["ok"] is True, result
+        assert result["verification"]["distinct_providers"] == 2
+        assert result["verification"]["provider_quorum_met"] is True
         assert elapsed < 0.8
         assert cancelled["count"] >= 1
 
@@ -1064,7 +1072,11 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
             "https://www.bcn.cl/leychile",
             "https://www.consejotransparencia.cl/",
         }
-        assert result["ok"] is True, result
+        # Official portal candidates are not a substitute for a second
+        # independent search provider.
+        assert result["ok"] is False, result
+        assert result["diagnostic_code"] == "INSUFFICIENT_PROVIDER_QUORUM"
+        assert result["verification"]["provider_quorum_met"] is False
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.gob.cl/" not in urls
@@ -1192,9 +1204,12 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
             fallback_delay_seconds=0,
             cache_ttl_seconds=120,
         )
-        orchestrator.providers = {"bing": provider}
+        orchestrator.providers = {"bing": provider, "mojeek": provider}
         orchestrator.fallback_providers = {}
-        orchestrator.circuits = {"bing": orchestrator.circuits["bing"]}
+        orchestrator.circuits = {
+            "bing": orchestrator.circuits["bing"],
+            "mojeek": orchestrator.circuits["mojeek"],
+        }
 
         first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
         second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
@@ -1205,7 +1220,7 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
     assert second["ok"] is True
     # Each top-level realtime search executes two planned query variants. Both
     # variants must execute again on the second call because realtime is cache-free.
-    assert calls["count"] == 4
+    assert calls["count"] == 8
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None

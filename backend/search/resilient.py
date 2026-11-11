@@ -21,10 +21,37 @@ from tools.web_search import (
     _google_search,
     _looks_realtime_news,
     _mojeek_search,
+    _mwmbl_search,
     _yahoo_search,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_family(provider: str) -> str:
+    """Collapse aliases from the same search company into one independent source."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    # Count underlying indexes, not branded front ends. Yahoo Search states
+    # Microsoft is its exclusive algorithmic search provider; DuckDuckGo also
+    # relies on Bing's index. Google News shares Google's index.
+    if "google" in name:
+        return "google"
+    if "bing" in name or "microsoft" in name or "yahoo" in name:
+        return "bing"
+    if "duckduckgo" in name or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    if "wikipedia" in name:
+        return "wikipedia"
+    return name
+
 
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
@@ -271,7 +298,7 @@ def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "WOM Chile internet tecnología empresas servicios digitales"),
         ("cl0q", "Movistar Empresas Chile tecnología servicios digitales"),
         ("mojeek", "empresas tecnológicas Chile software telecomunicaciones SONDA Entel WOM Movistar"),
-        ("yahoo", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
+        ("cl0q", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
     )
 
 
@@ -283,7 +310,7 @@ def _academic_ai_research_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "site:csail.mit.edu artificial intelligence research paper"),
         ("cl0q", "site:berkeley.edu artificial intelligence research machine learning paper"),
         ("mojeek", "site:cmu.edu artificial intelligence research publications"),
-        ("yahoo", "university artificial intelligence research papers academic labs"),
+        ("cl0q", "university artificial intelligence research papers academic labs"),
     )
 
 
@@ -299,7 +326,7 @@ class WebOrchestrator:
         fallback_delay_seconds: float = FALLBACK_DELAY_SECONDS,
         cache_ttl_seconds: float = CACHE_TTL_SECONDS,
     ) -> None:
-        self.max_results = max(1, min(8, int(max_results)))
+        self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
         self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
         self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
@@ -315,6 +342,7 @@ class WebOrchestrator:
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
             "yahoo": CircuitState(),
+            "mwmbl": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
@@ -324,8 +352,12 @@ class WebOrchestrator:
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
-        # Yahoo is a last-resort general-web fallback, not part of every request fan-out.
+        # Mwmbl is a genuinely independent index. Its anonymous endpoint has a
+        # 1,000-request monthly cap and 1 req/s limit, so reserve it for quorum
+        # recovery rather than spending the free quota on every query. Yahoo is
+        # only a Bing-family coverage fallback, never independent corroboration.
         self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
+            "mwmbl": self._mwmbl,
             "yahoo": self._yahoo,
         }
 
@@ -367,6 +399,9 @@ class WebOrchestrator:
 
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
+
+    async def _mwmbl(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _mwmbl_search(query, timeout, limit)
 
     async def _yahoo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _yahoo_search(query, timeout, limit, preserve_candidates=True)
@@ -714,10 +749,25 @@ class WebOrchestrator:
         except Exception as exc:
             state.failure(time.monotonic())
             name = type(exc).__name__.upper()
+            raw_detail = " ".join(str(exc).split()).upper()
+            # WebSearchError messages are stable diagnostic codes (for example
+            # HTTP_403). Expose only those code-shaped details, never URLs,
+            # queries, headers, or credentials.
+            safe_detail = (
+                raw_detail
+                if re.fullmatch(r"[A-Z0-9_:-]{1,120}", raw_detail)
+                else name
+            )
+            logger.warning(
+                "web_search_provider_error provider=%s error_type=%s detail=%s",
+                provider,
+                name,
+                safe_detail,
+            )
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
-                error_code=f"PROVIDER_ERROR:{name}",
+                error_code=f"PROVIDER_ERROR:{name}:{safe_detail}",
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
@@ -847,6 +897,23 @@ class WebOrchestrator:
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
+        # A single configured provider is never enough to certify a web answer.
+        required_provider_count = 2
+
+        def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
+            # Provider success only counts when that provider independently
+            # returned evidence relevant to the user's original query.
+            return {
+                _provider_family(outcome.provider)
+                for outcome in candidate_outcomes
+                if outcome.ok
+                and outcome.results
+                and rank_results(
+                    cleaned,
+                    outcome.results,
+                    realtime=is_realtime_query(cleaned),
+                )
+            }
         chile_public_info_intent = (
             "chile" in lowered_cleaned
             and any(term in lowered_cleaned for term in (
@@ -964,9 +1031,9 @@ class WebOrchestrator:
                 ("bing", "site:bcentral.cl Chile economía mercado informe"),
                 # Direct-web fallbacks reduce dependence on opaque Google News RSS
                 # wrappers and give the fetch/extractor real publisher URLs.
-                ("yahoo", "site:df.cl Chile economía mercados noticias hoy"),
-                ("yahoo", "site:latercera.com/pulso Chile economía mercados hoy"),
-                ("yahoo", "site:emol.com/economia Chile economía mercados hoy"),
+                ("cl0q", "site:df.cl Chile economía mercados noticias hoy"),
+                ("cl0q", "site:latercera.com/pulso Chile economía mercados hoy"),
+                ("cl0q", "site:emol.com/economia Chile economía mercados hoy"),
                 ("google", "site:bcentral.cl Chile economía mercado informe"),
                 # Prefer direct article/category URLs from newsrooms that are
                 # readable by the production fetcher; this avoids opaque Google
@@ -975,7 +1042,7 @@ class WebOrchestrator:
                 ("bing", "site:meganoticias.cl economía Chile noticias hoy"),
                 ("google", "site:24horas.cl economía Chile noticias hoy"),
                 ("bing", "site:biobiochile.cl economía Chile noticias hoy"),
-                ("yahoo", "site:cooperativa.cl economía Chile noticias hoy"),
+                ("cl0q", "site:cooperativa.cl economía Chile noticias hoy"),
                 ("google", "site:chvnoticias.cl economía Chile noticias hoy"),
                 # Brand-name queries recover direct newsroom URLs when public
                 # indexes ignore or mishandle site: filters.
@@ -1020,7 +1087,7 @@ class WebOrchestrator:
                 ("google_news", "BioBioChile Chile últimas noticias hoy"),
                 ("bing", "Cooperativa Chile últimas noticias hoy"),
                 ("google", "La Tercera Chile últimas noticias hoy"),
-                ("yahoo", "24Horas Chile últimas noticias hoy"),
+                ("cl0q", "24Horas Chile últimas noticias hoy"),
                 ("google_news", "Emol Chile últimas noticias hoy"),
                 ("bing", "CNN Chile últimas noticias hoy"),
             )
@@ -1040,7 +1107,7 @@ class WebOrchestrator:
                 ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
                 ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
                 ("google", "site:latercera.com Chile noticias hoy actualidad"),
-                ("yahoo", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("cl0q", "site:24horas.cl Chile noticias hoy actualidad"),
                 ("google_news", "site:emol.com Chile noticias hoy actualidad"),
                 ("bing", "site:cnnchile.com Chile noticias hoy actualidad"),
             )
@@ -1060,9 +1127,9 @@ class WebOrchestrator:
                 ("google", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("google", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
-                ("yahoo", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
+                ("cl0q", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteoblue.com Santiago Chile weather forecast temperature"),
-                ("yahoo", "site:accuweather.com Santiago Chile weather forecast temperature"),
+                ("cl0q", "site:accuweather.com Santiago Chile weather forecast temperature"),
             )
             tasks.update({
                 asyncio.create_task(
@@ -1083,17 +1150,17 @@ class WebOrchestrator:
                 # is not sufficient when the publisher URL must be fetched.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
@@ -1215,9 +1282,7 @@ class WebOrchestrator:
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                distinct_providers = {
-                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                }
+                distinct_providers = relevant_provider_names(outcomes)
                 enough_sources = (
                     len(selected_now) >= min(3, self.max_results)
                     and len(distinct_domains) >= min(3, len(selected_now))
@@ -1242,7 +1307,7 @@ class WebOrchestrator:
                 )
                 if (
                     enough_sources
-                    and len(distinct_providers) >= min(2, len(self.providers))
+                    and len(distinct_providers) >= required_provider_count
                 ):
                     break
                 if (
@@ -1292,7 +1357,7 @@ class WebOrchestrator:
         ):
             official_queries = (
                 ("mojeek", "site:chileatiende.gob.cl Chile servicios trámites información pública"),
-                ("yahoo", "site:datos.gob.cl Chile datos abiertos información pública"),
+                ("cl0q", "site:datos.gob.cl Chile datos abiertos información pública"),
                 ("google", "site:cplt.cl Chile transparencia información pública"),
                 ("duckduckgo", "site:bcn.cl/leychile Chile ley transparencia información pública"),
             )
@@ -1378,12 +1443,9 @@ class WebOrchestrator:
             and news_intent
             and len(selected_domains) < min(5, self.max_results)
         )
-        successful_providers = {
-            outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-        }
+        successful_providers = relevant_provider_names(outcomes)
         needs_provider_diversity = (
-            (is_realtime_query(cleaned) or news_intent)
-            and len(successful_providers) < min(2, len(self.providers))
+            len(successful_providers) < required_provider_count
         )
         needs_recovery = (
             len(selected) < min(3, self.max_results)
@@ -1464,13 +1526,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
-                    distinct_providers_now = {
-                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                    }
+                    distinct_providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
-                        and len(distinct_providers_now) >= min(2, len(self.providers))
+                        and len(distinct_providers_now) >= required_provider_count
                         and (
                             not who_dengue_source_intent
                             or _has_who_dengue_item(selected_now)
@@ -1515,16 +1575,16 @@ class WebOrchestrator:
                 # finish with a single editorial domain.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
@@ -1576,15 +1636,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("url")
                     } - {""}
-                    providers_now = {
-                        outcome.provider
-                        for outcome in outcomes
-                        if outcome.ok and outcome.results
-                    }
+                    providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(domains_now) >= min(3, self.max_results)
-                        and len(providers_now) >= min(2, len(self.providers))
+                        and len(providers_now) >= required_provider_count
                     ):
                         break
             finally:
@@ -1701,42 +1757,58 @@ class WebOrchestrator:
             len(selected) < minimum_coverage
             or len(selected_domains - {""}) < minimum_coverage
         )
-        selected_providers = {
-            str(item.get("provider") or "").strip()
-            for item in selected
-            if str(item.get("provider") or "").strip()
-        }
-        insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
-        yahoo_available = (
-            "yahoo" in self.fallback_providers
-            and "yahoo" in self.circuits
+        selected_providers = relevant_provider_names(outcomes)
+        insufficient_provider_diversity = (
+            len(selected_providers) < required_provider_count
+        )
+        fallback_order = []
+        if (
+            insufficient_provider_diversity
+            and not _looks_realtime_news(cleaned)
+            and "mwmbl" in self.fallback_providers
+            and "mwmbl" in self.circuits
+            and not any(outcome.provider == "mwmbl" for outcome in outcomes)
+        ):
+            fallback_order.append("mwmbl")
+        # Yahoo is powered by Bing's algorithmic index. Use it only when no
+        # Bing-family result exists; it may improve coverage but cannot add quorum.
+        yahoo_already_completed = any(outcome.provider == "yahoo" for outcome in outcomes)
+        bing_family_has_candidates = any(
+            _provider_family(outcome.provider) == "bing"
+            and outcome.ok
+            and bool(outcome.results)
+            for outcome in outcomes
         )
         if (
-            yahoo_available
-            and (insufficient_evidence or insufficient_provider_diversity)
-            and loop.time() < deadline
+            "yahoo" in self.fallback_providers
+            and "yahoo" in self.circuits
+            and not yahoo_already_completed
+            and not bing_family_has_candidates
         ):
-            # Reserve one independent general-web fallback when either evidence
-            # coverage OR provider diversity is incomplete. Several domains from
-            # one index are useful, but they are not independent provider failover.
-            # This preserves the latency-first primary wave while guaranteeing a
-            # second provider attempt only when the final evidence still needs it.
+            fallback_order.append("yahoo")
+
+        for fallback_name in fallback_order:
+            if loop.time() >= deadline:
+                break
+            if (
+                len(selected) >= minimum_coverage
+                and len(selected_domains - {""}) >= minimum_coverage
+                and len(selected_providers) >= required_provider_count
+            ):
+                break
             remaining = deadline - loop.time()
-            # Reuse the normalized, broadened query already sent to the primary
-            # providers. The user's raw phrasing can be too narrow or noisy for a
-            # fallback index, especially for official/non-news sources.
             fallback_query = provider_query or cleaned
             try:
-                yahoo_outcome = await asyncio.wait_for(
-                    self._bounded_call_provider("yahoo", fallback_query),
+                fallback_outcome = await asyncio.wait_for(
+                    self._bounded_call_provider(fallback_name, fallback_query),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
-                yahoo_outcome = ProviderOutcome(
-                    provider="yahoo", ok=False, error_code="PROVIDER_TIMEOUT"
+                fallback_outcome = ProviderOutcome(
+                    provider=fallback_name, ok=False, error_code="PROVIDER_TIMEOUT"
                 )
-            outcomes.append(yahoo_outcome)
-            if yahoo_outcome.ok and yahoo_outcome.results:
+            outcomes.append(fallback_outcome)
+            if fallback_outcome.ok and fallback_outcome.results:
                 merged = [
                     {**item, "provider": outcome.provider}
                     for outcome in outcomes
@@ -1750,6 +1822,7 @@ class WebOrchestrator:
                     for item in selected
                     if item.get("url")
                 }
+                selected_providers = relevant_provider_names(outcomes)
                 if selected:
                     provider_query = fallback_query
 
@@ -1938,10 +2011,26 @@ class WebOrchestrator:
         executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
-        providers_used = list(dict.fromkeys(o.provider for o in outcomes if o.ok))
-        attempted = list(dict.fromkeys(o.provider for o in outcomes))
-        winner = next((o.provider for o in outcomes if o.ok and o.results), None)
         realtime = is_realtime_query(query)
+        relevant_outcomes = [
+            outcome
+            for outcome in outcomes
+            if outcome.ok
+            and outcome.results
+            and rank_results(query, outcome.results, realtime=realtime)
+        ]
+        providers_used = list(dict.fromkeys(o.provider for o in relevant_outcomes))
+        provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
+        attempted = list(dict.fromkeys(o.provider for o in outcomes))
+        winner = next((o.provider for o in relevant_outcomes), None)
+        required_providers = 2
+        provider_quorum_met = len(provider_families) >= required_providers
+        final_ok = bool(selected) and provider_quorum_met
+        final_status = (
+            status
+            if final_ok or not selected
+            else "INSUFFICIENT_PROVIDER_QUORUM"
+        )
         domains = sorted({
             (urlparse(str(item.get("url") or "")).hostname or "").casefold()
             for item in selected
@@ -1955,9 +2044,9 @@ class WebOrchestrator:
             else "none"
         )
         return {
-            "ok": bool(selected),
-            "status": status,
-            "diagnostic_code": None if selected else status,
+            "ok": final_ok,
+            "status": final_status,
+            "diagnostic_code": None if final_ok else final_status,
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
@@ -1973,7 +2062,7 @@ class WebOrchestrator:
             "providers_attempted": attempted,
             "provider": (
                 providers_used[0]
-                if len(providers_used) == 1
+                if len(provider_families) == 1
                 else "multi"
                 if providers_used
                 else None
@@ -1982,7 +2071,9 @@ class WebOrchestrator:
             "verification": {
                 "level": verification_level,
                 "distinct_domains": len(domains),
-                "distinct_providers": len(set(providers_used)),
+                "distinct_providers": len(provider_families),
+                "required_providers": required_providers,
+                "provider_quorum_met": provider_quorum_met,
                 "corroborated_results": 0,
             },
             "errors": errors[:8],

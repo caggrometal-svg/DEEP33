@@ -131,7 +131,7 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
         if "official" in query.casefold():
             return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
         recovered.append(provider)
-        if provider == "bing":
+        if provider in {"bing", "mojeek"}:
             return ProviderOutcome(provider=provider, ok=True, results=results)
         await asyncio.sleep(0.5)
         return ProviderOutcome(provider=provider, ok=False, error_code="PROVIDER_TIMEOUT")
@@ -146,6 +146,142 @@ def test_recovery_keeps_success_when_sibling_recovery_provider_is_slow():
     assert len({item["source_domain"] for item in result["results"]}) >= 3
     assert "bing" in recovered
     assert result["latency_ms"] < 250
+
+
+def test_web_orchestrator_never_certifies_a_single_configured_provider():
+    from backend.search.resilient import WebOrchestrator
+
+    async def only_provider(query, timeout, limit):
+        return [
+            {
+                "title": "NASA Artemis mission",
+                "url": f"https://nasa{i}.example/artemis",
+                "snippet": "NASA Artemis mission and lunar exploration.",
+            }
+            for i in range(3)
+        ]
+
+    async def empty_provider(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.05,
+            global_budget_seconds=0.18,
+            fallback_delay_seconds=0.0,
+        )
+        orchestrator.providers = {"bing": only_provider}
+        orchestrator.fallback_providers = {"yahoo": empty_provider}
+        orchestrator.circuits = {
+            "bing": orchestrator.circuits["bing"],
+            "yahoo": orchestrator.circuits["yahoo"],
+        }
+        return await orchestrator.search("NASA Artemis mission", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
+
+
+def test_search_provider_families_collapse_google_and_bing_aliases():
+    from backend.search.resilient import _provider_family
+
+    assert _provider_family("google_news") == _provider_family("google")
+    assert _provider_family("yahoo") == _provider_family("bing")
+    assert _provider_family("duckduckgo") == _provider_family("bing")
+
+
+def test_web_orchestrator_does_not_count_google_news_as_a_second_google_provider():
+    from backend.search.resilient import WebOrchestrator
+
+    candidates = [
+        {
+            "title": "NASA Artemis mission lunar exploration",
+            "url": f"https://space{i}.example/artemis",
+            "snippet": "NASA Artemis mission and lunar exploration research.",
+        }
+        for i in range(3)
+    ]
+
+    async def google_provider(query, timeout, limit):
+        return candidates
+
+    async def empty_provider(query, timeout, limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.05,
+            global_budget_seconds=0.18,
+            fallback_delay_seconds=0.0,
+        )
+        orchestrator.providers = {
+            "google": google_provider,
+            "google_news": google_provider,
+            "bing": empty_provider,
+            "mojeek": empty_provider,
+        }
+        orchestrator.fallback_providers = {"yahoo": empty_provider}
+        orchestrator.circuits = {
+            name: orchestrator.circuits[name]
+            for name in orchestrator.providers
+        } | {"yahoo": orchestrator.circuits["yahoo"]}
+        return await orchestrator.search("NASA Artemis mission", fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert set(result["providers"]) == {"google", "google_news"}
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
+
+
+def test_web_orchestrator_fails_closed_when_only_one_provider_has_relevant_results():
+    from backend.search.resilient import ProviderOutcome, WebOrchestrator
+
+    orchestrator = WebOrchestrator(
+        max_results=3,
+        provider_total_seconds=0.05,
+        global_budget_seconds=0.18,
+        fallback_delay_seconds=0.0,
+        cache_ttl_seconds=30,
+    )
+    relevant = [
+        {"title": "Python asyncio documentation", "url": f"https://docs.python.org/3/asyncio-{i}.html",
+         "snippet": "Python asyncio documentation and event loop"}
+        for i in range(3)
+    ]
+    unrelated = [
+        {"title": "Gardening guide", "url": "https://gardening.example/soil",
+         "snippet": "Plants, soil and garden care"}
+    ]
+
+    async def fake_call_provider(provider, query):
+        if provider == "bing":
+            return ProviderOutcome(provider=provider, ok=True, results=relevant)
+        if provider == "mojeek":
+            # A transport-successful response is not a relevant evidence provider.
+            return ProviderOutcome(provider=provider, ok=True, results=unrelated)
+        return ProviderOutcome(provider=provider, ok=False, error_code="NO_RESULTS")
+
+    orchestrator._call_provider = fake_call_provider
+    result = asyncio.run(
+        orchestrator.search("Python asyncio documentation", fresh=True)
+    )
+
+    assert result["results"], result
+    assert result["ok"] is False
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["required_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is False
 
 
 def test_recovery_broadens_provider_query_but_ranks_against_original_question():
@@ -459,17 +595,24 @@ def test_bing_rss_failure_does_not_leak_off_topic_html_results(monkeypatch):
 
 def test_bing_falls_back_to_rss_after_http_error(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
 
     class Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
             async def handler(request):
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
                         content=b"""<?xml version="1.0"?><rss><channel><item><title>DEEP33</title><link>https://example.org/deep33</link><description>Search result</description></item></channel></rss>""",
+                    )
+                if request.url.host == "www.google.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        text='<html><body><a href="https://independent.example/deep33"><h3>DEEP33 independent reference</h3></a></body></html>',
                     )
                 return httpx.Response(502, request=request)
             kwargs["transport"] = httpx.MockTransport(handler)
@@ -488,6 +631,7 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setenv("WEB_SEARCH_PROVIDER", "bing")
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "false")
     monkeypatch.setenv("WEB_SEARCH_MAX_QUERIES", "1")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     module._SEARCH_CACHE.clear()
@@ -500,7 +644,13 @@ def test_bing_uses_rss_when_generic_html_results_are_off_topic(monkeypatch):
         def __init__(self, *args, **kwargs):
             async def handler(request):
                 requested.append(str(request.url))
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "www.google.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        text='<html><body><a href="https://peps.python.org/pep-3156/"><h3>Python asyncio PEP 3156</h3></a></body></html>',
+                    )
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
@@ -569,7 +719,20 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
         def __init__(self, *args, **kwargs):
             async def handler(request):
                 requested.append(str(request.url))
-                if request.url.params.get("format") == "rss":
+                if request.url.host == "www.mojeek.com":
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        headers={"content-type": "text/html"},
+                        content=(
+                            b'<html><body><ul class="results-standard"><li><h2>'
+                            b'<a class="ob" href="https://news-independent.example/las-condes/actualizacion">'
+                            b'Las Condes otra actualizacion local publicada hoy</a>'
+                            b'</h2><p class="s">Situacion actual de Las Condes en Chile; otra fuente independiente de hoy.</p>'
+                            b"</li></ul></body></html>"
+                        ),
+                    )
+                if request.url.host == "www.bing.com" and request.url.params.get("format") == "rss":
                     return httpx.Response(
                         200,
                         request=request,
@@ -612,6 +775,8 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
     assert result["ok"] is True
     assert any("format=rss" in url for url in requested)
     assert result["results"][0]["url"] == "https://news.example/las-condes/alertas-hoy"
+    assert result["verification"]["distinct_providers"] >= 2
+    assert {"bing", "mojeek"}.issubset(set(result["providers"]))
 
 
 
@@ -925,7 +1090,7 @@ def test_web_evidence_falls_back_to_independent_sources_after_blocked_pages(monk
     assert any("READABLE-FOUR" in fragment for fragment in evidence_fragments)
 
 
-def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(monkeypatch):
+def test_realtime_news_fails_closed_when_publishers_block(monkeypatch):
     import backend.main as main
 
     query = "¿Cuáles son las noticias más importantes de Chile hoy? Busca en Internet y revisa varias fuentes."
@@ -982,12 +1147,10 @@ def test_realtime_web_evidence_uses_multi_domain_snippets_when_publishers_block(
         )
     )
 
-    assert working is not None
-    assert len(sources) == 3
-    assert compact["snippet_fallback"] is True
-    assert compact["domains_used"] >= 2
-    assert compact["extracted_text_chars"] == 0
-    assert len([fragment for fragment in evidence_fragments if "Chile" in fragment]) >= 2
+    assert working is None
+    assert sources == []
+    assert evidence_fragments == []
+    assert compact == []
 
 
 def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_block() -> None:
@@ -999,13 +1162,15 @@ def test_edge_realtime_search_preserves_multidomain_snippets_when_page_readers_b
             root / "supabase" / "functions" / function_name / "index.ts"
         ).read_text(encoding="utf-8")
         assert "snippet_fallback: true" in source
-        assert "snippetFallback.length < 2 || snippetDomains.size < 2" in source
+        assert "snippetFallback.length < requiredProviders" in source
+        assert "snippetDomains.size < requiredProviders" in source
+        assert "snippetProviders.length < requiredProviders" in source
         assert "item.snippet.length >= 80" in source
         assert 'status: "degraded"' in source
         assert 'fallbackPath + "-snippet-fallback"' in source
 
 
-def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable() -> None:
+def test_edge_web_navigation_requires_multiple_readable_independent_sources() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -1020,8 +1185,11 @@ def test_edge_web_navigation_recovers_multiple_sources_but_accepts_one_readable(
         assert "const fetchedDomains = new Set<string>();" in source
         assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
         assert "readableSources.length < requiredReadableSources" in source
-        assert "if (!search.ok || sources.length < 1)" in source
-        expected_recovery = "backend-recovery" if function_name == "deep33-proxy" else "railway-recovery"
+        assert "sources.length < requiredReadableSources" in source
+        assert "readableProviderNames.length < requiredProviderCount" in source
+        assert "readableDomains.size < requiredProviderCount" in source
+        assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
+        expected_recovery = "vercel-backend-recovery"
         assert f'fallback_path: "{expected_recovery}"' in source
         assert "async function buildNavigatedWebEvidence(" in source
 
@@ -1247,6 +1415,20 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
 
     monkeypatch.setattr(main.gateway, "stream", fake_stream)
 
+    async def fake_complete(_payload, **_kwargs):
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Respuesta recuperada mediante completion normal.",
+                },
+                "finish_reason": "stop",
+            }],
+            "_deep33_gateway": {"provider": "test", "model": "test"},
+        }
+
+    monkeypatch.setattr(main.gateway, "complete", fake_complete)
+
     async def exercise():
         completion_state = {}
         generator = main.stream_gateway(
@@ -1265,11 +1447,212 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
         raw = output.decode("utf-8")
         assert "AI_GATEWAY_INVALID_RESPONSE" not in raw
         assert '"content":' in raw
-        assert "No pude completar la síntesis" in raw
+        assert "Respuesta recuperada mediante completion normal." in raw
+        assert "No pude completar la síntesis" not in raw
         assert raw.endswith("data: [DONE]\n\n")
-        assert completion_state["assistant_text"].startswith("No pude completar la síntesis")
+        assert completion_state["assistant_text"] == "Respuesta recuperada mediante completion normal."
 
     asyncio.run(exercise())
+
+
+def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(monkeypatch):
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    fixtures = [
+        {
+            "title": "Últimas noticias de Chile hoy: Congreso aprueba nueva medida",
+            "url": "https://www.biobiochile.cl/noticias/2026/11/09/chile-politica-a.shtml",
+            "snippet": "Últimas noticias de Chile hoy sobre Congreso, gobierno y actualidad nacional.",
+            "provider": "bing",
+            "source_domain": "biobiochile.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: autoridades anuncian cambios",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/09/chile-actualidad.shtml",
+            "snippet": "Noticias de Chile hoy, actualidad nacional y declaraciones de autoridades.",
+            "provider": "duckduckgo",
+            "source_domain": "cooperativa.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: nueva información política",
+            "url": "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
+            "snippet": "Últimas noticias de Chile hoy con información política y nacional.",
+            "provider": "google_news",
+            "source_domain": "latercera.com",
+            "published_at": published_at,
+        },
+    ]
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "realtime": True,
+            "fresh_request": True,
+            "providers": ["bing", "duckduckgo"],
+            "providers_attempted": ["bing", "duckduckgo", "google_news"],
+            "verification": {
+                "provider_quorum_met": True,
+                "distinct_providers": 2,
+            },
+            "sources": fixtures,
+            "results": fixtures,
+            "queries": [query],
+            "retrieved_at": published_at,
+        }
+
+    async def fake_fetch(source, **_kwargs):
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": (
+                "Últimas noticias de Chile hoy. "
+                "Información periodística actualizada sobre Congreso, autoridades, "
+                "gobierno y acontecimientos nacionales. " * 4
+            ),
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "source_domain": source["source_domain"],
+            "published_at": source["published_at"],
+            "retrieved_at": published_at,
+            "text_chars": 400,
+        }
+
+    async def fake_fetch_quorum(candidates, fetcher, *, policy):
+        documents = []
+        for source in candidates:
+            page = await fetcher(source, policy.base_timeout_seconds)
+            if page is not None:
+                documents.append(page)
+        domains = {page["domain"] for page in documents}
+        return type("FetchBatch", (), {
+            "documents": documents,
+            "status": "success" if len(documents) >= 3 else "degraded",
+            "fetched": len(documents),
+            "distinct_domains": len(domains),
+            "total_text_chars": sum(len(page["text"]) for page in documents),
+            "cancelled": 0,
+            "elapsed_ms": 10.0,
+        })()
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    monkeypatch.setattr(main, "fetch_source_quorum", fake_fetch_quorum)
+    monkeypatch.setattr(main, "search_recent_news_candidates", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+
+    async def exercise():
+        return await main.prepare_web_evidence(
+            [{"role": "user", "content": query}],
+            request_id="news-quorum-test",
+            deep=False,
+        )
+
+    working, source_links, evidence_fragments, compact = asyncio.run(exercise())
+    assert working is not None
+    assert compact["news_quorum"]["met"] is True
+    assert compact["news_quorum"]["articles"] == 3
+    assert compact["news_quorum"]["domains"] == 3
+    assert compact["news_quorum"]["providers"] == 2
+    assert len(evidence_fragments) == 3
+    assert len(source_links) == 3
+    assert len(compact["fetched_pages"]) == 3
+    assert len(compact["search_results"]) == 3
+
+
+def test_chat_realtime_news_fails_closed_without_three_publishers(monkeypatch):
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = "2026-11-09T20:00:00+00:00"
+    fixtures = [
+        {
+            "title": "Últimas noticias de Chile hoy: Congreso aprueba nueva medida",
+            "url": "https://www.biobiochile.cl/noticias/2026/11/09/chile-politica-a.shtml",
+            "snippet": "Últimas noticias de Chile hoy sobre Congreso y gobierno.",
+            "provider": "bing",
+            "source_domain": "biobiochile.cl",
+            "published_at": published_at,
+        },
+        {
+            "title": "Últimas noticias de Chile hoy: autoridades anuncian cambios",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/09/chile-actualidad.shtml",
+            "snippet": "Noticias de Chile hoy, actualidad nacional y declaraciones.",
+            "provider": "duckduckgo",
+            "source_domain": "cooperativa.cl",
+            "published_at": published_at,
+        },
+    ]
+
+    async def fake_search(_query, **_kwargs):
+        return {
+            "ok": True,
+            "realtime": True,
+            "fresh_request": True,
+            "providers": ["bing", "duckduckgo"],
+            "verification": {
+                "provider_quorum_met": True,
+                "distinct_providers": 2,
+            },
+            "sources": fixtures,
+            "results": fixtures,
+            "queries": [query],
+            "retrieved_at": published_at,
+        }
+
+    async def fake_fetch(source, **_kwargs):
+        return {
+            "title": source["title"],
+            "url": source["url"],
+            "text": (
+                "Últimas noticias de Chile hoy. "
+                "Información periodística actualizada sobre Congreso, autoridades "
+                "y acontecimientos nacionales. " * 4
+            ),
+            "provider": source["provider"],
+            "domain": source["source_domain"],
+            "source_domain": source["source_domain"],
+            "published_at": source["published_at"],
+            "retrieved_at": published_at,
+            "text_chars": 400,
+        }
+
+    async def fake_fetch_quorum(candidates, fetcher, *, policy):
+        documents = []
+        for source in candidates:
+            page = await fetcher(source, policy.base_timeout_seconds)
+            if page is not None:
+                documents.append(page)
+        domains = {page["domain"] for page in documents}
+        return type("FetchBatch", (), {
+            "documents": documents,
+            "status": "degraded",
+            "fetched": len(documents),
+            "distinct_domains": len(domains),
+            "total_text_chars": sum(len(page["text"]) for page in documents),
+            "cancelled": 0,
+            "elapsed_ms": 10.0,
+        })()
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    monkeypatch.setattr(main, "fetch_source_quorum", fake_fetch_quorum)
+    monkeypatch.setattr(main, "search_recent_news_candidates", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+
+    async def exercise():
+        return await main.prepare_web_evidence(
+            [{"role": "user", "content": query}],
+            request_id="news-quorum-insufficient-test",
+            deep=False,
+        )
+
+    evidence, sources, pages, snippets = asyncio.run(exercise())
+    assert evidence is None
+    assert sources == []
+    assert pages == []
+    assert snippets == []
 
 
 def test_chile_current_events_query_gets_broad_news_recovery():

@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published, rank_results
+from backend.search.engine import is_realtime_query, is_realtime_news_query, is_strict_news_query, _is_recently_published, _normalise_lookup_query, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -90,17 +90,18 @@ def _is_publishable_realtime_news_source(
     if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
 
-    published_at = fetched_page.get("published_at") or source.get("published_at")
+    # A SERP timestamp describes the index candidate, not necessarily the page
+    # opened by DEEP33. Only publisher metadata extracted from that page qualifies.
+    published_at = fetched_page.get("published_at")
     if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
+        {"published_at": published_at},
         query,
     ):
         return False
 
     page_url = str(
-        fetched_page.get("url")
-        or fetched_page.get("final_url")
-        or source.get("url")
+        fetched_page.get("final_url")
+        or fetched_page.get("url")
         or ""
     ).strip()
     parsed = urlparse(page_url)
@@ -116,7 +117,8 @@ def _is_publishable_realtime_news_source(
         "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news", "/ultimo-momento",
+        "/latest-news", "/breaking-news", "/ultimo-momento", "/ultimas",
+        "/ultima", "/últimas", "/últimas-noticias",
     }
     if path in landing_paths:
         return False
@@ -150,7 +152,51 @@ def _is_publishable_realtime_news_source(
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
-    return score_result(query, relevance_item) >= minimum_relevance_score
+    # Chat prompts often append output constraints after the actual search intent.
+    # Score the publisher article against the normalized topic, not those instructions.
+    evidence_query = _normalise_lookup_query(query) or query
+    return score_result(evidence_query, relevance_item) >= minimum_relevance_score
+
+
+def _recent_news_quorum_summary(
+    query: str,
+    pages: list[dict[str, Any]],
+    search_result: dict[str, Any],
+) -> dict[str, Any]:
+    if not is_strict_news_query(query):
+        return {"required": False, "met": True, "articles": len(pages), "domains": 0, "providers": 0}
+    valid_pages = [
+        page for page in pages
+        if isinstance(page, dict)
+        and _is_publishable_realtime_news_source(query, page, page)
+    ]
+    domains = {
+        str(page.get("domain") or (urlparse(str(page.get("final_url") or page.get("url") or "")).hostname or ""))
+        .casefold().removeprefix("www.")
+        for page in valid_pages
+    } - {""}
+    verification = search_result.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    providers = verification.get("distinct_providers")
+    try:
+        provider_count = int(providers or 0)
+    except (TypeError, ValueError):
+        provider_count = 0
+    provider_quorum = (
+        verification.get("provider_quorum_met") is True
+        and provider_count >= 2
+    )
+    article_count = len(valid_pages)
+    domain_count = len(domains)
+    return {
+        "required": True,
+        "met": article_count >= 3 and domain_count >= 3 and provider_quorum,
+        "articles": article_count,
+        "domains": domain_count,
+        "providers": provider_count,
+        "provider_quorum_met": provider_quorum,
+    }
+
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
@@ -1333,6 +1379,46 @@ WEB_NAVIGATION_PROMPT = (
     "Do not dump raw source metadata or internal retrieval JSON. When the user requests sources, or current/research claims need traceability, include concise source names and direct URLs present in retrieved evidence; never invent links."
 )
 
+def _compact_model_web_evidence(evidence: dict[str, Any], *, strict_news: bool) -> dict[str, Any]:
+    """Bound inference input without weakening server-side retrieval or source quorum."""
+    compact = dict(evidence)
+    if not strict_news:
+        return compact
+
+    # Free inference providers have a tight latency budget. Keep the three
+    # independently fetched publisher articles, but send only the fields needed
+    # to synthesize them. Full validated source metadata remains in the separate
+    # response source list; this does not weaken the retrieval quorum.
+    pages = evidence.get("fetched_pages")
+    if isinstance(pages, list):
+        compact["fetched_pages"] = [
+            {
+                "title": str(page.get("title") or "")[:160],
+                "url": str(page.get("url") or "")[:500],
+                "domain": str(page.get("domain") or "")[:120],
+                "published_at": page.get("published_at"),
+                "text": str(page.get("text") or "")[:500],
+            }
+            for page in pages[:3]
+            if isinstance(page, dict)
+        ]
+    results = evidence.get("search_results")
+    if isinstance(results, list):
+        compact["search_results"] = [
+            {
+                "title": str(item.get("title") or "")[:160],
+                "url": str(item.get("url") or "")[:500],
+                "source_domain": str(item.get("source_domain") or "")[:120],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:160],
+            }
+            for item in results[:3]
+            if isinstance(item, dict)
+        ]
+    compact["model_context_compacted"] = True
+    return compact
+
+
 WEB_EVIDENCE_SYNTHESIS_PROMPT = (
     "Server-side retrieval has already completed for this request. No web tools or function-call interface are available in this inference. "
     "Do not attempt to invoke, simulate, or print internal tool-call markup. "
@@ -1408,6 +1494,10 @@ def should_force_web(messages):
     query = latest_user_query(messages)
     if not query:
         return False
+    # The decision router's WEB route is itself an explicit external-evidence
+    # requirement. Keep the router and evidence acquisition contract aligned.
+    if classify_query(query).route == DecisionRoute.WEB:
+        return True
     if is_realtime_query(query):
         return True
     lowered = query.lower()
@@ -1903,7 +1993,10 @@ async def _fetch_web_source(
         "provider": provider,
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Publication timestamp remains page-derived; SERP dates are discovery
+        # hints only and must not be promoted to verified article metadata.
+        "published_at": result.get("published_at"),
+        "final_url": final_url,
         "text_chars": len(page_text),
     }
 
@@ -1915,11 +2008,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Explicit external lookups must enter web retrieval. Independent-provider
+    # quorum is enforced by the search engine; page extraction scales with the
+    # requested depth so simple factual lookups remain responsive.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    required_pages = 3 if is_strict_news_query(query) else 2 if contrast_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
@@ -1987,6 +2081,80 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in list(search_result.get("results") or [])[:5]
         if isinstance(item, dict)
     ]
+    if is_strict_news_query(query):
+        recent_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in sources.values()
+            if item.get("published_at") and _is_recently_published(item, query)
+        } - {""}
+        if len(recent_domains) < 3:
+            try:
+                rescue_query = (
+                    "Chile noticias hoy actualidad acontecimientos recientes"
+                    if "chile" in query.casefold()
+                    else query
+                )
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=1.8,
+                    max_results=8,
+                )
+                recent_candidates = rank_results(
+                    query,
+                    recent_candidates,
+                    realtime=True,
+                )
+                for raw in recent_candidates:
+                    if not isinstance(raw, dict):
+                        continue
+                    published_at = raw.get("published_at")
+                    if not published_at or not _is_recently_published(raw, query):
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    domain = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().removeprefix("www.")
+                    if (
+                        not url.startswith("https://")
+                        or not domain
+                        or domain in recent_domains
+                        or url in sources
+                    ):
+                        continue
+                    recovered = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": str(raw.get("provider") or "google_news"),
+                        "source_domain": domain[:255],
+                        "published_at": published_at,
+                    }
+                    sources[url] = recovered
+                    compact_search_results.append({
+                        "title": recovered["title"],
+                        "url": recovered["url"],
+                        "snippet": recovered["snippet"][:700],
+                        "published_at": published_at,
+                        "provider": recovered["provider"],
+                    })
+                    recent_domains.add(domain)
+                    if len(recent_domains) >= 5:
+                        break
+                logger.info(
+                    "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                    request_id or "unknown",
+                    len(recent_domains),
+                    len(sources),
+                )
+            except Exception as rescue_exc:
+                logger.warning(
+                    "chat_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                    request_id or "unknown",
+                    type(rescue_exc).__name__,
+                )
+
     snippets_sufficient = (
         len(compact_search_results) >= 2
         and sum(
@@ -2003,7 +2171,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         if str(item.get("url") or "").strip()
         and len(str(item.get("snippet") or "").strip()) >= 80
         and (
-            not is_realtime_news_query(query)
+            not is_strict_news_query(query)
             or _is_recently_published(item, query)
         )
     ]
@@ -2039,6 +2207,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
+    news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
     if must_fetch or not snippets_sufficient:
         fast_path = required_pages == 1 and not contrast_required
         configured_target = int(os.getenv(
@@ -2060,11 +2229,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             global_budget_seconds=(
                 max(2.0, min(5.0, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "3.6"))))
                 if fast_path
-                else max(3.5, min(9.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "6.2"))))
+                else max(
+                    3.5,
+                    min(
+                        9.0,
+                        float(os.getenv(
+                            "WEB_EVIDENCE_FETCH_BUDGET_SECONDS",
+                            "8.5" if is_strict_news_query(query) else "6.2",
+                        )),
+                    ),
+                )
             ),
             concurrency=4 if fast_path else 5,
             target_sources=min(target_sources, max(1, len(candidates))),
-            max_sources=min(5, max(1, len(candidates))),
+            max_sources=min(
+                8 if is_strict_news_query(query) else 5,
+                max(1, len(candidates)),
+            ),
             min_text_chars=80,
             min_total_chars=360 if fast_path else 720,
         )
@@ -2080,11 +2261,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             if (
                 page is not None
+                and is_strict_news_query(query)
+                and not _is_publishable_realtime_news_source(query, source, page)
+            ):
+                logger.info(
+                    "web_evidence_news_article_rejected request_id=%s url=%s reason=stale_generic_or_unreadable",
+                    request_id or "unknown",
+                    str(page.get("url") or source.get("url") or "")[:500],
+                )
+                return None
+            if (
+                page is not None
                 and is_realtime_news_query(query)
+                and not is_strict_news_query(query)
                 and not _is_recently_published(page, query)
             ):
                 logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    "web_evidence_current_page_rejected request_id=%s url=%s reason=missing_stale_or_future",
                     request_id or "unknown",
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
@@ -2097,6 +2290,17 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             policy=fetch_policy,
         )
         fetched_pages = list(fetch_batch.documents)
+        news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
+        if is_strict_news_query(query) and not news_quorum["met"]:
+            logger.warning(
+                "web_evidence_recent_news_quorum_not_met request_id=%s articles=%s domains=%s providers=%s",
+                request_id or "unknown",
+                news_quorum["articles"],
+                news_quorum["domains"],
+                news_quorum["providers"],
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
         logger.info(
             "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
             "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
@@ -2116,7 +2320,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # merely because publisher pages reject automated readers. Require at
         # least two independently hosted live search results before degrading to
         # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
+        if realtime and not is_strict_news_query(query) and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
             snippet_fallback_used = True
             logger.warning(
                 "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
@@ -2145,13 +2349,26 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     ]
     # Current-news candidates without a verified recent publication time never
     # reach the model through raw SERP metadata.
-    verified_search_results = [
-        item for item in compact_search_results
-        if (
-            not is_realtime_news_query(query)
-            or _is_recently_published(item, query)
-        )
-    ]
+    verified_search_results = (
+        [
+            {
+                "title": page.get("title"),
+                "url": page.get("url"),
+                "snippet": str(page.get("text") or "")[:700],
+                "published_at": page.get("published_at"),
+                "provider": page.get("provider"),
+            }
+            for page in compact_fetched_pages
+        ]
+        if is_strict_news_query(query)
+        else [
+            item for item in compact_search_results
+            if (
+                not is_realtime_news_query(query)
+                or _is_recently_published(item, query)
+            )
+        ]
+    )
     evidence_fragments = [
         str(item.get("snippet") or "")
         for item in (snippet_evidence if snippet_fallback_used else [])
@@ -2177,6 +2394,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
+        "news_quorum": news_quorum,
         "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
@@ -2191,10 +2409,11 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         ],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
-            for item in compact_fetched_pages[:2]
+            for item in compact_fetched_pages[:3 if is_strict_news_query(query) else 2]
         ],
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
+        "news_quorum": news_quorum,
         "snippet_fallback": snippet_fallback_used,
     }
 
@@ -2219,7 +2438,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "Prefer the newest independently corroborated evidence. Explicitly stale evidence must not support a current claim. "
             "If publication time is unavailable, do not invent one and do not describe that source as freshly published; use it only when other current evidence corroborates the claim. "
             "Write an original synthesis grounded in the retrieved evidence. Use the newest publication dates available, distinguish confirmed facts from uncertainty, and never state a current fact that the evidence does not support. Do not copy source phrasing or reproduce paragraphs or generate source URLs; DEEP33 will append verified direct source links from retrieval metadata.\n"
-            + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(
+                _compact_model_web_evidence(
+                    evidence,
+                    strict_news=is_strict_news_query(query),
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         ),
     })
     # Expose URLs that actually contributed fetched text. Only use result snippets
@@ -3088,17 +3314,19 @@ async def web_status() -> dict:
     return status
 
 def _web_search_result_limit(query: str, configured_limit: int) -> int:
-    limit = max(1, min(8, int(configured_limit)))
+    limit = max(1, min(12, int(configured_limit)))
     folded = str(query or "").casefold()
-    # Current news needs a wider candidate pool because readable pages can block
-    # automation. Search up to eight independent candidates, without changing the
-    # five-source default for ordinary queries or the endpoint contract.
+    # Strict current-news synthesis needs more candidates than the final quorum:
+    # publisher landing pages, redirects, and blocked articles must be rejected
+    # without leaving fewer than three verified, independent articles.
+    if is_strict_news_query(query):
+        return max(limit, 12)
     chile_current_news = (
         is_realtime_query(query)
         and "chile" in folded
         and any(term in folded for term in ("noticia", "actualidad", "breaking", "latest news", "news"))
     )
-    return max(limit, 8) if chile_current_news else limit
+    return max(limit, 12) if chile_current_news else limit
 
 
 @app.get("/v1/web/search")
@@ -3228,7 +3456,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_realtime_news_query(q):
+        if search_ok and is_strict_news_query(q):
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3278,7 +3506,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
+                            "provider": str(raw.get("provider") or "google_news"),
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }
@@ -3405,7 +3633,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if not direct_url or not fetched_page:
                 continue
 
-            if is_realtime_news_query(q):
+            if is_strict_news_query(q):
                 if not _is_publishable_realtime_news_source(q, item, fetched_page):
                     continue
                 published_at = fetched_page.get("published_at") or item.get("published_at")
@@ -3430,7 +3658,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         evidence_fetched_pages = (
             list(valid_news_pages_by_url.values())
-            if is_realtime_news_query(q)
+            if is_strict_news_query(q)
             else fetched_pages
         )
         fetched_domains = {
@@ -3453,7 +3681,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # underlying page was fetched: callers can distinguish evidence_type and
         # fetched=false from fully extracted pages.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and not has_extracted_content:
             for item in candidate_sources:
                 snippet = str(item.get("snippet") or "").strip()
                 url = str(item.get("url") or "").strip()
@@ -3461,7 +3689,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     item.get("source_domain")
                     or (urlparse(url).hostname or "")
                 ).casefold().removeprefix("www.")
-                if not url.startswith("https://") or not domain or len(snippet) < 24:
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
+                ):
                     continue
                 snippet_fallback_results.append({
                     **item,
@@ -3478,7 +3711,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # already-ranked live snippets from distinct domains. They are explicitly
         # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and has_extracted_content and len(resolved_results) < 3:
             extracted_result_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "")
                 .casefold().removeprefix("www.")
@@ -3501,6 +3734,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     not url.startswith("https://")
                     or not domain
                     or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
                     or url in extracted_result_urls
                     or domain in extracted_result_domains
                 ):
@@ -3541,7 +3775,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
         }
         news_quorum_met = (
-            not is_realtime_news_query(q)
+            not is_strict_news_query(q)
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
@@ -3565,7 +3799,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
-        if is_realtime_news_query(q) and not news_quorum_met:
+        if is_strict_news_query(q) and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
             errors.append("SEARCH_RESULT_NOT_OK")
@@ -3814,6 +4048,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     last_timeout = False
     transport_failed = False
+    last_gateway_attempts: list[dict] = []
+    last_error_type: str | None = None
 
     for attempt in range(2):
         remaining = deadline - time.monotonic()
@@ -3846,7 +4082,10 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 await asyncio.sleep(0.15)
                 continue
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -3856,7 +4095,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 attempt + 1,
             )
             break
-        except GatewayInvalidResponseError:
+        except GatewayInvalidResponseError as exc:
+            last_error_type = type(exc).__name__
+            last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -3866,6 +4107,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except (GatewayHTTPError, HTTPException) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayHTTPError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -3875,6 +4119,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except Exception as exc:
+            last_error_type = type(exc).__name__
             transport_failed = True
             logger.warning(
                 "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
@@ -3906,7 +4151,10 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 len(text_value),
             )
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -3914,6 +4162,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 stream_id,
             )
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -3921,6 +4172,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
         except Exception as exc:
+            last_error_type = type(exc).__name__
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -3928,19 +4180,32 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
 
-    return ("TIMEOUT" if last_timeout else "FAIL"), None, None
+    diagnostic_data = (
+        {"_deep33_gateway": {
+            "attempts": last_gateway_attempts,
+            "error_type": last_error_type,
+        }}
+        if last_gateway_attempts or last_error_type
+        else None
+    )
+    return ("TIMEOUT" if last_timeout else "FAIL"), diagnostic_data, None
 
 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
     request_id = request_id_from_request(request)
     status, data, text = await run_inference_check(request_id)
+    gateway_meta = data.get("_deep33_gateway", {}) if isinstance(data, dict) else {}
+    attempts = gateway_meta.get("attempts", []) if isinstance(gateway_meta, dict) else []
+    last_attempt = attempts[-1] if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else {}
     return {
         "status": status,
         "request_id": request_id,
-        "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
-        "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
+        "model": gateway_meta.get("model") or last_attempt.get("model"),
+        "provider": gateway_meta.get("provider") or last_attempt.get("provider"),
         "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
+        "attempts": attempts if isinstance(attempts, list) else [],
+        "error_type": gateway_meta.get("error_type"),
         "timestamp": utc_now(),
     }
 
@@ -4907,6 +5172,216 @@ async def _finalize_stream(
             )
 
 
+
+def _web_evidence_from_payload(payload: dict[str, Any]) -> tuple[int, dict[str, Any], str] | None:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return None
+    marker = "Server-side web evidence for this request follows."
+    decoder = json.JSONDecoder()
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        marker_at = content.find(marker)
+        if marker_at < 0:
+            continue
+        json_start = content.find("{", marker_at + len(marker))
+        if json_start < 0:
+            continue
+        try:
+            evidence, _consumed = decoder.raw_decode(content[json_start:])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(evidence, dict):
+            return index, evidence, content[:json_start]
+    return None
+
+
+def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    message_index, evidence, prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+
+    compact_pages = []
+    for page in pages[:3]:
+        if not isinstance(page, dict):
+            continue
+        compact_pages.append({
+            "title": str(page.get("title") or "")[:180],
+            "url": str(page.get("url") or "")[:1000],
+            "domain": str(page.get("domain") or "")[:180],
+            "provider": str(page.get("provider") or "")[:80],
+            "published_at": page.get("published_at"),
+            "text": str(page.get("text") or "")[:450],
+        })
+    if not compact_pages:
+        return None
+
+    results = evidence.get("search_results")
+    compact_results = []
+    if isinstance(results, list):
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            compact_results.append({
+                "title": str(item.get("title") or "")[:180],
+                "url": str(item.get("url") or "")[:1000],
+                "provider": str(item.get("provider") or "")[:80],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:180],
+            })
+
+    compact_verification = {
+        key: verification.get(key)
+        for key in (
+            "provider_quorum_met",
+            "distinct_providers",
+            "distinct_domains",
+            "relevant_results",
+        )
+        if key in verification
+    }
+    compact_evidence = {
+        "realtime": bool(evidence.get("realtime")),
+        "retrieved_at": evidence.get("retrieved_at"),
+        "providers_attempted": list(evidence.get("providers_attempted") or [])[:8],
+        "verification": compact_verification,
+        "news_quorum": news_quorum,
+        "search_results": compact_results,
+        "fetched_pages": compact_pages,
+        "domains_used": evidence.get("domains_used"),
+        "extracted_text_chars": evidence.get("extracted_text_chars"),
+        "snippet_fallback": bool(evidence.get("snippet_fallback")),
+        "model_context_compacted": True,
+    }
+    compact_payload = dict(payload)
+    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
+    compact_messages[message_index] = {
+        **compact_messages[message_index],
+        "content": prefix + json.dumps(
+            compact_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
+    compact_payload["messages"] = compact_messages
+    compact_payload["max_tokens"] = min(
+        384,
+        max(256, int(payload.get("max_tokens") or 384)),
+    )
+    return compact_payload
+
+
+def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    _message_index, evidence, _prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+
+    try:
+        provider_count = int(
+            verification.get("distinct_providers")
+            or news_quorum.get("providers")
+            or 0
+        )
+    except (TypeError, ValueError):
+        provider_count = 0
+    provider_quorum_met = (
+        verification.get("provider_quorum_met") is True
+        or news_quorum.get("provider_quorum_met") is True
+    )
+    if provider_count < 2 or not provider_quorum_met:
+        return None
+
+    strict_news = news_quorum.get("required") is True
+    if strict_news and (
+        news_quorum.get("met") is not True
+        or int(news_quorum.get("articles") or 0) < 3
+        or int(news_quorum.get("domains") or 0) < 3
+    ):
+        return None
+
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+    minimum_sources = 3 if strict_news else 2
+    selected: list[tuple[str, str, str]] = []
+    seen_domains: set[str] = set()
+    junk_sentence = re.compile(
+        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
+        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
+        r"ignore all previous instructions|system prompt)\b",
+        re.IGNORECASE,
+    )
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        url = str(page.get("url") or "").strip()
+        parsed_url = urlparse(url)
+        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
+            continue
+        domain = str(page.get("domain") or parsed_url.hostname).casefold()
+        domain = domain.removeprefix("www.").rstrip(".")
+        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
+        if not domain or domain in seen_domains or len(page_text) < 80:
+            continue
+        sentences = [
+            sentence.strip(" \t\r\n-•")
+            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
+            if sentence.strip()
+        ]
+        sentence = next(
+            (
+                item for item in sentences
+                if 8 <= len(item.split()) <= 45
+                and not junk_sentence.search(item)
+            ),
+            "",
+        )
+        if not sentence:
+            sentence = page_text
+        words = sentence.split()
+        excerpt = " ".join(words[:20]).strip()
+        if len(words) > 20:
+            excerpt += "…"
+        if len(excerpt) < 40:
+            continue
+        title = str(page.get("title") or domain).strip()[:160]
+        selected.append((domain, title, excerpt))
+        seen_domains.add(domain)
+        if len(selected) >= 3:
+            break
+
+    required_domains = 3 if strict_news else 2
+    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
+        return None
+
+    lines = [
+        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
+    ]
+    lines.extend(
+        f"• {title}: «{excerpt}»"
+        for _domain, title, excerpt in selected
+    )
+    return "\n".join(lines)
+
+
 async def stream_gateway(
     payload: dict,
     session_id: str,
@@ -5030,6 +5505,108 @@ async def stream_gateway(
             request_id,
             len(collected),
         )
+
+    nonstream_complete = getattr(gateway, "complete", None)
+    if (
+        not assistant_parts
+        and not tool_markup_filter.suppressed
+        and callable(nonstream_complete)
+    ):
+        compact_payload = _compact_web_synthesis_payload(payload)
+        candidates = []
+        if compact_payload is not None:
+            candidates.append((compact_payload, "compact"))
+        candidates.append((payload, "standard"))
+
+        for candidate_payload, fallback_kind in candidates:
+            try:
+                fallback_data = await nonstream_complete(
+                    candidate_payload,
+                    request_id=request_id,
+                    idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
+                    deadline=deadline,
+                )
+                fallback_message = _choice_message(fallback_data)
+                raw_fallback_text = fallback_message.get("content")
+                if not isinstance(raw_fallback_text, str) or not raw_fallback_text.strip():
+                    logger.warning(
+                        "stream_nonstream_fallback_empty request_id=%s mode=%s",
+                        request_id,
+                        fallback_kind,
+                    )
+                    continue
+                fallback_filter = _InternalToolMarkupStreamFilter()
+                fallback_text = (
+                    fallback_filter.push(raw_fallback_text)
+                    + fallback_filter.finish()
+                )
+                if not fallback_text or fallback_filter.suppressed:
+                    logger.warning(
+                        "stream_nonstream_fallback_filtered request_id=%s mode=%s",
+                        request_id,
+                        fallback_kind,
+                    )
+                    continue
+
+                assistant_parts.append(fallback_text)
+                saw_done = True
+                gateway_failure = None
+                if first_output_at is None:
+                    first_output_at = time.perf_counter()
+                    performance.mark(request_id, "T7_FIRST_TOKEN")
+                    _metric_latency["chat_stream_ttft_ms"].append(
+                        (first_output_at - stream_started) * 1000
+                    )
+                for piece in _sse_text_chunks(fallback_text):
+                    yield _sse_delta(piece)
+                gateway_meta = fallback_data.get("_deep33_gateway", {})
+                logger.info(
+                    "stream_nonstream_fallback_success request_id=%s mode=%s provider=%s model=%s chars=%s",
+                    request_id,
+                    fallback_kind,
+                    gateway_meta.get("provider"),
+                    gateway_meta.get("model"),
+                    len(fallback_text),
+                )
+                break
+            except (asyncio.TimeoutError, GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+                safe_attempts = [
+                    {
+                        key: attempt.get(key)
+                        for key in ("provider", "model", "status_code", "outcome")
+                        if attempt.get(key) is not None
+                    }
+                    for attempt in getattr(exc, "attempts", [])
+                    if isinstance(attempt, dict)
+                ]
+                logger.warning(
+                    "stream_nonstream_fallback_failed request_id=%s mode=%s error=%s attempts=%s",
+                    request_id,
+                    fallback_kind,
+                    type(exc).__name__,
+                    json.dumps(safe_attempts[:6], ensure_ascii=False, separators=(",", ":")),
+                )
+                gateway_failure = gateway_failure or "nonstream_fallback_failed"
+
+    if not assistant_parts and not tool_markup_filter.suppressed:
+        extractive_fallback = _extractive_web_evidence_fallback(payload)
+        if extractive_fallback:
+            assistant_parts.append(extractive_fallback)
+            saw_done = True
+            gateway_failure = None
+            if first_output_at is None:
+                first_output_at = time.perf_counter()
+                performance.mark(request_id, "T7_FIRST_TOKEN")
+                _metric_latency["chat_stream_ttft_ms"].append(
+                    (first_output_at - stream_started) * 1000
+                )
+            for piece in _sse_text_chunks(extractive_fallback):
+                yield _sse_delta(piece)
+            logger.warning(
+                "stream_extractive_web_evidence_fallback request_id=%s sources=%s",
+                request_id,
+                3 if "extractos breves" in extractive_fallback else 2,
+            )
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)

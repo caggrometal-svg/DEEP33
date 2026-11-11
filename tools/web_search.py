@@ -656,6 +656,45 @@ async def _cl0q_search(query, timeout_seconds, max_results):
     return _cl0q_result_items(payload, max_results)
 
 
+async def _mwmbl_search(query, timeout_seconds, max_results):
+    """Search Mwmbl's independent index using its anonymous no-key free tier."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://api.mwmbl.org/api/v2/search/",
+        params={"q": query},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/json",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.0)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_MWMBL_HTTP_{response.status_code}")
+    if len(response.content) > 2 * 1024 * 1024:
+        raise WebSearchError("WEB_SEARCH_MWMBL_RESPONSE_TOO_LARGE")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise WebSearchError("WEB_SEARCH_MWMBL_INVALID_JSON") from exc
+    raw = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        raise WebSearchError("WEB_SEARCH_MWMBL_INVALID_RESULTS")
+
+    # Mwmbl can expose seed/partner results in the same response. Only accept
+    # hits explicitly indexed by Mwmbl itself so it cannot masquerade as Google
+    # or another external engine and inflate independent-provider quorum.
+    own_index = []
+    for item in raw:
+        if not isinstance(item, dict) or str(item.get("engine") or "").casefold() != "mwmbl":
+            continue
+        own_index.append({
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "content": item.get("content") or "",
+        })
+    return _normalise_results(own_index, max_results)
+
+
 async def _duckduckgo_search(query, timeout_seconds, max_results):
     client = await _search_http_client()
     realtime_news = _looks_realtime_news(query)
@@ -806,22 +845,107 @@ async def _google_news_search(query, timeout_seconds, max_results):
     return await _parse_bing_rss(response, max_results)
 
 
+async def _bing_recent_news_search(
+    query: str,
+    timeout_seconds: float,
+    max_results: int,
+) -> list[dict]:
+    """Fetch publisher-linked RSS results with publication dates from Bing."""
+    client = await _search_http_client()
+    response = await client.get(
+        os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+        params={"q": query, "format": "rss", **_bing_market_params(query)},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/rss+xml,application/xml,text/xml",
+        },
+        timeout=_http_timeout(min(2.5, max(0.8, float(timeout_seconds)))),
+    )
+    results = await _parse_bing_rss(response, max_results)
+    return [{**item, "provider": "bing"} for item in results]
+
+
 async def search_recent_news_candidates(
     query: str,
     *,
     timeout_seconds: float = 2.0,
     max_results: int = 8,
 ) -> list[dict]:
-    """Return dated recent-news candidates for realtime diversity recovery."""
+    """Return dated recent-news candidates from independent RSS search paths."""
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
-    limit = max(1, min(8, int(max_results)))
-    return await _google_news_search(
-        cleaned,
-        min(2.5, max(0.8, float(timeout_seconds))),
-        limit,
+    limit = max(1, min(12, int(max_results)))
+    budget = min(2.5, max(0.8, float(timeout_seconds)))
+    publisher_domains = (
+        "biobiochile.cl",
+        "cooperativa.cl",
+        "latercera.com",
+        "emol.com",
+        "24horas.cl",
     )
+    queries: list[tuple[str, str | None]] = [(cleaned, None)]
+    if re.search(r"\bchile\b", cleaned, re.IGNORECASE):
+        queries.extend(
+            (f"noticias Chile hoy site:{domain}", domain)
+            for domain in publisher_domains
+        )
+
+    jobs = [
+        _google_news_search(cleaned, budget, limit),
+        *(
+            _bing_recent_news_search(search_query, budget, limit)
+            for search_query, _expected_domain in queries
+        ),
+    ]
+    settled = await asyncio.gather(*jobs, return_exceptions=True)
+    # Reject dated but stale Google News items here. Otherwise its first batch
+    # can fill the candidate limit and prevent independent Bing RSS recovery
+    # from being considered at all.
+    from backend.search.engine import _is_recently_published
+
+    merged: list[dict] = []
+    by_url: dict[str, dict] = {}
+    for index, result in enumerate(settled):
+        if isinstance(result, BaseException) or not isinstance(result, list):
+            continue
+        default_provider = "google_news" if index == 0 else "bing"
+        expected_domain = queries[index - 1][1] if index > 0 else None
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            published_at = str(item.get("published_at") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not published_at or not url:
+                continue
+            if not _is_recently_published(item, cleaned):
+                continue
+            try:
+                canonical_url = _safe_search_result_url(url)
+            except Exception:
+                continue
+            hostname = (urlparse(canonical_url).hostname or "").casefold().removeprefix("www.")
+            if expected_domain and hostname != expected_domain and not hostname.endswith("." + expected_domain):
+                continue
+
+            provider = str(item.get("provider") or default_provider)
+            existing = by_url.get(canonical_url)
+            if existing is not None:
+                prior = existing.get("provider_sources")
+                prior = prior if isinstance(prior, list) else [existing.get("provider") or default_provider]
+                existing["provider_sources"] = sorted({str(value) for value in [*prior, provider] if value})
+                continue
+            candidate = {
+                **item,
+                "url": canonical_url,
+                "provider": provider,
+                "provider_sources": [provider],
+            }
+            by_url[canonical_url] = candidate
+            merged.append(candidate)
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
@@ -1027,7 +1151,7 @@ async def search_web(
     if not cleaned:
         raise WebSearchError("WEB_SEARCH_QUERY_REQUIRED")
 
-    max_results = max(1, min(8, int(max_results)))
+    max_results = max(1, min(12, int(max_results)))
     orchestrator = get_web_orchestrator(max_results)
     # The fast flag was previously accepted but ignored. A bounded budget on
     # this path protects first-token latency; fallback still has a reserved slice.

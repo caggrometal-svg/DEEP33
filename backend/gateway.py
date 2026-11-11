@@ -29,15 +29,26 @@ _PROVIDER_POLICY_BLOCK_PHRASES = (
 
 
 class GatewayTimeoutError(Exception):
-    pass
+    def __init__(self, attempts: list[dict] | None = None) -> None:
+        super().__init__("gateway provider timeout")
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 class GatewayHTTPError(Exception):
-    pass
+    def __init__(
+        self,
+        status_code: int | None = None,
+        attempts: list[dict] | None = None,
+    ) -> None:
+        super().__init__(f"gateway provider HTTP failure: {status_code or 'unknown'}")
+        self.status_code = status_code
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 class GatewayInvalidResponseError(Exception):
-    pass
+    def __init__(self, attempts: list[dict] | None = None) -> None:
+        super().__init__("gateway providers returned no usable assistant text")
+        self.attempts = [dict(item) for item in (attempts or [])]
 
 
 @dataclass(frozen=True)
@@ -108,11 +119,11 @@ class GatewayConfig:
             name=os.getenv("AI_GATEWAY_PROVIDER", "kilo").strip() or "kilo",
             url=os.getenv(
                 "AI_GATEWAY_URL",
-                "https://api.kilo.ai/api/gateway/chat/completions",
+                "https://ai-gateway.kilo.ai/api/v1/chat/completions",
             ).strip(),
             health_url=os.getenv(
                 "AI_GATEWAY_HEALTH_URL",
-                "https://api.kilo.ai/api/gateway/models",
+                "https://ai-gateway.kilo.ai/api/v1/models",
             ).strip(),
             api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
             model=os.getenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free").strip(),
@@ -150,31 +161,52 @@ class GatewayConfig:
             and "gemma-4" not in provider.model.casefold()
         )
         # A 200 response with no visible assistant text is an invalid inference,
-        # not a successful completion. Keep a text-oriented free Kilo model as the
-        # final deterministic fallback for every Kilo gateway primary (including
-        # kilo-auto/free), unless that model is already configured explicitly.
+        # not a successful completion. Keep a currently listed, zero-cost text/vision
+        # model as the final deterministic fallback for every Kilo gateway primary,
+        # unless that model is already configured explicitly.
         kilo_provider = next(
             (
                 provider
                 for provider in secure_providers
                 if (
-                    urlsplit(provider.url).hostname or ""
-                ).casefold() == "api.kilo.ai"
+                    (urlsplit(provider.url).hostname or "").casefold()
+                    in {"api.kilo.ai", "ai-gateway.kilo.ai"}
+                )
             ),
             None,
         )
-        has_laguna_fallback = any(
-            "poolside/laguna-s-2.1" in provider.model.casefold()
+        configured_fallback_model = os.getenv("AI_GATEWAY_FALLBACK_MODEL", "").strip()
+        # A fixed free-model promotion can expire without a code deployment.
+        # Kilo Auto Free is a stable virtual model that dynamically selects an
+        # active zero-cost model from the live free catalog.
+        retired_free_models = {
+            "nvidia/nemotron-3.5-lightning:free",
+        }
+        if (
+            not configured_fallback_model
+            or configured_fallback_model.casefold() in retired_free_models
+            or (
+                configured_fallback_model.casefold() != "kilo-auto/free"
+                and not configured_fallback_model.casefold().endswith(":free")
+            )
+        ):
+            fallback_model = "kilo-auto/free"
+        else:
+            fallback_model = configured_fallback_model
+        has_configured_fallback = any(
+            provider.model.casefold() == fallback_model.casefold()
             for provider in secure_providers
         )
-        if kilo_provider is not None and not has_laguna_fallback:
+        if kilo_provider is not None and fallback_model and not has_configured_fallback:
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-laguna-fallback",
+                    name="kilo-auto-free-fallback"
+                    if fallback_model.casefold() == "kilo-auto/free"
+                    else "kilo-free-model-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
-                    model="poolside/laguna-s-2.1:free",
+                    model=fallback_model,
                 ),
             )
         return cls(
@@ -385,12 +417,34 @@ class AIGateway:
         elif not result.get("model"):
             result.pop("model", None)
 
-        # Dots3 is a reasoning model. On failover it can emit transport/reasoning
-        # frames several seconds before the first assistant text. Keep reasoning
-        # enabled, but bound it to the provider-supported low effort so fallback
-        # remains useful for interactive chat instead of becoming the TTFT bottleneck.
-        if "dots-studio/dots-3-note-preview" in provider.model.casefold():
-            result["reasoning_effort"] = "low"
+        # Dots3 defaults to an internal reasoning phase. DEEP33 needs the
+        # user-visible answer stream, so explicitly disable thinking as documented
+        # by the model and provide a bounded visible-output budget.
+        model_id = provider.model.casefold()
+        dots_or_nemotron = (
+            "dots-studio/dots-3-note-preview" in model_id
+            or "nvidia/nemotron-3.5-super-vl" in model_id
+        )
+        kilo_auto_free = "kilo-auto/free" in model_id
+        if dots_or_nemotron or kilo_auto_free:
+            # These routes may spend most of a short free-inference window on
+            # hidden reasoning. Disable it so the gateway can emit user-visible
+            # text before the first-visible deadline.
+            result.pop("reasoning_effort", None)
+            template_kwargs = result.get("chat_template_kwargs")
+            if not isinstance(template_kwargs, dict):
+                template_kwargs = {}
+            template_kwargs["enable_thinking"] = False
+            result["chat_template_kwargs"] = template_kwargs
+            if dots_or_nemotron:
+                if not isinstance(result.get("max_tokens"), int) or result["max_tokens"] < 1024:
+                    result["max_tokens"] = 1024
+            else:
+                configured_tokens = result.get("max_tokens")
+                result["max_tokens"] = min(
+                    512,
+                    max(256, configured_tokens if isinstance(configured_tokens, int) else 384),
+                )
         return result
 
     @staticmethod
@@ -539,6 +593,10 @@ class AIGateway:
                         "last_error": None,
                         "fallback_used": index > 0,
                         "circuit_open": False,
+                        "configured_providers": [
+                            {"name": item.name, "model": item.model}
+                            for item in self.config.providers
+                        ],
                     }
 
                 failures.append(f"{provider.name}:http:{response.status_code}")
@@ -556,6 +614,10 @@ class AIGateway:
             "last_error": ";".join(failures) if failures else "no providers configured",
             "fallback_used": False,
             "circuit_open": False,
+            "configured_providers": [
+                {"name": item.name, "model": item.model}
+                for item in self.config.providers
+            ],
         }
 
     async def complete(
@@ -570,12 +632,18 @@ class AIGateway:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
+        attempts: list[dict] = []
 
         ordered_providers = self._ordered_providers(prefer_ttft=prefer_ttft)
         for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             now = time.monotonic()
             if not circuit.available(now):
+                attempts.append({
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "outcome": "circuit_open",
+                })
                 logger.warning(
                     "provider_skipped_circuit_open provider=%s",
                     provider.name,
@@ -618,6 +686,13 @@ class AIGateway:
                     if response.status_code >= 400:
                         status = response.status_code
                         error_class = self._classify_http_status(status)
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": status,
+                            "outcome": "http_error",
+                            "error_class": error_class,
+                        })
                         saw_http_error = True
                         provider_failed_transiently = self._is_retryable_status(status)
                         if status in {404, 410}:
@@ -644,7 +719,7 @@ class AIGateway:
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            raise GatewayHTTPError
+                            raise GatewayHTTPError(status_code=status, attempts=attempts)
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
@@ -656,6 +731,12 @@ class AIGateway:
                         data = response.json()
                     except ValueError:
                         saw_invalid_response = True
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "invalid_json",
+                        })
                         logger.warning(
                             "ai_provider_invalid_json request_id=%s provider=%s",
                             request_id,
@@ -665,6 +746,12 @@ class AIGateway:
 
                     if not isinstance(data, dict):
                         saw_invalid_response = True
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "invalid_payload",
+                        })
                         logger.warning(
                             "ai_provider_invalid_payload request_id=%s provider=%s",
                             request_id,
@@ -686,6 +773,33 @@ class AIGateway:
                         # A 200 with no assistant content is not a successful
                         # inference. Fail over instead of exposing an empty reply
                         # or recording a false-positive production health check.
+                        message = (
+                            choices[0].get("message")
+                            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                            else {}
+                        )
+                        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                        finish_reason = (
+                            choices[0].get("finish_reason")
+                            if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                            else None
+                        )
+                        reasoning_value = (
+                            message.get("reasoning")
+                            or message.get("reasoning_content")
+                            or message.get("thinking")
+                            or ""
+                        ) if isinstance(message, dict) else ""
+                        attempts.append({
+                            "provider": provider.name,
+                            "model": provider.model,
+                            "status_code": 200,
+                            "outcome": "empty_content",
+                            "message_keys": sorted(str(key) for key in message.keys())[:12] if isinstance(message, dict) else [],
+                            "reasoning_chars": len(str(reasoning_value)),
+                            "finish_reason": str(finish_reason or "")[:40],
+                            "completion_tokens": usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), (int, float)) else None,
+                        })
                         saw_invalid_response = True
                         provider_failed_transiently = True
                         logger.warning(
@@ -718,10 +832,19 @@ class AIGateway:
                             provider,
                             float(completion_tokens) / max(0.001, elapsed_ms / 1000.0),
                         )
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "status_code": 200,
+                        "outcome": "text",
+                        "content_chars": len(provider_text),
+                        "finish_reason": str((choices[0].get("finish_reason") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else "") or "")[:40],
+                    })
                     result = dict(data)
                     result["_deep33_gateway"] = {
                         "provider": provider.name,
                         "model": provider.model or data.get("model"),
+                        "attempts": [dict(item) for item in attempts],
                     }
                     circuit.success()
                     provider_succeeded = True
@@ -735,6 +858,7 @@ class AIGateway:
                     return result
 
                 except httpx.ConnectTimeout:
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "connect_timeout"})
                     saw_timeout = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -750,6 +874,7 @@ class AIGateway:
                         continue
                     break
                 except (httpx.ReadTimeout, httpx.WriteTimeout):
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "ambiguous_timeout"})
                     # Never retry the same provider after an ambiguous timeout.
                     # If a distinct fallback exists, move to it once so the user
                     # can recover without receiving duplicate assistant output.
@@ -763,6 +888,7 @@ class AIGateway:
                     )
                     break
                 except httpx.TimeoutException:
+                    attempts.append({"provider": provider.name, "model": provider.model, "outcome": "timeout"})
                     saw_timeout = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -778,6 +904,12 @@ class AIGateway:
                         continue
                     break
                 except httpx.HTTPError as exc:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_error",
+                        "error_type": type(exc).__name__,
+                    })
                     saw_http_error = True
                     provider_failed_transiently = True
                     logger.warning(
@@ -795,10 +927,10 @@ class AIGateway:
                 )
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
-            raise GatewayTimeoutError
+            raise GatewayTimeoutError(attempts=attempts)
         if saw_http_error:
-            raise GatewayHTTPError
-        raise GatewayInvalidResponseError
+            raise GatewayHTTPError(status_code=last_status, attempts=attempts)
+        raise GatewayInvalidResponseError(attempts=attempts)
 
     async def diagnostic_inference(
         self,
@@ -914,11 +1046,17 @@ class AIGateway:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
+        attempts: list[dict] = []
 
         ordered_providers = self._ordered_providers(prefer_ttft=True)
         for provider_index, provider in enumerate(ordered_providers):
             circuit = self._circuit(provider)
             if not circuit.available(time.monotonic()):
+                attempts.append({
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "outcome": "circuit_open",
+                })
                 continue
 
             provider_succeeded = False
@@ -958,8 +1096,24 @@ class AIGateway:
                         timeout=self._http_timeout(timeout),
                     ) as response:
                             if response.status_code >= 400:
+                                # Streaming responses have not been consumed yet.
+                                # Read the bounded error body before parsing so provider
+                                # diagnostics include the actual 4xx reason, not only
+                                # the generic HTTP reason phrase.
+                                try:
+                                    await response.aread()
+                                except httpx.HTTPError:
+                                    pass
                                 status = response.status_code
                                 error_class = self._classify_http_status(status)
+                                attempts.append({
+                                    "provider": provider.name,
+                                    "model": provider.model,
+                                    "status_code": status,
+                                    "outcome": "http_error",
+                                    "error_class": error_class,
+                                    "content_type": response.headers.get("content-type", "")[:80],
+                                })
                                 saw_http_error = True
                                 transient_failure = self._is_retryable_status(status)
                                 if status in {404, 410}:
@@ -1070,6 +1224,17 @@ class AIGateway:
                                             started_output = True
                                             yield chunk
                                 if first_visible_timeout:
+                                    attempts.append({
+                                        "provider": provider.name,
+                                        "model": provider.model,
+                                        "status_code": response.status_code,
+                                        "outcome": "first_visible_timeout",
+                                        "content_type": response.headers.get("content-type", "")[:80],
+                                        "buffered_bytes": len(pending_bytes),
+                                        "first_chunk_ms": round((first_chunk_at - started_request) * 1000, 2)
+                                        if first_chunk_at else None,
+                                        "visible_budget_ms": round(visible_budget * 1000, 2),
+                                    })
                                     saw_timeout = True
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
@@ -1107,6 +1272,18 @@ class AIGateway:
                                         pending_bytes.clear()
 
                                 if not visible_content:
+                                    attempts.append({
+                                        "provider": provider.name,
+                                        "model": provider.model,
+                                        "status_code": response.status_code,
+                                        "outcome": "policy_block" if provider_policy_block else "empty_visible_stream",
+                                        "content_type": response.headers.get("content-type", "")[:80],
+                                        "buffered_bytes": len(pending_bytes),
+                                        "sse_data_frames": sum(
+                                            1 for line in pending_bytes.splitlines()
+                                            if line.lstrip().startswith(b"data:")
+                                        ),
+                                    })
                                     saw_invalid_response = True
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
@@ -1135,6 +1312,14 @@ class AIGateway:
 
                                 provider_succeeded = True
                                 elapsed_ms = (time.perf_counter() - started_request) * 1000
+                                attempts.append({
+                                    "provider": provider.name,
+                                    "model": provider.model,
+                                    "status_code": response.status_code,
+                                    "outcome": "success",
+                                    "elapsed_ms": round(elapsed_ms, 2),
+                                    "content_type": response.headers.get("content-type", "")[:80],
+                                })
                                 self._record_latency(provider, elapsed_ms)
                                 if stream_completion_tokens and stream_completion_tokens > 0:
                                     self._record_throughput(
@@ -1162,6 +1347,11 @@ class AIGateway:
                         continue
                     break
                 except httpx.TimeoutException:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_timeout",
+                    })
                     saw_timeout = True
                     transient_failure = True
                     logger.warning(
@@ -1171,7 +1361,7 @@ class AIGateway:
                         attempt + 1,
                     )
                     if started_output:
-                        raise GatewayTimeoutError
+                        raise GatewayTimeoutError(attempts=attempts)
                     if attempt < self.config.max_retries:
                         delay = self._sleep_budget(attempt, deadline)
                         if delay > 0:
@@ -1179,6 +1369,12 @@ class AIGateway:
                         continue
                     break
                 except httpx.HTTPError as exc:
+                    attempts.append({
+                        "provider": provider.name,
+                        "model": provider.model,
+                        "outcome": "transport_error",
+                        "error_type": type(exc).__name__,
+                    })
                     saw_http_error = True
                     logger.warning(
                         "ai_stream_provider_transport_failure request_id=%s provider=%s error=%s",
@@ -1195,10 +1391,10 @@ class AIGateway:
                 )
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
-            raise GatewayTimeoutError
+            raise GatewayTimeoutError(attempts=attempts)
         if saw_http_error:
-            raise GatewayHTTPError
-        raise GatewayInvalidResponseError
+            raise GatewayHTTPError(attempts=attempts)
+        raise GatewayInvalidResponseError(attempts=attempts)
 
 
 def uuid4_short() -> str:

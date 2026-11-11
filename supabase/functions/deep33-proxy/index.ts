@@ -11,8 +11,8 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 // The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
 // an old environment variable still exists in the project.
-const UPSTREAM = isSecureHttpsUrl(RAW_UPSTREAM) &&
-    !/(render\.com|railway\.app|iac33|guqevsjbjyapqjjtutza)/i.test(RAW_UPSTREAM)
+const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&
+    isSecureHttpsUrl(RAW_UPSTREAM)
   ? RAW_UPSTREAM
   : "";
 
@@ -98,6 +98,8 @@ type NavigatedWebSource = {
   url: string;
   snippet: string;
   source_domain?: string;
+  provider?: string;
+  provider_sources?: string[];
   page_text?: string;
   final_url?: string;
   retrieved_at?: string;
@@ -136,6 +138,10 @@ async function buildNavigatedWebEvidence(
           url: String(item.url).slice(0, 2000),
           snippet: String(item.snippet ?? "").slice(0, 900),
           source_domain: String(item.source_domain ?? "").slice(0, 255),
+          provider: String(item.provider ?? ""),
+          provider_sources: Array.isArray(item.provider_sources)
+            ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(item.provider || "")].filter(Boolean),
         }))
     : [];
 
@@ -320,15 +326,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// Route web search, page extraction, and the first internal backend fallback
-// through the canonical Vercel backend. Keep legacy hosts only as emergency
-// inference fallbacks; their deployments and configuration are not modified.
+// The only internal DEEP33 backend target is the canonical Vercel deployment.
+// No Render, Railway, Replit, or legacy IAC33 host is part of the runtime.
 const EDGE_AI_UPSTREAM_URLS = [
   "https://deep33-backend.vercel.app",
-  "https://iac33-fastapi-edge-production.up.railway.app",
-  "https://deep33-backend.onrender.com",
-  "https://deep33-api.onrender.com",
-  "https://deep33-backup.onrender.com",
 ] as const;
 const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];
 const EDGE_AI_REQUIRES_AUTH =
@@ -430,7 +431,17 @@ function buildWebSearchQuery(query: string): string {
 
 function requiresFreshWeb(query: string): boolean {
   const normalized = query.toLowerCase();
-  return [
+  const externalLookup = /\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|what\s+does|qu[eé]\s+sabemos\s+(?:de|sobre)|what\s+do\s+you\s+know\s+about|qui[eé]n\s+(?:es|fue|ser[aá])|who\s+(?:is|are)|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
+  const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
+  const externalNameTokens = Array.from(query.matchAll(/\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/g))
+    .map((match) => String(match[0] || "").toUpperCase())
+    .filter((name) => !["DEEP33", "IAC33", "C33", "OK"].includes(name));
+  const camelCaseOrAcronym = externalNameTokens.length > 0;
+  const standaloneEntity = query.trim().replace(/^[¿¡]+|[?!.,;:]+$/g, "").trim();
+  const nonEntitySingleTokens = new Set(["hola", "hello", "hi", "hey", "buenas", "buenos", "gracias", "thanks", "please", "favor", "ayuda", "ok", "okay", "sí", "si", "no", "adiós", "adios", "chao", "chau", "listo", "perfecto", "prueba", "test"]);
+  const singleNamedEntity = /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$/.test(standaloneEntity) &&
+    !nonEntitySingleTokens.has(standaloneEntity.toLowerCase());
+  return externalLookup || properNamePair || camelCaseOrAcronym || singleNamedEntity || [
     "internet", "web", "online", "actual", "actualmente", "hoy", "ayer", "mañana",
     "último", "última", "últimos", "últimas", "noticia", "noticias", "fuentes",
     "verifica", "verificar", "comprueba", "comprobar", "precio", "cotización",
@@ -577,13 +588,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 }
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
-  const names = [
-    "vercel-backend-primary",
-    "railway-backend-fallback",
-    "render-backend-fallback",
-    "render-api-fallback",
-    "render-backup-fallback",
-  ] as const;
+  const names = ["vercel-backend-primary"] as const;
   EDGE_AI_UPSTREAM_URLS.forEach((base, index) => {
     const url = base + "/v1/ai/generate";
     const streamUrl = base + "/v1/chat/stream";
@@ -607,7 +612,7 @@ function isFreeInferenceProvider(provider: EdgeAIProvider): boolean {
 }
 
 // Free alternatives are opt-in and read credentials only from server-side function secrets.
-// They are inserted before the cold Render fallback so a rate-limited/slow upstream can fail fast.
+// They are inserted before the cold Vercel backend fallback so a rate-limited/slow upstream can fail fast.
 function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
   if (
     (Deno.env.get("DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS") || "")
@@ -878,30 +883,30 @@ async function providerRequestHeaders(
   idempotencyKey = "",
   personality = "",
 ): Promise<Record<string, string>> {
-  const renderBackendFallback = isInternalBackendProvider(provider);
-  const fallbackSessionId = renderBackendFallback && !sessionId
+  const internalBackendFallback = isInternalBackendProvider(provider);
+  const fallbackSessionId = internalBackendFallback && !sessionId
     ? "deep33-edge-" + requestId.slice(0, 100)
     : "";
-  const authorization = renderBackendFallback && userAuthorization.startsWith("Bearer ")
+  const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")
     ? userAuthorization
     : provider.api_key
       ? "Bearer " + provider.api_key
       : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
-  // Render must claim its own child operation while Edge retains the public request
+  // Vercel backend must claim its own child operation while Edge retains the public request
   // lease. This avoids two concurrent claims on the same shared row but keeps the
-  // public X-Idempotency-Key unchanged across Edge and direct Render retries.
-  const delegatedIdempotencyKey = renderBackendFallback && idempotencyKey
-    ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
+  // public X-Idempotency-Key unchanged across Edge and direct Vercel backend retries.
+  const delegatedIdempotencyKey = internalBackendFallback && idempotencyKey
+    ? "edge-vercel:" + await sha256("deep33|vercel-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
     // The edge gateway already ran web search and appended evidence before entering
-    // the provider loop. Prevent the Render fallback from launching a second nested
+    // the provider loop. Prevent the Vercel backend fallback from launching a second nested
     // web-tool loop, which can turn a valid researched response into a 502/503.
-    ...(renderBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
-    ...(renderBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
+    ...(internalBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
     "X-Request-ID": requestId,
     ...(sessionId ? { "X-DEEP33-Session-Id": sessionId } : {}),
     ...(fallbackSessionId ? { "X-DEEP33-Session-Id": fallbackSessionId } : {}),
@@ -1064,8 +1069,8 @@ async function buildEdgeIdempotencyContext(
   if (!key || !session) return null;
 
   // Match backend/main.py generation_request_hash(): the shared key must have one
-  // request fingerprint across Edge, direct Render, /v1/ai/generate and /v1/chat/stream.
-  // System prompts injected by Edge are excluded exactly as Render excludes system
+  // request fingerprint across Edge, direct Vercel backend, /v1/ai/generate and /v1/chat/stream.
+  // System prompts injected by Edge are excluded exactly as Vercel backend excludes system
   // messages; provider, operation and transport mode must not change request identity.
   const messages = (Array.isArray(payload.messages) ? payload.messages : [])
     .filter((item): item is Record<string, unknown> =>
@@ -1271,9 +1276,9 @@ async function callEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalBackendFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalBackendFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -1371,7 +1376,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "render-backend-fallback" &&
+              provider.name === "vercel-backend-primary" &&
               response.status >= 500 &&
               provider.stream_url
             ) {
@@ -1641,9 +1646,9 @@ async function streamEdgeAI(
   try {
     for (const provider of providers) {
       const circuit = edgeCircuit.get(provider.name) || { failures: 0, openUntil: 0 };
-      const criticalRenderFallback =
+      const criticalInternalBackendFallback =
         providers.length === 1 && isInternalBackendProvider(provider);
-      if (Date.now() < circuit.openUntil && !criticalRenderFallback) {
+      if (Date.now() < circuit.openUntil && !criticalInternalBackendFallback) {
         console.warn(JSON.stringify({
           event: "edge_ai_provider_circuit_skip",
           provider: provider.name,
@@ -2730,8 +2735,10 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
       }
     }).filter(Boolean));
     const providers = new Set([
-      ...(Array.isArray(result.providers) ? result.providers.map((item) => String(item || "")) : []),
-      ...results.map((item) => String(item.provider || "")),
+      ...(Array.isArray(result.providers)
+        ? result.providers.map((item) => edgeProviderFamily(String(item || "")))
+        : []),
+      ...edgeProvidersForResults(results),
     ].filter(Boolean));
     return { results, domains, providers };
   };
@@ -2748,7 +2755,7 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
     primary: Record<string, unknown>,
     recovery: Record<string, unknown>,
   ): Record<string, unknown> => {
-    const seen = new Set<string>();
+    const byCanonicalUrl = new Map<string, Record<string, unknown>>();
     const combined: Record<string, unknown>[] = [];
     for (const result of [primary, recovery]) {
       const items = Array.isArray(result.results) ? result.results : [];
@@ -2766,17 +2773,33 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
         } catch {
           continue;
         }
-        if (seen.has(key)) continue;
-        seen.add(key);
-        combined.push(candidate);
-        if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
+
+        const incomingProviders = Array.isArray(candidate.provider_sources)
+          ? candidate.provider_sources.map((value) => String(value || "")).filter(Boolean)
+          : [String(candidate.provider || "")].filter(Boolean);
+        const existing = byCanonicalUrl.get(key);
+        if (existing) {
+          const priorProviders = Array.isArray(existing.provider_sources)
+            ? existing.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(existing.provider || "")].filter(Boolean);
+          existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];
+          continue;
+        }
+        if (combined.length >= MAX_WEB_SEARCH_RESULTS) continue;
+        const mergedCandidate = {
+          ...candidate,
+          provider_sources: [...new Set(incomingProviders)],
+        };
+        byCanonicalUrl.set(key, mergedCandidate);
+        combined.push(mergedCandidate);
       }
-      if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
     }
     const providers = [...new Set([
       ...(Array.isArray(primary.providers) ? primary.providers.map((item) => String(item || "")) : []),
       ...(Array.isArray(recovery.providers) ? recovery.providers.map((item) => String(item || "")) : []),
-      ...combined.map((item) => String(item.provider || "")),
+      ...combined.flatMap((item) => Array.isArray(item.provider_sources)
+        ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+        : [String(item.provider || "")].filter(Boolean)),
     ].filter(Boolean))];
     const merged: Record<string, unknown> = {
       ...primary,
@@ -2789,9 +2812,9 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
     };
     const evidence = metrics(merged);
     merged.verification = {
-      level: providers.length > 1 ? "dual-public-provider" : "public-fallback",
+      level: evidence.providers.size > 1 ? "dual-public-provider" : "public-fallback",
       distinct_domains: evidence.domains.size,
-      distinct_providers: providers.length,
+      distinct_providers: evidence.providers.size,
     };
     return merged;
   };
@@ -2999,6 +3022,7 @@ async function runPublicWebSearchQuery(
   query: string,
   forceFullSearch = false,
   providerTimeoutMs?: number,
+  independentOnly = false,
 ) {
   const q = query.trim();
   if (!q) return { ok: false, error: "SEARCH_QUERY_REQUIRED", results: [] };
@@ -3047,7 +3071,7 @@ async function runPublicWebSearchQuery(
     },
   ];
 
-  const merged = new Map<string, Record<string, string>>();
+  const merged = new Map<string, Record<string, unknown>>();
   const providerNames: string[] = [];
 
   const fetchProvider = async (provider: typeof providers[number]) => {
@@ -3154,13 +3178,14 @@ async function runPublicWebSearchQuery(
     return { name: provider.name, results };
   };
 
-  const activeProviders = fastNewsQuery
+  const activeProviders = independentOnly || (forceFullSearch && currentNewsRequest)
+    // Corroboration must use independent public indexes, not a replay of Bing,
+    // Google News, or Wikipedia results from the primary search wave.
+    ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
     // News queries use several independent public-web providers in the same
     // bounded race. Google News is one candidate, never the exclusive source.
-    ? providers.filter((provider) => provider.name !== "wikipedia_public")
-    // Corroboration uses independent web indexes, not a replay of Bing/Google RSS.
-    : forceFullSearch && currentNewsRequest
-      ? providers.filter((provider) => provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public")
+    : fastNewsQuery
+      ? providers.filter((provider) => provider.name !== "wikipedia_public")
       : providers;
   const settled = await Promise.allSettled(activeProviders.map(fetchProvider));
   for (const item of settled) {
@@ -3169,12 +3194,19 @@ async function runPublicWebSearchQuery(
     for (const result of item.value.results) {
       try {
         const domain = new URL(result.url).hostname;
-        if (!merged.has(result.url)) {
+        const existing = merged.get(result.url);
+        if (existing) {
+          const priorProviders = Array.isArray(existing.provider_sources)
+            ? existing.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(existing.provider || "")].filter(Boolean);
+          existing.provider_sources = [...new Set([...priorProviders, item.value.name])];
+        } else {
           merged.set(result.url, {
             title: String(result.title || result.url).slice(0, 300),
             url: String(result.url).slice(0, 2000),
             snippet: String(result.snippet || "").slice(0, 1500),
             provider: item.value.name,
+            provider_sources: [item.value.name],
             domain,
             source_domain: String(result.source_domain || "").slice(0, 255),
           });
@@ -3186,10 +3218,10 @@ async function runPublicWebSearchQuery(
   }
 
   const all = [...merged.values()];
-  const diversified: Array<Record<string, string>> = [];
+  const diversified: Array<Record<string, unknown>> = [];
   const seenDomains = new Set<string>();
   for (const result of all) {
-    const domain = result.domain;
+    const domain = String(result.domain || "");
     if (seenDomains.has(domain)) continue;
     seenDomains.add(domain);
     diversified.push(result);
@@ -3208,7 +3240,7 @@ async function runPublicWebSearchQuery(
       results: finalResults.map(({ provider: _provider, domain: _domain, ...result }) => ({ ...result, provider: _provider })),
       verification: {
         level: providerNames.length > 1 ? "dual-public-provider" : "public-fallback",
-        distinct_domains: new Set(finalResults.map((item) => new URL(item.url).hostname)).size,
+        distinct_domains: new Set(finalResults.map((item) => new URL(String(item.url)).hostname)).size,
       },
     };
   }
@@ -3506,8 +3538,34 @@ function edgeFilterSearchResults(
   });
 }
 
+function edgeProviderFamily(provider: string): string {
+  const name = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
+  if (name.includes("google")) return "google";
+  if (
+    name.includes("bing") ||
+    name.includes("microsoft") ||
+    name.includes("yahoo") ||
+    name.includes("duckduckgo") ||
+    name.startsWith("ddg")
+  ) return "bing";
+  if (name.includes("mojeek")) return "mojeek";
+  if (name.includes("marginalia")) return "marginalia";
+  if (name.includes("tavily")) return "tavily";
+  if (name.includes("cl0q")) return "cl0q";
+  if (name.includes("wikipedia")) return "wikipedia";
+  return name;
+}
+
 function edgeProvidersForResults(items: Array<Record<string, unknown>>): string[] {
-  return [...new Set(items.map((item) => String(item.provider || "").trim()).filter(Boolean))];
+  const names: string[] = [];
+  for (const item of items) {
+    if (Array.isArray(item.provider_sources)) {
+      names.push(...item.provider_sources.map((value) => edgeProviderFamily(String(value || ""))).filter(Boolean));
+    }
+    const provider = edgeProviderFamily(String(item.provider || ""));
+    if (provider) names.push(provider);
+  }
+  return [...new Set(names)];
 }
 
 function edgeSearchVerification(
@@ -3684,7 +3742,23 @@ async function publicWebSearchUncached(
       if (!item || typeof item !== "object") continue;
       const value = item as Record<string, unknown>;
       const url = String(value.url || "").trim();
-      if (url && !merged.has(url)) merged.set(url, { ...value, search_query: batch.query });
+      if (!url) continue;
+      const incomingProviders = Array.isArray(value.provider_sources)
+        ? value.provider_sources.map((item) => String(item || "")).filter(Boolean)
+        : [String(value.provider || "")].filter(Boolean);
+      const existing = merged.get(url);
+      if (existing) {
+        const priorProviders = Array.isArray(existing.provider_sources)
+          ? existing.provider_sources.map((item) => String(item || "")).filter(Boolean)
+          : [String(existing.provider || "")].filter(Boolean);
+        existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];
+      } else {
+        merged.set(url, {
+          ...value,
+          search_query: batch.query,
+          provider_sources: [...new Set(incomingProviders)],
+        });
+      }
     }
   };
   for (const batch of batches) mergeBatch(batch);
@@ -3692,18 +3766,15 @@ async function publicWebSearchUncached(
     edgeFilterSearchResults(plan.original, [...merged.values()], plan.depth === "realtime").slice(0, MAX_WEB_SEARCH_RESULTS);
   let finalResults = filteredResults();
 
-  // Fresh news from a single provider is usable, but not yet independently corroborated.
-  // Give public secondary providers one short bounded window before returning.
-  if (
-    realtimeNewsPlan &&
-    finalResults.length > 0 &&
-    edgeProvidersForResults(finalResults).length < 2
-  ) {
+  // A single useful index is not independent corroboration. Give every lookup
+  // one bounded second wave against different public indexes before failing closed.
+  if (finalResults.length > 0 && edgeProvidersForResults(finalResults).length < 2) {
     const corroborationQuery = plan.queries[0] || plan.original;
     const corroborationData = await runPublicWebSearchQuery(
       corroborationQuery,
       true,
-      Math.min(650, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      Math.min(1100, EDGE_SEARCH_PROVIDER_TIMEOUT_MS),
+      true,
     ).catch(() => ({ ok: false, results: [], providers: [] })) as Record<string, unknown>;
     const corroborationBatch = { query: corroborationQuery, data: corroborationData };
     batches.push(corroborationBatch);
@@ -3761,9 +3832,11 @@ async function publicWebSearchUncached(
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
   const providerNames = edgeProvidersForResults(finalResults);
+  const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;
+  const providerQuorumMet = providerNames.length >= requiredProviderCount;
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
-    ok: publicResults.length > 0,
+    ok: publicResults.length > 0 && providerQuorumMet,
     realtime: plan.depth === "realtime",
     fresh_request: true,
     realtime_news: /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|alerta|guerra)\b/i.test(plan.original),
@@ -3778,7 +3851,11 @@ async function publicWebSearchUncached(
     provider: providerNames.length === 1 ? providerNames[0] : providerNames.length > 1 ? "multi" : null,
     results: publicResults,
     sources: publicResults,
-    verification: edgeSearchVerification(finalResults, providerNames),
+    verification: {
+      ...edgeSearchVerification(finalResults, providerNames),
+      required_providers: requiredProviderCount,
+      provider_quorum_met: providerQuorumMet,
+    },
     latency_ms: Math.round(performance.now() - started),
   };
 }
@@ -3790,7 +3867,7 @@ function edgeSearchCacheKey(plan: { original: string; depth: string }): string {
 async function publicWebSearch(query: string): Promise<Record<string, unknown>> {
   const plan = edgeSearchQueries(query);
   const key = edgeSearchCacheKey(plan);
-  const cacheable = plan.depth === "standard" && EDGE_SEARCH_CACHE_TTL_MS > 0;
+  const cacheable = plan.depth === "standard" && !requiresFreshWeb(query) && EDGE_SEARCH_CACHE_TTL_MS > 0;
   const now = Date.now();
 
   if (cacheable) {
@@ -3827,7 +3904,7 @@ async function edgeSearch(
   query: string,
   sessionId = "deep33-edge-search",
   userAuthorization = "",
-  backendOnly = false,
+  vercelBackendOnly = false,
   requireExtractedEvidence = false,
 ): Promise<Record<string, unknown>> {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
@@ -3866,6 +3943,9 @@ async function edgeSearch(
     const realtime = candidatePayload.realtime === true || edgeRealtimeQuery(q);
     const filtered = edgeFilterSearchResults(q, candidateItems, realtime).slice(0, MAX_WEB_SEARCH_RESULTS);
     if (!filtered.length) return null;
+    const requiredProviders = edgeCurrentDateTimeQuery(q) ? 1 : 2;
+    const candidateProviders = edgeProvidersForResults(filtered);
+    if (candidateProviders.length < requiredProviders) return null;
 
     const navigation = await buildNavigatedWebEvidence(
       { ...candidatePayload, results: filtered },
@@ -3908,6 +3988,9 @@ async function edgeSearch(
                 snippet,
                 source_domain: editorialDomain,
                 provider: String(item.provider || candidatePayload.provider || "unknown"),
+                provider_sources: Array.isArray(item.provider_sources)
+                  ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+                  : [String(item.provider || candidatePayload.provider || "")].filter(Boolean),
               };
             })
             .filter((item) =>
@@ -3922,7 +4005,12 @@ async function edgeSearch(
             )
         : [];
       const snippetDomains = new Set(snippetFallback.map((item) => item.source_domain));
-      if (snippetFallback.length < 2 || snippetDomains.size < 2) return null;
+      const snippetProviders = edgeProvidersForResults(snippetFallback);
+      if (
+        snippetFallback.length < requiredProviders ||
+        snippetDomains.size < requiredProviders ||
+        snippetProviders.length < requiredProviders
+      ) return null;
 
       const diversifiedSnippets: Array<Record<string, unknown>> = [];
       const usedDomains = new Set<string>();
@@ -3977,7 +4065,10 @@ async function edgeSearch(
         text: pageText.slice(0, 2200),
         text_chars: pageText.length,
         source_domain: domain || String(original.source_domain || ""),
-        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "railway"),
+        provider: String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "unknown"),
+        provider_sources: Array.isArray(original.provider_sources)
+          ? original.provider_sources.map((value) => String(value || "")).filter(Boolean)
+          : [String(original.provider || candidatePayload.provider || candidatePayload.winner_provider || "")].filter(Boolean),
         retrieved_at: String(source.retrieved_at || new Date().toISOString()),
       };
     }).filter((item) => item.source_domain && item.text_chars >= 80);
@@ -3985,6 +4076,7 @@ async function edgeSearch(
 
     const providers = edgeProvidersForResults(results);
     const domains = [...new Set(results.map((item) => item.source_domain))];
+    if (providers.length < requiredProviders || domains.length < requiredProviders) return null;
     const extractedTextChars = results.reduce((sum, item) => sum + item.text_chars, 0);
     const retrievedAt = new Date().toISOString();
     const fetchedPages = results.map((item) => ({
@@ -4022,10 +4114,10 @@ async function edgeSearch(
 
   // Search public Edge providers first. Recovery mode skips them and queries
   // the canonical DEEP33 Vercel backend exactly once.
-  const direct: Record<string, unknown> = backendOnly
+  const direct: Record<string, unknown> = vercelBackendOnly
     ? {
         ok: false,
-        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_BACKEND_RECOVERY",
+        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_VERCEL_BACKEND_RECOVERY",
         results: [],
         providers: [],
       }
@@ -4037,7 +4129,7 @@ async function edgeSearch(
       })) as Record<string, unknown>;
 
   if (
-    !backendOnly &&
+    !vercelBackendOnly &&
     direct.ok === true &&
     Array.isArray(direct.results) &&
     direct.results.length > 0
@@ -4058,13 +4150,13 @@ async function edgeSearch(
     const unavailable = requireExtractedEvidence
       ? { ...direct, ok: false, results: [], sources: [], error: "SOURCE_VERIFICATION_AUTH_REQUIRED" }
       : direct;
-    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "edge-direct", unavailable);
+    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "edge-direct", unavailable);
     return unavailable;
   }
 
   try {
-    const backendSearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
-    const res = await fetch(backendSearchUrl, {
+    const vercelBackendSearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
+    const res = await fetch(vercelBackendSearchUrl, {
       method: "GET",
       headers: {
         "Authorization": userAuthorization,
@@ -4087,10 +4179,10 @@ async function edgeSearch(
         if (requireExtractedEvidence) {
           const verified = await verifyCandidatePayload(
             { ...data, results: filtered },
-            "railway-page-recovery",
+            "vercel-backend-page-recovery",
           );
           if (verified) {
-            logSearchStage("success", "railway-page-recovery", verified);
+            logSearchStage("success", "vercel-backend-page-recovery", verified);
             return verified;
           }
         } else if (data.ok === true) {
@@ -4106,7 +4198,7 @@ async function edgeSearch(
             verification: edgeSearchVerification(filtered, providers),
             fallback_path: "vercel-backend",
           };
-          logSearchStage("success", backendOnly ? "backend-recovery" : "backend-fallback", response);
+          logSearchStage("success", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", response);
           return response;
         } else if (!requireExtractedEvidence) {
           // Keep candidate URLs available to chat so its navigation phase can read
@@ -4123,7 +4215,7 @@ async function edgeSearch(
             verification: edgeSearchVerification(filtered, providers),
             fallback_path: "vercel-backend-candidates",
           };
-          logSearchStage("degraded", backendOnly ? "backend-recovery" : "backend-candidate-recovery", candidatePayload);
+          logSearchStage("degraded", vercelBackendOnly ? "vercel-backend-recovery" : "backend-candidate-recovery", candidatePayload);
           return candidatePayload;
         }
       }
@@ -4131,19 +4223,19 @@ async function edgeSearch(
     const unavailable = requireExtractedEvidence
       ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
       : { ...direct, fallback_path: "vercel-backend" };
-    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "backend-fallback", unavailable);
+    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", unavailable);
     return unavailable;
   } catch (error) {
     console.warn(JSON.stringify({
       event: "edge_web_search_fallback_error",
-      path: backendOnly ? "backend-recovery" : "backend-fallback",
+      path: vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback",
       error: error instanceof Error ? error.name : "UNKNOWN",
       request_scope: sessionId.slice(0, 128),
     }));
     const unavailable = requireExtractedEvidence
       ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
       : { ...direct, fallback_path: "vercel-backend" };
-    logSearchStage("unavailable", backendOnly ? "backend-recovery" : "backend-fallback", unavailable);
+    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", unavailable);
     return unavailable;
   }
 }
@@ -4367,11 +4459,11 @@ Deno.serve(async (req) => {
         const requiredReadableSources = requestedReadableSourceCount(query);
 
         // If Edge search returned candidates but source pages were unreadable,
-        // try the independent Railway index once. Exclude every attempted URL
+        // try the canonical Vercel backend recovery once. Exclude every attempted URL
         // and domain, so this is genuine failover rather than a repeated fetch.
         if (
           readableSources.length < requiredReadableSources &&
-          search.fallback_path !== "railway" &&
+          search.fallback_path !== "vercel-backend" &&
           userAuthorization.startsWith("Bearer ")
         ) {
           const recoverySearch = await edgeSearch(
@@ -4440,19 +4532,33 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "backend-recovery",
+              fallback_path: "vercel-backend-recovery",
             };
           }
         }
 
         const sources = readableSources;
         verifiedSourcesForOutput = sources;
-        if (sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(query) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          readableSources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(readableSources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return new Response(
             "event: error\ndata: " +
               JSON.stringify({
                 status: "FAIL",
-                error: "WEB_SEARCH_NO_RESULTS",
+                error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+                  ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+                  : "WEB_SEARCH_NO_RESULTS",
               }) +
               "\n\ndata: [DONE]\n\n",
             {
@@ -4470,10 +4576,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {
@@ -4610,7 +4717,7 @@ Deno.serve(async (req) => {
                     : "UnknownError",
                 }));
 
-                // The Render SSE route can terminate without a valid final frame
+                // The Vercel backend SSE route can terminate without a valid final frame
                 // when a model returns internal control output. Recover once through
                 // the non-streaming completion endpoint; keep the public SSE contract
                 // by emitting the complete, validated answer as bounded text chunks.
@@ -4881,8 +4988,7 @@ Deno.serve(async (req) => {
         .filter((item) => item.role === "user")
         .map((item) => String(item.content ?? "").trim())
         .join("\n")
-        .trim()
-        .toLowerCase();
+        .trim();
 
       const webTrigger = requiresFreshWeb(query);
 
@@ -4917,11 +5023,11 @@ Deno.serve(async (req) => {
         const requiredReadableSources = requestedReadableSourceCount(searchQuery);
 
         // Keep JSON generation on the same resilient web path as streaming:
-        // if Edge candidates cannot be read, ask the independent Railway index
+        // if Edge candidates cannot be read, ask the canonical Vercel backend recovery
         // once and never refetch a URL/domain already attempted.
         if (
           readableSources.length < requiredReadableSources &&
-          search.fallback_path !== "railway" &&
+          search.fallback_path !== "vercel-backend" &&
           userAuthorization.startsWith("Bearer ")
         ) {
           const recoverySearch = await edgeSearch(
@@ -4990,16 +5096,31 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "backend-recovery",
+              fallback_path: "vercel-backend-recovery",
             };
           }
         }
 
         const sources = readableSources;
-        if (!search.ok || sources.length < 1) {
+        const requiredProviderCount = edgeCurrentDateTimeQuery(searchQuery) ? 1 : 2;
+        const readableProviderNames = edgeProvidersForResults(
+          sources as unknown as Array<Record<string, unknown>>,
+        );
+        const readableDomains = new Set(sources.map((source) => {
+          try { return new URL(String(source.final_url || source.url)).hostname.toLowerCase().replace(/^www\./, ""); }
+          catch { return ""; }
+        }).filter(Boolean));
+        if (
+          !search.ok ||
+          sources.length < requiredReadableSources ||
+          readableProviderNames.length < requiredProviderCount ||
+          readableDomains.size < requiredProviderCount
+        ) {
           return json({
             status: "FAIL",
-            error: "WEB_SEARCH_NO_RESULTS",
+            error: readableProviderNames.length < requiredProviderCount || readableDomains.size < requiredProviderCount
+              ? "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET"
+              : "WEB_SEARCH_NO_RESULTS",
             web_navigation: false,
             sources: [],
           }, 503);
@@ -5008,10 +5129,11 @@ Deno.serve(async (req) => {
         const evidence = {
           retrieved_at: new Date().toISOString(),
           verification: {
-            level: sources.length >= 2 ? "multi-source" : "single-source",
-            corroborated: sources.length >= 2,
+            level: sources.length >= 2 && readableProviderNames.length >= 2 ? "multi-source" : "single-source",
+            corroborated: sources.length >= 2 && readableProviderNames.length >= 2,
             readable_source_count: sources.length,
-            providers: Array.isArray(search.providers) ? search.providers : [],
+            distinct_providers: readableProviderNames.length,
+            providers: readableProviderNames,
           },
           search_results: sources,
           navigation: {

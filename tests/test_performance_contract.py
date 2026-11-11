@@ -9,6 +9,15 @@ from backend import main
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_master_gate_requires_independent_provider_quorum_and_multiple_readable_domains():
+    script = (ROOT / "scripts" / "verify_deep33.sh").read_text(encoding="utf-8")
+    assert "(.verification.provider_quorum_met // false) == true" in script
+    assert "(.verification.distinct_providers // 0) >= 2" in script
+    assert "(.domains_used // 0) >= 2" in script
+    assert "((.fetched_pages // []) | length) >= 2" in script
+    assert "independent_provider_quorum_or_multi_domain_extraction_not_verified" in script
+
+
 def test_chat_stream_uses_live_streaming_path():
     source = (ROOT / "backend" / "main.py").read_text(encoding="utf-8")
     route = source[source.index('@app.post("/v1/chat/stream")'):]
@@ -326,7 +335,7 @@ def test_edge_realtime_news_uses_bounded_rss_first_path_and_provider_timeout() -
         assert "Math.min(3000, EDGE_SEARCH_PROVIDER_TIMEOUT_MS)" in source
         assert 'currentNewsRequest ? q + " when:1d" : q' in source
         assert 'provider.name !== "wikipedia_public"' in source
-        assert 'provider.name !== "bing_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
+        assert 'provider.name !== "bing_public" && provider.name !== "google_public" && provider.name !== "google_news_public" && provider.name !== "wikipedia_public"' in source
         assert ".slice(0, realtimeNewsPlan ? 1 : 3)" in source
         assert "const recoveryPlan = [" in source
         assert "const recoveryBatches = await Promise.all(recoveryPlan.map(async (candidate) => ({" in source
@@ -390,8 +399,10 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "isSearchWrapper(a.url)" in source
     assert "const requiredReadableSources = requestedReadableSourceCount(searchQuery)" in source
     assert "readableSources.length < requiredReadableSources" in source
-    assert "if (!search.ok || sources.length < 1)" in source
-    assert 'fallback_path: "backend-recovery"' in source
+    assert "sources.length < requiredReadableSources" in source
+    assert "readableProviderNames.length < requiredProviderCount" in source
+    assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
+    assert 'fallback_path: "vercel-backend-recovery"' in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
 

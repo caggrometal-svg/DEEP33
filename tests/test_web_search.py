@@ -10,6 +10,89 @@ from urllib.parse import urlparse
 from tools.web_search import _parse_bing_rss, _plain_rss_snippet
 
 
+def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch) -> None:
+    import backend.search.resilient as resilient
+    import tools.web_search as module
+
+    seen = {}
+
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False):
+            return {"ok": True, "query": query, "results": []}
+
+    def factory(max_results):
+        seen["max_results"] = max_results
+        return FakeOrchestrator()
+
+    monkeypatch.setattr(resilient, "get_web_orchestrator", factory)
+    result = asyncio.run(
+        module.search_web("últimas noticias de Chile hoy", max_results=12, fresh=True)
+    )
+
+    assert seen["max_results"] == 12
+    assert result["ok"] is True
+
+
+def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeypatch) -> None:
+    import tools.web_search as module
+
+    seen = {}
+
+    async def fake_google_news(query, timeout_seconds, max_results):
+        seen["google_query"] = query
+        seen["google_max_results"] = max_results
+        return [
+            {
+                "title": f"Noticia antigua {index}",
+                "url": f"https://old-news-{index}.example/noticia.html",
+                "source_domain": f"old-news-{index}.example",
+                "published_at": "2026-11-01T12:00:00+00:00",
+                "snippet": "Artículo antiguo de prueba.",
+                "provider": "google_news",
+            }
+            for index in range(12)
+        ]
+
+    async def fake_bing_news(query, timeout_seconds, max_results):
+        seen.setdefault("bing_queries", []).append(query)
+        seen["bing_max_results"] = max_results
+        return [{
+            "title": "Noticia reciente de Chile",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/11/nota.html",
+            "source_domain": "cooperativa.cl",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "snippet": "Información periodística reciente sobre Chile.",
+            "provider": "bing",
+        }]
+
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_news)
+    result = asyncio.run(
+        module.search_recent_news_candidates(
+            "Chile noticias hoy",
+            timeout_seconds=2.0,
+            max_results=12,
+        )
+    )
+
+    assert len(result) == 1
+    assert result[0]["provider"] == "bing"
+    assert result[0]["source_domain"] == "cooperativa.cl"
+    assert result[0]["published_at"] != "2026-11-01T12:00:00+00:00"
+    assert seen["google_max_results"] == 12
+    assert seen["bing_max_results"] == 12
+    assert len(seen["bing_queries"]) == 6
+    assert any("site:biobiochile.cl" in query for query in seen["bing_queries"])
+    assert any("site:cooperativa.cl" in query for query in seen["bing_queries"])
+
+
+def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
+    from backend.search.resilient import WebOrchestrator
+
+    assert WebOrchestrator(max_results=12).max_results == 12
+    assert WebOrchestrator(max_results=99).max_results == 12
+
+
 def test_plain_rss_snippet_removes_html_tags_and_decodes_entities() -> None:
     snippet = (
         '<a href="https://news.google.com/rss/articles/example">Headline</a>'
@@ -160,7 +243,7 @@ def test_smartphone_recovery_query_uses_common_web_search_terms():
     )
 
 
-def test_current_chile_politics_search_recovers_when_only_three_domains_are_found():
+def test_current_chile_politics_search_requires_independent_provider_quorum():
     from backend.search.resilient import WebOrchestrator
 
     initial_query = "política Chile hoy últimas noticias"
@@ -203,7 +286,7 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
         )
         orchestrator.providers = {
             "bing": provider,
-            "google": empty,
+            "google": provider,
             "cl0q": empty,
             "mojeek": empty,
             "duckduckgo": empty,
@@ -211,12 +294,10 @@ def test_current_chile_politics_search_recovers_when_only_three_domains_are_foun
         return await orchestrator.search(initial_query, fresh=True)
 
     result = asyncio.run(exercise())
-    assert result["ok"] is True
-    assert any(
-        query.startswith("Chile política gobierno Congreso elecciones actualidad noticias")
-        for query in recovered_queries
-    )
-    assert result["verification"]["distinct_domains"] >= 5
+    assert result["ok"] is True, result
+    assert result["verification"]["distinct_providers"] >= 2
+    assert {"bing", "google"}.issubset(set(result["providers"]))
+    assert result["verification"]["distinct_domains"] >= 3
 
 
 def test_chile_government_site_recovery_uses_official_portal_terms():
@@ -290,6 +371,9 @@ def test_chile_public_information_fans_out_distinct_official_domains():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -301,6 +385,7 @@ def test_chile_public_information_fans_out_distinct_official_domains():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
@@ -345,7 +430,7 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
                     item("cooperativa.cl", "Política Chile últimas noticias"),
                     item("emol.com", "Política Chile noticias de hoy"),
                 ]
-            if name == "duckduckgo":
+            if name == "mojeek":
                 return [
                     item("latercera.com", "Política Chile últimas noticias del gobierno"),
                     item("24horas.cl", "Noticias política en Chile hoy"),
@@ -432,7 +517,127 @@ def test_yahoo_search_parses_general_web_destinations(monkeypatch):
     assert any(item["url"].startswith("https://docs.python.org/") for item in results)
 
 
-def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_are_empty():
+def test_mwmbl_adapter_only_accepts_its_own_independent_index(monkeypatch):
+    from tools import web_search
+
+    class FakeResponse:
+        status_code = 200
+        content = b"{}"
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "url": "https://docs.python.org/3/library/asyncio.html",
+                        "title": "Python asyncio documentation",
+                        "content": "Python asyncio task groups and asynchronous I/O.",
+                        "engine": "mwmbl",
+                        "score": 0.9,
+                    },
+                    {
+                        "url": "https://www.python.org/",
+                        "title": "Python",
+                        "content": "Python programming language.",
+                        "engine": "google",
+                        "score": 0.8,
+                    },
+                    {
+                        "url": "https://en.wikipedia.org/wiki/Asyncio",
+                        "title": "Asyncio",
+                        "content": "Asynchronous I/O in Python.",
+                        "engine": "wikipedia",
+                        "score": 0.7,
+                    },
+                ]
+            }
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url == "https://api.mwmbl.org/api/v2/search/"
+            assert kwargs["params"]["q"] == "Python asyncio official documentation"
+            return FakeResponse()
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(web_search, "_search_http_client", fake_client)
+    results = asyncio.run(
+        web_search._mwmbl_search("Python asyncio official documentation", 1.0, 5)
+    )
+    assert len(results) == 1
+    assert results[0]["url"] == "https://docs.python.org/3/library/asyncio.html"
+
+
+def test_mwmbl_independent_fallback_can_complete_provider_quorum():
+    from backend.search.resilient import WebOrchestrator
+
+    query = "Python asyncio TaskGroup official documentation"
+    bing_results = [
+        {
+            "title": "Python asyncio TaskGroup documentation",
+            "url": "https://docs.python.org/3/library/asyncio-task.html",
+            "snippet": "Python asyncio TaskGroup and task cancellation.",
+        },
+        {
+            "title": "Python asyncio concurrency guide",
+            "url": "https://realpython.com/async-io-python/",
+            "snippet": "Python asyncio concurrency and structured tasks.",
+        },
+        {
+            "title": "Python asynchronous programming",
+            "url": "https://peps.python.org/pep-0654/",
+            "snippet": "Python exception groups and asynchronous programming.",
+        },
+    ]
+    mwmbl_results = [
+        {
+            "title": "Python asyncio documentation and task groups",
+            "url": "https://docs.python.org/3/library/asyncio.html",
+            "snippet": "Official Python documentation for asyncio.",
+        }
+    ]
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def bing_provider(_query, _timeout, _limit):
+        return bing_results
+
+    async def mwmbl_provider(_query, _timeout, _limit):
+        return mwmbl_results
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.15,
+            global_budget_seconds=0.7,
+            fallback_delay_seconds=0,
+        )
+        for name in tuple(orchestrator.providers):
+            orchestrator.providers[name] = empty_provider
+        orchestrator.providers["bing"] = bing_provider
+        orchestrator.fallback_providers["mwmbl"] = mwmbl_provider
+        orchestrator.fallback_providers["yahoo"] = empty_provider
+        return await orchestrator.search(query, fresh=True)
+
+    result = asyncio.run(exercise())
+    assert result["ok"] is True, result
+    assert {"bing", "mwmbl"}.issubset(set(result["providers"]))
+    assert result["verification"]["distinct_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is True
+
+
+def test_provider_aliases_do_not_count_as_independent_search_indexes():
+    from backend.search.resilient import _provider_family
+
+    assert _provider_family("yahoo") == "bing"
+    assert _provider_family("duckduckgo") == "bing"
+    assert _provider_family("google_news") == "google"
+    assert _provider_family("mojeek") == "mojeek"
+    assert _provider_family("cl0q") == "cl0q"
+
+
+def test_orchestrator_fails_closed_when_yahoo_is_the_only_generic_search_provider():
     from backend.search.resilient import WebOrchestrator
 
     candidates = [
@@ -466,49 +671,54 @@ def test_orchestrator_uses_yahoo_for_generic_web_queries_when_other_providers_ar
             global_budget_seconds=0.5,
             fallback_delay_seconds=0,
         )
+        orchestrator.fallback_providers["mwmbl"] = empty_provider
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
         orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search("Wikipedia asyncio Python", fresh=True)
 
     result = asyncio.run(exercise())
-    assert result["ok"] is True, result
-    assert "yahoo" in result["providers"]
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["yahoo"]
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
     assert any("wikipedia.org" in item["url"] for item in result["results"])
     assert result["verification"]["distinct_domains"] >= 3
 
 
-def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
+def test_yahoo_does_not_fake_independent_quorum_when_bing_already_returned():
     from backend.search.resilient import WebOrchestrator
 
     partial_results = [
         {
-            "title": "Chile government public data portal",
-            "url": "https://datos.gob.cl/",
-            "snippet": "Government public information and open data services in Chile.",
+            "title": "Python official documentation and release notes",
+            "url": "https://docs.python.org/3/whatsnew/3.15.html",
+            "snippet": "Official Python documentation describing the latest Python release.",
         },
         {
-            "title": "Chile government transparency and public information",
-            "url": "https://www.gobiernotransparentechile.cl/",
-            "snippet": "Public government transparency resources for Chile.",
+            "title": "Real Python official documentation and release notes",
+            "url": "https://realpython.com/python-releases/",
+            "snippet": "Python release notes, official documentation references and current release information.",
         },
     ]
     yahoo_results = [
         {
-            "title": "ChileAtiende government public services",
-            "url": "https://www.chileatiende.gob.cl/",
-            "snippet": "Official Chilean government portal with public services and information.",
+            "title": "Python Package Index",
+            "url": "https://pypi.org/",
+            "snippet": "Python packages and release information.",
         }
     ]
     yahoo_calls = {"count": 0}
-    yahoo_queries = []
 
-    async def two_domains(_query, _timeout, _limit):
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def bing_provider(_query, _timeout, _limit):
         return partial_results
 
-    async def yahoo_provider(query, _timeout, _limit):
+    async def yahoo_provider(_query, _timeout, _limit):
         yahoo_calls["count"] += 1
-        yahoo_queries.append(query)
         return yahoo_results
 
     async def exercise():
@@ -519,20 +729,23 @@ def test_orchestrator_uses_yahoo_when_general_search_has_only_two_domains():
             fallback_delay_seconds=0,
         )
         for provider in tuple(orchestrator.providers):
-            orchestrator.providers[provider] = two_domains
+            orchestrator.providers[provider] = empty_provider
+        orchestrator.providers["bing"] = bing_provider
+        orchestrator.fallback_providers["mwmbl"] = empty_provider
         orchestrator.fallback_providers["yahoo"] = yahoo_provider
         return await orchestrator.search(
-            "sitio gubernamental Chile información pública",
+            "Python official documentation and release notes",
             fresh=True,
         )
 
     result = asyncio.run(exercise())
-    assert yahoo_calls["count"] == 1
-    assert "site:datos.gob.cl" in yahoo_queries[0]
-    assert "gob.cl" in yahoo_queries[0]
-    assert result["ok"] is True, result
-    assert "yahoo" in result["providers"]
-    assert result["verification"]["distinct_domains"] >= 3
+    assert yahoo_calls["count"] == 0
+    assert result["ok"] is False, result
+    assert result["status"] == "INSUFFICIENT_PROVIDER_QUORUM"
+    assert result["providers"] == ["bing"]
+    assert result["verification"]["distinct_domains"] == 2
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
 
 
 def test_rss_publisher_metadata_preserves_real_domains_behind_google_news_links():
@@ -750,7 +963,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
         }
         for index in range(5)
     ]
-    yahoo_results = [
+    mojeek_results = [
         {
             "title": "Artificial intelligence research technology news today independent",
             "url": "https://independent-ai.example.org/article",
@@ -758,7 +971,7 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
     ]
-    yahoo_calls = {"count": 0}
+    mojeek_calls = {"count": 0}
 
     async def bing_provider(_query, _timeout, _limit):
         return bing_results
@@ -766,9 +979,9 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
     async def empty_provider(_query, _timeout, _limit):
         return []
 
-    async def yahoo_provider(_query, _timeout, _limit):
-        yahoo_calls["count"] += 1
-        return yahoo_results
+    async def mojeek_provider(_query, _timeout, _limit):
+        mojeek_calls["count"] += 1
+        return mojeek_results
 
     async def exercise():
         orchestrator = WebOrchestrator(
@@ -780,15 +993,15 @@ def test_orchestrator_adds_independent_provider_when_domains_are_many_but_provid
         for provider in tuple(orchestrator.providers):
             orchestrator.providers[provider] = empty_provider
         orchestrator.providers["bing"] = bing_provider
-        orchestrator.fallback_providers["yahoo"] = yahoo_provider
+        orchestrator.providers["mojeek"] = mojeek_provider
         return await orchestrator.search(query, fresh=True)
 
     result = asyncio.run(exercise())
     assert result["ok"] is True, result
-    assert yahoo_calls["count"] == 1
+    assert mojeek_calls["count"] == 1
     assert result["verification"]["distinct_domains"] >= 3
     assert result["verification"]["distinct_providers"] >= 2
-    assert {"bing", "yahoo"}.issubset(set(result["providers"]))
+    assert {"bing", "mojeek"}.issubset(set(result["providers"]))
 
 
 def test_wikipedia_asyncio_ranking_accepts_independent_async_io_sources():
@@ -932,6 +1145,9 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -943,6 +1159,7 @@ def test_chile_commercial_technology_search_uses_real_company_websites():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = make_provider("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
@@ -995,6 +1212,9 @@ def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
         return provider
 
     async def exercise():
+        async def no_mwmbl(_query, _timeout, _limit):
+            return []
+
         orchestrator = WebOrchestrator(
             max_results=5,
             provider_total_seconds=0.1,
@@ -1006,6 +1226,7 @@ def test_named_health_organization_search_keeps_who_dengue_fact_sheet():
             for name in ("bing", "google", "google_news", "cl0q", "mojeek", "duckduckgo")
         }
         orchestrator.fallback_providers["yahoo"] = provider_for("yahoo")
+        orchestrator.fallback_providers["mwmbl"] = no_mwmbl
         orchestrator.circuits = {
             name: orchestrator.circuits[name]
             for name in orchestrator.providers
@@ -1274,7 +1495,9 @@ def test_chile_commercial_technology_recovery_uses_broad_brand_queries():
     assert all(not query.casefold().lstrip().startswith("site:") for _, query in queries)
     corpus = " ".join(query.casefold() for _, query in queries)
     assert all(brand in corpus for brand in ("sonda", "entel", "wom", "movistar"))
-    assert len({provider for provider, _ in queries}) == len(queries)
+    from backend.search.resilient import _provider_family
+    assert len(queries) == 6
+    assert len({_provider_family(provider) for provider, _ in queries}) == 4
 
 
 

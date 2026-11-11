@@ -399,10 +399,10 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
 def test_web_search_result_limit_expands_only_for_realtime_chile_news() -> None:
     from backend.main import _web_search_result_limit
 
-    assert _web_search_result_limit("política Chile hoy últimas noticias", 5) == 8
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 5) == 12
     assert _web_search_result_limit("sitio gubernamental Chile información pública", 5) == 5
     assert _web_search_result_limit("Python asyncio documentation", 5) == 5
-    assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 8
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 12
 
 
 def test_generate_claim_failure_preserves_original_error_without_a_lease(monkeypatch) -> None:

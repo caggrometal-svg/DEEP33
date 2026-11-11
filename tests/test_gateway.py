@@ -4,11 +4,76 @@ import asyncio
 import httpx
 import pytest
 
-from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayProvider
+from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayInvalidResponseError, GatewayProvider
 
 
 def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvider:
     return GatewayProvider(name=name, url=url, health_url=health_url, api_key="", model=model)
+
+
+def test_dots_payload_disables_hidden_reasoning_and_sets_visible_output_budget() -> None:
+    dots = provider(
+        "kilo",
+        "https://gateway.test/chat",
+        "https://gateway.test/models",
+        "dots-studio/dots-3-note-preview:free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Summarize these sources."}],
+            "reasoning_effort": "low",
+            "max_tokens": None,
+        },
+        dots,
+    )
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in payload
+
+
+def test_stream_gateway_uses_nonstream_completion_when_provider_stream_is_empty(monkeypatch) -> None:
+    from backend import main
+
+    async def empty_stream(_payload, **_kwargs):
+        yield b"data: [DONE]\n\n"
+
+    async def nonstream_completion(_payload, **_kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Respuesta sintetizada desde el modelo."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "_deep33_gateway": {
+                "provider": "kilo",
+                "model": "dots-studio/dots-3-note-preview:free",
+            },
+        }
+
+    monkeypatch.setattr(main.gateway, "stream", empty_stream)
+    monkeypatch.setattr(main.gateway, "complete", nonstream_completion)
+
+    async def exercise() -> bytes:
+        chunks = [
+            chunk
+            async for chunk in main.stream_gateway(
+                {"model": "dots-studio/dots-3-note-preview:free", "messages": [{"role": "user", "content": "Resume las fuentes."}]},
+                "session-test",
+                "default",
+                request_id="stream-fallback-test",
+                idempotency_key="stream-fallback-test",
+                request_hash="hash",
+                lease_token="lease",
+                completion_state={},
+                sources=[],
+            )
+        ]
+        return b"".join(chunks)
+
+    output = asyncio.run(exercise())
+    assert b"Respuesta sintetizada desde el modelo." in output
+    assert b"No pude completar la s\xc3\xadntesis" not in output
 
 
 def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
@@ -632,8 +697,8 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv(
         "AI_GATEWAY_FALLBACKS_JSON",
@@ -664,17 +729,17 @@ def test_gateway_config_excludes_gemma4_fallback(monkeypatch) -> None:
 
 
 
-def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models() -> None:
+def test_dots_fallback_disables_hidden_reasoning_without_changing_other_models() -> None:
     dots = provider(
         "kilo-dots-fallback",
-        "https://api.kilo.ai/api/gateway/chat/completions",
-        "https://api.kilo.ai/api/gateway/models",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
         "dots-studio/dots-3-note-preview:free",
     )
     laguna = provider(
         "kilo",
-        "https://api.kilo.ai/api/gateway/chat/completions",
-        "https://api.kilo.ai/api/gateway/models",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
         "poolside/laguna-s-2.1:free",
     )
 
@@ -687,8 +752,10 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
         laguna,
     )
 
-    assert dots_payload["reasoning_effort"] == "low"
-    assert "reasoning_effort" not in laguna_payload
+    assert dots_payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert dots_payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in dots_payload
+    assert "chat_template_kwargs" not in laguna_payload
 
 
 def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
@@ -731,8 +798,8 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
@@ -751,8 +818,8 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     assert config.providers[0].name == "kilo-dots-fallback"
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
     fallback = config.providers[1]
-    assert fallback.name == "kilo-laguna-fallback"
-    assert fallback.model == "poolside/laguna-s-2.1:free"
+    assert fallback.name == "kilo-auto-free-fallback"
+    assert fallback.model == "kilo-auto/free"
     assert fallback.url == config.providers[0].url
     assert fallback.health_url == config.providers[0].health_url
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
@@ -761,15 +828,15 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     import json
 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
         {
             "name": "configured-fallback",
-            "url": "https://api.kilo.ai/api/gateway/chat/completions",
-            "health_url": "https://api.kilo.ai/api/gateway/models",
+            "url": "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+            "health_url": "https://ai-gateway.kilo.ai/api/v1/models",
             "api_key": "",
             "model": "some-provider/fast-model:free",
         }
@@ -781,26 +848,175 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert [provider.name for provider in config.providers] == [
         "kilo-dots-fallback",
         "configured-fallback",
-        "kilo-laguna-fallback",
+        "kilo-auto-free-fallback",
     ]
-    assert config.providers[-1].model == "poolside/laguna-s-2.1:free"
+    assert config.providers[-1].name == "kilo-auto-free-fallback"
+    assert config.providers[-1].model == "kilo-auto/free"
     assert config.providers[-1].url == config.providers[0].url
     assert config.providers[-1].health_url == config.providers[0].health_url
 
 
-def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
+def test_retired_kilo_free_fallback_is_replaced_with_dynamic_auto_free(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
-    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
-    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
     monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
-    monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning:free")
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
 
     config = GatewayConfig.from_env()
 
     assert len(config.providers) == 2
-    assert config.providers[0].model == "kilo-auto/free"
-    assert config.providers[1].name == "kilo-laguna-fallback"
-    assert config.providers[1].model == "poolside/laguna-s-2.1:free"
+    assert config.providers[1].name == "kilo-auto-free-fallback"
+    assert config.providers[1].model == "kilo-auto/free"
+    assert all(provider.model != "nvidia/nemotron-3.5-lightning:free" for provider in config.providers)
+
+
+@pytest.mark.parametrize("configured_fallback", ["openai/gpt-5.4", "kilo-auto/frontier"])
+def test_non_free_kilo_fallback_is_replaced_with_dynamic_auto_free(monkeypatch, configured_fallback: str) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", configured_fallback)
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[1].model == "kilo-auto/free"
+
+
+def test_kilo_free_fallback_primary_does_not_duplicate_itself(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://ai-gateway.kilo.ai/api/v1/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://ai-gateway.kilo.ai/api/v1/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "nvidia/nemotron-3.5-super-vl:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "nvidia/nemotron-3.5-super-vl:free")
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert len(config.providers) == 1
+    assert config.providers[0].model == "nvidia/nemotron-3.5-super-vl:free"
+
+
+def test_kilo_gateway_uses_configured_free_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv(
+        "AI_GATEWAY_URL",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+    )
+    monkeypatch.setenv(
+        "AI_GATEWAY_HEALTH_URL",
+        "https://ai-gateway.kilo.ai/api/v1/models",
+    )
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACK_MODEL", "nvidia/nemotron-3.5-super-vl:free")
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert len(config.providers) == 2
+    assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
+    assert config.providers[1].name == "kilo-free-model-fallback"
+    assert config.providers[1].model == "nvidia/nemotron-3.5-super-vl:free"
     assert config.providers[1].url == config.providers[0].url
-    assert config.providers[1].health_url == config.providers[0].health_url
+
+
+def test_nemotron_super_vl_disables_hidden_reasoning_for_visible_stream() -> None:
+    nemotron = provider(
+        "kilo-nemotron-super-vl-fallback",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
+        "nvidia/nemotron-3.5-super-vl:free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Resume las fuentes."}],
+            "reasoning_effort": "high",
+            "max_tokens": 256,
+        },
+        nemotron,
+    )
+
+    assert payload["model"] == "nvidia/nemotron-3.5-super-vl:free"
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 1024
+    assert "reasoning_effort" not in payload
+
+
+
+def test_kilo_auto_free_disables_hidden_reasoning_for_visible_stream() -> None:
+    fallback = provider(
+        "kilo-auto-free-fallback",
+        "https://ai-gateway.kilo.ai/api/v1/chat/completions",
+        "https://ai-gateway.kilo.ai/api/v1/models",
+        "kilo-auto/free",
+    )
+    payload = AIGateway._provider_payload(
+        {
+            "messages": [{"role": "user", "content": "Resume tres noticias verificadas."}],
+            "reasoning_effort": "high",
+            "max_tokens": 384,
+        },
+        fallback,
+    )
+
+    assert payload["model"] == "kilo-auto/free"
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["max_tokens"] == 384
+    assert "reasoning_effort" not in payload
+
+
+def test_stream_empty_provider_response_preserves_safe_attempt_diagnostics(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            text="data: [DONE]\n\n",
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        ),
+        timeout_seconds=2,
+        provider_timeout_seconds=2,
+        first_visible_timeout_seconds=1,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> None:
+        async for _ in gateway.stream(
+            {"messages": [{"role": "user", "content": "diagnostic"}]}
+        ):
+            pass
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    with pytest.raises(GatewayInvalidResponseError) as captured:
+        asyncio.run(run_stream())
+
+    assert calls == ["https://primary.test/chat"]
+    assert captured.value.attempts == [{
+        "provider": "primary",
+        "model": "primary-model",
+        "status_code": 200,
+        "outcome": "empty_visible_stream",
+        "content_type": "text/event-stream",
+        "buffered_bytes": len(b"data: [DONE]\n\n"),
+        "sse_data_frames": 1,
+    }]
