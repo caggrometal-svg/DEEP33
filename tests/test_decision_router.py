@@ -61,7 +61,7 @@ def test_classifier_routes_standalone_named_entities_to_web():
 
 
 def test_classifier_routes_conversation_and_own_product_name_internally():
-    for query in ("Hola", "Hola DEEP33", "Gracias", "OK"):
+    for query in ("Hola", "Hola DEEP33", "Gracias", "OK", "OK?"):
         assert classify_query(query).route == DecisionRoute.INTERNAL, query
 
 

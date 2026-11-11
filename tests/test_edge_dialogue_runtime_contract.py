@@ -340,7 +340,7 @@ def test_edge_router_detects_external_entity_and_product_lookups():
         assert "const externalLookup =" in router
         assert "const properNamePair =" in router
         assert "const externalNameTokens =" in router
-        assert '["DEEP33", "IAC33", "C33"].includes(name)' in router
+        assert '["DEEP33", "IAC33", "C33", "OK"].includes(name)' in router
         assert "const camelCaseOrAcronym =" in router
         assert "const nonEntitySingleTokens =" in router
         assert "const singleNamedEntity =" in router

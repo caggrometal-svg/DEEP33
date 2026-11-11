@@ -437,7 +437,7 @@ function requiresFreshWeb(query: string): boolean {
   const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
   const externalNameTokens = Array.from(query.matchAll(/\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/g))
     .map((match) => String(match[0] || "").toUpperCase())
-    .filter((name) => !["DEEP33", "IAC33", "C33"].includes(name));
+    .filter((name) => !["DEEP33", "IAC33", "C33", "OK"].includes(name));
   const camelCaseOrAcronym = externalNameTokens.length > 0;
   const standaloneEntity = query.trim().replace(/^[¿¡]+|[?!.,;:]+$/g, "").trim();
   const nonEntitySingleTokens = new Set(["hola", "hello", "hi", "hey", "buenas", "buenos", "gracias", "thanks", "please", "favor", "ayuda", "ok", "okay", "sí", "si", "no", "adiós", "adios", "chao", "chau", "listo", "perfecto", "prueba", "test"]);

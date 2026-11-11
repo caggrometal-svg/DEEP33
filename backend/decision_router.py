@@ -199,7 +199,7 @@ def classify_query(query: str) -> Decision:
         )
     standalone_entity = cleaned.strip("¿¡?!. ,;:")
     external_acronym_or_camel_case = any(
-        match.group(0).casefold() not in _INTERNAL_PROJECT_IDENTIFIERS
+        match.group(0).casefold() not in (_INTERNAL_PROJECT_IDENTIFIERS | _NON_ENTITY_SINGLE_TOKENS)
         for match in _CAMEL_OR_ACRONYM_RE.finditer(cleaned)
     )
     single_entity_token = standalone_entity.casefold()
