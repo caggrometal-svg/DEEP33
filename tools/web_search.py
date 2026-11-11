@@ -899,6 +899,11 @@ async def search_recent_news_candidates(
         ),
     ]
     settled = await asyncio.gather(*jobs, return_exceptions=True)
+    # Reject dated but stale Google News items here. Otherwise its first batch
+    # can fill the candidate limit and prevent independent Bing RSS recovery
+    # from being considered at all.
+    from backend.search.engine import _is_recently_published
+
     merged: list[dict] = []
     by_url: dict[str, dict] = {}
     for index, result in enumerate(settled):
@@ -912,6 +917,8 @@ async def search_recent_news_candidates(
             published_at = str(item.get("published_at") or "").strip()
             url = str(item.get("url") or "").strip()
             if not published_at or not url:
+                continue
+            if not _is_recently_published(item, cleaned):
                 continue
             try:
                 canonical_url = _safe_search_result_url(url)

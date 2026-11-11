@@ -33,7 +33,7 @@ def test_web_search_adapter_preserves_twelve_result_candidate_limit(monkeypatch)
     assert result["ok"] is True
 
 
-def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> None:
+def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeypatch) -> None:
     import tools.web_search as module
 
     seen = {}
@@ -41,7 +41,17 @@ def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> N
     async def fake_google_news(query, timeout_seconds, max_results):
         seen["google_query"] = query
         seen["google_max_results"] = max_results
-        return []
+        return [
+            {
+                "title": f"Noticia antigua {index}",
+                "url": f"https://old-news-{index}.example/noticia.html",
+                "source_domain": f"old-news-{index}.example",
+                "published_at": "2026-11-01T12:00:00+00:00",
+                "snippet": "Artículo antiguo de prueba.",
+                "provider": "google_news",
+            }
+            for index in range(12)
+        ]
 
     async def fake_bing_news(query, timeout_seconds, max_results):
         seen.setdefault("bing_queries", []).append(query)
@@ -68,6 +78,7 @@ def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> N
     assert len(result) == 1
     assert result[0]["provider"] == "bing"
     assert result[0]["source_domain"] == "cooperativa.cl"
+    assert result[0]["published_at"] != "2026-11-01T12:00:00+00:00"
     assert seen["google_max_results"] == 12
     assert seen["bing_max_results"] == 12
     assert len(seen["bing_queries"]) == 6
