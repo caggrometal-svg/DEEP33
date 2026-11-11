@@ -877,27 +877,35 @@ async def search_recent_news_candidates(
         return []
     limit = max(1, min(12, int(max_results)))
     budget = min(2.5, max(0.8, float(timeout_seconds)))
-    queries = [cleaned]
-    if re.search(r"\\bchile\\b", cleaned, re.IGNORECASE):
-        targeted = (
-            'noticias Chile hoy '
-            '(site:biobiochile.cl OR site:cooperativa.cl OR '
-            'site:latercera.com OR site:emol.com)'
+    publisher_domains = (
+        "biobiochile.cl",
+        "cooperativa.cl",
+        "latercera.com",
+        "emol.com",
+        "24horas.cl",
+    )
+    queries: list[tuple[str, str | None]] = [(cleaned, None)]
+    if re.search(r"\bchile\b", cleaned, re.IGNORECASE):
+        queries.extend(
+            (f"noticias Chile hoy site:{domain}", domain)
+            for domain in publisher_domains
         )
-        if targeted.casefold() != cleaned.casefold():
-            queries.append(targeted)
 
     jobs = [
         _google_news_search(cleaned, budget, limit),
-        *(_bing_recent_news_search(item, budget, limit) for item in queries),
+        *(
+            _bing_recent_news_search(search_query, budget, limit)
+            for search_query, _expected_domain in queries
+        ),
     ]
     settled = await asyncio.gather(*jobs, return_exceptions=True)
     merged: list[dict] = []
-    seen_urls: set[str] = set()
+    by_url: dict[str, dict] = {}
     for index, result in enumerate(settled):
         if isinstance(result, BaseException) or not isinstance(result, list):
             continue
         default_provider = "google_news" if index == 0 else "bing"
+        expected_domain = queries[index - 1][1] if index > 0 else None
         for item in result:
             if not isinstance(item, dict):
                 continue
@@ -909,14 +917,25 @@ async def search_recent_news_candidates(
                 canonical_url = _safe_search_result_url(url)
             except Exception:
                 continue
-            if canonical_url in seen_urls:
+            hostname = (urlparse(canonical_url).hostname or "").casefold().removeprefix("www.")
+            if expected_domain and hostname != expected_domain and not hostname.endswith("." + expected_domain):
                 continue
-            seen_urls.add(canonical_url)
-            merged.append({
+
+            provider = str(item.get("provider") or default_provider)
+            existing = by_url.get(canonical_url)
+            if existing is not None:
+                prior = existing.get("provider_sources")
+                prior = prior if isinstance(prior, list) else [existing.get("provider") or default_provider]
+                existing["provider_sources"] = sorted({str(value) for value in [*prior, provider] if value})
+                continue
+            candidate = {
                 **item,
                 "url": canonical_url,
-                "provider": str(item.get("provider") or default_provider),
-            })
+                "provider": provider,
+                "provider_sources": [provider],
+            }
+            by_url[canonical_url] = candidate
+            merged.append(candidate)
             if len(merged) >= limit:
                 return merged
     return merged

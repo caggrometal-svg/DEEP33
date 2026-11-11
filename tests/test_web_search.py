@@ -70,7 +70,9 @@ def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> N
     assert result[0]["source_domain"] == "cooperativa.cl"
     assert seen["google_max_results"] == 12
     assert seen["bing_max_results"] == 12
-    assert len(seen["bing_queries"]) == 2
+    assert len(seen["bing_queries"]) == 6
+    assert any("site:biobiochile.cl" in query for query in seen["bing_queries"])
+    assert any("site:cooperativa.cl" in query for query in seen["bing_queries"])
 
 
 def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
