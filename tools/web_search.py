@@ -845,22 +845,81 @@ async def _google_news_search(query, timeout_seconds, max_results):
     return await _parse_bing_rss(response, max_results)
 
 
+async def _bing_recent_news_search(
+    query: str,
+    timeout_seconds: float,
+    max_results: int,
+) -> list[dict]:
+    """Fetch publisher-linked RSS results with publication dates from Bing."""
+    client = await _search_http_client()
+    response = await client.get(
+        os.getenv("WEB_SEARCH_BING_URL", BING_URL),
+        params={"q": query, "format": "rss", **_bing_market_params(query)},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/rss+xml,application/xml,text/xml",
+        },
+        timeout=_http_timeout(min(2.5, max(0.8, float(timeout_seconds)))),
+    )
+    results = await _parse_bing_rss(response, max_results)
+    return [{**item, "provider": "bing"} for item in results]
+
+
 async def search_recent_news_candidates(
     query: str,
     *,
     timeout_seconds: float = 2.0,
     max_results: int = 8,
 ) -> list[dict]:
-    """Return dated recent-news candidates for realtime diversity recovery."""
+    """Return dated recent-news candidates from independent RSS search paths."""
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
     limit = max(1, min(12, int(max_results)))
-    return await _google_news_search(
-        cleaned,
-        min(2.5, max(0.8, float(timeout_seconds))),
-        limit,
-    )
+    budget = min(2.5, max(0.8, float(timeout_seconds)))
+    queries = [cleaned]
+    if re.search(r"\\bchile\\b", cleaned, re.IGNORECASE):
+        targeted = (
+            'noticias Chile hoy '
+            '(site:biobiochile.cl OR site:cooperativa.cl OR '
+            'site:latercera.com OR site:emol.com)'
+        )
+        if targeted.casefold() != cleaned.casefold():
+            queries.append(targeted)
+
+    jobs = [
+        _google_news_search(cleaned, budget, limit),
+        *(_bing_recent_news_search(item, budget, limit) for item in queries),
+    ]
+    settled = await asyncio.gather(*jobs, return_exceptions=True)
+    merged: list[dict] = []
+    seen_urls: set[str] = set()
+    for index, result in enumerate(settled):
+        if isinstance(result, BaseException) or not isinstance(result, list):
+            continue
+        default_provider = "google_news" if index == 0 else "bing"
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            published_at = str(item.get("published_at") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not published_at or not url:
+                continue
+            try:
+                canonical_url = _safe_search_result_url(url)
+            except Exception:
+                continue
+            if canonical_url in seen_urls:
+                continue
+            seen_urls.add(canonical_url)
+            merged.append({
+                **item,
+                "url": canonical_url,
+                "provider": str(item.get("provider") or default_provider),
+            })
+            if len(merged) >= limit:
+                return merged
+    return merged
 
 
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):

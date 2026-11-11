@@ -2127,7 +2127,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                         "title": str(raw.get("title") or url)[:300],
                         "url": url[:2000],
                         "snippet": str(raw.get("snippet") or "")[:1000],
-                        "provider": "google_news",
+                        "provider": str(raw.get("provider") or "google_news"),
                         "source_domain": domain[:255],
                         "published_at": published_at,
                     }
@@ -2137,7 +2137,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                         "url": recovered["url"],
                         "snippet": recovered["snippet"][:700],
                         "published_at": published_at,
-                        "provider": "google_news",
+                        "provider": recovered["provider"],
                     })
                     recent_domains.add(domain)
                     if len(recent_domains) >= 5:
@@ -3506,7 +3506,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
+                            "provider": str(raw.get("provider") or "google_news"),
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }

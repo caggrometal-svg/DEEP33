@@ -39,12 +39,24 @@ def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> N
     seen = {}
 
     async def fake_google_news(query, timeout_seconds, max_results):
-        seen["query"] = query
-        seen["timeout_seconds"] = timeout_seconds
-        seen["max_results"] = max_results
+        seen["google_query"] = query
+        seen["google_max_results"] = max_results
         return []
 
+    async def fake_bing_news(query, timeout_seconds, max_results):
+        seen.setdefault("bing_queries", []).append(query)
+        seen["bing_max_results"] = max_results
+        return [{
+            "title": "Noticia reciente de Chile",
+            "url": "https://www.cooperativa.cl/noticias/pais/2026/11/11/nota.html",
+            "source_domain": "cooperativa.cl",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "snippet": "Información periodística reciente sobre Chile.",
+            "provider": "bing",
+        }]
+
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_news)
     result = asyncio.run(
         module.search_recent_news_candidates(
             "Chile noticias hoy",
@@ -53,8 +65,12 @@ def test_recent_news_recovery_preserves_twelve_candidate_limit(monkeypatch) -> N
         )
     )
 
-    assert result == []
-    assert seen["max_results"] == 12
+    assert len(result) == 1
+    assert result[0]["provider"] == "bing"
+    assert result[0]["source_domain"] == "cooperativa.cl"
+    assert seen["google_max_results"] == 12
+    assert seen["bing_max_results"] == 12
+    assert len(seen["bing_queries"]) == 2
 
 
 def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
