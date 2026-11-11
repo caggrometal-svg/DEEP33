@@ -50,8 +50,14 @@ def test_classifier_routes_products_companies_and_technical_docs_to_web():
         "¿Cuánto cuesta un Toyota Corolla?",
         "Documentación de Python asyncio",
         "¿Qué versión de Android tiene el Samsung Galaxy?",
+        "Tesla",
     )
     assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
+
+
+def test_classifier_routes_standalone_named_entities_to_web():
+    for query in ("Tesla", "¿Nvidia?", "Codelco"):
+        assert classify_query(query).route == DecisionRoute.WEB, query
 
 
 def test_classifier_keeps_stable_general_knowledge_internal():

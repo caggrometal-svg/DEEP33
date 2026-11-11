@@ -434,7 +434,9 @@ function requiresFreshWeb(query: string): boolean {
   const externalLookup = /\b(?:qu[eé]\s+es|what\s+is|qu[eé]\s+significa|what\s+does|qu[eé]\s+sabemos\s+(?:de|sobre)|what\s+do\s+you\s+know\s+about|qui[eé]n\s+(?:es|fue|ser[aá])|who\s+(?:is|are)|where\s+is|d[oó]nde\s+(?:queda|est[aá]|se\s+encuentra)|ubicaci[oó]n\s+de|informaci[oó]n\s+(?:sobre|de)|datos\s+(?:sobre|de)|empresas?|compa[nñ][ií]as?|marcas?|productos?|modelos?|fabricantes?|organizaciones?|instituciones?|organismos?|ministerios?|municipalidades?|hospitales?|cl[ií]nicas?|universidades?|servicios?\s+p[uú]blicos?|leyes?\s+vigentes?|normativas?|reglamentos?|documentaci[oó]n|docs?\b|apis?\b|software|versiones?|fecha\s+de\s+lanzamiento|cu[aá]nto\s+cuesta|precios?|disponible|stock|horarios?|compar(?:a|ar|aci[oó]n)|versus|\bvs\b|alternativas?|estudios?\s+cient[ií]ficos?|investigaciones?\s+cient[ií]ficas?|estad[ií]sticas?\s+de|autores?\s+de|libros?\s+de|pel[ií]culas?\s+de)\b/i.test(query);
   const properNamePair = /\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/.test(query);
   const camelCaseOrAcronym = /\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b/.test(query);
-  return externalLookup || properNamePair || camelCaseOrAcronym || [
+  const standaloneEntity = query.trim().replace(/^[¿¡]+|[?!.,;:]+$/g, "").trim();
+  const singleNamedEntity = /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$/.test(standaloneEntity);
+  return externalLookup || properNamePair || camelCaseOrAcronym || singleNamedEntity || [
     "internet", "web", "online", "actual", "actualmente", "hoy", "ayer", "mañana",
     "último", "última", "últimos", "últimas", "noticia", "noticias", "fuentes",
     "verifica", "verificar", "comprueba", "comprobar", "precio", "cotización",
@@ -2728,8 +2730,10 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
       }
     }).filter(Boolean));
     const providers = new Set([
-      ...(Array.isArray(result.providers) ? result.providers.map((item) => String(item || "")) : []),
-      ...results.map((item) => String(item.provider || "")),
+      ...(Array.isArray(result.providers)
+        ? result.providers.map((item) => edgeProviderFamily(String(item || "")))
+        : []),
+      ...edgeProvidersForResults(results),
     ].filter(Boolean));
     return { results, domains, providers };
   };
@@ -2746,7 +2750,7 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
     primary: Record<string, unknown>,
     recovery: Record<string, unknown>,
   ): Record<string, unknown> => {
-    const seen = new Set<string>();
+    const byCanonicalUrl = new Map<string, Record<string, unknown>>();
     const combined: Record<string, unknown>[] = [];
     for (const result of [primary, recovery]) {
       const items = Array.isArray(result.results) ? result.results : [];
@@ -2764,17 +2768,33 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
         } catch {
           continue;
         }
-        if (seen.has(key)) continue;
-        seen.add(key);
-        combined.push(candidate);
-        if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
+
+        const incomingProviders = Array.isArray(candidate.provider_sources)
+          ? candidate.provider_sources.map((value) => String(value || "")).filter(Boolean)
+          : [String(candidate.provider || "")].filter(Boolean);
+        const existing = byCanonicalUrl.get(key);
+        if (existing) {
+          const priorProviders = Array.isArray(existing.provider_sources)
+            ? existing.provider_sources.map((value) => String(value || "")).filter(Boolean)
+            : [String(existing.provider || "")].filter(Boolean);
+          existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];
+          continue;
+        }
+        if (combined.length >= MAX_WEB_SEARCH_RESULTS) continue;
+        const mergedCandidate = {
+          ...candidate,
+          provider_sources: [...new Set(incomingProviders)],
+        };
+        byCanonicalUrl.set(key, mergedCandidate);
+        combined.push(mergedCandidate);
       }
-      if (combined.length >= MAX_WEB_SEARCH_RESULTS) break;
     }
     const providers = [...new Set([
       ...(Array.isArray(primary.providers) ? primary.providers.map((item) => String(item || "")) : []),
       ...(Array.isArray(recovery.providers) ? recovery.providers.map((item) => String(item || "")) : []),
-      ...combined.map((item) => String(item.provider || "")),
+      ...combined.flatMap((item) => Array.isArray(item.provider_sources)
+        ? item.provider_sources.map((value) => String(value || "")).filter(Boolean)
+        : [String(item.provider || "")].filter(Boolean)),
     ].filter(Boolean))];
     const merged: Record<string, unknown> = {
       ...primary,
@@ -2787,9 +2807,9 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
     };
     const evidence = metrics(merged);
     merged.verification = {
-      level: providers.length > 1 ? "dual-public-provider" : "public-fallback",
+      level: evidence.providers.size > 1 ? "dual-public-provider" : "public-fallback",
       distinct_domains: evidence.domains.size,
-      distinct_providers: providers.length,
+      distinct_providers: evidence.providers.size,
     };
     return merged;
   };
@@ -3516,11 +3536,15 @@ function edgeFilterSearchResults(
 function edgeProviderFamily(provider: string): string {
   const name = String(provider || "").trim().toLowerCase().replace(/-/g, "_");
   if (name.includes("google")) return "google";
-  if (name.includes("bing") || name.includes("microsoft")) return "bing";
-  if (name.includes("duckduckgo") || name.startsWith("ddg")) return "duckduckgo";
+  if (
+    name.includes("bing") ||
+    name.includes("microsoft") ||
+    name.includes("yahoo") ||
+    name.includes("duckduckgo") ||
+    name.startsWith("ddg")
+  ) return "bing";
   if (name.includes("mojeek")) return "mojeek";
   if (name.includes("marginalia")) return "marginalia";
-  if (name.includes("yahoo")) return "yahoo";
   if (name.includes("tavily")) return "tavily";
   if (name.includes("cl0q")) return "cl0q";
   if (name.includes("wikipedia")) return "wikipedia";

@@ -340,6 +340,8 @@ def test_edge_router_detects_external_entity_and_product_lookups():
         assert "const externalLookup =" in router
         assert "const properNamePair =" in router
         assert "const camelCaseOrAcronym =" in router
+        assert "const singleNamedEntity =" in router
+        assert "|| singleNamedEntity ||" in router
         assert "qu[eé]\\s+es" in router
         assert "documentaci" in router
         assert "hospitales?" in router
@@ -353,7 +355,13 @@ def test_edge_search_requires_independent_provider_provenance():
         assert "function edgeProviderFamily(" in source
         assert 'if (name.includes("google")) return "google";' in source
         assert 'if (name.includes("bing") || name.includes("microsoft")) return "bing";' in source
-        assert 'if (name.includes("yahoo")) return "yahoo";' in source
+        assert 'name.includes("yahoo")' in source
+        assert 'name.includes("duckduckgo")' in source
+        assert 'name.startsWith("ddg")' in source
+        assert 'return "yahoo";' not in source
+        assert 'return "duckduckgo";' not in source
+        assert "edgeProvidersForResults(results)" in source
+        assert "existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];" in source
         assert "independentOnly = false" in source
         assert 'provider.name !== "google_public"' in source
         assert "const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;" in source

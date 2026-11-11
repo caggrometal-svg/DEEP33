@@ -152,6 +152,7 @@ _PROPER_NAME_PAIR_RE = re.compile(
     r"\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b"
 )
 _CAMEL_OR_ACRONYM_RE = re.compile(r"\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b")
+_SINGLE_NAMED_ENTITY_RE = re.compile(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$")
 
 
 def classify_query(query: str) -> Decision:
@@ -189,10 +190,15 @@ def classify_query(query: str) -> Decision:
             DecisionRoute.WEB, 0.92,
             "explicit_current_or_web_request", cleaned, 20.0,
         )
+    standalone_entity = cleaned.strip("¿¡?!. ,;:")
     if (
         _EXTERNAL_LOOKUP_RE.search(cleaned)
         or _PROPER_NAME_PAIR_RE.search(cleaned)
         or _CAMEL_OR_ACRONYM_RE.search(cleaned)
+        or (
+            len(standalone_entity.split()) == 1
+            and _SINGLE_NAMED_ENTITY_RE.fullmatch(standalone_entity) is not None
+        )
     ):
         return Decision(
             DecisionRoute.WEB, 0.90,
