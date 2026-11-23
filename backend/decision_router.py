@@ -151,6 +151,11 @@ _EXTERNAL_LOOKUP_RE = re.compile(
 _PROPER_NAME_PAIR_RE = re.compile(
     r"\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b"
 )
+_NON_NAME_INITIAL_TOKENS = frozenset({
+    "por", "que", "qué", "como", "cómo", "cuando", "cuándo", "donde",
+    "dónde", "cual", "cuál", "quien", "quién", "para", "con", "desde",
+    "sobre", "entre", "hasta", "hacia", "porque", "aunque", "pero",
+})
 _CAMEL_OR_ACRONYM_RE = re.compile(r"\b(?:[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]{2,})\b")
 _SINGLE_NAMED_ENTITY_RE = re.compile(r"^[A-ZÁÉÍÓÚÑ][a-záéíóúñ0-9_-]{2,}$")
 _NON_ENTITY_SINGLE_TOKENS = frozenset({
