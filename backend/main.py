@@ -2017,6 +2017,15 @@ async def _fetch_web_source(
         "url": final_url,
         "text": page_text[:5000],
         "provider": provider,
+        "providers": list(dict.fromkeys(
+            str(name).strip()
+            for name in (
+                source.get("providers")
+                if isinstance(source.get("providers"), list)
+                else [provider]
+            )
+            if str(name).strip()
+        )),
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
         # Publication timestamp remains page-derived; SERP dates are discovery
