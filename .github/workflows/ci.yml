@@ -1045,6 +1045,7 @@ jobs:
     permissions:
       contents: read
       checks: read
+      deployments: read
       issues: read
       statuses: read
       id-token: write
