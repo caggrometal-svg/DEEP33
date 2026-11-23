@@ -158,6 +158,26 @@ def _is_publishable_realtime_news_source(
     return score_result(evidence_query, relevance_item) >= minimum_relevance_score
 
 
+def _independent_search_provider_family(provider: str) -> str:
+    """Count underlying search indexes, not aliases or front ends."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    if "google" in name:
+        return "google"
+    if any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "mwmbl" in name:
+        return "mwmbl"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    return name
+
+
 def _recent_news_quorum_summary(
     query: str,
     pages: list[dict[str, Any]],
@@ -177,13 +197,19 @@ def _recent_news_quorum_summary(
     } - {""}
     verification = search_result.get("verification")
     verification = verification if isinstance(verification, dict) else {}
-    providers = verification.get("distinct_providers")
+    reported_provider_count = verification.get("distinct_providers")
     try:
-        provider_count = int(providers or 0)
+        reported_provider_count = int(reported_provider_count or 0)
     except (TypeError, ValueError):
-        provider_count = 0
+        reported_provider_count = 0
+    page_provider_families = {
+        _independent_search_provider_family(str(page.get("provider") or ""))
+        for page in valid_pages
+    } - {""}
+    provider_count = len(page_provider_families)
     provider_quorum = (
         verification.get("provider_quorum_met") is True
+        and reported_provider_count >= 2
         and provider_count >= 2
     )
     article_count = len(valid_pages)
