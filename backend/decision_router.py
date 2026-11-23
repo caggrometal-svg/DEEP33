@@ -208,9 +208,14 @@ def classify_query(query: str) -> Decision:
         for match in _CAMEL_OR_ACRONYM_RE.finditer(cleaned)
     )
     single_entity_token = standalone_entity.casefold()
+    named_entity_pair = any(
+        match.start() != 0
+        or match.group(0).split()[0].casefold() not in _NON_NAME_INITIAL_TOKENS
+        for match in _PROPER_NAME_PAIR_RE.finditer(cleaned)
+    )
     if (
         _EXTERNAL_LOOKUP_RE.search(cleaned)
-        or _PROPER_NAME_PAIR_RE.search(cleaned)
+        or named_entity_pair
         or external_acronym_or_camel_case
         or (
             len(standalone_entity.split()) == 1
