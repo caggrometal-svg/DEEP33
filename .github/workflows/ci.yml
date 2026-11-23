@@ -1061,45 +1061,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          checks_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/check-runs?per_page=100"
-          status_api="https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status"
           alias=""
           for attempt in $(seq 1 36); do
-            checks="$(curl -fsS --connect-timeout 8 --max-time 20 \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$checks_api" || true)"
-            statuses="$(curl -fsS --connect-timeout 8 --max-time 20 \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "$status_api" || true)"
-
-            vercel_state="$(printf '%s' "$statuses" | jq -r '
-              [.statuses[]? | select(.context == "Vercel") | .state] | last // empty
-            ' 2>/dev/null || true)"
-            candidate="$(printf '%s' "$checks" | jq -r '
-              [
-                .check_runs[]?
-                | select((.app.slug // "") == "vercel")
-                | select(.conclusion == "success")
-                | (.output.summary // ""),
-                  (.output.text // "")
-              ]
-              | map(select(length > 0))
-              | join("\n")
-            ' 2>/dev/null | sed -nE 's#.*open-feedback/([^? )]+).*#\1#p' | head -n 1)"
-
-            case "$candidate" in
-              deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
-                if [ "$vercel_state" = "success" ]; then
-                  alias="$candidate"
-                  break
-                fi
-                ;;
-            esac
-            echo "WAITING_FOR_EXACT_VERCEL_CHECK_AND_COMMIT_STATUS attempt=$attempt sha=$CURRENT_SHA status=${vercel_state:-missing}"
+            # Vercel's GitHub commit status links to the Vercel dashboard, not
+            # to the deployment hostname. Resolve the successful GitHub
+            # deployment status and use its environment_url for this exact SHA.
+            deployments="$(gh api --paginate "repos/$GITHUB_REPOSITORY/deployments?sha=$CURRENT_SHA&per_page=100" 2>/dev/null || printf '[]')"
+            while IFS= read -r deployment_id; do
+              [ -n "$deployment_id" ] || continue
+              deployment_statuses="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses?per_page=20" 2>/dev/null || printf '[]')"
+              candidate="$(printf '%s' "$deployment_statuses" | jq -r '
+                [.[]? | select(.state == "success") | .environment_url // empty]
+                | map(select(test("^https://deep33-backend-git-(fix-phase1-routing-provider-quo|fix-vercel-android-route-221026)-.+\\.iac33\\.vercel\\.app/?$")))
+                | first // empty
+              ')"
+              if [ -n "$candidate" ]; then
+                alias="${candidate#https://}"
+                alias="${alias%/}"
+                break
+              fi
+            done < <(printf '%s' "$deployments" | jq -r '.[].id')
+            [ -n "$alias" ] && break
+            echo "WAITING_FOR_EXACT_VERCEL_DEPLOYMENT attempt=$attempt sha=$CURRENT_SHA"
             [ "$attempt" -lt 36 ] && sleep 5
           done
           test -n "$alias" || {
