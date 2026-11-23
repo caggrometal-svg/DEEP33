@@ -3551,7 +3551,18 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             raw.get("source_domain")
                             or (urlparse(url).hostname or "")
                         ).casefold().removeprefix("www.")
-                        if not url.startswith("https://") or not domain:
+                        parsed_candidate = urlparse(url)
+                        candidate_path_parts = [
+                            part for part in parsed_candidate.path.split("/") if part
+                        ]
+                        # A category/homepage URL is not a news article, even if
+                        # an RSS/search provider assigns it a recent timestamp.
+                        if (
+                            parsed_candidate.scheme.lower() != "https"
+                            or not parsed_candidate.hostname
+                            or not domain
+                            or len(candidate_path_parts) < 2
+                        ):
                             continue
                         if any(
                             str(existing.get("url") or "").strip() == url
