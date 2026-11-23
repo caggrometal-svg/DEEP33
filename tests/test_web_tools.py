@@ -1562,6 +1562,40 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
     assert len(compact["search_results"]) == 3
 
 
+def test_chat_realtime_news_rejects_three_articles_from_one_provider(monkeypatch):
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    pages = [
+        {
+            "title": f"Últimas noticias de Chile hoy: acontecimiento nacional {index}",
+            "url": f"https://publisher{index}.example/noticias/chile-actualidad-{index}",
+            "final_url": f"https://publisher{index}.example/noticias/chile-actualidad-{index}",
+            "domain": f"publisher{index}.example",
+            "provider": "bing",
+            "published_at": published_at,
+            "snippet": "Noticias recientes de Chile y actualidad nacional.",
+            "text": "Noticias recientes de Chile y actualidad nacional. " * 8,
+        }
+        for index in range(1, 4)
+    ]
+    search_result = {
+        "verification": {
+            "provider_quorum_met": True,
+            "distinct_providers": 2,
+        }
+    }
+
+    summary = main._recent_news_quorum_summary(query, pages, search_result)
+
+    assert summary["articles"] == 3
+    assert summary["domains"] == 3
+    assert summary["providers"] == 1
+    assert summary["provider_quorum_met"] is False
+    assert summary["met"] is False
+
+
 def test_chat_realtime_news_fails_closed_without_three_publishers(monkeypatch):
     import backend.main as main
 
