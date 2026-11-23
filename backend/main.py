@@ -202,10 +202,21 @@ def _recent_news_quorum_summary(
         reported_provider_count = int(reported_provider_count or 0)
     except (TypeError, ValueError):
         reported_provider_count = 0
-    page_provider_families = {
-        _independent_search_provider_family(str(page.get("provider") or ""))
-        for page in valid_pages
-    } - {""}
+    page_provider_families: set[str] = set()
+    for page in valid_pages:
+        names = (
+            page.get("providers")
+            if isinstance(page.get("providers"), list)
+            else [page.get("provider")]
+        )
+        page_provider_families.update(
+            family
+            for family in (
+                _independent_search_provider_family(str(name or ""))
+                for name in names
+            )
+            if family
+        )
     provider_count = len(page_provider_families)
     provider_quorum = (
         verification.get("provider_quorum_met") is True
