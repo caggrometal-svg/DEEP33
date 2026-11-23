@@ -187,6 +187,72 @@ def test_web_orchestrator_never_certifies_a_single_configured_provider():
     assert result["verification"]["provider_quorum_met"] is False
 
 
+def test_web_orchestrator_uses_reserved_independent_provider_for_sparse_news():
+    from datetime import datetime, timezone
+    from backend.search.resilient import ProviderOutcome, WebOrchestrator
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    results_by_provider = {
+        "bing": [{
+            "title": "Noticias de Chile hoy: autoridades anuncian medidas",
+            "url": "https://news-one.example/chile/actualidad",
+            "snippet": "Noticias recientes de Chile hoy sobre autoridades y actualidad nacional.",
+            "published_at": published_at,
+        }],
+        "google": [{
+            "title": "Noticias de Chile hoy: Congreso informa cambios",
+            "url": "https://news-two.example/chile/congreso",
+            "snippet": "Noticias recientes de Chile hoy sobre Congreso y actualidad nacional.",
+            "published_at": published_at,
+        }],
+        "mwmbl": [{
+            "title": "Noticias de Chile hoy: nueva información nacional",
+            "url": "https://news-three.example/chile/nacional",
+            "snippet": "Noticias recientes de Chile hoy con información nacional.",
+            "published_at": published_at,
+        }],
+    }
+    recovered = []
+
+    async def fake_call_provider(provider, query):
+        if provider == "mwmbl":
+            recovered.append(provider)
+        items = results_by_provider.get(provider, [])
+        return ProviderOutcome(
+            provider=provider,
+            ok=bool(items),
+            results=items,
+            error_code=None if items else "NO_RESULTS",
+        )
+
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.05,
+        global_budget_seconds=0.8,
+        fallback_delay_seconds=0.0,
+    )
+    orchestrator.providers = {
+        "bing": orchestrator._bing,
+        "google": orchestrator._google,
+    }
+    orchestrator.fallback_providers = {"mwmbl": orchestrator._mwmbl}
+    orchestrator.circuits = {
+        name: orchestrator.circuits[name]
+        for name in ("bing", "google", "mwmbl")
+    }
+    orchestrator._call_provider = fake_call_provider
+
+    result = asyncio.run(
+        orchestrator.search("últimas noticias de Chile hoy", fresh=True)
+    )
+
+    assert recovered == ["mwmbl"]
+    assert result["ok"] is True, result
+    assert len(result["results"]) >= 3
+    assert result["verification"]["distinct_providers"] >= 2
+    assert result["verification"]["distinct_domains"] >= 3
+
+
 def test_search_provider_families_collapse_google_and_bing_aliases():
     from backend.search.resilient import _provider_family
 
