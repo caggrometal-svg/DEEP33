@@ -1094,11 +1094,67 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
     seen_urls = set()
     seen_title_domain = set()
     seen_domains = set()
+    seen_provider_families: set[str] = set()
     output = []
+    deferred_same_provider: list[dict] = []
 
-    # Pass 1: guarantee source-domain diversity where possible. Identical titles
-    # from different domains are retained because they are evidence of corroboration.
+    def provider_families(item: dict) -> set[str]:
+        names = item.get("providers")
+        if not isinstance(names, list):
+            names = [item.get("provider")]
+        families = set()
+        for raw_name in names:
+            name = str(raw_name or "").strip().casefold().replace("-", "_")
+            if not name:
+                continue
+            if "google" in name:
+                family = "google"
+            elif any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
+                family = "bing"
+            elif "mojeek" in name:
+                family = "mojeek"
+            elif "mwmbl" in name:
+                family = "mwmbl"
+            elif "marginalia" in name:
+                family = "marginalia"
+            elif "tavily" in name:
+                family = "tavily"
+            elif "cl0q" in name:
+                family = "cl0q"
+            else:
+                family = name
+            families.add(family)
+        return families
+
+    # Pass 1: prefer one source from each independent provider family while
+    # retaining editorial-domain diversity. Repeated results from one index are
+    # deferred, not discarded; the next pass fills remaining slots.
     for item in results:
+        url = _canonical_url(str(item.get("url") or ""))
+        title = " ".join(str(item.get("title") or "").lower().split())
+        domain = _source_host(item).removeprefix("www.")
+        title_key = (domain, title) if title else None
+        if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
+            continue
+        if domain and domain in seen_domains:
+            continue
+        families = provider_families(item)
+        if families and families.issubset(seen_provider_families):
+            deferred_same_provider.append(item)
+            continue
+        seen_urls.add(url)
+        if title_key:
+            seen_title_domain.add(title_key)
+        if domain:
+            seen_domains.add(domain)
+        seen_provider_families.update(families)
+        output.append(preserve_provenance(item, url))
+        if len(output) >= limit:
+            return output
+
+    # Fill the first-pass slots with other editorial domains even when the
+    # independent provider did not return enough fetchable candidates.
+    for item in deferred_same_provider:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
         domain = _source_host(item).removeprefix("www.")
