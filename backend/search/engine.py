@@ -1068,6 +1068,29 @@ def _text_score(query_tokens: list[str], item: dict) -> float:
 
 
 def deduplicate(results: list[dict], limit: int) -> list[dict]:
+    # Preserve every independent provider that returned the same canonical URL.
+    # The selected result remains a single fetch target, but provenance must not
+    # disappear when duplicate URLs are collapsed.
+    providers_by_url: dict[str, list[str]] = {}
+    for item in results:
+        url = _canonical_url(str(item.get("url") or ""))
+        if not url:
+            continue
+        existing = item.get("providers")
+        names = existing if isinstance(existing, list) else [item.get("provider")]
+        bucket = providers_by_url.setdefault(url, [])
+        for name in names:
+            provider = str(name or "").strip()
+            if provider and provider not in bucket:
+                bucket.append(provider)
+
+    def preserve_provenance(item: dict, url: str) -> dict:
+        selected = {**item, "url": url}
+        providers = providers_by_url.get(url, [])
+        if providers:
+            selected["providers"] = list(providers)
+        return selected
+
     seen_urls = set()
     seen_title_domain = set()
     seen_domains = set()
@@ -1089,7 +1112,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
             seen_title_domain.add(title_key)
         if domain:
             seen_domains.add(domain)
-        output.append({**item, "url": url})
+        output.append(preserve_provenance(item, url))
         if len(output) >= limit:
             return output
 
@@ -1112,11 +1135,10 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
         if title_key:
             seen_title_domain.add(title_key)
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
-        output.append({**item, "url": url})
+        output.append(preserve_provenance(item, url))
         if len(output) >= limit:
             break
     return output
-
 
 class SearchEngine:
     """Provider-agnostic DEEP33 web-search orchestration layer."""
