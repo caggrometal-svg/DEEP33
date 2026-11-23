@@ -1077,7 +1077,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
         if not url:
             continue
         existing = item.get("providers")
-        names = existing if isinstance(existing, list) else [item.get("provider")]
+        names = [*(existing if isinstance(existing, list) else []), item.get("provider")]
         bucket = providers_by_url.setdefault(url, [])
         for name in names:
             provider = str(name or "").strip()
