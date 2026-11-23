@@ -112,6 +112,32 @@ def test_deduplicate_preserves_provider_provenance_for_duplicate_urls():
     assert results[0]["providers"] == ["bing", "mojeek"]
 
 
+def test_deduplicate_prioritizes_independent_provider_families():
+    results = deduplicate(
+        [
+            {
+                "title": "Chile noticia uno",
+                "url": "https://medio-a.example/noticia-uno",
+                "provider": "bing",
+            },
+            {
+                "title": "Chile noticia dos",
+                "url": "https://medio-b.example/noticia-dos",
+                "provider": "bing",
+            },
+            {
+                "title": "Chile noticia tres",
+                "url": "https://medio-c.example/noticia-tres",
+                "provider": "google_news",
+            },
+        ],
+        2,
+    )
+
+    assert len(results) == 2
+    assert {item["provider"] for item in results} == {"bing", "google_news"}
+
+
 def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
 
