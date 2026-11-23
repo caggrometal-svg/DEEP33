@@ -209,7 +209,7 @@ def classify_query(query: str) -> Decision:
     )
     single_entity_token = standalone_entity.casefold()
     named_entity_pair = any(
-        bool(cleaned[:match.start()].strip("¿¡ \\t"))
+        bool(cleaned[:match.start()].strip("¿¡ "))
         or match.group(0).split()[0].casefold() not in _NON_NAME_INITIAL_TOKENS
         for match in _PROPER_NAME_PAIR_RE.finditer(cleaned)
     )
