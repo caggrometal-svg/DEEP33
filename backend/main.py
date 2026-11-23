@@ -2109,6 +2109,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 or search_result.get("provider")
                 or "unknown"
             ),
+            "providers": list(dict.fromkeys(
+                str(name).strip()
+                for name in (
+                    source.get("providers")
+                    if isinstance(source.get("providers"), list)
+                    else [source.get("provider") or search_result.get("winner_provider") or search_result.get("provider")]
+                )
+                if str(name or "").strip()
+            )),
             "source_domain": str(
                 source.get("source_domain")
                 or (urlparse(url).hostname or "")
@@ -2174,6 +2183,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                         "url": url[:2000],
                         "snippet": str(raw.get("snippet") or "")[:1000],
                         "provider": str(raw.get("provider") or "google_news"),
+                        "providers": [str(raw.get("provider") or "google_news")],
                         "source_domain": domain[:255],
                         "published_at": published_at,
                     }
