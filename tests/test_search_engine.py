@@ -91,6 +91,27 @@ def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
     }
 
 
+def test_deduplicate_preserves_provider_provenance_for_duplicate_urls():
+    results = deduplicate(
+        [
+            {
+                "title": "Python asyncio documentation",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+                "provider": "bing",
+            },
+            {
+                "title": "Python asyncio documentation",
+                "url": "https://docs.python.org/3/library/asyncio.html#tasks",
+                "provider": "mojeek",
+            },
+        ],
+        5,
+    )
+
+    assert len(results) == 1
+    assert results[0]["providers"] == ["bing", "mojeek"]
+
+
 def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
 
