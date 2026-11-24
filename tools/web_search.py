@@ -944,7 +944,7 @@ async def search_recent_news_candidates(
             for domain in publisher_domains
         )
 
-    jobs: list[tuple[str, str | None, Any]] = [
+    jobs = [
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         *(
             ("bing", expected_domain, _bing_recent_news_search(search_query, budget, limit))
