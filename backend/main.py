@@ -239,26 +239,14 @@ def _recent_news_quorum_summary(
         reported_provider_count = int(reported_provider_count or 0)
     except (TypeError, ValueError):
         reported_provider_count = 0
-    page_provider_families: set[str] = set()
-    for page in valid_pages:
-        names = _candidate_provider_names(
-            page,
-            str(page.get("provider") or ""),
-        )
-        page_provider_families.update(
-            family
-            for family in (
-                _independent_search_provider_family(str(name or ""))
-                for name in names
-            )
-            if family
-        )
-    provider_count = len(page_provider_families)
+    # Provider independence is verified by the search orchestrator before
+    # extraction. Publisher RSS pages add editorial diversity, but their adapter
+    # label is not a search-index provider and must not erase a valid quorum.
     provider_quorum = (
         verification.get("provider_quorum_met") is True
         and reported_provider_count >= 2
-        and provider_count >= 2
     )
+    provider_count = reported_provider_count if provider_quorum else 0
     article_count = len(valid_pages)
     domain_count = len(domains)
     return {
