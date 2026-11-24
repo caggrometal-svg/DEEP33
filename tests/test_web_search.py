@@ -40,7 +40,7 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
 
     async def fake_google_news(query, timeout_seconds, max_results):
         seen["google_query"] = query
-        seen["google_max_results"] = max_results
+        seen.setdefault("google_max_results_values", []).append(max_results)
         return [
             {
                 "title": f"Noticia antigua {index}",
@@ -87,7 +87,8 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
     assert result[0]["provider"] == "bing"
     assert result[0]["source_domain"] == "cooperativa.cl"
     assert result[0]["published_at"] != "2026-11-01T12:00:00+00:00"
-    assert seen["google_max_results"] == 12
+    assert 12 in seen["google_max_results_values"]
+    assert 3 in seen["google_max_results_values"]
     assert seen["bing_max_results"] == 12
     assert len(seen["bing_queries"]) == 6
     assert any("site:biobiochile.cl" in query for query in seen["bing_queries"])
