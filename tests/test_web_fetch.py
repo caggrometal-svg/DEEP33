@@ -567,3 +567,38 @@ def test_google_news_wrapper_decoder_fails_closed_without_signed_params(monkeypa
         asyncio.run(
             web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
         )
+
+
+def test_fetch_page_uses_bounded_reader_path_when_google_news_resolution_fails(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/OPAQUE_ID?oc=5"
+    publisher = "https://www.cooperativa.cl/noticias/pais/2026/11/24/article.shtml"
+    seen = {}
+
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda value: value)
+
+    async def broken_resolver(_url, *, timeout_seconds):
+        raise web_fetch.WebFetchError("GOOGLE_NEWS_WRAPPER_PARAMS_MISSING")
+
+    async def fake_total_budget(**kwargs):
+        seen["original_url"] = kwargs["original_url"]
+        seen["current_url"] = kwargs["current_url"]
+        return {
+            "ok": True,
+            "url": kwargs["original_url"],
+            "final_url": publisher,
+            "title": "Noticia reciente de Chile",
+            "text": "Información periodística actual de Chile. " * 8,
+            "published_at": "2026-11-24T00:30:00+00:00",
+        }
+
+    monkeypatch.setattr(web_fetch, "_resolve_google_news_wrapper", broken_resolver)
+    monkeypatch.setattr(web_fetch, "_fetch_with_total_budget", fake_total_budget)
+
+    result = asyncio.run(web_fetch.fetch_page(wrapper, fresh=True))
+
+    assert seen["original_url"] == wrapper
+    assert seen["current_url"] == wrapper
+    assert result["final_url"] == publisher
