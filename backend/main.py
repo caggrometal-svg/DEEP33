@@ -1680,13 +1680,21 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         if str(item.get("url") or "").strip()
     }
     for item in items:
-        if str(item.get("provider") or "").casefold() != "publisher_rss":
+        provider = str(item.get("provider") or "").casefold()
+        if provider not in {"publisher_rss", "mwmbl"}:
             continue
         url = str(item.get("url") or "").strip()
         parsed = urlparse(url)
         host = (parsed.hostname or "").casefold().removeprefix("www.")
-        source_domain = str(item.get("source_domain") or "").casefold().removeprefix("www.")
+        source_domain = str(
+            item.get("source_domain") or host
+        ).casefold().removeprefix("www.")
         path_parts = [part for part in parsed.path.split("/") if part]
+        publication_is_recent = (
+            _is_recently_published(item, query)
+            if item.get("published_at")
+            else provider == "mwmbl"
+        )
         if (
             not url
             or url in seen_urls
@@ -1695,9 +1703,9 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             or not source_domain
             or (host != source_domain and not host.endswith("." + source_domain))
             or len(path_parts) < 2
-            or not _is_recently_published(item, query)
+            or not publication_is_recent
             or len(str(item.get("title") or "").strip()) < 12
-            or len(str(item.get("snippet") or "").strip()) < 30
+            or len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
         ):
             continue
         retained = dict(item)
@@ -2322,11 +2330,13 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             normalized = {str(name or "").casefold() for name in names}
             if "publisher_rss" in normalized:
                 return 0
-            if "google_news" in normalized or "google" in normalized:
+            if "mwmbl" in normalized:
                 return 1
-            if "bing" in normalized:
+            if "google_news" in normalized or "google" in normalized:
                 return 2
-            return 3
+            if "bing" in normalized:
+                return 3
+            return 4
         source_candidates.sort(key=_chat_news_provider_priority)
         publisher_sources = [
             source for source in source_candidates
@@ -3739,11 +3749,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             normalized = {str(name or "").casefold() for name in names}
             if "publisher_rss" in normalized:
                 return 0
-            if "google_news" in normalized or "google" in normalized:
+            if "mwmbl" in normalized:
                 return 1
-            if "bing" in normalized:
+            if "google_news" in normalized or "google" in normalized:
                 return 2
-            return 3
+            if "bing" in normalized:
+                return 3
+            return 4
 
         ordered_sources = sorted(
             candidate_sources,
