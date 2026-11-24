@@ -669,8 +669,12 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "text_chars": 360,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(
