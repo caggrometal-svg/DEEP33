@@ -1470,6 +1470,11 @@ def _compact_model_web_evidence(evidence: dict[str, Any], *, strict_news: bool) 
                 "url": str(page.get("url") or "")[:500],
                 "domain": str(page.get("domain") or "")[:120],
                 "published_at": page.get("published_at"),
+                "provider": page.get("provider"),
+                "provider_sources": _candidate_provider_names(
+                    page,
+                    str(page.get("provider") or "unknown"),
+                ),
                 "text": str(page.get("text") or "")[:500],
             }
             for page in pages[:3]
@@ -2275,6 +2280,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         url = str(source.get("url") or "").strip()
         if not url:
             continue
+        provider_sources = _candidate_provider_names(
+            source,
+            str(source.get("provider") or search_result.get("winner_provider") or search_result.get("provider") or "unknown"),
+        )
         sources[url] = {
             "title": str(source.get("title") or url)[:300],
             "url": url[:2000],
@@ -2285,15 +2294,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 or search_result.get("provider")
                 or "unknown"
             ),
-            "providers": list(dict.fromkeys(
-                str(name).strip()
-                for name in (
-                    source.get("providers")
-                    if isinstance(source.get("providers"), list)
-                    else [source.get("provider") or search_result.get("winner_provider") or search_result.get("provider")]
-                )
-                if str(name or "").strip()
-            )),
+            "provider_sources": provider_sources,
+            "providers": provider_sources,
             "source_domain": str(
                 source.get("source_domain")
                 or (urlparse(url).hostname or "")
@@ -2308,6 +2310,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "snippet": str(item.get("snippet") or "")[:700],
             "published_at": item.get("published_at"),
             "provider": item.get("provider"),
+            "provider_sources": _candidate_provider_names(
+                item,
+                str(item.get("provider") or search_result.get("winner_provider") or search_result.get("provider") or "unknown"),
+            ),
         }
         for item in list(search_result.get("results") or [])[:5]
         if isinstance(item, dict)
@@ -2647,6 +2653,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 "snippet": str(page.get("text") or "")[:700],
                 "published_at": page.get("published_at"),
                 "provider": page.get("provider"),
+                "provider_sources": _candidate_provider_names(
+                    page,
+                    str(page.get("provider") or "unknown"),
+                ),
             }
             for page in compact_fetched_pages
         ]
@@ -4033,12 +4043,22 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "reason": "FETCH_OR_EXTRACTION_FAILED",
                 })
                 continue
-            fetched_pages.append(fetched)
+            source_provider_names = _candidate_provider_names(
+                source,
+                str(source.get("provider") or "unknown"),
+            )
+            fetched_with_provenance = {
+                **fetched,
+                "provider": str(source.get("provider") or (source_provider_names[0] if source_provider_names else "unknown")),
+                "provider_sources": source_provider_names,
+                "providers": source_provider_names,
+            }
+            fetched_pages.append(fetched_with_provenance)
             original_source_url = str(source.get("url") or "").strip()
-            resolved_source_url = str(fetched.get("url") or "").strip()
+            resolved_source_url = str(fetched_with_provenance.get("url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
-                fetched_by_source_url[original_source_url] = fetched
+                fetched_by_source_url[original_source_url] = fetched_with_provenance
 
         # Surface verified direct publisher URLs to callers. Keep the wrapper in
         # original_url for diagnostics, but never make clients navigate a Google
@@ -4278,6 +4298,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "title": page.get("title"),
                     "url": page.get("url"),
                     "provider": page.get("provider"),
+                    "provider_sources": _candidate_provider_names(
+                        page,
+                        str(page.get("provider") or "unknown"),
+                    ),
                     "text_chars": page.get("text_chars"),
                     "text": str(page.get("text") or "")[:2200],
                     "published_at": page.get("published_at"),
@@ -5657,6 +5681,10 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
             "url": str(page.get("url") or "")[:1000],
             "domain": str(page.get("domain") or "")[:180],
             "provider": str(page.get("provider") or "")[:80],
+            "provider_sources": _candidate_provider_names(
+                page,
+                str(page.get("provider") or "unknown"),
+            ),
             "published_at": page.get("published_at"),
             "text": str(page.get("text") or "")[:450],
         })
