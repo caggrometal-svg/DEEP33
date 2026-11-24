@@ -3420,20 +3420,27 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         raw_sources = _source_from_result(result)
         strict_news_request = is_strict_news_query(q)
-        # The orchestrator can return ok=false solely because its first pass
-        # found fewer than three dated publishers. Keep those real candidates
-        # available for the endpoint's independent RSS recovery and page reads;
-        # final success is still gated on three extracted articles below.
-        dated_news_candidates = [
-            source for source in raw_sources
-            if isinstance(source, dict)
-            and str(source.get("url") or "").startswith("https://")
-            and source.get("published_at")
-            and _is_recently_published(source, q)
-        ] if strict_news_request else []
+        # A strict-news search may have a valid two-index discovery quorum but
+        # fewer than three dated publishers on its first pass. That is not final
+        # evidence; it is permission to run the independent RSS recovery below.
+        # Final success still requires three fresh, extracted publisher articles.
+        search_verification = result.get("verification")
+        search_verification = (
+            search_verification if isinstance(search_verification, dict) else {}
+        )
+        try:
+            reported_search_providers = int(
+                search_verification.get("distinct_providers") or 0
+            )
+        except (TypeError, ValueError):
+            reported_search_providers = 0
+        discovery_provider_quorum = (
+            search_verification.get("provider_quorum_met") is True
+            and reported_search_providers >= 2
+        )
         search_ok = (
             result.get("ok") is True
-            or (strict_news_request and len(dated_news_candidates) >= 2)
+            or (strict_news_request and discovery_provider_quorum)
         )
         normalized_sources: dict[str, dict[str, Any]] = {}
         for source in raw_sources:
@@ -3536,7 +3543,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if strict_news_request and len(dated_news_candidates) >= 2:
+        if strict_news_request:
             candidate_domains = {
                 str(
                     item.get("source_domain")
