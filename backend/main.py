@@ -2612,25 +2612,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and not is_strict_news_query(query) and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
-            snippet_fallback_used = True
-            logger.warning(
-                "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
-                "snippet_sources=%s snippet_domains=%s",
-                request_id or "unknown", required_pages, len(fetched_pages),
-                len(snippet_evidence), len(snippet_evidence_domains),
-            )
-        else:
-            logger.warning(
-                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-                request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
-            )
-            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-            return None, [], [], []
+        # Search snippets are discovery hints, never verified page evidence.
+        # General lookups need one extracted page, research needs two domains,
+        # and current-news requests need three extracted articles.
+        logger.warning(
+            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
+            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -2688,7 +2678,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
     )
     evidence = {
+        "query": query,
         "realtime": realtime,
+        "contrast_required": contrast_required,
         "fresh_request": bool(search_result.get("fresh_request")),
         "retrieved_at": search_result.get("retrieved_at"),
         "queries_executed": search_result.get("queries") or [],
@@ -2703,6 +2695,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "snippet_fallback": snippet_fallback_used,
     }
     compact_web_evidence = {
+        "query": query,
+        "contrast_required": contrast_required,
         "search_results": [
             {**item, "snippet": str(item.get("snippet") or "")[:300]}
             for item in verified_search_results[:4]
@@ -5716,7 +5710,9 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         if key in verification
     }
     compact_evidence = {
+        "query": str(evidence.get("query") or "")[:500],
         "realtime": bool(evidence.get("realtime")),
+        "contrast_required": bool(evidence.get("contrast_required")),
         "retrieved_at": evidence.get("retrieved_at"),
         "providers_attempted": list(evidence.get("providers_attempted") or [])[:8],
         "verification": compact_verification,
@@ -5764,16 +5760,15 @@ def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
         )
     except (TypeError, ValueError):
         provider_count = 0
-    provider_quorum_met = (
-        verification.get("provider_quorum_met") is True
-        or news_quorum.get("provider_quorum_met") is True
-    )
-    if provider_count < 2 or not provider_quorum_met:
-        return None
-
     strict_news = news_quorum.get("required") is True
+    contrast_required = evidence.get("contrast_required") is True
     if strict_news and (
-        news_quorum.get("met") is not True
+        provider_count < 2
+        or not (
+            verification.get("provider_quorum_met") is True
+            or news_quorum.get("provider_quorum_met") is True
+        )
+        or news_quorum.get("met") is not True
         or int(news_quorum.get("articles") or 0) < 3
         or int(news_quorum.get("domains") or 0) < 3
     ):
@@ -5782,7 +5777,7 @@ def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
     pages = evidence.get("fetched_pages")
     if not isinstance(pages, list):
         return None
-    minimum_sources = 3 if strict_news else 2
+    minimum_sources = 3 if strict_news else 2 if contrast_required else 1
     selected: list[tuple[str, str, str]] = []
     seen_domains: set[str] = set()
     junk_sentence = re.compile(
@@ -5830,7 +5825,7 @@ def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
         if len(selected) >= 3:
             break
 
-    required_domains = 3 if strict_news else 2
+    required_domains = 3 if strict_news else 2 if contrast_required else 1
     if len(selected) < minimum_sources or len(seen_domains) < required_domains:
         return None
 
