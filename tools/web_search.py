@@ -833,7 +833,9 @@ async def _google_news_search(query, timeout_seconds, max_results):
     response = await client.get(
         "https://news.google.com/rss/search",
         params={
-            "q": f"{normalized_query} when:1d",
+            # Query broadly; the parsed publisher timestamp is checked
+            # against the requested freshness window after extraction.
+            "q": normalized_query,
             "hl": "es-419",
             "gl": "CL",
             "ceid": "CL:es-419",
