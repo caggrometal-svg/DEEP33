@@ -3418,8 +3418,23 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         if not isinstance(result, dict):
             result = {"ok": False, "results": [], "sources": [], "errors": ["INVALID_SEARCH_RESULT"]}
 
-        search_ok = result.get("ok") is True
         raw_sources = _source_from_result(result)
+        strict_news_request = is_strict_news_query(q)
+        # The orchestrator can return ok=false solely because its first pass
+        # found fewer than three dated publishers. Keep those real candidates
+        # available for the endpoint's independent RSS recovery and page reads;
+        # final success is still gated on three extracted articles below.
+        dated_news_candidates = [
+            source for source in raw_sources
+            if isinstance(source, dict)
+            and str(source.get("url") or "").startswith("https://")
+            and source.get("published_at")
+            and _is_recently_published(source, q)
+        ] if strict_news_request else []
+        search_ok = (
+            result.get("ok") is True
+            or (strict_news_request and len(dated_news_candidates) >= 2)
+        )
         normalized_sources: dict[str, dict[str, Any]] = {}
         for source in raw_sources:
             url = str(source.get("url") or "").strip()
@@ -3436,6 +3451,15 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or result.get("provider")
                     or "unknown"
                 ),
+                "providers": list(dict.fromkeys(
+                    str(name).strip()
+                    for name in (
+                        source.get("providers")
+                        if isinstance(source.get("providers"), list)
+                        else [source.get("provider") or result.get("winner_provider") or result.get("provider")]
+                    )
+                    if str(name or "").strip()
+                )),
                 # Preserve editorial provenance from RSS/search adapters. Without
                 # this field Google News wrapper URLs lose the publisher identity
                 # before _fetch_web_source can resolve them to the original article.
@@ -3512,7 +3536,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_strict_news_query(q):
+        if strict_news_request and len(dated_news_candidates) >= 2:
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3569,11 +3593,22 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                             for existing in candidate_sources
                         ):
                             continue
+                        candidate_provider = str(raw.get("provider") or "google_news")
+                        candidate_providers = raw.get("provider_sources")
+                        if not isinstance(candidate_providers, list):
+                            candidate_providers = raw.get("providers")
+                        if not isinstance(candidate_providers, list):
+                            candidate_providers = [candidate_provider]
                         candidate = {
                             "title": str(raw.get("title") or url)[:300],
                             "url": url[:2000],
                             "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": str(raw.get("provider") or "google_news"),
+                            "provider": candidate_provider,
+                            "providers": list(dict.fromkeys(
+                                str(name).strip()
+                                for name in candidate_providers
+                                if str(name or "").strip()
+                            )),
                             "source_domain": domain[:255],
                             "published_at": published_at,
                         }
@@ -3836,17 +3871,27 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # response. Editorial independence is proven separately by three dated,
         # extracted publisher domains; article metadata may retain one feed's
         # adapter label even when multiple search providers contributed to discovery.
-        valid_news_providers = {
-            str(provider).strip().casefold()
-            for provider in (result.get("providers") or [])
-            if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
-        }
+        valid_news_provider_families: set[str] = set()
+        for page in evidence_fetched_pages:
+            names = (
+                page.get("providers")
+                if isinstance(page.get("providers"), list)
+                else [page.get("provider")]
+            )
+            valid_news_provider_families.update(
+                family
+                for family in (
+                    _independent_search_provider_family(str(name or ""))
+                    for name in names
+                )
+                if family
+            )
         news_quorum_met = (
-            not is_strict_news_query(q)
+            not strict_news_request
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
-                and len(valid_news_providers) >= 2
+                and len(valid_news_provider_families) >= 2
             )
         )
         final_ok = (
