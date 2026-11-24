@@ -105,6 +105,7 @@ def test_recent_news_recovery_accepts_bing_click_url_with_verified_publisher_dom
 
     monkeypatch.setattr(module, "_google_news_search", no_google_news)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
+    monkeypatch.setattr(module, "_publisher_rss_search", no_google_news)
 
     candidates = asyncio.run(
         module.search_recent_news_candidates(
@@ -118,6 +119,62 @@ def test_recent_news_recovery_accepts_bing_click_url_with_verified_publisher_dom
     assert candidates[0]["source_domain"] == "www.biobiochile.cl"
     assert candidates[0]["provider"] == "bing"
     assert candidates[0]["provider_sources"] == ["bing"]
+
+
+def test_publisher_rss_fallback_extracts_dated_direct_articles(monkeypatch):
+    import tools.web_search as module
+
+    published_at = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    feeds = {
+        "https://www.latercera.com/arcio/rss/": (
+            "latercera.com",
+            "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
+        ),
+        "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml": (
+            "cooperativa.cl",
+            "https://www.cooperativa.cl/noticias/pais/actualidad/2026/11/23/noticia.shtml",
+        ),
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, domain, url):
+            self.text = (
+                "<rss><channel><item>"
+                "<title>Últimas noticias de Chile hoy: actualización nacional</title>"
+                f"<link>{url}</link>"
+                "<description>Información reciente de Chile y actualidad nacional.</description>"
+                f"<pubDate>{published_at}</pubDate>"
+                "</item></channel></rss>"
+            )
+            self.content = self.text.encode()
+
+    class FakeClient:
+        async def get(self, url, **_kwargs):
+            domain, article_url = feeds[url]
+            return FakeResponse(domain, article_url)
+
+    async def fake_http_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_http_client)
+
+    candidates = asyncio.run(
+        module._publisher_rss_search(
+            "noticias de Chile hoy",
+            timeout_seconds=1.0,
+            max_results=5,
+        )
+    )
+
+    assert len(candidates) == 2
+    assert {item["source_domain"] for item in candidates} == {
+        "latercera.com",
+        "cooperativa.cl",
+    }
+    assert all(item["provider"] == "publisher_rss" for item in candidates)
+    assert all(item["published_at"] for item in candidates)
 
 
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
