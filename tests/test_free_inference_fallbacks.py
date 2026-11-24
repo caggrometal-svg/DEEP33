@@ -177,7 +177,9 @@ def test_google_news_rss_provider_parses_recent_chile_rss(monkeypatch) -> None:
     assert fake_client.url == "https://news.google.com/rss/search"
     assert fake_client.params["gl"] == "CL"
     assert fake_client.params["ceid"] == "CL:es-419"
-    assert "when:1d" in fake_client.params["q"]
+    # Google News query syntax varies; freshness is enforced against the
+    # parsed publisher timestamp, not by relying on the when:1d search operator.
+    assert "when:1d" not in fake_client.params["q"]
     assert result
     assert result[0]["url"].startswith("https://news.google.com/")
 
