@@ -106,6 +106,7 @@ def test_recent_news_recovery_accepts_bing_click_url_with_verified_publisher_dom
     monkeypatch.setattr(module, "_google_news_search", no_google_news)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
     monkeypatch.setattr(module, "_publisher_rss_search", no_google_news)
+    monkeypatch.setattr(module, "_mwmbl_search", no_google_news)
 
     candidates = asyncio.run(
         module.search_recent_news_candidates(
