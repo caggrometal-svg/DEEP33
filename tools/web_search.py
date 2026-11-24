@@ -23,7 +23,7 @@ from tools.web_fetch import validate_public_url
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
-DEFAULT_TIMEOUT_SECONDS = 6.0
+DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_MAX_RESULTS = 8
 MAX_QUERY_CHARS = 1000
 SEARCH_CACHE_TTL_SECONDS = max(
@@ -1481,7 +1481,7 @@ async def search_web(
         # request 5 seconds while the orchestrator still used its shorter default
         # budget and returned zero candidates before slower providers completed.
         if isinstance(orchestrator, WebOrchestrator):
-            full_budget = max(1.0, min(6.0, float(timeout_seconds)))
+            full_budget = max(1.0, min(5.0, float(timeout_seconds)))
             search_parameters = inspect.signature(orchestrator.search).parameters
             if "budget_seconds" in search_parameters:
                 result = await orchestrator.search(
@@ -1588,6 +1588,6 @@ def web_search_status():
         ),
         "timeout_seconds": max(
             1.0,
-            min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))),
+            min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))),
         ),
     }
