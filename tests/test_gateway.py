@@ -784,6 +784,8 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
         "kilo-free-text-fallback",
     ]
     assert config.providers[-1].model == "baidu/ernie-5.5-flash-preview:free"
+    assert config.providers[-1].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[-1])
     assert config.providers[-1].url == config.providers[0].url
     assert config.providers[-1].health_url == config.providers[0].health_url
 
@@ -802,5 +804,7 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
     assert config.providers[0].model == "kilo-auto/free"
     assert config.providers[1].name == "kilo-free-text-fallback"
     assert config.providers[1].model == "baidu/ernie-5.5-flash-preview:free"
+    assert config.providers[1].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[1])
     assert config.providers[1].url == config.providers[0].url
     assert config.providers[1].health_url == config.providers[0].health_url
