@@ -931,10 +931,18 @@ async def fetch_page(
     original_url = url.strip()
     current_url = await asyncio.to_thread(validate_public_url, original_url)
     if _is_google_news_wrapper(current_url):
-        current_url = await _resolve_google_news_wrapper(
-            current_url,
-            timeout_seconds=max(0.8, min(2.5, timeout_seconds * 0.45)),
-        )
+        try:
+            current_url = await _resolve_google_news_wrapper(
+                current_url,
+                timeout_seconds=max(0.8, min(2.5, timeout_seconds * 0.45)),
+            )
+        except (WebFetchError, httpx.HTTPError, asyncio.TimeoutError):
+            # Google periodically changes or blocks its signed-link RPC. Do not
+            # discard the candidate here: let the normal bounded direct-fetch
+            # and Reader fallback try the original public URL. Every redirect is
+            # still revalidated, and the caller accepts evidence only when the
+            # final page resolves to a real, fresh publisher article.
+            current_url = original_url
     cache_key=hashlib.sha256(
         f"{current_url}{max_redirects}{max_text_chars}{user_agent}".encode("utf-8")
     ).hexdigest()
