@@ -884,7 +884,46 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
     assert len(ranked) == 1
 
 
-def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
+def test_realtime_strict_news_waits_for_two_independent_provider_families(monkeypatch):
+    async def fast_google_news(query, timeout_seconds, max_results):
+        return [
+            {
+                "title": f"Noticias recientes de Chile {index}",
+                "url": f"https://medio-{index}.example/noticia-chile-{index}",
+                "snippet": "Noticias recientes de Chile con información publicada hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for index in range(1, 4)
+        ]
+
+    async def delayed_bing(query, timeout_seconds, max_results):
+        await asyncio.sleep(0.03)
+        return [{
+            "title": "Noticias recientes de Chile desde otro proveedor",
+            "url": "https://otro-medio.example/noticia-chile",
+            "snippet": "Noticias recientes de Chile con información publicada hoy.",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+        }]
+
+    monkeypatch.setattr("tools.web_search._google_news_search", fast_google_news)
+    monkeypatch.setattr("tools.web_search._bing_search", delayed_bing)
+
+    results, errors, attempted = asyncio.run(
+        SearchEngine(max_results=5)._run_query(
+            ["google_news", "bing"],
+            "noticias recientes en Chile",
+            plan_depth="realtime",
+            timeout_seconds=1,
+            api_key="",
+            fast_mode=False,
+        )
+    )
+
+    assert {provider for provider, _items in results} == {"google_news", "bing"}
+    assert set(attempted) == {"google_news", "bing"}
+
+
+def test_realtime_strict_news_does_not_accept_one_provider_as_quorum(monkeypatch):
     queries = []
 
     async def fake_run_query(self, providers, planned_query, **kwargs):
@@ -919,8 +958,9 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
         )
     )
     assert result["ok"] is True
-    assert len(queries) == 1
-    assert result["queries_executed"] == [queries[0]]
+    assert len(queries) > 1
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["queries_executed"] == queries
 
 
 def test_rank_results_normalizes_ai_and_technology_synonyms():
