@@ -6,6 +6,7 @@ import copy
 import hashlib
 import html
 import inspect
+import logging
 import os
 import re
 import time
@@ -14,6 +15,8 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from tools.web_fetch import validate_public_url
 
@@ -885,28 +888,43 @@ async def _publisher_rss_search(
     per_feed_limit = max(1, min(4, int(max_results)))
 
     async def fetch_feed(domain: str, feed_url: str) -> list[dict]:
-        response = await client.get(
-            feed_url,
-            headers={
-                "User-Agent": "DEEP33-WebSearch/1.0",
-                "Accept": "application/rss+xml,application/xml,text/xml",
-            },
-            timeout=_http_timeout(min(2.5, max(0.8, float(timeout_seconds)))),
-        )
-        items = await _parse_bing_rss(response, per_feed_limit)
-        candidates = []
-        for item in items:
-            url = str(item.get("url") or "").strip()
-            host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
-            if host != domain and not host.endswith("." + domain):
-                continue
-            candidates.append({
-                **item,
-                "provider": "publisher_rss",
-                "provider_sources": ["publisher_rss"],
-                "source_domain": domain,
-            })
-        return candidates
+        try:
+            response = await client.get(
+                feed_url,
+                headers={
+                    "User-Agent": "DEEP33-WebSearch/1.0",
+                    "Accept": "application/rss+xml,application/xml,text/xml",
+                },
+                timeout=_http_timeout(min(2.5, max(0.8, float(timeout_seconds)))),
+            )
+            items = await _parse_bing_rss(response, per_feed_limit)
+            candidates = []
+            for item in items:
+                url = str(item.get("url") or "").strip()
+                host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+                if host != domain and not host.endswith("." + domain):
+                    continue
+                candidates.append({
+                    **item,
+                    "provider": "publisher_rss",
+                    "provider_sources": ["publisher_rss"],
+                    "source_domain": domain,
+                })
+            logger.info(
+                "publisher_rss_feed_fetch domain=%s status=%s parsed=%s accepted=%s",
+                domain,
+                getattr(response, "status_code", "unknown"),
+                len(items),
+                len(candidates),
+            )
+            return candidates
+        except Exception as exc:
+            logger.warning(
+                "publisher_rss_feed_failed domain=%s error=%s",
+                domain,
+                type(exc).__name__,
+            )
+            return []
 
     settled = await asyncio.gather(
         *(fetch_feed(domain, feed_url) for domain, feed_url in PUBLISHER_NEWS_RSS_FEEDS),
@@ -919,6 +937,12 @@ async def _publisher_rss_search(
         merged.extend(result)
         if len(merged) >= max_results:
             break
+    logger.info(
+        "publisher_rss_recovery_complete feeds=%s candidates=%s domains=%s",
+        len(PUBLISHER_NEWS_RSS_FEEDS),
+        len(merged),
+        len({str(item.get("source_domain") or "") for item in merged}),
+    )
     return merged[:max_results]
 
 
