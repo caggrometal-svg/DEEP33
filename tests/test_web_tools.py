@@ -2641,3 +2641,47 @@ def test_force_web_geocodes_only_explicit_current_weather_queries(monkeypatch):
 
     asyncio.run(run("¿Cuál es el clima actual en Santiago?"))
     assert len(calls) == 1
+
+
+def test_web_orchestrator_ranks_against_compacted_semantic_query(monkeypatch):
+    from backend.search import resilient
+
+    query = (
+        "Ejecuta una búsqueda web real sobre el precio internacional del cobre hoy. "
+        "No uses memoria ni datos almacenados; consulta fuentes independientes."
+    )
+    expected_query = resilient.WebOrchestrator._provider_query(query)
+    ranked_queries = []
+
+    def capture_rank_query(rank_query, results, **kwargs):
+        ranked_queries.append(rank_query)
+        return list(results or [])
+
+    async def provider(_query, _timeout, _limit):
+        return [
+            {
+                "title": "Precio internacional del cobre hoy",
+                "url": "https://market-one.example/copper-price",
+                "source_domain": "market-one.example",
+                "snippet": "Cotización internacional del cobre y evolución del precio.",
+            },
+            {
+                "title": "Mercado mundial del cobre",
+                "url": "https://market-two.example/copper-market",
+                "source_domain": "market-two.example",
+                "snippet": "Precio del cobre en los mercados internacionales.",
+            },
+        ]
+
+    monkeypatch.setattr(resilient, "rank_results", capture_rank_query)
+    orchestrator = resilient.WebOrchestrator(max_results=8, global_budget_seconds=2.0)
+    orchestrator.providers = {"bing": provider, "google": provider}
+    orchestrator.fallback_providers = {}
+
+    result = asyncio.run(orchestrator.search(query, fresh=True, budget_seconds=2.0))
+
+    assert result["ok"] is True
+    assert ranked_queries
+    assert all(value == expected_query for value in ranked_queries)
+    assert "memoria" not in expected_query.casefold()
+    assert "ejecuta" not in expected_query.casefold()
