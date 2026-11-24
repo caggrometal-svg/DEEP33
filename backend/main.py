@@ -1759,6 +1759,20 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
     return ranked
 
 
+def _candidate_provider_names(raw: dict[str, Any], default_provider: str) -> list[str]:
+    """Return non-empty provider provenance, falling back to the candidate's source."""
+    names = raw.get("provider_sources")
+    if not isinstance(names, list) or not names:
+        names = raw.get("providers")
+    if not isinstance(names, list) or not names:
+        names = [default_provider]
+    return list(dict.fromkeys(
+        str(name).strip()
+        for name in names
+        if str(name or "").strip()
+    ))
+
+
 def _source_from_result(result):
     items=result.get("results")
     if isinstance(items,list):
@@ -3773,21 +3787,13 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     ):
                         continue
                     candidate_provider = str(raw.get("provider") or "google_news")
-                    candidate_providers = raw.get("provider_sources")
-                    if not isinstance(candidate_providers, list) or not candidate_providers:
-                        candidate_providers = raw.get("providers")
-                    if not isinstance(candidate_providers, list) or not candidate_providers:
-                        candidate_providers = [candidate_provider]
+                    candidate_providers = _candidate_provider_names(raw, candidate_provider)
                     candidate = {
                         "title": str(raw.get("title") or url)[:300],
                         "url": url[:2000],
                         "snippet": str(raw.get("snippet") or "")[:1000],
                         "provider": candidate_provider,
-                        "providers": list(dict.fromkeys(
-                            str(name).strip()
-                            for name in candidate_providers
-                            if str(name or "").strip()
-                        )),
+                        "providers": candidate_providers,
                         "source_domain": domain[:255],
                         "published_at": published_at,
                     }
