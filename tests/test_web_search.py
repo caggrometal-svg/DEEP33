@@ -135,6 +135,42 @@ def test_google_news_query_does_not_depend_on_when_operator(monkeypatch):
     assert results[0]["source_domain"] == "www.cooperativa.cl"
 
 
+def test_google_news_article_requires_matching_bing_title_and_domain_for_quorum(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    candidate = {
+        "provider": "google_news",
+        "provider_sources": ["google_news"],
+        "source_domain": "www.latercera.com",
+        "title": "Presupuesto: diputados PC y DC ratifican acuerdos con Quiroz",
+        "url": "https://news.google.com/rss/articles/example",
+    }
+    calls = []
+
+    async def fake_bing(query, timeout, limit):
+        calls.append(query)
+        return [{
+            "provider": "bing",
+            "source_domain": "latercera.com",
+            "title": "Presupuesto: diputados PC y DC ratifican acuerdos con Quiroz",
+            "url": "https://www.latercera.com/politica/noticia/presupuesto/ARTICLE/",
+        }]
+
+    monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing)
+    asyncio.run(
+        module._corroborate_google_news_candidates_with_bing(
+            [candidate],
+            1.5,
+            max_candidates=2,
+        )
+    )
+
+    assert calls and "site:www.latercera.com" in calls[0]
+    assert candidate["provider_sources"] == ["bing", "google_news"]
+    assert candidate["providers"] == ["bing", "google_news"]
+
+
 def test_google_news_top_stories_adapter_returns_publisher_linked_candidates(monkeypatch):
     import tools.web_search as module
 
