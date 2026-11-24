@@ -1969,6 +1969,42 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
     asyncio.run(exercise())
 
 
+def test_recovered_provider_provenance_updates_quorum_without_counting_rss():
+    import backend.main as main
+
+    search_result = {
+        "providers": ["bing", "duckduckgo"],
+        "verification": {
+            "distinct_providers": 1,
+            "provider_quorum_met": False,
+        },
+    }
+    main._merge_recovered_provider_provenance(
+        search_result,
+        [{
+            "provider": "google_news",
+            "provider_sources": ["google_news", "mwmbl"],
+        }],
+    )
+    assert search_result["verification"]["distinct_providers"] == 3
+    assert search_result["verification"]["provider_quorum_met"] is True
+    assert {"bing", "google_news", "mwmbl"}.issubset(set(search_result["providers"]))
+
+    rss_only = {
+        "providers": ["bing", "duckduckgo"],
+        "verification": {
+            "distinct_providers": 1,
+            "provider_quorum_met": False,
+        },
+    }
+    main._merge_recovered_provider_provenance(
+        rss_only,
+        [{"provider": "publisher_rss", "provider_sources": ["publisher_rss"]}],
+    )
+    assert rss_only["verification"]["distinct_providers"] == 1
+    assert rss_only["verification"]["provider_quorum_met"] is False
+
+
 def test_candidate_provider_names_falls_back_when_provenance_lists_are_empty():
     import backend.main as main
 
