@@ -2,6 +2,9 @@ name: Render Connectivity Diagnostics
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/render-connectivity-diagnostics.yml'
   schedule:
     - cron: "17,47 * * * *"
 
