@@ -1217,6 +1217,11 @@ def test_chile_commercial_site_fallback_returns_official_navigation_candidates_w
             "https://ww2.movistar.cl/empresas/",
         }
         assert result["ok"] is True, result
+        assert result["status"] == "PARTIAL"
+        assert result["diagnostic_code"] == "INSUFFICIENT_PROVIDER_QUORUM"
+        assert result["verification"]["provider_quorum_met"] is False
+        assert result["verification"]["navigation_only"] is True
+        assert result["verification"]["evidence_status"] == "NAVIGATION_ONLY"
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
