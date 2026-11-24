@@ -917,6 +917,8 @@ class WebOrchestrator:
             deadline,
             loop.time() + max(0.05, effective_budget * 0.55),
         )
+        # Use the same compact semantic query for provider retrieval and ranking;
+        # instruction boilerplate must not become relevance anchors.
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
         strict_news_request = is_strict_news_query(cleaned)
@@ -931,7 +933,7 @@ class WebOrchestrator:
                 if outcome.ok
                 and outcome.results
                 and rank_results(
-                    cleaned,
+                    provider_query,
                     outcome.results,
                     realtime=is_realtime_query(cleaned),
                 )
@@ -1322,7 +1324,7 @@ class WebOrchestrator:
                     if outcome.ok
                     for item in outcome.results
                 ]
-                ranked_now = rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned))
+                ranked_now = rank_results(provider_query, merged_now, realtime=is_realtime_query(cleaned))
                 selected_now = deduplicate(ranked_now, self.max_results)
                 distinct_domains = {
                     item.get("source_domain") or ""
@@ -1384,7 +1386,7 @@ class WebOrchestrator:
             if outcome.ok
             for item in outcome.results
         ]
-        ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+        ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
 
         # Official/public-information discovery is a special case where one broad
@@ -1447,7 +1449,7 @@ class WebOrchestrator:
                         for item in outcome.results
                     ]
                     selected_now = deduplicate(
-                        rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned)),
+                        rank_results(provider_query, merged_now, realtime=is_realtime_query(cleaned)),
                         self.max_results,
                     )
                     distinct_domains_now = {
@@ -1472,7 +1474,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
 
         recovery_query = self._recovery_query(cleaned)
@@ -1596,7 +1598,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
             if selected:
                 provider_query = recovery_query
@@ -1702,7 +1704,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
 
             # The strict relevance ranker can legitimately prefer two headlines
@@ -1860,7 +1862,7 @@ class WebOrchestrator:
                     if outcome.ok
                     for item in outcome.results
                 ]
-                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains = {
                     str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
@@ -1910,7 +1912,7 @@ class WebOrchestrator:
             # If a valid WHO fact sheet was found, preserve it in the final set even
             # when higher-volume CDC/PAHO results otherwise occupy every slot.
             who_candidates = [
-                item for item in rank_results(cleaned, merged, realtime=False)
+                item for item in rank_results(provider_query, merged, realtime=False)
                 if _is_who_dengue_item(item)
             ]
             if who_candidates:
@@ -1935,7 +1937,7 @@ class WebOrchestrator:
                     )
                 ]
                 merged.extend(dict(item) for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
-                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains_after_portal_fallback = {
                     str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
