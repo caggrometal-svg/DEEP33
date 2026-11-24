@@ -2606,3 +2606,38 @@ def test_realtime_provider_query_preserves_country_when_compacting() -> None:
     assert "dólar" in provider_query or "dolar" in provider_query
     assert len(provider_query.split()) <= 10
 
+
+
+def test_force_web_geocodes_only_explicit_current_weather_queries(monkeypatch):
+    import backend.main as main
+
+    calls = []
+
+    async def fake_weather_resolver(*args, **kwargs):
+        calls.append(args)
+        return None
+
+    async def fake_prepare_web_evidence(*args, **kwargs):
+        return None, [], [], []
+
+    monkeypatch.setattr(main, "resolve_gps_weather", fake_weather_resolver)
+    monkeypatch.setattr(main, "prepare_web_evidence", fake_prepare_web_evidence)
+
+    async def run(query):
+        return await main.run_web_tool_loop(
+            [{"role": "user", "content": query}],
+            model="kilo-auto/free",
+            max_tokens=128,
+            request_id="weather-routing-contract",
+            idempotency_key="weather-routing-contract",
+            force_web=True,
+            deadline=None,
+            personality=main.DEFAULT_PERSONALITY,
+            weather=None,
+        )
+
+    asyncio.run(run("Busca el precio internacional del cobre hoy"))
+    assert calls == []
+
+    asyncio.run(run("¿Cuál es el clima actual en Santiago?"))
+    assert len(calls) == 1
