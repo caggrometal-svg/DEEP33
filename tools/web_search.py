@@ -931,11 +931,20 @@ async def _publisher_rss_search(
         *(fetch_feed(domain, feed_url) for domain, feed_url in PUBLISHER_NEWS_RSS_FEEDS),
         return_exceptions=True,
     )
+    feed_batches = [
+        result
+        for result in settled
+        if isinstance(result, list) and result
+    ]
+    # Round-robin across publisher feeds so the result cap does not let the
+    # first high-volume outlet crowd every other editorial domain out.
     merged: list[dict] = []
-    for result in settled:
-        if isinstance(result, BaseException) or not isinstance(result, list):
-            continue
-        merged.extend(result)
+    for item_index in range(per_feed_limit):
+        for batch in feed_batches:
+            if item_index < len(batch):
+                merged.append(batch[item_index])
+                if len(merged) >= max_results:
+                    break
         if len(merged) >= max_results:
             break
     logger.info(
