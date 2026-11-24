@@ -3941,7 +3941,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 + publisher_sources[2:]
                 + search_sources[2:]
             )
-        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))
+        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "8"))
         max_fetch_candidates = (
             max(3, min(8, configured_fetch_candidates))
             if strict_news_request
@@ -4218,31 +4218,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in resolved_results
             if str(item.get("url") or "").startswith("https://")
         }
-        # The orchestrator reports providers that successfully returned a
-        # response. Editorial independence is proven separately by three dated,
-        # extracted publisher domains; article metadata may retain one feed's
-        # adapter label even when multiple search providers contributed to discovery.
-        valid_news_provider_families: set[str] = set()
-        for page in evidence_fetched_pages:
-            names = (
-                page.get("providers")
-                if isinstance(page.get("providers"), list)
-                else [page.get("provider")]
-            )
-            valid_news_provider_families.update(
-                family
-                for family in (
-                    _independent_search_provider_family(str(name or ""))
-                    for name in names
-                )
-                if family
-            )
+        # The search orchestrator already verifies two independent provider
+        # families against relevant live candidates. Publisher RSS contributes
+        # additional dated, extracted articles but is not itself a search index;
+        # requiring two provider labels again on the fetched pages incorrectly
+        # rejects valid three-publisher evidence discovered by a verified quorum.
         news_quorum_met = (
             not strict_news_request
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
-                and len(valid_news_provider_families) >= 2
+                and discovery_provider_quorum
             )
         )
         final_ok = (
