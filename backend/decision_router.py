@@ -184,18 +184,12 @@ def classify_query(query: str) -> Decision:
             DecisionRoute.SEISMIC, 0.99,
             "seismic_data_is_time_sensitive", cleaned, 15.0,
         )
-    if _FINANCE_RE.search(cleaned) and _REALTIME_RE.search(cleaned):
-        return Decision(
-            DecisionRoute.FINANCE, 0.99,
-            "financial_quote_is_time_sensitive", cleaned, 20.0,
-        )
     if _FINANCE_RE.search(cleaned) and (
-        re.search(r"\b(?:d[oó]lar|dolar|tipo de cambio|cotizaci[oó]n|uf|utm)\b", lowered)
-        or _PRICE_RE.search(cleaned)
+        _REALTIME_RE.search(cleaned) or _PRICE_RE.search(cleaned)
     ):
         return Decision(
-            DecisionRoute.FINANCE, 0.95,
-            "financial_indicator_should_use_live_data", cleaned, 20.0,
+            DecisionRoute.FINANCE, 0.99,
+            "financial_quote_requires_live_source", cleaned, 20.0,
         )
     if _RESEARCH_RE.search(cleaned) or _REALTIME_RE.search(cleaned):
         return Decision(
@@ -779,4 +773,3 @@ class UniversalDecisionRouter:
 
 
 universal_router = UniversalDecisionRouter()
-_PRICE_RE = re.compile(r"\\b(?:precio|valor|cotizaci[oó]n|cu[aá]nto vale|cu[aá]nto est[aá])\\b", re.I)
