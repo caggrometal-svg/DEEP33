@@ -29,6 +29,10 @@ services:
         value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
         value: "2"
+      - key: WEB_SEARCH_MOJEEK_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_MAX_RESULTS
+        value: "8"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -62,6 +66,10 @@ services:
         value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
         value: "2"
+      - key: WEB_SEARCH_MOJEEK_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_MAX_RESULTS
+        value: "8"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -95,6 +103,10 @@ services:
         value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
         value: "2"
+      - key: WEB_SEARCH_MOJEEK_ENABLED
+        value: "true"
+      - key: WEB_SEARCH_MAX_RESULTS
+        value: "8"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
