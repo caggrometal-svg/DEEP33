@@ -865,6 +865,59 @@ async def _bing_recent_news_search(
     return [{**item, "provider": "bing"} for item in results]
 
 
+PUBLISHER_NEWS_RSS_FEEDS = (
+    ("latercera.com", "https://www.latercera.com/arcio/rss/"),
+    ("cooperativa.cl", "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml"),
+)
+
+
+async def _publisher_rss_search(
+    query: str,
+    timeout_seconds: float,
+    max_results: int,
+) -> list[dict]:
+    """Recover dated direct publisher articles when general search RSS is sparse."""
+    client = await _search_http_client()
+    per_feed_limit = max(1, min(4, int(max_results)))
+
+    async def fetch_feed(domain: str, feed_url: str) -> list[dict]:
+        response = await client.get(
+            feed_url,
+            headers={
+                "User-Agent": "DEEP33-WebSearch/1.0",
+                "Accept": "application/rss+xml,application/xml,text/xml",
+            },
+            timeout=_http_timeout(min(2.5, max(0.8, float(timeout_seconds)))),
+        )
+        items = await _parse_bing_rss(response, per_feed_limit)
+        candidates = []
+        for item in items:
+            url = str(item.get("url") or "").strip()
+            host = (urlparse(url).hostname or "").casefold().removeprefix("www.")
+            if host != domain and not host.endswith("." + domain):
+                continue
+            candidates.append({
+                **item,
+                "provider": "publisher_rss",
+                "provider_sources": ["publisher_rss"],
+                "source_domain": domain,
+            })
+        return candidates
+
+    settled = await asyncio.gather(
+        *(fetch_feed(domain, feed_url) for domain, feed_url in PUBLISHER_NEWS_RSS_FEEDS),
+        return_exceptions=True,
+    )
+    merged: list[dict] = []
+    for result in settled:
+        if isinstance(result, BaseException) or not isinstance(result, list):
+            continue
+        merged.extend(result)
+        if len(merged) >= max_results:
+            break
+    return merged[:max_results]
+
+
 async def search_recent_news_candidates(
     query: str,
     *,
@@ -891,14 +944,18 @@ async def search_recent_news_candidates(
             for domain in publisher_domains
         )
 
-    jobs = [
-        _google_news_search(cleaned, budget, limit),
+    jobs: list[tuple[str, str | None, Any]] = [
+        ("google_news", None, _google_news_search(cleaned, budget, limit)),
         *(
-            _bing_recent_news_search(search_query, budget, limit)
-            for search_query, _expected_domain in queries
+            ("bing", expected_domain, _bing_recent_news_search(search_query, budget, limit))
+            for search_query, expected_domain in queries
         ),
+        ("publisher_rss", None, _publisher_rss_search(cleaned, budget, limit)),
     ]
-    settled = await asyncio.gather(*jobs, return_exceptions=True)
+    settled = await asyncio.gather(
+        *(job[2] for job in jobs),
+        return_exceptions=True,
+    )
     # Reject dated but stale Google News items here. Otherwise its first batch
     # can fill the candidate limit and prevent independent Bing RSS recovery
     # from being considered at all.
@@ -906,11 +963,9 @@ async def search_recent_news_candidates(
 
     merged: list[dict] = []
     by_url: dict[str, dict] = {}
-    for index, result in enumerate(settled):
+    for (default_provider, expected_domain, _job), result in zip(jobs, settled):
         if isinstance(result, BaseException) or not isinstance(result, list):
             continue
-        default_provider = "google_news" if index == 0 else "bing"
-        expected_domain = queries[index - 1][1] if index > 0 else None
         for item in result:
             if not isinstance(item, dict):
                 continue
