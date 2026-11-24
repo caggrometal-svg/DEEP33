@@ -176,7 +176,9 @@ class GatewayConfig:
                     name="kilo-free-text-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
-                    api_key=kilo_provider.api_key,
+                    # Kilo explicitly permits anonymous access to :free models.
+                    # Do not forward a rejected/expired primary credential to the fallback.
+                    api_key="",
                     model="baidu/ernie-5.5-flash-preview:free",
                 ),
             )
