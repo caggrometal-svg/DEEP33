@@ -742,8 +742,12 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             "text_chars": 280,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     started = time.perf_counter()
@@ -890,8 +894,12 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
             "text_chars": 390,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(
