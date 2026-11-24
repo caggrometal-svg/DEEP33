@@ -239,10 +239,9 @@ def _recent_news_quorum_summary(
         reported_provider_count = 0
     page_provider_families: set[str] = set()
     for page in valid_pages:
-        names = (
-            page.get("providers")
-            if isinstance(page.get("providers"), list)
-            else [page.get("provider")]
+        names = _candidate_provider_names(
+            page,
+            str(page.get("provider") or ""),
         )
         page_provider_families.update(
             family
@@ -1773,6 +1772,50 @@ def _candidate_provider_names(raw: dict[str, Any], default_provider: str) -> lis
     ))
 
 
+def _merge_recovered_provider_provenance(
+    search_result: dict[str, Any],
+    recovered_candidates: list[dict[str, Any]],
+) -> None:
+    """Merge only verified independent-index provenance into search quorum metadata."""
+    if not isinstance(search_result, dict):
+        return
+    existing = search_result.get("providers")
+    provider_names = {
+        str(name).strip()
+        for name in (existing if isinstance(existing, list) else [search_result.get("provider")])
+        if str(name or "").strip()
+    }
+    for candidate in recovered_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        provider_names.update(
+            _candidate_provider_names(
+                candidate,
+                str(candidate.get("provider") or ""),
+            )
+        )
+    families = {
+        family
+        for family in (
+            _independent_search_provider_family(name)
+            for name in provider_names
+        )
+        if family
+    }
+    search_result["providers"] = sorted(provider_names)
+    verification = search_result.get("verification")
+    if not isinstance(verification, dict):
+        verification = {}
+    try:
+        previous_count = int(verification.get("distinct_providers") or 0)
+    except (TypeError, ValueError):
+        previous_count = 0
+    verification["distinct_providers"] = max(previous_count, len(families))
+    if len(families) >= 2:
+        verification["provider_quorum_met"] = True
+    search_result["verification"] = verification
+
+
 def _source_from_result(result):
     items=result.get("results")
     if isinstance(items,list):
@@ -2288,6 +2331,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 max_results=8,
             )
             recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
+            recovered_provider_candidates: list[dict[str, Any]] = []
             for raw in recent_candidates:
                 if not isinstance(raw, dict):
                     continue
@@ -2310,11 +2354,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 ):
                     continue
                 recovered_provider = str(raw.get("provider") or "google_news")
-                recovered_providers = raw.get("provider_sources")
-                if not isinstance(recovered_providers, list):
-                    recovered_providers = raw.get("providers")
-                if not isinstance(recovered_providers, list):
-                    recovered_providers = [recovered_provider]
+                recovered_providers = _candidate_provider_names(raw, recovered_provider)
                 recovered = {
                     "title": str(raw.get("title") or url)[:300],
                     "url": url[:2000],
@@ -2329,6 +2369,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                     "published_at": published_at,
                 }
                 sources[url] = recovered
+                recovered_provider_candidates.append(recovered)
                 compact_search_results.append({
                     "title": recovered["title"],
                     "url": recovered["url"],
@@ -2337,11 +2378,13 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                     "provider": recovered["provider"],
                 })
                 recent_domains.add(domain)
+            _merge_recovered_provider_provenance(search_result, recovered_provider_candidates)
             logger.info(
-                "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s",
                 request_id or "unknown",
                 len(recent_domains),
                 len(sources),
+                search_result.get("providers", []),
             )
         except Exception as rescue_exc:
             logger.warning(
@@ -3753,6 +3796,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     max_results=8,
                 )
                 recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
+                recovered_provider_candidates: list[dict[str, Any]] = []
                 for raw in recent_candidates:
                     if not isinstance(raw, dict):
                         continue
@@ -3799,7 +3843,9 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     }
                     candidate["relevance_score"] = score_result(q, candidate)
                     candidate_sources.append(candidate)
+                    recovered_provider_candidates.append(candidate)
                     candidate_domains.add(domain)
+                _merge_recovered_provider_provenance(search_result, recovered_provider_candidates)
                 recovery_providers = sorted({
                     str(item.get("provider") or "unknown")
                     for item in recent_candidates
