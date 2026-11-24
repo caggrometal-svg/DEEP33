@@ -929,9 +929,14 @@ async def search_recent_news_candidates(
             # separately identifying the publisher in <source url="...">.
             # Validate the publisher metadata when present; checking the wrapper
             # hostname here discarded every targeted publisher recovery result.
-            publisher_domain = str(
-                item.get("source_domain") or hostname
+            source_domain = str(
+                item.get("source_domain") or ""
             ).casefold().removeprefix("www.").rstrip(".")
+            bing_click_host = hostname == "bing.com" or hostname.endswith(".bing.com")
+            # Trust the RSS <source> host only while the link is still a Bing
+            # click-through. For a direct URL, its actual hostname must match
+            # the requested publisher; mismatched metadata is not evidence.
+            publisher_domain = source_domain if bing_click_host and source_domain else hostname
             if (
                 expected_domain
                 and publisher_domain != expected_domain
