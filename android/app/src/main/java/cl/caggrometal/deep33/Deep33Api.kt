@@ -493,7 +493,8 @@ object Deep33Api {
                         }
                     }
 
-                    if (!sawDone || !emitted || output.toString().isBlank()) {
+                    // A clean SSE EOF is valid even when the server omits the optional [DONE] frame.
+                    if (!emitted || output.toString().isBlank()) {
                         throw Deep33ApiException(
                             Deep33ApiException.Kind.BAD_RESPONSE,
                             statusCode = 502,
