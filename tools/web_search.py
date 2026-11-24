@@ -847,6 +847,21 @@ async def _google_news_search(query, timeout_seconds, max_results):
     # Google News uses standard RSS; reuse the bounded XML parser and URL checks.
     return await _parse_bing_rss(response, max_results)
 
+async def _google_news_top_stories_search(timeout_seconds, max_results):
+    """Recover current Chile headlines from Google's country-scoped top-stories RSS."""
+    client = await _search_http_client()
+    response = await client.get(
+        "https://news.google.com/rss",
+        params={"hl": "es-419", "gl": "CL", "ceid": "CL:es-419"},
+        headers={
+            "User-Agent": "DEEP33-WebSearch/1.0",
+            "Accept": "application/rss+xml,application/xml,text/xml",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    results = await _parse_bing_rss(response, max_results)
+    return [{**item, "provider": "google_news"} for item in results]
+
 
 async def _bing_recent_news_search(
     query: str,
@@ -988,6 +1003,15 @@ async def search_recent_news_candidates(
             "publisher_rss",
             None,
             _publisher_rss_search(cleaned, budget, min(limit, 4)),
+        ))
+        # A country-scoped top-stories feed is a separate recovery path from
+        # query RSS. It supplies additional publisher domains when Google News
+        # search-by-query is sparse; article freshness/relevance is still
+        # validated after extraction and it cannot satisfy evidence alone.
+        jobs.append((
+            "google_news",
+            None,
+            _google_news_top_stories_search(budget, min(limit, 8)),
         ))
         # Mwmbl contributes an independent index. Its SERP may be undated;
         # the final article fetch must extract and validate publication time.
