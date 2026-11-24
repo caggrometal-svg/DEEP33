@@ -182,6 +182,50 @@ def test_publisher_rss_fallback_extracts_dated_direct_articles(monkeypatch):
     assert all(item["published_at"] for item in candidates)
 
 
+def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
+    import backend.main as main
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    candidates = [
+        {
+            "title": "Actualidad nacional: nueva medida del Gobierno",
+            "url": "https://www.theclinic.cl/2026/11/23/actualidad-nacional/",
+            "source_domain": "theclinic.cl",
+            "provider": "publisher_rss",
+            "published_at": published_at,
+            "snippet": "Información reciente publicada por un medio chileno.",
+        },
+        {
+            "title": "Presupuesto 2027 y cambios del Congreso",
+            "url": "https://www.latercera.com/nacional/noticia/presupuesto-2027/",
+            "source_domain": "latercera.com",
+            "provider": "publisher_rss",
+            "published_at": published_at,
+            "snippet": "Información reciente sobre Chile y el Congreso.",
+        },
+        {
+            "title": "Página genérica de noticias",
+            "url": "https://www.chicureohoy.cl/",
+            "source_domain": "chicureohoy.cl",
+            "provider": "bing",
+            "published_at": published_at,
+            "snippet": "Portada general.",
+        },
+    ]
+
+    monkeypatch.setattr(main, "rank_results", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(main, "_is_recently_published", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(main, "score_result", lambda *_args, **_kwargs: 0.1)
+
+    ranked = main._rank_recent_news_candidates("noticias de Chile hoy", candidates)
+
+    assert {item["source_domain"] for item in ranked} == {
+        "theclinic.cl",
+        "latercera.com",
+    }
+    assert all(item["provider"] == "publisher_rss" for item in ranked)
+
+
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     from backend.search.resilient import WebOrchestrator
 
