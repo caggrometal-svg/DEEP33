@@ -398,8 +398,13 @@ def test_edge_provider_quorum_ignores_aggregate_and_wikipedia_provenance():
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert 'if (name.includes("wikipedia")) return "";' in source
-        coverage = source.split("const sufficientSearchCoverage", 1)[1].split(
-            "\n  };", 1
-        )[0]
+        if "const metrics =" in source:
+            coverage = source.split("const metrics =", 1)[1].split(
+                "const sufficientSearchCoverage", 1
+            )[0]
+        else:
+            coverage = source.split("const sufficientSearchCoverage", 1)[1].split(
+                "\n  };", 1
+            )[0]
         assert "new Set(edgeProvidersForResults(results))" in coverage
         assert "result.providers" not in coverage
