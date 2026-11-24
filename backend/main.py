@@ -2336,6 +2336,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     )
     candidates: list[dict[str, Any]] = []
     seen_candidate_urls: set[str] = set()
+    seen_candidate_domains: set[str] = set()
     source_candidates = list(sources.values())
     if is_strict_news_query(query):
         def _chat_news_provider_priority(source: dict[str, Any]) -> int:
@@ -2372,16 +2373,20 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     for source in source_candidates:
         source_url = str(source.get("url") or "").strip()
+        source_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
+        if not source_host:
+            source_host = (urlparse(source_url).hostname or "").casefold().removeprefix("www.")
+        strict_news = is_strict_news_query(query)
         if (
             not source_url
             or source_url in seen_candidate_urls
-            or (
-                is_strict_news_query(query)
-                and urlparse(source_url).scheme.lower() != "https"
-            )
+            or not source_host
+            or (not strict_news and source_host in seen_candidate_domains)
+            or (strict_news and urlparse(source_url).scheme.lower() != "https")
         ):
             continue
         seen_candidate_urls.add(source_url)
+        seen_candidate_domains.add(source_host)
         candidates.append(source)
         if len(candidates) >= candidate_limit:
             break
