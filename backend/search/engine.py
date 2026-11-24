@@ -1080,6 +1080,45 @@ def rank_results(
     return ranked
 
 
+def validate_realtime_evidence(query: str, items: list[dict]) -> dict:
+    """Validate freshness, relevance, editorial domains, and independent indexes."""
+    fresh = [
+        item
+        for item in rank_results(query, items, realtime=True)
+        if _is_recently_published(item, query)
+        and float(item.get("score") or 0.0) >= 0.28
+    ]
+    domains = {
+        str(item.get("source_domain") or _host(str(item.get("url") or ""))).casefold().removeprefix("www.")
+        for item in fresh
+    } - {""}
+    provider_families = set()
+    for item in fresh:
+        names = item.get("providers")
+        if not isinstance(names, list) or not names:
+            names = [item.get("provider")]
+        provider_families.update(
+            family
+            for family in (_independent_provider_family(str(name or "")) for name in names)
+            if family
+        )
+    return {
+        "fresh_items": fresh,
+        "domains": len(domains),
+        "providers": len(provider_families),
+        "ok": len(fresh) >= 3 and len(domains) >= 3 and len(provider_families) >= 2,
+    }
+
+
+def _requires_research_contrast(query: str) -> bool:
+    return bool(re.search(
+        r"\\b(?:investiga(?:r|ci[oó]n)?|research|contrasta(?:r)?|contrast|"
+        r"compara(?:r|ci[oó]n)?|compare|an[aá]lisis comparativo|comparative analysis)\\b",
+        str(query or ""),
+        re.IGNORECASE,
+    ))
+
+
 def _text_score(query_tokens: list[str], item: dict) -> float:
     title = str(item.get("title") or "").lower()
     snippet = str(item.get("snippet") or "").lower()
@@ -1671,10 +1710,7 @@ class SearchEngine:
                     successful.append((rescue, provider_used, items))
 
         merged = []
-        providers_used = []
         for planned_query, name, items in successful:
-            if name not in providers_used:
-                providers_used.append(name)
             for item in items:
                 merged.append({
                     **item,
@@ -1688,11 +1724,46 @@ class SearchEngine:
             realtime=plan.depth == "realtime",
         )
         selected = deduplicate(ranked, self.max_results)
+        strict_news_request = is_strict_news_query(plan.original_query)
+        research_contrast_request = _requires_research_contrast(plan.original_query)
+        realtime_evidence = (
+            validate_realtime_evidence(plan.original_query, selected)
+            if strict_news_request
+            else None
+        )
+        if realtime_evidence is not None:
+            selected = realtime_evidence["fresh_items"]
         distinct_domains = sorted({
-            _host(str(item.get("url") or ""))
+            _host(str(item.get("url") or "")).removeprefix("www.")
             for item in selected
             if _host(str(item.get("url") or ""))
         })
+        relevant_provider_names = []
+        relevant_provider_families = set()
+        for item in selected:
+            names = item.get("providers")
+            if not isinstance(names, list) or not names:
+                names = [item.get("provider")]
+            for name in names:
+                raw_name = str(name or "").strip()
+                family = _independent_provider_family(raw_name)
+                if raw_name and raw_name not in relevant_provider_names:
+                    relevant_provider_names.append(raw_name)
+                if family:
+                    relevant_provider_families.add(family)
+        providers_used = relevant_provider_names
+        required_domains = 3 if strict_news_request else 2 if research_contrast_request else 1
+        domain_quorum_met = len(distinct_domains) >= required_domains
+        provider_quorum_met = (
+            realtime_evidence["ok"]
+            if realtime_evidence is not None
+            else bool(relevant_provider_families)
+        )
+        result_quorum_met = (
+            realtime_evidence["ok"]
+            if realtime_evidence is not None
+            else bool(selected) and domain_quorum_met
+        )
         corroborated = sum(1 for item in selected if item.get("corroborated"))
         if corroborated:
             verification_level = "corroborated"
@@ -1704,7 +1775,7 @@ class SearchEngine:
             verification_level = "none"
 
         return {
-            "ok": bool(selected),
+            "ok": result_quorum_met,
             "realtime": plan.depth == "realtime",
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "engine": "DEEP33 Search Engine",
@@ -1725,7 +1796,11 @@ class SearchEngine:
             "verification": {
                 "level": verification_level,
                 "distinct_domains": len(distinct_domains),
-                "distinct_providers": len(providers_used),
+                "distinct_providers": len(relevant_provider_families),
+                "required_domains": required_domains,
+                "domain_quorum_met": domain_quorum_met,
+                "provider_quorum_met": provider_quorum_met,
+                "fresh_news_items": len(realtime_evidence["fresh_items"]) if realtime_evidence is not None else 0,
                 "corroborated_results": corroborated,
             },
             "errors": errors[:8],
