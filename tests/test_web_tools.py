@@ -216,7 +216,6 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
             "url": "https://news.google.com/rss/articles/current-chile-article",
             "source_domain": "cooperativa.cl",
             "provider": "google_news",
-            "published_at": published_at,
             "snippet": "Información reciente de Chile y actualidad nacional.",
         },
         {
