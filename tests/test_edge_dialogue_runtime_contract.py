@@ -371,7 +371,9 @@ def test_edge_search_requires_independent_provider_provenance():
         assert "existing.provider_sources = [...new Set([...priorProviders, ...incomingProviders])];" in source
         assert "independentOnly = false" in source
         assert 'provider.name !== "google_public"' in source
-        assert "const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;" in source
+        assert "const coverageRequirements = edgeCoverageRequirements(plan.original);" in source
+        assert "if (edgeCurrentNewsQuery(query)) return { results: 3, domains: 3, providers: 2 };" in source
+        assert "if (edgeResearchContrastQuery(query)) return { results: 2, domains: 2, providers: 1 };" in source
         assert "provider_quorum_met: providerQuorumMet" in source
         assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
         assert "providerSources" not in source
