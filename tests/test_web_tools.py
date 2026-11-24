@@ -159,6 +159,11 @@ def test_publisher_rss_fallback_extracts_dated_direct_articles(monkeypatch):
         return FakeClient()
 
     monkeypatch.setattr(module, "_search_http_client", fake_http_client)
+    monkeypatch.setattr(
+        module,
+        "PUBLISHER_NEWS_RSS_FEEDS",
+        tuple((domain, feed_url) for feed_url, (domain, _article_url) in feeds.items()),
+    )
 
     candidates = asyncio.run(
         module._publisher_rss_search(
