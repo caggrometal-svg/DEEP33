@@ -2059,8 +2059,17 @@ class WebOrchestrator:
         winner = next((o.provider for o in relevant_outcomes), None)
         strict_news_request = is_strict_news_query(query)
         research_contrast_request = _requires_research_contrast(query)
+        lowered_query = str(query or "").casefold()
+        chile_public_info_request = (
+            "chile" in lowered_query
+            and any(term in lowered_query for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            ))
+        )
         required_providers = (
-            1 if not strict_news_request and (research_contrast_request or chile_public_info_intent)
+            1 if not strict_news_request and (research_contrast_request or chile_public_info_request)
             else 2
         )
         provider_quorum_met = len(provider_families) >= required_providers
