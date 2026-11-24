@@ -2247,7 +2247,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 if published_at:
                     if not _is_recently_published(raw, query):
                         continue
-                elif recovered_provider != "mwmbl":
+                elif recovered_provider not in {"mwmbl", "google_news"}:
                     continue
                 url = str(raw.get("url") or "").strip()
                 domain = str(
@@ -3707,7 +3707,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     if published_at:
                         if not _is_recently_published(raw, q):
                             continue
-                    elif recovered_provider != "mwmbl":
+                    elif recovered_provider not in {"mwmbl", "google_news"}:
                         continue
                     url = str(raw.get("url") or "").strip()
                     domain = str(
