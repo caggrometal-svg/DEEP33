@@ -1667,6 +1667,46 @@ def _tool_calls_from_message(message):
     calls=message.get("tool_calls")
     return [c for c in calls if isinstance(c,dict)] if isinstance(calls,list) else []
 
+def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
+    """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
+    items = [item for item in candidates if isinstance(item, dict)]
+    ranked = rank_results(query, items, realtime=True)
+    if "chile" not in str(query or "").casefold():
+        return ranked
+
+    seen_urls = {
+        str(item.get("url") or "").strip()
+        for item in ranked
+        if str(item.get("url") or "").strip()
+    }
+    for item in items:
+        if str(item.get("provider") or "").casefold() != "publisher_rss":
+            continue
+        url = str(item.get("url") or "").strip()
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").casefold().removeprefix("www.")
+        source_domain = str(item.get("source_domain") or "").casefold().removeprefix("www.")
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if (
+            not url
+            or url in seen_urls
+            or parsed.scheme.lower() != "https"
+            or not host
+            or not source_domain
+            or (host != source_domain and not host.endswith("." + source_domain))
+            or len(path_parts) < 2
+            or not _is_recently_published(item, query)
+            or len(str(item.get("title") or "").strip()) < 12
+            or len(str(item.get("snippet") or "").strip()) < 30
+        ):
+            continue
+        retained = dict(item)
+        retained["relevance_score"] = score_result(query, retained)
+        ranked.append(retained)
+        seen_urls.add(url)
+    return ranked
+
+
 def _source_from_result(result):
     items=result.get("results")
     if isinstance(items,list):
@@ -2181,11 +2221,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 timeout_seconds=1.8,
                 max_results=8,
             )
-            recent_candidates = rank_results(
-                query,
-                recent_candidates,
-                realtime=True,
-            )
+            recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
             for raw in recent_candidates:
                 if not isinstance(raw, dict):
                     continue
@@ -2292,6 +2328,20 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 return 2
             return 3
         source_candidates.sort(key=_chat_news_provider_priority)
+        publisher_sources = [
+            source for source in source_candidates
+            if _chat_news_provider_priority(source) == 0
+        ]
+        search_sources = [
+            source for source in source_candidates
+            if _chat_news_provider_priority(source) != 0
+        ]
+        source_candidates = (
+            publisher_sources[:3]
+            + search_sources[:2]
+            + publisher_sources[3:]
+            + search_sources[2:]
+        )
 
     for source in source_candidates:
         host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
@@ -3616,11 +3666,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     timeout_seconds=1.8,
                     max_results=8,
                 )
-                recent_candidates = rank_results(
-                    q,
-                    recent_candidates,
-                    realtime=True,
-                )
+                recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
                 for raw in recent_candidates:
                     if not isinstance(raw, dict):
                         continue
@@ -3707,6 +3753,21 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 _fetch_priority(item),
             ),
         )
+        if strict_news_request:
+            publisher_sources = [
+                item for item in ordered_sources
+                if _news_provider_priority(item) == 0
+            ]
+            search_sources = [
+                item for item in ordered_sources
+                if _news_provider_priority(item) != 0
+            ]
+            ordered_sources = (
+                publisher_sources[:4]
+                + search_sources[:4]
+                + publisher_sources[4:]
+                + search_sources[4:]
+            )
         configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))
         max_fetch_candidates = (
             max(3, min(8, configured_fetch_candidates))
