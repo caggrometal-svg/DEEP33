@@ -79,6 +79,47 @@ def test_tavily_realtime_news_is_time_bounded(monkeypatch):
     assert result[0]["published_at"].startswith("2026-10-08")
 
 
+def test_recent_news_recovery_accepts_bing_click_url_with_verified_publisher_domain(monkeypatch):
+    import tools.web_search as module
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    wrapped_url = (
+        "https://www.bing.com/news/apiclick.aspx?"
+        "url=https%3A%2F%2Fwww.biobiochile.cl%2Fnoticias%2F2026%2F11%2F23%2Fnoticia.shtml"
+    )
+
+    async def no_google_news(*_args, **_kwargs):
+        return []
+
+    async def fake_bing_rss(query, _timeout, _limit):
+        if "site:biobiochile.cl" not in query:
+            return []
+        return [{
+            "title": "Últimas noticias de Chile hoy: actualización nacional",
+            "url": wrapped_url,
+            "snippet": "Noticia reciente de Chile publicada hoy.",
+            "source_domain": "www.biobiochile.cl",
+            "published_at": published_at,
+            "provider": "bing",
+        }]
+
+    monkeypatch.setattr(module, "_google_news_search", no_google_news)
+    monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
+
+    candidates = asyncio.run(
+        module.search_recent_news_candidates(
+            "Chile noticias hoy",
+            timeout_seconds=1.0,
+            max_results=5,
+        )
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["source_domain"] == "www.biobiochile.cl"
+    assert candidates[0]["provider"] == "bing"
+    assert candidates[0]["provider_sources"] == ["bing"]
+
+
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     from backend.search.resilient import WebOrchestrator
 
