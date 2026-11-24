@@ -100,6 +100,41 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
 
 
 
+def test_google_news_query_does_not_depend_on_when_operator(monkeypatch):
+    import asyncio
+    import httpx
+    import tools.web_search as module
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url == "https://news.google.com/rss/search"
+            assert kwargs["params"]["q"] == "Chile noticias hoy"
+            assert "when:1d" not in kwargs["params"]["q"]
+            xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0"><channel><item>
+              <title>Actualidad de Chile - Cooperativa</title>
+              <link>https://news.google.com/rss/articles/example-query</link>
+              <description>Noticias recientes de Chile.</description>
+              <source url="https://www.cooperativa.cl">Cooperativa</source>
+              <pubDate>Tue, 24 Nov 2026 01:40:00 GMT</pubDate>
+            </item></channel></rss>"""
+            return httpx.Response(
+                200,
+                text=xml,
+                request=httpx.Request("GET", url),
+            )
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+    results = asyncio.run(module._google_news_search("Chile noticias hoy", 1.5, 5))
+
+    assert len(results) == 1
+    assert results[0]["provider"] == "google_news"
+    assert results[0]["source_domain"] == "www.cooperativa.cl"
+
+
 def test_google_news_top_stories_adapter_returns_publisher_linked_candidates(monkeypatch):
     import tools.web_search as module
 
