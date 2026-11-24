@@ -279,6 +279,66 @@ def test_publisher_rss_recovery_round_robins_editorial_domains(monkeypatch):
     assert len({item["source_domain"] for item in candidates}) == 3
 
 
+def test_recent_news_recovery_reserves_slots_for_independent_search_providers(monkeypatch):
+    import tools.web_search as module
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    publisher_candidates = [
+        {
+            "title": f"Chile noticia reciente de medio {index}",
+            "url": f"https://medio-{index}.example/noticias/chile-{index}.html",
+            "snippet": "Noticia reciente de Chile y actualidad nacional.",
+            "source_domain": f"medio-{index}.example",
+            "provider": "publisher_rss",
+            "provider_sources": ["publisher_rss"],
+            "published_at": published_at,
+        }
+        for index in range(1, 6)
+    ]
+
+    async def fake_publisher_rss(*_args, **_kwargs):
+        return publisher_candidates
+
+    async def fake_google_news(*_args, **_kwargs):
+        return [{
+            "title": "Noticias recientes de Chile desde Google News",
+            "url": "https://google-source.example/noticias/chile-google.html",
+            "snippet": "Noticia reciente de Chile publicada hoy.",
+            "source_domain": "google-source.example",
+            "provider": "google_news",
+            "published_at": published_at,
+        }]
+
+    async def fake_bing_rss(query, _timeout, _limit):
+        if "site:biobiochile.cl" not in query:
+            return []
+        return [{
+            "title": "Noticias recientes de Chile desde Bing RSS",
+            "url": "https://www.biobiochile.cl/noticias/2026/11/24/chile-bing.shtml",
+            "snippet": "Noticia reciente de Chile publicada hoy.",
+            "source_domain": "biobiochile.cl",
+            "provider": "bing",
+            "published_at": published_at,
+        }]
+
+    monkeypatch.setattr(module, "_publisher_rss_search", fake_publisher_rss)
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
+
+    candidates = asyncio.run(
+        module.search_recent_news_candidates(
+            "noticias de Chile hoy",
+            timeout_seconds=1.0,
+            max_results=8,
+        )
+    )
+
+    providers = {item["provider"] for item in candidates}
+    assert "publisher_rss" in providers
+    assert "google_news" in providers
+    assert "bing" in providers
+
+
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     from backend.search.resilient import WebOrchestrator
 
