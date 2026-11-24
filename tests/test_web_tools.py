@@ -104,6 +104,7 @@ def test_recent_news_recovery_accepts_bing_click_url_with_verified_publisher_dom
         }]
 
     monkeypatch.setattr(module, "_google_news_search", no_google_news)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_google_news)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
     monkeypatch.setattr(module, "_publisher_rss_search", no_google_news)
     monkeypatch.setattr(module, "_mwmbl_search", no_google_news)
@@ -360,9 +361,13 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
             "published_at": published_at,
         }]
 
+    async def no_google_top_stories(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(module, "_publisher_rss_search", fake_publisher_rss)
     monkeypatch.setattr(module, "_mwmbl_search", fake_mwmbl)
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_google_top_stories)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
 
     candidates = asyncio.run(
@@ -404,6 +409,7 @@ def test_recent_news_recovery_retries_google_news_with_short_chile_query(monkeyp
     monkeypatch.setattr(module, "_publisher_rss_search", no_results)
     monkeypatch.setattr(module, "_mwmbl_search", no_results)
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_results)
     monkeypatch.setattr(module, "_bing_recent_news_search", no_results)
 
     candidates = asyncio.run(
@@ -2098,6 +2104,60 @@ def test_chat_realtime_news_rejects_three_articles_from_one_provider(monkeypatch
             "text": "Noticias recientes de Chile y actualidad nacional. " * 8,
         }
         for index in range(1, 4)
+    ]
+    search_result = {
+        "verification": {
+            "provider_quorum_met": True,
+            "distinct_providers": 2,
+        }
+    }
+
+    summary = main._recent_news_quorum_summary(query, pages, search_result)
+
+    assert summary["articles"] == 3
+    assert summary["domains"] == 3
+    assert summary["providers"] == 1
+    assert summary["provider_quorum_met"] is False
+    assert summary["met"] is False
+
+
+
+def test_chat_realtime_news_does_not_count_publisher_rss_as_search_provider():
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    pages = [
+        {
+            "title": "Noticia reciente de Chile desde Bing",
+            "url": "https://bing-publisher.example/noticias/chile-bing",
+            "final_url": "https://bing-publisher.example/noticias/chile-bing",
+            "domain": "bing-publisher.example",
+            "provider": "bing",
+            "providers": ["bing"],
+            "published_at": published_at,
+            "text": "Información periodística reciente de Chile. " * 5,
+        },
+        {
+            "title": "Noticia reciente de Chile desde feed editorial",
+            "url": "https://feed-publisher.example/noticias/chile-feed",
+            "final_url": "https://feed-publisher.example/noticias/chile-feed",
+            "domain": "feed-publisher.example",
+            "provider": "publisher_rss",
+            "providers": ["publisher_rss"],
+            "published_at": published_at,
+            "text": "Información periodística reciente de Chile. " * 5,
+        },
+        {
+            "title": "Otra noticia reciente de Chile desde feed editorial",
+            "url": "https://feed-publisher-two.example/noticias/chile-feed",
+            "final_url": "https://feed-publisher-two.example/noticias/chile-feed",
+            "domain": "feed-publisher-two.example",
+            "provider": "publisher_rss",
+            "providers": ["publisher_rss"],
+            "published_at": published_at,
+            "text": "Información periodística reciente de Chile. " * 5,
+        },
     ]
     search_result = {
         "verification": {
