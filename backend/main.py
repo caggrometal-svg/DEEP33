@@ -246,7 +246,7 @@ def _recent_news_quorum_summary(
         verification.get("provider_quorum_met") is True
         and reported_provider_count >= 2
     )
-    provider_count = reported_provider_count if provider_quorum else 0
+    provider_count = reported_provider_count
     article_count = len(valid_pages)
     domain_count = len(domains)
     return {
