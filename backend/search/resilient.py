@@ -2143,11 +2143,14 @@ class WebOrchestrator:
         required_domains = 3 if strict_news_request else 2
         required_results = 3 if strict_news_request else 1
         domain_quorum_met = len(domains) >= required_domains
+        navigation_candidates_present = any(
+            bool(item.get("navigation_only")) for item in selected
+        )
         navigation_only = (
             not strict_news_request
             and not provider_quorum_met
             and domain_quorum_met
-            and any(bool(item.get("navigation_only")) for item in selected)
+            and navigation_candidates_present
         )
         final_ok = (
             len(selected) >= required_results
@@ -2206,8 +2209,12 @@ class WebOrchestrator:
                 "domain_quorum_met": domain_quorum_met,
                 "provider_quorum_met": provider_quorum_met,
                 "navigation_only": navigation_only,
-                "evidence_status": "NAVIGATION_ONLY" if navigation_only else (
-                    "VERIFIED" if provider_quorum_met and domain_quorum_met else "INSUFFICIENT"
+                "navigation_candidates_present": navigation_candidates_present,
+                "evidence_status": (
+                    "NAVIGATION_ONLY" if navigation_only else
+                    "MIXED_NAVIGATION" if navigation_candidates_present else
+                    "VERIFIED" if provider_quorum_met and domain_quorum_met else
+                    "INSUFFICIENT"
                 ),
                 "corroborated_results": 0,
             },
