@@ -763,14 +763,14 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo-dots-fallback")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
     monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "invalid-primary-test-token")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free")
     monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", json.dumps([
         {
             "name": "configured-fallback",
             "url": "https://api.kilo.ai/api/gateway/chat/completions",
             "health_url": "https://api.kilo.ai/api/gateway/models",
-            "api_key": "",
+            "api_key": "invalid-fallback-test-token",
             "model": "some-provider/fast-model:free",
         }
     ]))
@@ -778,6 +778,10 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     config = GatewayConfig.from_env()
 
     assert len(config.providers) == 3
+    assert config.providers[0].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[0])
+    assert config.providers[1].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[1])
     assert [provider.name for provider in config.providers] == [
         "kilo-dots-fallback",
         "configured-fallback",
@@ -794,7 +798,7 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
     monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "invalid-primary-test-token")
     monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
     monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
 
@@ -802,9 +806,25 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
 
     assert len(config.providers) == 2
     assert config.providers[0].model == "kilo-auto/free"
+    assert config.providers[0].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[0])
     assert config.providers[1].name == "kilo-free-text-fallback"
     assert config.providers[1].model == "baidu/ernie-5.5-flash-preview:free"
     assert config.providers[1].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[1])
     assert config.providers[1].url == config.providers[0].url
     assert config.providers[1].health_url == config.providers[0].health_url
+
+
+def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "paid-test-token")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "anthropic/claude-sonnet-4.5")
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[0].api_key == "paid-test-token"
+    assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
