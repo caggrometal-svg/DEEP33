@@ -157,11 +157,11 @@ def test_google_news_article_requires_matching_bing_title_and_domain_for_quorum(
             "url": "https://www.latercera.com/politica/noticia/presupuesto/ARTICLE/",
         }]
 
-    async def no_duckduckgo(*_args, **_kwargs):
+    async def no_mwmbl(*_args, **_kwargs):
         return []
 
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing)
-    monkeypatch.setattr(module, "_duckduckgo_search", no_duckduckgo)
+    monkeypatch.setattr(module, "_mwmbl_search", no_mwmbl)
     asyncio.run(
         module._corroborate_google_news_candidates_with_indexes(
             [candidate],
@@ -175,7 +175,7 @@ def test_google_news_article_requires_matching_bing_title_and_domain_for_quorum(
     assert candidate["providers"] == ["bing", "google_news"]
 
 
-def test_google_news_article_can_be_corroborated_by_duckduckgo(monkeypatch):
+def test_google_news_article_can_be_corroborated_by_mwmbl(monkeypatch):
     import asyncio
     import tools.web_search as module
 
@@ -190,7 +190,7 @@ def test_google_news_article_can_be_corroborated_by_duckduckgo(monkeypatch):
     async def no_bing(*_args, **_kwargs):
         return []
 
-    async def fake_duckduckgo(query, timeout, limit):
+    async def fake_mwmbl(query, timeout, limit):
         assert "site:theclinic.cl" in query
         return [{
             "title": "Hombre detenido por contrabando de especies exóticas en Hualpén",
@@ -199,7 +199,7 @@ def test_google_news_article_can_be_corroborated_by_duckduckgo(monkeypatch):
         }]
 
     monkeypatch.setattr(module, "_bing_recent_news_search", no_bing)
-    monkeypatch.setattr(module, "_duckduckgo_search", fake_duckduckgo)
+    monkeypatch.setattr(module, "_mwmbl_search", fake_mwmbl)
     asyncio.run(
         module._corroborate_google_news_candidates_with_indexes(
             [candidate],
@@ -208,7 +208,7 @@ def test_google_news_article_can_be_corroborated_by_duckduckgo(monkeypatch):
         )
     )
 
-    assert candidate["provider_sources"] == ["duckduckgo", "google_news"]
+    assert candidate["provider_sources"] == ["google_news", "mwmbl"]
 
 
 def test_google_news_top_stories_adapter_returns_publisher_linked_candidates(monkeypatch):
