@@ -2234,7 +2234,11 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 if not isinstance(raw, dict):
                     continue
                 published_at = raw.get("published_at")
-                if not published_at or not _is_recently_published(raw, query):
+                recovered_provider = str(raw.get("provider") or "unknown")
+                if published_at:
+                    if not _is_recently_published(raw, query):
+                        continue
+                elif recovered_provider != "mwmbl":
                     continue
                 url = str(raw.get("url") or "").strip()
                 domain = str(
@@ -2318,7 +2322,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
     )
     candidates: list[dict[str, Any]] = []
-    seen_candidate_domains: set[str] = set()
+    seen_candidate_urls: set[str] = set()
     source_candidates = list(sources.values())
     if is_strict_news_query(query):
         def _chat_news_provider_priority(source: dict[str, Any]) -> int:
@@ -2354,12 +2358,17 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         )
 
     for source in source_candidates:
-        host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-        if not host:
-            host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-        if not host or host in seen_candidate_domains:
+        source_url = str(source.get("url") or "").strip()
+        if (
+            not source_url
+            or source_url in seen_candidate_urls
+            or (
+                is_strict_news_query(query)
+                and urlparse(source_url).scheme.lower() != "https"
+            )
+        ):
             continue
-        seen_candidate_domains.add(host)
+        seen_candidate_urls.add(source_url)
         candidates.append(source)
         if len(candidates) >= candidate_limit:
             break
@@ -3681,7 +3690,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     if not isinstance(raw, dict):
                         continue
                     published_at = raw.get("published_at")
-                    if not published_at or not _is_recently_published(raw, q):
+                    recovered_provider = str(raw.get("provider") or "unknown")
+                    if published_at:
+                        if not _is_recently_published(raw, q):
+                            continue
+                    elif recovered_provider != "mwmbl":
                         continue
                     url = str(raw.get("url") or "").strip()
                     domain = str(
