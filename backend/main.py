@@ -3869,7 +3869,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     candidate_sources.append(candidate)
                     recovered_provider_candidates.append(candidate)
                     candidate_domains.add(domain)
-                _merge_recovered_provider_provenance(search_result, recovered_provider_candidates)
+                _merge_recovered_provider_provenance(result, recovered_provider_candidates)
                 recovery_providers = sorted({
                     str(item.get("provider") or "unknown")
                     for item in recent_candidates
