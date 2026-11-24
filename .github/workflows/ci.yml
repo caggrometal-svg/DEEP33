@@ -592,7 +592,7 @@ jobs:
   android_feature_instrumentation:
     needs: backend_unit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     env:
@@ -639,8 +639,37 @@ jobs:
           channel: stable
           working-directory: android
           script: |
-            gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
-            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest,cl.caggrometal.deep33.Deep33LifecycleRecoveryTest,cl.caggrometal.deep33.SessionStorePersistenceTest --no-daemon
+            set -euo pipefail
+
+            run_gradle_with_transient_retry() {
+              local attempt=1
+              local max_attempts=3
+              local log_file
+              while [ "$attempt" -le "$max_attempts" ]; do
+                log_file="$(mktemp)"
+                echo "GRADLE_ATTEMPT=$attempt/$max_attempts TASKS=$*"
+                if gradle "$@" --no-daemon --max-workers=2 2>&1 | tee "$log_file"; then
+                  rm -f "$log_file"
+                  return 0
+                fi
+                if ! grep -Eqi 'HTTP.*429|status code 429|Too Many Requests|Could not GET.*(maven|gradle)' "$log_file"; then
+                  echo "GRADLE_NON_TRANSIENT_FAILURE"
+                  rm -f "$log_file"
+                  return 1
+                fi
+                echo "GRADLE_REPOSITORY_RATE_LIMIT attempt=$attempt"
+                rm -f "$log_file"
+                if [ "$attempt" -eq "$max_attempts" ]; then
+                  echo "GRADLE_RATE_LIMIT_RETRIES_EXHAUSTED"
+                  return 1
+                fi
+                sleep $((attempt * 20))
+                attempt=$((attempt + 1))
+              done
+            }
+
+            run_gradle_with_transient_retry :app:assembleDebug :app:assembleDebugAndroidTest
+            run_gradle_with_transient_retry :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest,cl.caggrometal.deep33.Deep33LifecycleRecoveryTest,cl.caggrometal.deep33.SessionStorePersistenceTest
 
   change_scope:
     runs-on: ubuntu-latest
@@ -1059,39 +1088,54 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+          PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
         shell: bash
         run: |
           set -euo pipefail
-          alias=""
+          # Vercel's GitHub integration publishes a commit status, not a GitHub
+          # deployment object. The previous deployments API lookup therefore
+          # waited forever even after Vercel had reported success.
+          case "$PREVIEW_BRANCH" in
+            fix/phase1-routing-provider-quorum-071126)
+              alias="https://deep33-backend-git-fix-phase1-routing-provider-quorum-071126-iac33.vercel.app"
+              ;;
+            fix/vercel-android-route-221026)
+              alias="https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app"
+              ;;
+            *)
+              echo "ANDROID_E2E_UNAPPROVED_PREVIEW_BRANCH=$PREVIEW_BRANCH"
+              exit 1
+              ;;
+          esac
+
+          ready=0
           for attempt in $(seq 1 36); do
-            # Vercel's GitHub commit status links to the Vercel dashboard, not
-            # to the deployment hostname. Resolve the successful GitHub
-            # deployment status and use its environment_url for this exact SHA.
-            deployments="$(gh api --paginate "repos/$GITHUB_REPOSITORY/deployments?sha=$CURRENT_SHA&per_page=100" 2>/dev/null || printf '[]')"
-            while IFS= read -r deployment_id; do
-              [ -n "$deployment_id" ] || continue
-              deployment_statuses="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses?per_page=20" 2>/dev/null || printf '[]')"
-              candidate="$(printf '%s' "$deployment_statuses" | jq -r '
-                [.[]? | select(.state == "success") | .environment_url // empty]
-                | map(select(test("^https://deep33-backend-git-(fix-phase1-routing-provider-quo|fix-vercel-android-route-221026)-.+\\.iac33\\.vercel\\.app/?$")))
-                | first // empty
-              ')"
-              if [ -n "$candidate" ]; then
-                alias="${candidate#https://}"
-                alias="${alias%/}"
+            vercel_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status" \
+              --jq '[.statuses[]? | select(.context == "Vercel") | .state] | first // empty' 2>/dev/null || true)"
+            if [ "$vercel_state" = "success" ]; then
+              http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
+                -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
+                "$alias/health" || true)"
+              if [ "$http_status" = "200" ] && jq -e \
+                '.status == "PASS" and (.service == "DEEP33 Backend" or .service == "DEEP33 Edge Gateway")' \
+                "$RUNNER_TEMP/deep33-preview-health.json" >/dev/null 2>&1; then
+                ready=1
                 break
               fi
-            done < <(printf '%s' "$deployments" | jq -r '.[].id')
-            [ -n "$alias" ] && break
-            echo "WAITING_FOR_EXACT_VERCEL_DEPLOYMENT attempt=$attempt sha=$CURRENT_SHA"
+              echo "WAITING_FOR_PREVIEW_HEALTH attempt=$attempt http=$http_status"
+            else
+              echo "WAITING_FOR_VERCEL_COMMIT_STATUS attempt=$attempt state=${vercel_state:-missing} sha=$CURRENT_SHA"
+            fi
             [ "$attempt" -lt 36 ] && sleep 5
           done
-          test -n "$alias" || {
-            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_FOUND sha=$CURRENT_SHA"
+          test "$ready" = "1" || {
+            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_READY sha=$CURRENT_SHA url=$alias"
+            cat "$RUNNER_TEMP/deep33-preview-health.json" 2>/dev/null || true
             exit 1
           }
-          echo "DEEP33_E2E_VERCEL_URL=https://$alias" >> "$GITHUB_ENV"
+          echo "DEEP33_E2E_VERCEL_URL=$alias" >> "$GITHUB_ENV"
           echo "ANDROID_E2E_TARGET=$alias"
+          echo "ANDROID_E2E_VERIFIED_COMMIT=$CURRENT_SHA"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
