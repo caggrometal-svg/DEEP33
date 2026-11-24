@@ -2082,18 +2082,45 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
-    if not isinstance(search_result, dict) or search_result.get("ok") is not True:
-        errors = search_result.get("errors") if isinstance(search_result, dict) else None
+    if not isinstance(search_result, dict):
         logger.warning(
-            "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
+            "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
             request_id, (time.perf_counter() - search_started) * 1000,
-            search_result.get("providers_attempted") if isinstance(search_result, dict) else None,
-            errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
     raw_sources = _source_from_result(search_result)
+    strict_news_request = is_strict_news_query(query)
+    search_verification = search_result.get("verification")
+    search_verification = (
+        search_verification if isinstance(search_verification, dict) else {}
+    )
+    try:
+        reported_search_providers = int(
+            search_verification.get("distinct_providers") or 0
+        )
+    except (TypeError, ValueError):
+        reported_search_providers = 0
+    discovery_provider_quorum = (
+        search_verification.get("provider_quorum_met") is True
+        and reported_search_providers >= 2
+    )
+    search_usable = (
+        search_result.get("ok") is True
+        or (strict_news_request and discovery_provider_quorum)
+    )
+    if not search_usable:
+        errors = search_result.get("errors")
+        logger.warning(
+            "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
+            request_id, (time.perf_counter() - search_started) * 1000,
+            search_result.get("providers_attempted") or search_result.get("providers"),
+            errors,
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
+
     sources: dict[str, dict[str, Any]] = {}
     for source in raw_sources:
         url = str(source.get("url") or "").strip()
@@ -2178,12 +2205,22 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                         or url in sources
                     ):
                         continue
+                    recovered_provider = str(raw.get("provider") or "google_news")
+                    recovered_providers = raw.get("provider_sources")
+                    if not isinstance(recovered_providers, list):
+                        recovered_providers = raw.get("providers")
+                    if not isinstance(recovered_providers, list):
+                        recovered_providers = [recovered_provider]
                     recovered = {
                         "title": str(raw.get("title") or url)[:300],
                         "url": url[:2000],
                         "snippet": str(raw.get("snippet") or "")[:1000],
-                        "provider": str(raw.get("provider") or "google_news"),
-                        "providers": [str(raw.get("provider") or "google_news")],
+                        "provider": recovered_provider,
+                        "providers": list(dict.fromkeys(
+                            str(name).strip()
+                            for name in recovered_providers
+                            if str(name or "").strip()
+                        )),
                         "source_domain": domain[:255],
                         "published_at": published_at,
                     }
