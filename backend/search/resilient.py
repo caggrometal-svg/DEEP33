@@ -446,6 +446,20 @@ class WebOrchestrator:
             cleaned,
             flags=re.IGNORECASE,
         )
+        provider_source = re.sub(
+            r"\b(?:ejecuta|realiza|haz)\s+(?:una\s+)?(?:b[uú]squeda|search)\s+"
+            r"(?:web\s+)?(?:real\s+)?(?:sobre|de|para)\b",
+            " ",
+            provider_source,
+            flags=re.IGNORECASE,
+        )
+        provider_source = re.sub(
+            r"\b(?:consulta|contrasta|verifica|cita|incluye)\s+(?:las?\s+)?"
+            r"(?:fuentes?|sources?|enlaces?|links?)\b.*$",
+            " ",
+            provider_source,
+            flags=re.IGNORECASE,
+        )
         lowered = cleaned.casefold()
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
