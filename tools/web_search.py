@@ -1114,27 +1114,51 @@ async def search_recent_news_candidates(
             }
             by_url[canonical_url] = candidate
             merged.append(candidate)
-            if len(merged) >= limit:
-                provider_mix: dict[str, int] = {}
-                for merged_item in merged:
-                    provider_name = str(merged_item.get("provider") or "unknown")
-                    provider_mix[provider_name] = provider_mix.get(provider_name, 0) + 1
-                logger.info(
-                    "recent_news_recovery_provider_mix candidates=%s providers=%s",
-                    len(merged),
-                    sorted(provider_mix.items()),
-                )
-                return merged
+
+    # Reserve at least one slot for each available independent search index
+    # before publisher RSS recovery can fill the result cap. Publisher feeds
+    # are primary-source discovery paths, not independent search providers.
+    provider_priority = (
+        "google_news",
+        "bing",
+        "mwmbl",
+        "mojeek",
+        "cl0q",
+        "tavily",
+        "marginalia",
+    )
+    selected: list[dict] = []
+    selected_urls: set[str] = set()
+    for provider_name in provider_priority:
+        candidate = next(
+            (item for item in merged if item.get("provider") == provider_name),
+            None,
+        )
+        if candidate is not None:
+            selected.append(candidate)
+            selected_urls.add(str(candidate.get("url") or ""))
+            if len(selected) >= limit:
+                break
+    if len(selected) < limit:
+        for candidate in merged:
+            url = str(candidate.get("url") or "")
+            if url in selected_urls:
+                continue
+            selected.append(candidate)
+            selected_urls.add(url)
+            if len(selected) >= limit:
+                break
+
     provider_mix: dict[str, int] = {}
-    for item in merged:
+    for item in selected:
         provider_name = str(item.get("provider") or "unknown")
         provider_mix[provider_name] = provider_mix.get(provider_name, 0) + 1
     logger.info(
         "recent_news_recovery_provider_mix candidates=%s providers=%s",
-        len(merged),
+        len(selected),
         sorted(provider_mix.items()),
     )
-    return merged
+    return selected
 
 
 async def _bing_search(query, timeout_seconds, max_results, *, preserve_candidates=False):
