@@ -434,7 +434,7 @@ class WebOrchestrator:
 
     @staticmethod
     def _provider_query(query: str) -> str:
-        """Reduce provider-side noise without changing the user's ranking query."""
+        """Remove instruction noise to build the compact retrieval and ranking query."""
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return cleaned
