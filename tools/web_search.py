@@ -1578,15 +1578,11 @@ def web_search_status():
         "active_provider": active,
         "tavily_configured": key,
         "bing_enabled": bing,
-        "fallback_duckduckgo": os.getenv(
-            "WEB_SEARCH_FALLBACK_DDG", "true"
-        ).lower() == "true",
-        "parallel_providers": os.getenv(
-            "WEB_SEARCH_PARALLEL_PROVIDERS", "true"
-        ).lower() == "true",
-        "max_queries": max(
-            1, min(3, int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3")))
-        ),
+        "fallback_duckduckgo": True,
+        "parallel_providers": True,
+        "mojeek_enabled": os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() == "true",
+        "max_queries": 2,
+        "query_strategy": "parallel_providers_with_bounded_semantic_recovery",
         "max_results": max(
             1, min(8, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8")))
         ),
