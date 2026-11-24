@@ -395,7 +395,7 @@ class WebOrchestrator:
 
     async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
         # Direct adapter callers keep strict legacy behavior; orchestration keeps
-        # candidates so independent results can be ranked against the original query.
+        # candidates so independent results can be ranked against the compact semantic query.
         return await _google_search(query, timeout, limit, preserve_candidates=True)
 
     async def _google_news(self, query: str, timeout: float, limit: int) -> list[dict]:
@@ -656,7 +656,7 @@ class WebOrchestrator:
             return "Python asyncio"
 
         # Reframe generic current smartphone/product queries into common web-search
-        # vocabulary. Results are still ranked against the untouched original query.
+        # vocabulary. Results are ranked against the compact semantic query derived from the request.
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
             "teléfono móvil", "telefono movil", "celular",
@@ -683,7 +683,7 @@ class WebOrchestrator:
             if "chile" in lowered:
                 # Public indexes can pollute a generic "economy/markets" query.
                 # Use Chilean economic vocabulary plus independent publishers;
-                # final ranking still evaluates candidates against the original query.
+                # final ranking still evaluates candidates against the compact semantic query.
                 return (
                     "Chile economía mercados finanzas Banco Central Diario Financiero "
                     "Pulso Emol economía actualidad"
@@ -948,7 +948,7 @@ class WebOrchestrator:
 
         def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
             # Provider success only counts when that provider independently
-            # returned evidence relevant to the user's original query.
+            # returned evidence relevant to the compact semantic query derived from the user's request.
             return {
                 _provider_family(outcome.provider)
                 for outcome in candidate_outcomes
@@ -1087,12 +1087,12 @@ class WebOrchestrator:
         # Keep a deterministic live-search path when public indexes are
         # rate-limited. These are still real Bing/Google-News queries; no result
         # is synthesized locally and every candidate is ranked against the
-        # untouched user query.
+        # compact semantic query derived from the untouched user request.
         if chile_economic_news_intent:
             # Economy queries were depending on one Bing SERP and could collapse
             # to two domains. Fan out publisher-specific discovery across Bing and
             # Google News in the primary wave; all candidates are still ranked
-            # against the untouched user query and no evidence is synthesized.
+            # against the compact semantic query derived from the user request; no evidence is synthesized.
             economic_queries = (
                 ("google_news", "site:df.cl Chile economía mercados noticias hoy"),
                 ("google_news", "site:latercera.com Chile Pulso economía mercados hoy"),
@@ -1173,7 +1173,7 @@ class WebOrchestrator:
         if chile_current_events_intent:
             # Generic current-events queries can collapse to one search index and
             # two publishers. Discover independent Chilean newsrooms in parallel;
-            # final ranking still uses the untouched user query.
+            # final ranking uses the compact semantic query derived from the user request.
             current_events_queries = (
                 ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
                 ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
@@ -1297,7 +1297,7 @@ class WebOrchestrator:
         if academic_ai_research_intent:
             # Broad academic wording can collapse to one university in public SERPs.
             # Query independent real research domains in parallel, then rank every
-            # returned candidate against the untouched user query.
+            # returned candidate against the compact semantic query derived from the user request.
             academic_queries = _academic_ai_research_queries()
             tasks.update({
                 asyncio.create_task(
