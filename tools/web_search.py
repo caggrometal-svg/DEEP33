@@ -999,6 +999,9 @@ async def search_recent_news_candidates(
     jobs.extend([
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         *(
+            ("google_news", None, _google_news_search("noticias Chile", budget, min(limit, 3))),
+        ),
+        *(
             ("bing", expected_domain, _bing_recent_news_search(search_query, budget, limit))
             for search_query, expected_domain in queries
         ),
