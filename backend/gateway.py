@@ -91,6 +91,11 @@ def _provider_url_is_secure(value: str) -> bool:
         return False
 
 
+def _is_kilo_free_model(model: str) -> bool:
+    normalized = str(model or "").strip().casefold()
+    return normalized == "kilo-auto/free" or normalized.endswith(":free")
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
@@ -104,18 +109,30 @@ class GatewayConfig:
 
     @classmethod
     def from_env(cls) -> "GatewayConfig":
+        primary_url = os.getenv(
+            "AI_GATEWAY_URL",
+            "https://api.kilo.ai/api/gateway/chat/completions",
+        ).strip()
+        primary_model = os.getenv(
+            "AI_GATEWAY_MODEL",
+            "dots-studio/dots-3-note-preview:free",
+        ).strip()
+        primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        primary_host = (urlsplit(primary_url).hostname or "").casefold()
+        if primary_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(primary_model):
+            # Kilo permits anonymous access to free models. Avoid sending a stale
+            # account token that can turn an otherwise available free model into HTTP 401.
+            primary_api_key = ""
+
         primary = GatewayProvider(
             name=os.getenv("AI_GATEWAY_PROVIDER", "kilo").strip() or "kilo",
-            url=os.getenv(
-                "AI_GATEWAY_URL",
-                "https://api.kilo.ai/api/gateway/chat/completions",
-            ).strip(),
+            url=primary_url,
             health_url=os.getenv(
                 "AI_GATEWAY_HEALTH_URL",
                 "https://api.kilo.ai/api/gateway/models",
             ).strip(),
-            api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
-            model=os.getenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free").strip(),
+            api_key=primary_api_key,
+            model=primary_model,
         )
 
         providers = [primary]
