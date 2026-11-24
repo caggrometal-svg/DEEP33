@@ -18,7 +18,7 @@ services:
       - key: WEB_SEARCH_FALLBACK_DDG
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "6"
+        value: "5"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_PROVIDER
@@ -55,7 +55,7 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "6"
+        value: "5"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_MOJEEK_ENABLED
@@ -88,7 +88,7 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "6"
+        value: "5"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_MOJEEK_ENABLED
