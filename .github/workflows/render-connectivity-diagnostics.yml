@@ -1,0 +1,117 @@
+name: Render Connectivity Diagnostics
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17,47 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-connectivity-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: deep33-backend
+            base_url: https://deep33-backend.onrender.com
+          - service: deep33-backup
+            base_url: https://deep33-backup.onrender.com
+          - service: deep33-api
+            base_url: https://deep33-api.onrender.com
+    env:
+      BASE_URL: ${{ matrix.base_url }}
+      SERVICE_NAME: ${{ matrix.service }}
+    steps:
+      - name: Check liveness and readiness independently
+        shell: bash
+        run: |
+          set -uo pipefail
+          failed=0
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          probe() {
+            local endpoint="$1"
+            local body="$tmp/body.json"
+            local error_file="$tmp/curl-error.txt"
+            local meta status latency curl_rc
+            : > "$body"
+            : > "$error_file"
+
+            meta="$(curl --silent --show-error \
+              --connect-timeout 5 --max-time 15 \
+              --output "$body" \
+              --write-out '%{http_code}|%{time_total}' \
+              "$BASE_URL/$endpoint" 2>"$error_file")"
+            curl_rc=$?
+            status="${meta%%|*}"
+            latency="${meta#*|}"
+            [ -n "$status" ] || status="000"
+            [ -n "$latency" ] || latency="n/a"
+
+            echo "SERVICE=$SERVICE_NAME ENDPOINT=/$endpoint HTTP=$status LATENCY_SECONDS=$latency CURL_EXIT=$curl_rc"
+
+            if [ "$curl_rc" -ne 0 ]; then
+              if grep -Eqi 'Could not resolve|resolve host' "$error_file"; then
+                echo "DIAGNOSIS=DNS_RESOLUTION_FAILED"
+              elif grep -Eqi 'SSL|certificate|TLS' "$error_file"; then
+                echo "DIAGNOSIS=TLS_HANDSHAKE_OR_CERTIFICATE_FAILED"
+              elif grep -Eqi 'timed out|timeout' "$error_file"; then
+                echo "DIAGNOSIS=CONNECTION_OR_RESPONSE_TIMEOUT"
+              else
+                echo "DIAGNOSIS=TRANSPORT_FAILURE"
+              fi
+              failed=1
+              return
+            fi
+
+            if ! jq -e 'type == "object"' "$body" >/dev/null 2>&1; then
+              echo "DIAGNOSIS=NON_JSON_OR_EMPTY_RESPONSE"
+              failed=1
+              return
+            fi
+
+            if [ "$endpoint" = "health" ]; then
+              jq -c '{service, version, git_sha, build_id, status}' "$body" 2>/dev/null || true
+              if [ "$status" != "200" ] || ! jq -e '.service == "DEEP33 Backend" and .status == "PASS"' "$body" >/dev/null 2>&1; then
+                echo "DIAGNOSIS=HTTP_OR_DEEP33_LIVENESS_CONTRACT_FAILED"
+                failed=1
+              else
+                echo "LIVENESS=PASS"
+              fi
+            else
+              jq -c '{
+                status,
+                ready,
+                git_sha,
+                network_internet_available: .network.internet_available,
+                gateway_status: .gateway.gateway,
+                gateway_error: .gateway.error,
+                memory_configured,
+                memory_ready
+              }' "$body" 2>/dev/null || true
+              if [ "$status" != "200" ] || ! jq -e '.ready == true and .status == "PASS"' "$body" >/dev/null 2>&1; then
+                echo "DIAGNOSIS=DEPENDENCY_READINESS_FAILED"
+                failed=1
+              else
+                echo "READINESS=PASS"
+              fi
+            fi
+          }
+
+          probe health
+          probe ready
+          if [ "$failed" -ne 0 ]; then
+            echo "RENDER_SERVICE_DIAGNOSTICS=FAIL SERVICE=$SERVICE_NAME"
+            exit 1
+          fi
+          echo "RENDER_SERVICE_DIAGNOSTICS=PASS SERVICE=$SERVICE_NAME"
