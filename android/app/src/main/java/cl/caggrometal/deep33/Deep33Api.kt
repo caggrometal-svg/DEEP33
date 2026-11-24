@@ -439,12 +439,32 @@ object Deep33Api {
                     }
 
                     connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                        val eventData = StringBuilder()
-                        var currentEventType: String? = null
-
-                        fun processEvent() {
-                            val data = eventData.toString().trimEnd('\n')
-                            if (data.isNotBlank() && !sawDone) {
+                        SseTextParser.readEvents(
+                            reader = reader,
+                            onHeartbeat = {
+                                if (!emitted) {
+                                    val remainingMs =
+                                        ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                                    connection.readTimeout =
+                                        minOf(STREAM_HEARTBEAT_GRACE_MS, remainingMs).toInt()
+                                }
+                            },
+                        ) { currentEventType, data ->
+                            if (isCancelled()) {
+                                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                            }
+                            val nowNanos = System.nanoTime()
+                            if (nowNanos >= deadline) {
+                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
+                            }
+                            if (!emitted && nowNanos >= firstTextDeadlineNanos) {
+                                android.util.Log.w(
+                                    "DEEP33_PERF",
+                                    "FIRST_TEXT_TIMEOUT request_id=$requestId endpoint=$endpoint budget_ms=$STREAM_FIRST_TEXT_TIMEOUT_MS"
+                                )
+                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
+                            }
+                            if (!sawDone) {
                                 if (currentEventType.equals("error", ignoreCase = true)) {
                                     throw mapStreamError(data)
                                 }
@@ -470,50 +490,6 @@ object Deep33Api {
                                     }
                                 }
                             }
-                            eventData.setLength(0)
-                            currentEventType = null
-                        }
-
-                        while (true) {
-                            if (isCancelled()) {
-                                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
-                            }
-                            val nowNanos = System.nanoTime()
-                            if (nowNanos >= deadline) {
-                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
-                            }
-                            if (!emitted && nowNanos >= firstTextDeadlineNanos) {
-                                android.util.Log.w(
-                                    "DEEP33_PERF",
-                                    "FIRST_TEXT_TIMEOUT request_id=$requestId endpoint=$endpoint budget_ms=$STREAM_FIRST_TEXT_TIMEOUT_MS"
-                                )
-                                throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
-                            }
-
-                            val line = reader.readLine() ?: break
-                            when {
-                                line.isEmpty() -> processEvent()
-                                line.startsWith(":") -> {
-                                    if (!emitted) {
-                                        val remainingMs =
-                                            ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
-                                        connection.readTimeout =
-                                            minOf(STREAM_HEARTBEAT_GRACE_MS, remainingMs).toInt()
-                                    }
-                                }
-                                line.startsWith("event:") -> {
-                                    currentEventType = line.substringAfter(":").trim()
-                                }
-                                line.startsWith("data:") -> {
-                                    if (eventData.isNotEmpty()) eventData.append('\n')
-                                    eventData.append(line.substringAfter(":").removePrefix(" "))
-                                }
-                                else -> Unit
-                            }
-                        }
-
-                        if (eventData.isNotEmpty() || currentEventType != null) {
-                            processEvent()
                         }
                     }
 
@@ -780,6 +756,35 @@ object SseTextParser {
         "metadata",
         "reasoning",
     )
+
+    fun readEvents(
+        reader: java.io.BufferedReader,
+        onHeartbeat: () -> Unit = {},
+        onEvent: (eventType: String?, data: String) -> Unit,
+    ) {
+        var eventType: String? = null
+        val dataLines = mutableListOf<String>()
+
+        fun dispatch() {
+            if (eventType != null || dataLines.isNotEmpty()) {
+                onEvent(eventType, dataLines.joinToString("\n"))
+            }
+            eventType = null
+            dataLines.clear()
+        }
+
+        while (true) {
+            val line = reader.readLine() ?: break
+            when {
+                line.isEmpty() -> dispatch()
+                line.startsWith(":") -> onHeartbeat()
+                line.startsWith("event:") -> eventType = line.substringAfter(":").trim()
+                line.startsWith("data:") -> dataLines.add(line.substringAfter(":").removePrefix(" "))
+                else -> Unit
+            }
+        }
+        if (eventType != null || dataLines.isNotEmpty()) dispatch()
+    }
 
     fun extractText(data: String, eventType: String? = null): String? {
         if (eventType?.trim()?.lowercase() in nonVisibleEvents) return null
