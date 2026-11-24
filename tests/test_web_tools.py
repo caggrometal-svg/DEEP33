@@ -368,6 +368,46 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
     assert "bing" in providers
 
 
+def test_recent_news_recovery_retries_google_news_with_short_chile_query(monkeypatch):
+    import tools.web_search as module
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    seen_queries = []
+
+    async def no_results(*_args, **_kwargs):
+        return []
+
+    async def fake_google_news(query, _timeout, _limit):
+        seen_queries.append(query)
+        if query != "noticias Chile":
+            return []
+        return [{
+            "title": "Noticias recientes de Chile: actualización nacional",
+            "url": "https://google-news-source.example/noticias/chile-hoy.html",
+            "snippet": "Noticia reciente de Chile publicada hoy.",
+            "source_domain": "google-news-source.example",
+            "provider": "google_news",
+            "published_at": published_at,
+        }]
+
+    monkeypatch.setattr(module, "_publisher_rss_search", no_results)
+    monkeypatch.setattr(module, "_mwmbl_search", no_results)
+    monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_bing_recent_news_search", no_results)
+
+    candidates = asyncio.run(
+        module.search_recent_news_candidates(
+            "Chile noticias hoy actualidad acontecimientos recientes",
+            timeout_seconds=1.0,
+            max_results=8,
+        )
+    )
+
+    assert "noticias Chile" in seen_queries
+    assert len(candidates) == 1
+    assert candidates[0]["provider"] == "google_news"
+
+
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     from backend.search.resilient import WebOrchestrator
 
