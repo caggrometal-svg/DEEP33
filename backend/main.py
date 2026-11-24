@@ -145,6 +145,40 @@ def _is_publishable_realtime_news_source(
         "snippet": page_text[:2000],
         "text": page_text[:2000],
     }
+    # Chat prompts often append output constraints after the actual search intent.
+    # Score the publisher article against the normalized topic, not those instructions.
+    evidence_query = _normalise_lookup_query(query) or query
+    query_tokens = {
+        token
+        for token in re.findall(r"[a-záéíóúüñ]+", evidence_query.casefold())
+        if token not in {
+            "chile", "noticia", "noticias", "ultima", "ultimas", "última",
+            "últimas", "hoy", "actualidad", "de", "del", "en", "el", "la",
+        }
+    }
+    broad_chile_news = (
+        "chile" in str(query or "").casefold()
+        and not query_tokens
+    )
+    if broad_chile_news:
+        # For a country-wide "latest news" query, a fresh article from a
+        # Chilean publisher can be relevant without repeating the word Chile.
+        # Require concrete local institutions or geography, not just a .cl host.
+        local_context = " ".join((title, page_text)).casefold()
+        chile_context_markers = (
+            "hualpén", "hualpen", "san miguel", "santiago", "valparaíso",
+            "valparaiso", "concepción", "concepcion", "biobío", "biobio",
+            "antofagasta", "temuco", "iquique", "copiapó", "copiapo",
+            "puerto montt", "valdivia", "rancagua", "talca", "chillán",
+            "chillan", "carabineros", "policía de investigaciones", "pdi",
+            "congreso", "diputados", "senadores", "gobierno de chile",
+            "presidente de chile", "ministerio", "seremi", "municipalidad",
+            "fiscalía", "fiscalia", "alcalde", "alcaldesa", "región del",
+            "region del", "subsecretaría", "subsecretaria",
+        )
+        if any(marker in local_context for marker in chile_context_markers):
+            return True
+
     try:
         minimum_relevance_score = max(
             0.18,
@@ -152,9 +186,6 @@ def _is_publishable_realtime_news_source(
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
-    # Chat prompts often append output constraints after the actual search intent.
-    # Score the publisher article against the normalized topic, not those instructions.
-    evidence_query = _normalise_lookup_query(query) or query
     return score_result(evidence_query, relevance_item) >= minimum_relevance_score
 
 
@@ -3743,9 +3774,9 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                         continue
                     candidate_provider = str(raw.get("provider") or "google_news")
                     candidate_providers = raw.get("provider_sources")
-                    if not isinstance(candidate_providers, list):
+                    if not isinstance(candidate_providers, list) or not candidate_providers:
                         candidate_providers = raw.get("providers")
-                    if not isinstance(candidate_providers, list):
+                    if not isinstance(candidate_providers, list) or not candidate_providers:
                         candidate_providers = [candidate_provider]
                     candidate = {
                         "title": str(raw.get("title") or url)[:300],
