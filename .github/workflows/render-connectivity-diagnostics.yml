@@ -98,6 +98,8 @@ jobs:
                 git_sha,
                 network_internet_available: .network.internet_available,
                 gateway_status: .gateway.gateway,
+                gateway_provider: .gateway.provider,
+                gateway_model: .gateway.model,
                 memory_configured,
                 memory_ready
               }' "$body" 2>/dev/null || true
