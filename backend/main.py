@@ -161,6 +161,10 @@ def _is_publishable_realtime_news_source(
 def _independent_search_provider_family(provider: str) -> str:
     """Count underlying search indexes, not aliases or front ends."""
     name = str(provider or "").strip().casefold().replace("-", "_")
+    # Publisher RSS is a direct-source feed, not an independent search index.
+    # It may enrich source diversity but must never satisfy provider quorum.
+    if name in {"publisher_rss", "publisher_feed"}:
+        return ""
     if "google" in name:
         return "google"
     if any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
