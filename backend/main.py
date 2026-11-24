@@ -3067,6 +3067,18 @@ def sanitize_stream_delta(text: str) -> str:
     return value
 
 
+def visible_stream_delta(delta: dict) -> str:
+    """Return only user-visible assistant text; metadata and reasoning never stream."""
+    if not isinstance(delta, dict) or "reasoning" in delta or "analysis" in delta or "thinking" in delta:
+        return ""
+    content = delta.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return ""
+    if content.lstrip().startswith("<"):
+        return ""
+    return sanitize_stream_delta(content)
+
+
 _INTERNAL_TOOL_MARKERS = (
     "<dots_function_call>",
     "<function_call>",
@@ -5552,8 +5564,8 @@ async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
         choices = event.get("choices")
         if choices and isinstance(choices[0], dict):
             delta = choices[0].get("delta") or {}
-            content = delta.get("content")
-            if isinstance(content, str):
+            content = visible_stream_delta(delta)
+            if content:
                 assistant_parts.append(content)
     return "".join(assistant_parts), saw_done
 
@@ -5889,8 +5901,10 @@ async def stream_gateway(
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
                                 if isinstance(content_value, str):
-                                    safe_delta = tool_markup_filter.push(content_value)
-                                    assistant_parts.append(safe_delta)
+                                    visible_delta = visible_stream_delta(delta)
+                                    safe_delta = tool_markup_filter.push(visible_delta)
+                                    if safe_delta:
+                                        assistant_parts.append(safe_delta)
                                     if safe_delta != content_value:
                                         delta["content"] = safe_delta
                                         frame_changed = True
