@@ -96,6 +96,13 @@ def _is_kilo_free_model(model: str) -> bool:
     return normalized == "kilo-auto/free" or normalized.endswith(":free")
 
 
+def _provider_hostname(value: str) -> str:
+    try:
+        return (urlsplit(str(value or "").strip()).hostname or "").casefold()
+    except (TypeError, ValueError):
+        return ""
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
@@ -118,7 +125,7 @@ class GatewayConfig:
             "dots-studio/dots-3-note-preview:free",
         ).strip()
         primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
-        primary_host = (urlsplit(primary_url).hostname or "").casefold()
+        primary_host = _provider_hostname(primary_url)
         if primary_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(primary_model):
             # Kilo permits anonymous access to free models. Avoid sending a stale
             # account token that can turn an otherwise available free model into HTTP 401.
@@ -152,7 +159,7 @@ class GatewayConfig:
                 fallback_url = str(item.get("url", "")).strip()
                 fallback_model = str(item.get("model", "")).strip()
                 fallback_api_key = str(item.get("api_key", "")).strip()
-                fallback_host = (urlsplit(fallback_url).hostname or "").casefold()
+                fallback_host = _provider_hostname(fallback_url)
                 if fallback_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(fallback_model):
                     fallback_api_key = ""
                 providers.append(
