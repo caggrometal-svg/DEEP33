@@ -1388,7 +1388,11 @@ def test_web_search_endpoint_recovers_three_publishers_when_initial_news_search_
             "results": sources,
             "sources": sources,
             "providers": ["bing", "google_news"],
-            "verification": {"distinct_domains": 2, "distinct_providers": 2},
+            "verification": {
+                "distinct_domains": 2,
+                "distinct_providers": 2,
+                "provider_quorum_met": True,
+            },
         }
 
     async def fake_recent_candidates(*_args, **_kwargs):
