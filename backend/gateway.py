@@ -149,13 +149,19 @@ class GatewayConfig:
                     raise ValueError(
                         f"AI_GATEWAY_FALLBACKS_JSON item {index} must be an object"
                     )
+                fallback_url = str(item.get("url", "")).strip()
+                fallback_model = str(item.get("model", "")).strip()
+                fallback_api_key = str(item.get("api_key", "")).strip()
+                fallback_host = (urlsplit(fallback_url).hostname or "").casefold()
+                if fallback_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(fallback_model):
+                    fallback_api_key = ""
                 providers.append(
                     GatewayProvider(
                         name=str(item.get("name", f"fallback-{index}")).strip(),
-                        url=str(item.get("url", "")).strip(),
+                        url=fallback_url,
                         health_url=str(item.get("health_url", "")).strip(),
-                        api_key=str(item.get("api_key", "")).strip(),
-                        model=str(item.get("model", "")).strip(),
+                        api_key=fallback_api_key,
+                        model=fallback_model,
                     )
                 )
 
