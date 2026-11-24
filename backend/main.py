@@ -3893,11 +3893,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     recovery_providers,
                     recovery_samples,
                 )
-            except Exception as rescue_exc:
-                logger.warning(
-                    "web_search_recent_news_diversity_recovery_failed request_id=%s error=%s",
+            except Exception:
+                logger.exception(
+                    "web_search_recent_news_diversity_recovery_failed request_id=%s",
                     request_id,
-                    type(rescue_exc).__name__,
                 )
         def _news_provider_priority(item: dict[str, Any]) -> int:
             names = (
