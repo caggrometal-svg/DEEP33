@@ -1065,7 +1065,10 @@ async def search_recent_news_candidates(
             ):
                 continue
 
-            provider = str(item.get("provider") or default_provider)
+            # The dispatch job is authoritative provenance. Some adapters
+            # normalize missing provider fields to "unknown", which must not
+            # erase the known Mwmbl/Google News/Bing origin.
+            provider = str(default_provider or item.get("provider") or "unknown")
             existing = by_url.get(canonical_url)
             if existing is not None:
                 prior = existing.get("provider_sources")
