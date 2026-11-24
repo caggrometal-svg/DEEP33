@@ -721,9 +721,15 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         fetched.append(source["url"])
         assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
         assert kwargs["direct_timeout_seconds"] == 0.85
+        resolved_url = (
+            "https://www.emol.com/noticias/actualidad/chile-hoy.html"
+            if source["url"] == wrapper
+            else source["url"]
+        )
         return {
             "title": source["title"],
-            "url": source["url"],
+            "url": resolved_url,
+            "final_url": resolved_url,
             "text": "Texto editorial directo verificable. " * 8,
             "provider": source["provider"],
             "domain": source["source_domain"],
