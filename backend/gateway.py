@@ -163,18 +163,21 @@ class GatewayConfig:
             ),
             None,
         )
-        has_laguna_fallback = any(
-            "poolside/laguna-s-2.1" in provider.model.casefold()
+        has_free_text_fallback = any(
+            "baidu/ernie-5.5-flash-preview:free" in provider.model.casefold()
             for provider in secure_providers
         )
-        if kilo_provider is not None and not has_laguna_fallback:
+        if kilo_provider is not None and not has_free_text_fallback:
+            # Keep the deterministic fallback on a model currently listed as
+            # free by Kilo. The former Laguna fallback is no longer present in
+            # the live model catalog and can silently turn failover into a dead end.
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-laguna-fallback",
+                    name="kilo-free-text-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
                     api_key=kilo_provider.api_key,
-                    model="poolside/laguna-s-2.1:free",
+                    model="baidu/ernie-5.5-flash-preview:free",
                 ),
             )
         return cls(
