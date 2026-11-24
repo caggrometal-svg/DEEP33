@@ -2363,9 +2363,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if _chat_news_provider_priority(source) != 0
         ]
         source_candidates = (
-            publisher_sources[:3]
+            publisher_sources[:2]
             + search_sources[:2]
-            + publisher_sources[3:]
+            + publisher_sources[2:]
             + search_sources[2:]
         )
 
@@ -3805,11 +3805,14 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 item for item in ordered_sources
                 if _news_provider_priority(item) != 0
             ]
+            # Fetch both discovery families early; otherwise three valid
+            # publisher-RSS pages can satisfy the article count before any
+            # independent search-index page is attempted.
             ordered_sources = (
-                publisher_sources[:4]
-                + search_sources[:4]
-                + publisher_sources[4:]
-                + search_sources[4:]
+                publisher_sources[:2]
+                + search_sources[:2]
+                + publisher_sources[2:]
+                + search_sources[2:]
             )
         configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))
         max_fetch_candidates = (
