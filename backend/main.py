@@ -1693,7 +1693,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         publication_is_recent = (
             _is_recently_published(item, query)
             if item.get("published_at")
-            else provider == "mwmbl"
+            else provider in {"mwmbl", "google_news"}
         )
         is_google_news_wrapper = host in {"news.google.com", "google.com"}
         domain_matches = (
@@ -3759,12 +3759,23 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     for item in recent_candidates
                     if isinstance(item, dict)
                 })
+                recovery_samples = [
+                    {
+                        "provider": str(item.get("provider") or "unknown"),
+                        "url": str(item.get("url") or "")[:240],
+                        "source_domain": str(item.get("source_domain") or ""),
+                        "published_at": str(item.get("published_at") or ""),
+                    }
+                    for item in recent_candidates[:8]
+                    if isinstance(item, dict)
+                ]
                 logger.info(
-                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s",
+                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s samples=%s",
                     request_id,
                     len(candidate_domains),
                     len(candidate_sources),
                     recovery_providers,
+                    recovery_samples,
                 )
             except Exception as rescue_exc:
                 logger.warning(
