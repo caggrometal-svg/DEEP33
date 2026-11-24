@@ -3591,93 +3591,116 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and item.get("published_at")
                 and _is_recently_published(item, q)
             } - {""}
-            if len(candidate_domains) < 3:
-                try:
-                    rescue_query = (
-                        "Chile noticias hoy actualidad acontecimientos recientes"
-                        if "chile" in q.casefold()
-                        else q
-                    )
-                    recent_candidates = await search_recent_news_candidates(
-                        rescue_query,
-                        timeout_seconds=1.8,
-                        max_results=8,
-                    )
-                    recent_candidates = rank_results(
-                        q,
-                        recent_candidates,
-                        realtime=True,
-                    )
-                    for raw in recent_candidates:
-                        if not isinstance(raw, dict):
-                            continue
-                        published_at = raw.get("published_at")
-                        if not published_at or not _is_recently_published(raw, q):
-                            continue
-                        url = str(raw.get("url") or "").strip()
-                        domain = str(
-                            raw.get("source_domain")
-                            or (urlparse(url).hostname or "")
-                        ).casefold().removeprefix("www.")
-                        parsed_candidate = urlparse(url)
-                        candidate_path_parts = [
-                            part for part in parsed_candidate.path.split("/") if part
-                        ]
-                        # A category/homepage URL is not a news article, even if
-                        # an RSS/search provider assigns it a recent timestamp.
-                        if (
-                            parsed_candidate.scheme.lower() != "https"
-                            or not parsed_candidate.hostname
-                            or not domain
-                            or len(candidate_path_parts) < 2
-                        ):
-                            continue
-                        if any(
-                            str(existing.get("url") or "").strip() == url
-                            for existing in candidate_sources
-                        ):
-                            continue
-                        candidate_provider = str(raw.get("provider") or "google_news")
-                        candidate_providers = raw.get("provider_sources")
-                        if not isinstance(candidate_providers, list):
-                            candidate_providers = raw.get("providers")
-                        if not isinstance(candidate_providers, list):
-                            candidate_providers = [candidate_provider]
-                        candidate = {
-                            "title": str(raw.get("title") or url)[:300],
-                            "url": url[:2000],
-                            "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": candidate_provider,
-                            "providers": list(dict.fromkeys(
-                                str(name).strip()
-                                for name in candidate_providers
-                                if str(name or "").strip()
-                            )),
-                            "source_domain": domain[:255],
-                            "published_at": published_at,
-                        }
-                        candidate["relevance_score"] = score_result(q, candidate)
-                        candidate_sources.append(candidate)
-                        candidate_domains.add(domain)
-                        if len(candidate_domains) >= 5:
-                            break
-                    logger.info(
-                        "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
-                        request_id,
-                        len(candidate_domains),
-                        len(candidate_sources),
-                    )
-                except Exception as rescue_exc:
-                    logger.warning(
-                        "web_search_recent_news_diversity_recovery_failed request_id=%s error=%s",
-                        request_id,
-                        type(rescue_exc).__name__,
-                    )
+            try:
+                rescue_query = (
+                    "Chile noticias hoy actualidad acontecimientos recientes"
+                    if "chile" in q.casefold()
+                    else q
+                )
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=1.8,
+                    max_results=8,
+                )
+                recent_candidates = rank_results(
+                    q,
+                    recent_candidates,
+                    realtime=True,
+                )
+                for raw in recent_candidates:
+                    if not isinstance(raw, dict):
+                        continue
+                    published_at = raw.get("published_at")
+                    if not published_at or not _is_recently_published(raw, q):
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    domain = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().removeprefix("www.")
+                    parsed_candidate = urlparse(url)
+                    candidate_path_parts = [
+                        part for part in parsed_candidate.path.split("/") if part
+                    ]
+                    # A category/homepage URL is not a news article, even if
+                    # an RSS/search provider assigns it a recent timestamp.
+                    if (
+                        parsed_candidate.scheme.lower() != "https"
+                        or not parsed_candidate.hostname
+                        or not domain
+                        or len(candidate_path_parts) < 2
+                    ):
+                        continue
+                    if any(
+                        str(existing.get("url") or "").strip() == url
+                        for existing in candidate_sources
+                    ):
+                        continue
+                    candidate_provider = str(raw.get("provider") or "google_news")
+                    candidate_providers = raw.get("provider_sources")
+                    if not isinstance(candidate_providers, list):
+                        candidate_providers = raw.get("providers")
+                    if not isinstance(candidate_providers, list):
+                        candidate_providers = [candidate_provider]
+                    candidate = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": candidate_provider,
+                        "providers": list(dict.fromkeys(
+                            str(name).strip()
+                            for name in candidate_providers
+                            if str(name or "").strip()
+                        )),
+                        "source_domain": domain[:255],
+                        "published_at": published_at,
+                    }
+                    candidate["relevance_score"] = score_result(q, candidate)
+                    candidate_sources.append(candidate)
+                    candidate_domains.add(domain)
+                    if len(candidate_domains) >= 5:
+                        break
+                logger.info(
+                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                    request_id,
+                    len(candidate_domains),
+                    len(candidate_sources),
+                )
+            except Exception as rescue_exc:
+                logger.warning(
+                    "web_search_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                    request_id,
+                    type(rescue_exc).__name__,
+                )
+        def _news_provider_priority(item: dict[str, Any]) -> int:
+            names = (
+                item.get("providers")
+                if isinstance(item.get("providers"), list)
+                else [item.get("provider")]
+            )
+            normalized = {str(name or "").casefold() for name in names}
+            if "publisher_rss" in normalized:
+                return 0
+            if "google_news" in normalized or "google" in normalized:
+                return 1
+            if "bing" in normalized:
+                return 2
+            return 3
+
         ordered_sources = sorted(
             candidate_sources,
-            key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
+            key=lambda item: (
+                _news_provider_priority(item) if strict_news_request else 0,
+                -item["relevance_score"],
+                _fetch_priority(item),
+            ),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
+        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))
+        max_fetch_candidates = (
+            max(3, min(8, configured_fetch_candidates))
+            if strict_news_request
+            else max(3, min(6, configured_fetch_candidates))
+        )
         direct_sources = [
             item for item in ordered_sources
             if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
