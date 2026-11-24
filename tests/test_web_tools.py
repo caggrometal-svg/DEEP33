@@ -226,6 +226,59 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
     assert all(item["provider"] == "publisher_rss" for item in ranked)
 
 
+def test_publisher_rss_recovery_round_robins_editorial_domains(monkeypatch):
+    import tools.web_search as module
+
+    published_at = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    feeds = {
+        "https://rss.a.example/feed.xml": ("a.example", "https://a.example/news/"),
+        "https://rss.b.example/feed.xml": ("b.example", "https://b.example/news/"),
+        "https://rss.c.example/feed.xml": ("c.example", "https://c.example/news/"),
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, domain, prefix):
+            items = "".join(
+                "<item>"
+                f"<title>Chile actualidad artículo {index} de {domain}</title>"
+                f"<link>{prefix}2026/11/24/article-{index}.html</link>"
+                "<description>Noticia reciente de Chile y actualidad nacional.</description>"
+                f"<pubDate>{published_at}</pubDate>"
+                "</item>"
+                for index in range(4)
+            )
+            self.text = f"<rss><channel>{items}</channel></rss>"
+            self.content = self.text.encode()
+
+    class FakeClient:
+        async def get(self, url, **_kwargs):
+            domain, prefix = feeds[url]
+            return FakeResponse(domain, prefix)
+
+    async def fake_http_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_http_client)
+    monkeypatch.setattr(
+        module,
+        "PUBLISHER_NEWS_RSS_FEEDS",
+        tuple((domain, feed_url) for feed_url, (domain, _prefix) in feeds.items()),
+    )
+
+    candidates = asyncio.run(
+        module._publisher_rss_search(
+            "noticias de Chile hoy",
+            timeout_seconds=1.0,
+            max_results=5,
+        )
+    )
+
+    assert len(candidates) == 5
+    assert len({item["source_domain"] for item in candidates}) == 3
+
+
 def test_resilient_orchestrator_falls_back_to_duckduckgo(monkeypatch):
     from backend.search.resilient import WebOrchestrator
 
