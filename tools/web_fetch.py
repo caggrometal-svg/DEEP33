@@ -728,22 +728,25 @@ async def _resolve_google_news_wrapper(url: str, timeout_seconds: float) -> str:
     }
 
     splash_url = f"https://news.google.com/rss/articles/{article_id}"
+    if parsed.query:
+        splash_url = f"{splash_url}?{parsed.query}"
     response = await client.get(
         splash_url,
         headers=browser_headers,
         timeout=request_timeout,
     )
-    # Google may canonicalize the splash URL with locale parameters. Follow at
-    # most one same-origin redirect and never follow /sorry/ or an external hop.
+    # Current Google News RSS links can redirect directly to the publisher.
+    # Validate the public destination before returning it; never trust an
+    # arbitrary Location header or follow a private/metadata address.
     if response.status_code in REDIRECT_STATUSES:
         location = response.headers.get("location") or ""
         next_url = urljoin(splash_url, location)
         next_parsed = urlparse(next_url)
-        if (
-            (next_parsed.hostname or "").casefold().removeprefix("www.") != "news.google.com"
-            or "/sorry/" in next_parsed.path.casefold()
-        ):
+        next_host = (next_parsed.hostname or "").casefold().removeprefix("www.")
+        if "/sorry/" in next_parsed.path.casefold():
             raise WebFetchError("GOOGLE_NEWS_WRAPPER_UNRESOLVED")
+        if next_host != "news.google.com":
+            return await asyncio.to_thread(validate_public_url, next_url)
         response = await client.get(
             next_url,
             headers=browser_headers,
@@ -753,11 +756,28 @@ async def _resolve_google_news_wrapper(url: str, timeout_seconds: float) -> str:
         raise WebFetchError(f"GOOGLE_NEWS_WRAPPER_HTTP_{response.status_code}")
 
     body = response.text
-    signature_match = re.search(r'data-n-a-sg=["\']([^"\']+)["\']', body)
-    timestamp_match = re.search(r'data-n-a-ts=["\']([0-9]+)["\']', body)
+    signature_match = re.search(r'data-n-a-sg=["\\']([^"\\']+)["\\']', body)
+    timestamp_match = re.search(r'data-n-a-ts=["\\']([0-9]+)["\\']', body)
     if not signature_match or not timestamp_match:
+        # Google sometimes exposes a canonical publisher URL without the
+        # signed RPC metadata. Accept only a non-Google public destination.
+        canonical_match = re.search(
+            r'<link[^>]+rel=["\\']canonical["\\'][^>]+href=["\\']([^"\\']+)["\\']',
+            body,
+            re.IGNORECASE,
+        )
+        if canonical_match is None:
+            canonical_match = re.search(
+                r'<meta[^>]+property=["\\']og:url["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+                body,
+                re.IGNORECASE,
+            )
+        if canonical_match is not None:
+            canonical_url = urljoin(splash_url, html.unescape(canonical_match.group(1)))
+            canonical_host = (urlparse(canonical_url).hostname or "").casefold().removeprefix("www.")
+            if canonical_host and canonical_host != "news.google.com" and not canonical_host.endswith(".google.com"):
+                return await asyncio.to_thread(validate_public_url, canonical_url)
         raise WebFetchError("GOOGLE_NEWS_WRAPPER_PARAMS_MISSING")
-
     signature = html.unescape(signature_match.group(1))
     timestamp = int(timestamp_match.group(1))
     inner = json.dumps(
