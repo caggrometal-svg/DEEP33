@@ -1089,6 +1089,15 @@ async def search_recent_news_candidates(
             merged.append(candidate)
             if len(merged) >= limit:
                 return merged
+    provider_mix: dict[str, int] = {}
+    for item in merged:
+        provider_name = str(item.get("provider") or "unknown")
+        provider_mix[provider_name] = provider_mix.get(provider_name, 0) + 1
+    logger.info(
+        "recent_news_recovery_provider_mix candidates=%s providers=%s",
+        len(merged),
+        sorted(provider_mix.items()),
+    )
     return merged
 
 
