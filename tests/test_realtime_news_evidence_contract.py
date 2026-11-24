@@ -190,7 +190,10 @@ def test_strict_news_model_context_is_compact_but_keeps_full_quorum_metadata():
     assert len(compact["fetched_pages"]) == 3
     assert len(compact["search_results"]) == 3
     assert all(len(page["text"]) <= 500 for page in compact["fetched_pages"])
-    assert set(compact["fetched_pages"][0]) == {"title", "url", "domain", "published_at", "text"}
+    assert set(compact["fetched_pages"][0]) == {
+        "title", "url", "domain", "published_at", "provider",
+        "provider_sources", "text",
+    }
     assert all(len(item.get("snippet", "")) <= 160 for item in compact["search_results"])
     assert compact["domains_used"] == 4
     assert compact["news_quorum"] == evidence["news_quorum"]
@@ -332,3 +335,48 @@ def test_html_fetch_extracts_date_published_from_news_article_jsonld():
     assert title == "Informe oficial publicado"
     assert len(text) >= 80
     assert published_at == "2026-11-10T01:45:00Z"
+
+
+def test_recent_news_quorum_requires_provenance_on_extracted_pages():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    pages = []
+    for index, provider in enumerate(("bing", "bing", "mojeek"), start=1):
+        url = f"https://medio{index}.example/2026/11/23/noticia-{index}"
+        source = _news_source(published_at=now, url=url)
+        fetched = _fetched_page(published_at=now, url=url)
+        pages.append({
+            **source,
+            **fetched,
+            "provider": provider,
+            "provider_sources": [provider],
+        })
+
+    search_result = {
+        "verification": {
+            "provider_quorum_met": True,
+            "distinct_providers": 2,
+        }
+    }
+    summary = main._recent_news_quorum_summary(
+        "últimas noticias de Chile hoy",
+        pages,
+        search_result,
+    )
+
+    assert summary["met"] is True
+    assert summary["articles"] == 3
+    assert summary["domains"] == 3
+    assert summary["providers"] == 2
+
+    without_provenance = [
+        {key: value for key, value in page.items() if key not in {"provider", "provider_sources", "providers"}}
+        for page in pages
+    ]
+    rejected = main._recent_news_quorum_summary(
+        "últimas noticias de Chile hoy",
+        without_provenance,
+        search_result,
+    )
+    assert rejected["met"] is False
