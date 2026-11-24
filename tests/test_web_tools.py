@@ -1352,6 +1352,102 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
     assert result["extracted_text_chars"] >= 80
     assert result["fetched_pages"][0]["url"].startswith("https://www.t13.cl/")
 
+def test_web_search_endpoint_recovers_three_publishers_when_initial_news_search_is_degraded(monkeypatch):
+    import backend.main as main
+    from starlette.requests import Request
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    sources = [
+        {
+            "title": f"Últimas noticias de Chile hoy: acontecimiento {index}",
+            "url": f"https://medio-{index}.example/noticias/chile-actualidad-{index}",
+            "snippet": "Últimas noticias de Chile hoy con información nacional reciente y verificable.",
+            "provider": provider,
+            "providers": [provider],
+            "source_domain": f"medio-{index}.example",
+            "published_at": published_at,
+        }
+        for index, provider in ((1, "bing"), (2, "google_news"))
+    ]
+    rescued = [{
+        "title": "Últimas noticias de Chile hoy: nueva actualización nacional",
+        "url": "https://tercer-medio.example/noticias/chile-actualidad",
+        "snippet": "Últimas noticias de Chile hoy con información nacional reciente y verificable.",
+        "provider": "google_news",
+        "provider_sources": ["google_news", "bing"],
+        "source_domain": "tercer-medio.example",
+        "published_at": published_at,
+    }]
+
+    async def fake_search(*_args, **_kwargs):
+        return {
+            "ok": False,
+            "status": "failed",
+            "errors": ["REALTIME_NEWS_QUORUM_NOT_MET"],
+            "results": sources,
+            "sources": sources,
+            "providers": ["bing", "google_news"],
+            "verification": {"distinct_domains": 2, "distinct_providers": 2},
+        }
+
+    async def fake_recent_candidates(*_args, **_kwargs):
+        return rescued
+
+    async def fake_fetch(source, **_kwargs):
+        url = source["url"]
+        provider = source.get("provider", "unknown")
+        return {
+            "title": source["title"],
+            "url": url,
+            "final_url": url,
+            "domain": source["source_domain"],
+            "provider": provider,
+            "providers": source.get("providers", [provider]),
+            "published_at": source["published_at"],
+            "text": (
+                "Últimas noticias de Chile hoy. Esta noticia describe hechos "
+                "nacionales recientes, declaraciones oficiales y contexto verificable. "
+            ) * 4,
+            "text_chars": 400,
+        }
+
+    async def allow_controls(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", fake_recent_candidates)
+    monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
+    monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
+    monkeypatch.setattr(main, "session_id_from_request", lambda _request: "test-session")
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "test-news-recovery")
+
+    request = Request({
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/v1/web/search",
+        "raw_path": b"/v1/web/search",
+        "query_string": b"q=noticias",
+        "headers": [],
+        "server": ("testserver", 443),
+        "client": ("127.0.0.1", 12345),
+    })
+    result = asyncio.run(main.web_search_endpoint(request, q=query))
+
+    assert result["ok"] is True
+    assert result["status"] == "success"
+    assert len(result["results"]) == 3
+    assert result["domains_used"] == 3
+    assert {
+        item["source_domain"] for item in result["results"]
+    } == {"medio-1.example", "medio-2.example", "tercer-medio.example"}
+    assert all(item["evidence_type"] == "verified_current_news_article" for item in result["results"])
+
+
 def test_web_search_endpoint_has_bounded_multi_candidate_fetch_fallback():
     from pathlib import Path
 
