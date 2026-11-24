@@ -192,6 +192,8 @@ def _is_publishable_realtime_news_source(
 def _independent_search_provider_family(provider: str) -> str:
     """Count underlying search indexes, not aliases or front ends."""
     name = str(provider or "").strip().casefold().replace("-", "_")
+    if not name or name in {"unknown", "none", "null"}:
+        return ""
     # Publisher RSS is a direct-source feed, not an independent search index.
     # It may enrich source diversity but must never satisfy provider quorum.
     if name in {"publisher_rss", "publisher_feed"}:
@@ -2172,20 +2174,18 @@ async def _fetch_web_source(
         request_id or "unknown", final_url, provider, final_host or "unknown",
         len(page_text), (time.perf_counter() - started) * 1000,
     )
+    page_providers = _candidate_provider_names(
+        source,
+        str(source.get("provider") or provider),
+    )
+    if provider and provider not in page_providers:
+        page_providers.append(provider)
     return {
         "title": str(result.get("title") or source.get("title") or final_url)[:300],
         "url": final_url,
         "text": page_text[:5000],
         "provider": provider,
-        "providers": list(dict.fromkeys(
-            str(name).strip()
-            for name in (
-                source.get("providers")
-                if isinstance(source.get("providers"), list)
-                else [provider]
-            )
-            if str(name).strip()
-        )),
+        "providers": sorted(set(page_providers)),
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
         # Publication timestamp remains page-derived; SERP dates are discovery
@@ -2576,6 +2576,10 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             policy=fetch_policy,
         )
         fetched_pages = list(fetch_batch.documents)
+        # Page extraction may add an independent resolver provider (for example
+        # Bing resolving a Google News publisher wrapper). Preserve that evidence
+        # in the aggregate verification before evaluating the final quorum.
+        _merge_recovered_provider_provenance(search_result, fetched_pages)
         news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
         if is_strict_news_query(query) and not news_quorum["met"]:
             logger.warning(
