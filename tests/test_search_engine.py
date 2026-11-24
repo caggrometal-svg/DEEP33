@@ -1279,11 +1279,12 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
         calls["count"] += 1
         return [
             {
-                "title": "DEEP33 noticias actuales",
-                "url": f"https://news.example/item-{calls['count']}",
-                "snippet": "DEEP33 noticias actualidad hoy",
+                "title": f"DEEP33 noticias actuales {index}",
+                "url": f"https://news{index}.example/item-{calls['count']}",
+                "snippet": "DEEP33 noticias actualidad hoy con información reciente",
                 "published_at": datetime.now(timezone.utc).isoformat(),
             }
+            for index in range(1, 4)
         ]
 
     async def exercise():
@@ -1319,7 +1320,7 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
 def test_general_search_accepts_one_relevant_provider_result(monkeypatch):
     from backend.search.engine import SearchEngine
 
-    async def one_provider(_providers, query, **kwargs):
+    async def one_provider(self, _providers, query, **kwargs):
         return (
             [("bing", [{
                 "title": "Official overview of the Eiffel Tower",
@@ -1348,7 +1349,7 @@ def test_general_search_accepts_one_relevant_provider_result(monkeypatch):
 def test_research_contrast_requires_two_distinct_domains_not_two_providers(monkeypatch):
     from backend.search.engine import SearchEngine
 
-    async def one_provider_two_domains(_providers, query, **kwargs):
+    async def one_provider_two_domains(self, _providers, query, **kwargs):
         return (
             [("mojeek", [
                 {
