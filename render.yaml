@@ -18,7 +18,7 @@ services:
       - key: WEB_SEARCH_FALLBACK_DDG
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "3"
+        value: "6"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_PROVIDER
@@ -26,9 +26,9 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_MAX_QUERIES
-        value: "1"
+        value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "1"
+        value: "2"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -55,13 +55,13 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "3"
+        value: "6"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_MAX_QUERIES
-        value: "1"
+        value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "1"
+        value: "2"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -88,13 +88,13 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "3"
+        value: "6"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
       - key: WEB_SEARCH_MAX_QUERIES
-        value: "1"
+        value: "3"
       - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "1"
+        value: "2"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
