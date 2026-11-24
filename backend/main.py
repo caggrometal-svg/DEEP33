@@ -3672,8 +3672,6 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     candidate["relevance_score"] = score_result(q, candidate)
                     candidate_sources.append(candidate)
                     candidate_domains.add(domain)
-                    if len(candidate_domains) >= 5:
-                        break
                 logger.info(
                     "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
                     request_id,
