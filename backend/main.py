@@ -2329,6 +2329,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     candidate_limit = min(
         8,
         max(
+            5,
             required_pages + 2,
             _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
         ),
