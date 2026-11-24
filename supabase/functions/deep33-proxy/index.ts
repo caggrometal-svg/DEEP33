@@ -2734,12 +2734,9 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
         return "";
       }
     }).filter(Boolean));
-    const providers = new Set([
-      ...(Array.isArray(result.providers)
-        ? result.providers.map((item) => edgeProviderFamily(String(item || "")))
-        : []),
-      ...edgeProvidersForResults(results),
-    ].filter(Boolean));
+    // Quorum is based only on provenance attached to relevant retained URLs.
+    // Aggregate provider lists may include irrelevant search hits.
+    const providers = new Set(edgeProvidersForResults(results));
     return { results, domains, providers };
   };
 
@@ -3552,7 +3549,8 @@ function edgeProviderFamily(provider: string): string {
   if (name.includes("marginalia")) return "marginalia";
   if (name.includes("tavily")) return "tavily";
   if (name.includes("cl0q")) return "cl0q";
-  if (name.includes("wikipedia")) return "wikipedia";
+  // Wikipedia is a content corpus, not an independent web-search index.
+  if (name.includes("wikipedia")) return "";
   return name;
 }
 
