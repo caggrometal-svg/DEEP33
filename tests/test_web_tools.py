@@ -1969,6 +1969,57 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
     asyncio.run(exercise())
 
 
+def test_recent_news_quorum_uses_provider_field_when_provider_list_is_empty():
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    pages = [
+        {
+            "provider": "google_news",
+            "providers": [],
+            "domain": "theclinic.cl",
+            "final_url": "https://www.theclinic.cl/2026/11/24/noticia-hualpen/",
+            "title": "Hualpén: procedimiento de la PDI",
+            "published_at": published_at,
+            "text": ("La PDI realizó un procedimiento en Hualpén, Región del Biobío. " * 8),
+        },
+        {
+            "provider": "mwmbl",
+            "providers": [],
+            "domain": "cooperativa.cl",
+            "final_url": "https://www.cooperativa.cl/noticias/pais/2026/11/24/noticia-san-miguel/",
+            "title": "Municipalidad de San Miguel anuncia medidas",
+            "published_at": published_at,
+            "text": ("La Municipalidad de San Miguel informó nuevas medidas para Chile. " * 8),
+        },
+        {
+            "provider": "publisher_rss",
+            "providers": [],
+            "domain": "latercera.com",
+            "final_url": "https://www.latercera.com/politica/noticia/diputados/",
+            "title": "Diputados revisan presupuesto en el Congreso",
+            "published_at": published_at,
+            "text": ("Diputados revisaron el presupuesto en el Congreso de Chile. " * 8),
+        },
+    ]
+    search_result = {
+        "providers": ["bing", "duckduckgo"],
+        "verification": {
+            "distinct_providers": 2,
+            "provider_quorum_met": True,
+        },
+    }
+
+    summary = main._recent_news_quorum_summary(query, pages, search_result)
+
+    assert summary["articles"] == 3
+    assert summary["domains"] == 3
+    assert summary["providers"] == 2
+    assert summary["met"] is True
+    assert main._independent_search_provider_family("unknown") == ""
+
+
 def test_recovered_provider_provenance_updates_quorum_without_counting_rss():
     import backend.main as main
 
