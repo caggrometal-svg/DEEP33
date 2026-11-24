@@ -24,16 +24,16 @@ android {
     val releaseStorePassword = System.getenv("DEEP33_RELEASE_STORE_PASSWORD")?.trim().orEmpty()
     val releaseKeyAlias = System.getenv("DEEP33_RELEASE_KEY_ALIAS")?.trim().orEmpty()
     val releaseKeyPassword = System.getenv("DEEP33_RELEASE_KEY_PASSWORD")?.trim().orEmpty()
-    val releaseSigningReady = listOf(
-        releaseKeystorePath,
-        releaseStorePassword,
-        releaseKeyAlias,
-        releaseKeyPassword,
-    ).all { it.isNotBlank() }
+    val releaseSigningValues = listOf(
+        "DEEP33_RELEASE_KEYSTORE_PATH" to releaseKeystorePath,
+        "DEEP33_RELEASE_STORE_PASSWORD" to releaseStorePassword,
+        "DEEP33_RELEASE_KEY_ALIAS" to releaseKeyAlias,
+        "DEEP33_RELEASE_KEY_PASSWORD" to releaseKeyPassword,
+    )
 
     signingConfigs {
         create("release") {
-            if (releaseSigningReady) {
+            if (releaseSigningValues.all { it.second.isNotBlank() }) {
                 storeFile = file(releaseKeystorePath)
                 storePassword = releaseStorePassword
                 keyAlias = releaseKeyAlias
@@ -46,12 +46,26 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            if (releaseSigningReady) {
-                signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    // A release task must never produce an unsigned or ambiguously signed artifact.
+    gradle.taskGraph.whenReady {
+        val buildingRelease = allTasks.any { it.name.contains("Release", ignoreCase = true) }
+        if (buildingRelease) {
+            val missing = releaseSigningValues
+                .filter { it.second.isBlank() }
+                .map { it.first }
+            require(missing.isEmpty()) {
+                "Release signing configuration missing: ${missing.joinToString()}"
+            }
+            require(file(releaseKeystorePath).isFile) {
+                "Release keystore does not exist at DEEP33_RELEASE_KEYSTORE_PATH"
             }
         }
     }
