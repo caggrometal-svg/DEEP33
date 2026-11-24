@@ -925,7 +925,18 @@ async def search_recent_news_candidates(
             except Exception:
                 continue
             hostname = (urlparse(canonical_url).hostname or "").casefold().removeprefix("www.")
-            if expected_domain and hostname != expected_domain and not hostname.endswith("." + expected_domain):
+            # Bing RSS can wrap the destination in a click-through URL while
+            # separately identifying the publisher in <source url="...">.
+            # Validate the publisher metadata when present; checking the wrapper
+            # hostname here discarded every targeted publisher recovery result.
+            publisher_domain = str(
+                item.get("source_domain") or hostname
+            ).casefold().removeprefix("www.").rstrip(".")
+            if (
+                expected_domain
+                and publisher_domain != expected_domain
+                and not publisher_domain.endswith("." + expected_domain)
+            ):
                 continue
 
             provider = str(item.get("provider") or default_provider)
