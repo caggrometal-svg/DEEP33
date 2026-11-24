@@ -910,7 +910,7 @@ class WebOrchestrator:
         lowered_cleaned = cleaned.casefold()
         strict_news_request = is_strict_news_query(cleaned)
         research_contrast_request = _requires_research_contrast(cleaned)
-        required_provider_count = 2 if strict_news_request else 1
+        required_provider_count = 2  # All web answers require two independent search-index families.
 
         def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
             # Provider success only counts when that provider independently
@@ -1024,11 +1024,7 @@ class WebOrchestrator:
             or broad_ai_news_intent
         )
         research_contrast_request = research_contrast_request or academic_ai_research_intent
-        required_domain_count = (
-            3 if strict_news_request
-            else 2 if research_contrast_request
-            else 1
-        )
+        required_domain_count = 3 if strict_news_request else 2
         minimum_coverage = required_domain_count
         if (
             chile_public_info_intent
@@ -2057,14 +2053,14 @@ class WebOrchestrator:
         winner = next((o.provider for o in relevant_outcomes), None)
         strict_news_request = is_strict_news_query(query)
         research_contrast_request = _requires_research_contrast(query)
-        required_providers = 2 if strict_news_request else 1
+        required_providers = 2
         provider_quorum_met = len(provider_families) >= required_providers
         domains = sorted({
             (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             for item in selected
             if str(item.get("url") or "").strip()
         } - {""})
-        required_domains = 3 if strict_news_request else 2 if research_contrast_request else 1
+        required_domains = 3 if strict_news_request else 2
         required_results = 3 if strict_news_request else 1
         domain_quorum_met = len(domains) >= required_domains
         final_ok = (
@@ -2075,6 +2071,8 @@ class WebOrchestrator:
         final_status = (
             status
             if final_ok or not selected
+            else "INSUFFICIENT_PROVIDER_QUORUM"
+            if not provider_quorum_met
             else "INSUFFICIENT_EXTERNAL_EVIDENCE"
         )
         verification_level = (
