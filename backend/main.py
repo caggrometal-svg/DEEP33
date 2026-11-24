@@ -1681,7 +1681,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
     }
     for item in items:
         provider = str(item.get("provider") or "").casefold()
-        if provider not in {"publisher_rss", "mwmbl"}:
+        if provider not in {"publisher_rss", "mwmbl", "google_news"}:
             continue
         url = str(item.get("url") or "").strip()
         parsed = urlparse(url)
@@ -1695,13 +1695,19 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             if item.get("published_at")
             else provider == "mwmbl"
         )
+        is_google_news_wrapper = host in {"news.google.com", "google.com"}
+        domain_matches = (
+            is_google_news_wrapper
+            if provider == "google_news"
+            else host == source_domain or host.endswith("." + source_domain)
+        )
         if (
             not url
             or url in seen_urls
             or parsed.scheme.lower() != "https"
             or not host
             or not source_domain
-            or (host != source_domain and not host.endswith("." + source_domain))
+            or not domain_matches
             or len(path_parts) < 2
             or not publication_is_recent
             or len(str(item.get("title") or "").strip()) < 12
