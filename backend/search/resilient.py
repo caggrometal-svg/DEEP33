@@ -48,8 +48,9 @@ def _provider_family(provider: str) -> str:
         return "tavily"
     if "cl0q" in name:
         return "cl0q"
+    # Wikipedia is a content corpus, not an independent web-search index.
     if "wikipedia" in name:
-        return "wikipedia"
+        return ""
     return name
 
 
