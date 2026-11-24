@@ -1960,7 +1960,7 @@ class WebOrchestrator:
                         and urlparse(str(item.get("url") or "")).path in {"", "/"}
                     )
                 ]
-                merged.extend(dict(item) for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
+                merged.extend({**dict(item), "navigation_only": True} for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
                 ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains_after_portal_fallback = {
@@ -1990,7 +1990,7 @@ class WebOrchestrator:
                 # fetcher extracts their actual page text.
                 navigation_candidates: list[dict] = []
                 seen_company_hosts: set[str] = set()
-                for item in [*selected, *[dict(candidate) for candidate in _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES]]:
+                for item in selected:
                     if not _is_chile_commercial_technology_item(item):
                         continue
                     host = str(
@@ -2004,6 +2004,22 @@ class WebOrchestrator:
                     navigation_candidates.append(item)
                     if len(navigation_candidates) >= self.max_results:
                         break
+                if len(navigation_candidates) < self.max_results:
+                    for item in _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES:
+                        candidate = {**dict(item), "navigation_only": True}
+                        if not _is_chile_commercial_technology_item(candidate):
+                            continue
+                        host = str(
+                            candidate.get("source_domain")
+                            or (urlparse(str(candidate.get("url") or "")).hostname or "")
+                        ).casefold().rstrip(".").removeprefix("www.")
+                        url = str(candidate.get("url") or "").strip()
+                        if not host or not url or host in seen_company_hosts:
+                            continue
+                        seen_company_hosts.add(host)
+                        navigation_candidates.append(candidate)
+                        if len(navigation_candidates) >= self.max_results:
+                            break
                 if len(navigation_candidates) >= min(3, self.max_results):
                     selected = navigation_candidates
                 logger.warning(
@@ -2127,20 +2143,30 @@ class WebOrchestrator:
         required_domains = 3 if strict_news_request else 2
         required_results = 3 if strict_news_request else 1
         domain_quorum_met = len(domains) >= required_domains
+        navigation_only = (
+            not strict_news_request
+            and not provider_quorum_met
+            and domain_quorum_met
+            and any(bool(item.get("navigation_only")) for item in selected)
+        )
         final_ok = (
             len(selected) >= required_results
             and domain_quorum_met
-            and provider_quorum_met
+            and (provider_quorum_met or navigation_only)
         )
         final_status = (
-            status
+            "PARTIAL"
+            if navigation_only
+            else status
             if final_ok or not selected
             else "INSUFFICIENT_PROVIDER_QUORUM"
             if not provider_quorum_met
             else "INSUFFICIENT_EXTERNAL_EVIDENCE"
         )
         verification_level = (
-            "multi-source"
+            "navigation-only"
+            if navigation_only
+            else "multi-source"
             if len(domains) >= 2
             else "single-source"
             if selected
