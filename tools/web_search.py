@@ -989,6 +989,13 @@ async def search_recent_news_candidates(
             None,
             _publisher_rss_search(cleaned, budget, min(limit, 5)),
         ))
+        # Mwmbl contributes an independent index. Its SERP may be undated;
+        # the final article fetch must extract and validate publication time.
+        jobs.append((
+            "mwmbl",
+            None,
+            _mwmbl_search(cleaned, budget, min(limit, 2)),
+        ))
     jobs.extend([
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         *(
@@ -1015,10 +1022,24 @@ async def search_recent_news_candidates(
                 continue
             published_at = str(item.get("published_at") or "").strip()
             url = str(item.get("url") or "").strip()
-            if not published_at or not url:
+            provider = str(item.get("provider") or default_provider)
+            if not url:
                 continue
-            if not _is_recently_published(item, cleaned):
+            if published_at:
+                if not _is_recently_published(item, cleaned):
+                    continue
+            elif provider != "mwmbl":
                 continue
+            else:
+                parsed_candidate = urlparse(url)
+                candidate_path = [part for part in parsed_candidate.path.split("/") if part]
+                if (
+                    parsed_candidate.scheme.lower() != "https"
+                    or len(candidate_path) < 2
+                    or len(str(item.get("title") or "").strip()) < 12
+                    or len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+                ):
+                    continue
             try:
                 canonical_url = _safe_search_result_url(url)
             except Exception:
@@ -1054,6 +1075,10 @@ async def search_recent_news_candidates(
                 **item,
                 "url": canonical_url,
                 "provider": provider,
+                "source_domain": str(
+                    item.get("source_domain")
+                    or (urlparse(canonical_url).hostname or "").casefold().removeprefix("www.")
+                ),
                 "provider_sources": [provider],
             }
             by_url[canonical_url] = candidate
