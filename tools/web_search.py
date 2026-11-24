@@ -975,6 +975,77 @@ async def _publisher_rss_search(
     return merged[:max_results]
 
 
+async def _corroborate_google_news_candidates_with_bing(
+    candidates: list[dict],
+    timeout_seconds: float,
+    *,
+    max_candidates: int = 3,
+) -> None:
+    """Attach Bing provenance only when Bing independently finds the same publisher article."""
+    targets: list[dict] = []
+    seen_domains: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, dict) or item.get("provider") != "google_news":
+            continue
+        domain = str(item.get("source_domain") or "").casefold().removeprefix("www.")
+        title = str(item.get("title") or "").strip()
+        if not domain or not title or domain in seen_domains:
+            continue
+        seen_domains.add(domain)
+        targets.append(item)
+        if len(targets) >= max(1, min(4, int(max_candidates))):
+            break
+
+    if not targets:
+        return
+
+    jobs = [
+        _bing_recent_news_search(
+            f'"{str(item.get("title") or "").strip()}" site:{str(item.get("source_domain") or "").strip()}',
+            timeout_seconds,
+            2,
+        )
+        for item in targets
+    ]
+    settled = await asyncio.gather(*jobs, return_exceptions=True)
+    stopwords = {"chile", "noticia", "noticias", "hoy", "ultima", "ultimas", "actualidad", "de", "del", "en", "el", "la"}
+
+    for candidate, results in zip(targets, settled):
+        if isinstance(results, BaseException) or not isinstance(results, list):
+            continue
+        target_domain = str(candidate.get("source_domain") or "").casefold().removeprefix("www.")
+        target_tokens = {
+            token for token in re.findall(r"[a-z0-9áéíóúüñ]+", str(candidate.get("title") or "").casefold())
+            if len(token) > 2 and token not in stopwords
+        }
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            result_url = str(result.get("url") or "").strip()
+            result_host = (urlparse(result_url).hostname or "").casefold().removeprefix("www.")
+            result_domain = str(result.get("source_domain") or result_host).casefold().removeprefix("www.")
+            if not result_url or result_domain != target_domain:
+                continue
+            result_tokens = {
+                token for token in re.findall(r"[a-z0-9áéíóúüñ]+", str(result.get("title") or "").casefold())
+                if len(token) > 2 and token not in stopwords
+            }
+            overlap = len(target_tokens & result_tokens) / max(1, len(target_tokens))
+            if overlap < 0.45:
+                continue
+            providers = candidate.get("provider_sources")
+            providers = providers if isinstance(providers, list) else []
+            candidate["provider_sources"] = sorted({str(value) for value in [*providers, "google_news", "bing"] if value})
+            candidate["providers"] = list(candidate["provider_sources"])
+            logger.info(
+                "recent_news_provider_corroborated domain=%s providers=%s title=%s",
+                target_domain,
+                candidate["provider_sources"],
+                str(candidate.get("title") or "")[:140],
+            )
+            break
+
+
 async def search_recent_news_candidates(
     query: str,
     *,
@@ -1118,6 +1189,15 @@ async def search_recent_news_candidates(
             }
             by_url[canonical_url] = candidate
             merged.append(candidate)
+
+    # Corroborate Google News article candidates against Bing by exact title
+    # and publisher domain. A provider is added only when Bing returns a matching
+    # article; mere provider availability never satisfies the quorum.
+    await _corroborate_google_news_candidates_with_bing(
+        merged,
+        budget,
+        max_candidates=3,
+    )
 
     # Reserve at least one slot for each available independent search index
     # before publisher RSS recovery can fill the result cap. Publisher feeds
