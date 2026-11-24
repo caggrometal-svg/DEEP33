@@ -652,6 +652,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "errors": [],
             "providers": ["google_news", "bing"],
             "providers_attempted": ["google_news", "bing"],
+            "verification": {"provider_quorum_met": True, "distinct_providers": 2},
             "winner_provider": "multi",
         }
 
@@ -719,6 +720,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             ],
             "errors": [],
             "providers": ["google_news", "bing", "duckduckgo"],
+            "verification": {"provider_quorum_met": True, "distinct_providers": 2},
         }
 
     async def fake_fetch_source(source, **kwargs):
