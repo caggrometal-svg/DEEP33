@@ -18,7 +18,7 @@ def _fetched_page(*, published_at, url="https://noticias.example/2026/10/25/gobi
     return {
         "title": title or "Gobierno anuncia nuevas medidas en Chile hoy",
         "url": url,
-        "domain": "noticias.example",
+        "domain": url.split("/")[2],
         "published_at": published_at,
         "text": (
             "Últimas noticias de Chile. El Gobierno de Chile anunció nuevas medidas hoy. "
