@@ -2175,7 +2175,7 @@ class WebOrchestrator:
         return {
             "ok": final_ok,
             "status": final_status,
-            "diagnostic_code": None if final_ok else final_status,
+            "diagnostic_code": "INSUFFICIENT_PROVIDER_QUORUM" if navigation_only else None if final_ok else final_status,
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
@@ -2205,6 +2205,10 @@ class WebOrchestrator:
                 "required_providers": required_providers,
                 "domain_quorum_met": domain_quorum_met,
                 "provider_quorum_met": provider_quorum_met,
+                "navigation_only": navigation_only,
+                "evidence_status": "NAVIGATION_ONLY" if navigation_only else (
+                    "VERIFIED" if provider_quorum_met and domain_quorum_met else "INSUFFICIENT"
+                ),
                 "corroborated_results": 0,
             },
             "errors": errors[:8],
@@ -2219,7 +2223,7 @@ class WebOrchestrator:
 _default_orchestrator: WebOrchestrator | None = None
 
 
-def get_web_orchestrator(max_results: int = 5) -> WebOrchestrator:
+def get_web_orchestrator(max_results: int = 8) -> WebOrchestrator:
     global _default_orchestrator
     if _default_orchestrator is None or _default_orchestrator.max_results != max_results:
         _default_orchestrator = WebOrchestrator(max_results=max_results)
