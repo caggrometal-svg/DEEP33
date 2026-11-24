@@ -1666,37 +1666,15 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    import tools.web_search as web
-
-    rescued_candidate = {
-        "title": "Presidente de la DC analiza las elecciones en Chile",
-        "url": "https://www.t13.cl/noticia/politica/presidente-dc-analiza-elecciones-15-10-2026",
-        "snippet": "Artículo periodístico con declaraciones sobre política chilena y elecciones.",
-        "source_domain": "t13.cl",
-        "published_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    async def fake_publisher_rss(*_args, **_kwargs):
-        return [rescued_candidate]
-
-    async def fake_empty_provider(*_args, **_kwargs):
+    async def fake_recent_candidates(*_args, **_kwargs):
         return []
-
-    async def fake_corroboration(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(web, "_publisher_rss_search", fake_publisher_rss)
-    monkeypatch.setattr(web, "_google_news_search", fake_empty_provider)
-    monkeypatch.setattr(web, "_google_news_top_stories_search", fake_empty_provider)
-    monkeypatch.setattr(web, "_mwmbl_search", fake_empty_provider)
-    monkeypatch.setattr(web, "_bing_recent_news_search", fake_empty_provider)
-    monkeypatch.setattr(web, "_corroborate_google_news_candidates_with_indexes", fake_corroboration)
 
     async def allow_controls(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", fake_recent_candidates)
     monkeypatch.setattr(main, "fetch_page", fake_fetch)
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "session_id_from_request", lambda _request: "test-session")
@@ -2711,3 +2689,45 @@ def test_web_orchestrator_ranks_against_compacted_semantic_query(monkeypatch):
     assert all(value == expected_query for value in ranked_queries)
     assert "memoria" not in expected_query.casefold()
     assert "ejecuta" not in expected_query.casefold()
+
+
+def test_search_recent_news_candidates_uses_rss_and_preserves_provenance(monkeypatch):
+    import tools.web_search as web
+
+    published_at = datetime.now(timezone.utc).isoformat()
+    candidate = {
+        "title": "Últimas noticias de Chile: actualización nacional",
+        "url": "https://www.biobiochile.cl/noticias/nacional/region-metropolitana/2026/11/24/actualizacion.shtml",
+        "snippet": "Artículo reciente con información nacional y contexto suficiente para validar la noticia.",
+        "source_domain": "biobiochile.cl",
+        "published_at": published_at,
+    }
+
+    async def fake_publisher_rss(*_args, **_kwargs):
+        return [candidate]
+
+    async def fake_empty_provider(*_args, **_kwargs):
+        return []
+
+    async def fake_corroboration(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(web, "_publisher_rss_search", fake_publisher_rss)
+    monkeypatch.setattr(web, "_google_news_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_google_news_top_stories_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_mwmbl_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_bing_recent_news_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_corroborate_google_news_candidates_with_indexes", fake_corroboration)
+
+    results = asyncio.run(
+        web.search_recent_news_candidates(
+            "últimas noticias de Chile hoy",
+            timeout_seconds=0.8,
+            max_results=8,
+        )
+    )
+
+    assert any(item.get("url") == candidate["url"] for item in results)
+    recovered = next(item for item in results if item.get("url") == candidate["url"])
+    assert recovered["provider"] == "publisher_rss"
+    assert recovered["provider_sources"] == ["publisher_rss"]
