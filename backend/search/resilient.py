@@ -74,7 +74,7 @@ def _bounded_env_float(name: str, default: float, minimum: float, maximum: float
 
 
 PROVIDER_TOTAL_SECONDS = 2.5
-GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 6.0, 1.0, 6.0)
+GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 5.0, 1.0, 5.0)
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
@@ -349,7 +349,7 @@ class WebOrchestrator:
         self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
         self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
-        self.global_budget_seconds = max(0.05, min(6.0, float(global_budget_seconds)))
+        self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
         self.fallback_delay_seconds = max(0.0, min(2.0, float(fallback_delay_seconds)))
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
@@ -1062,7 +1062,9 @@ class WebOrchestrator:
         # research contrast or official public-information discovery, two distinct
         # publisher domains are the controlling quorum; strict news always needs two indexes.
         required_provider_count = (
-            1 if not strict_news_request and (research_contrast_request or chile_public_info_intent)
+            1 if not strict_news_request and (
+                research_contrast_request or chile_public_info_intent or commercial_technology_site_intent
+            )
             else 2
         )
         required_domain_count = 3 if strict_news_request else 2
@@ -2104,8 +2106,16 @@ class WebOrchestrator:
                 "portal gubernamental", "datos abiertos", "transparencia",
             ))
         )
+        commercial_technology_site_request = (
+            "chile" in lowered_query
+            and any(term in lowered_query for term in ("comercial", "commercial", "empresa", "company"))
+            and any(term in lowered_query for term in ("tecnología", "tecnologia", "technology", "tech"))
+            and any(term in lowered_query for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
+        )
         required_providers = (
-            1 if not strict_news_request and (research_contrast_request or chile_public_info_request)
+            1 if not strict_news_request and (
+                research_contrast_request or chile_public_info_request or commercial_technology_site_request
+            )
             else 2
         )
         provider_quorum_met = len(provider_families) >= required_providers
