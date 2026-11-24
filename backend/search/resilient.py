@@ -438,6 +438,14 @@ class WebOrchestrator:
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return cleaned
+        provider_source = re.sub(
+            r"\b(?:no\s+(?:uses|utilices|consultes)|do\s+not\s+use|don't\s+use)\s+"
+            r"(?:la\s+)?(?:memoria|memory)(?:\s+(?:ni|or|and)\s+(?:los\s+)?"
+            r"(?:datos?\s+almacenados|stored\s+data))?\b",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         lowered = cleaned.casefold()
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
@@ -477,7 +485,7 @@ class WebOrchestrator:
             # Realtime questions must retain their topical entities, not their
             # full conversational instructions. The raw Spanish prompt often
             # causes search providers to return a completely different topic.
-            normalized_lookup = _normalise_lookup_query(cleaned)
+            normalized_lookup = _normalise_lookup_query(provider_source)
             realtime_tokens = list(dict.fromkeys(_topic_tokens(normalized_lookup)))
             if "chile" in lowered and "chile" not in {token.casefold() for token in realtime_tokens}:
                 realtime_tokens.append("Chile")
@@ -532,7 +540,7 @@ class WebOrchestrator:
                 "Chile commercial technology companies official websites software telecom digital services "
                 "SONDA Entel WOM Movistar"
             )
-        topic_tokens = list(_topic_tokens(cleaned))
+        topic_tokens = list(_topic_tokens(provider_source))
         website_intent = any(
             term in lowered
             for term in (
