@@ -157,9 +157,13 @@ def test_google_news_article_requires_matching_bing_title_and_domain_for_quorum(
             "url": "https://www.latercera.com/politica/noticia/presupuesto/ARTICLE/",
         }]
 
+    async def no_duckduckgo(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing)
+    monkeypatch.setattr(module, "_duckduckgo_search", no_duckduckgo)
     asyncio.run(
-        module._corroborate_google_news_candidates_with_bing(
+        module._corroborate_google_news_candidates_with_indexes(
             [candidate],
             1.5,
             max_candidates=2,
@@ -169,6 +173,42 @@ def test_google_news_article_requires_matching_bing_title_and_domain_for_quorum(
     assert calls and "site:www.latercera.com" in calls[0]
     assert candidate["provider_sources"] == ["bing", "google_news"]
     assert candidate["providers"] == ["bing", "google_news"]
+
+
+def test_google_news_article_can_be_corroborated_by_duckduckgo(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    candidate = {
+        "provider": "google_news",
+        "provider_sources": ["google_news"],
+        "source_domain": "theclinic.cl",
+        "title": "Hombre detenido por contrabando de especies exóticas en Hualpén",
+        "url": "https://news.google.com/rss/articles/example-ddg",
+    }
+
+    async def no_bing(*_args, **_kwargs):
+        return []
+
+    async def fake_duckduckgo(query, timeout, limit):
+        assert "site:theclinic.cl" in query
+        return [{
+            "title": "Hombre detenido por contrabando de especies exóticas en Hualpén",
+            "url": "https://www.theclinic.cl/2026/11/23/noticia-hualpen/",
+            "source_domain": "theclinic.cl",
+        }]
+
+    monkeypatch.setattr(module, "_bing_recent_news_search", no_bing)
+    monkeypatch.setattr(module, "_duckduckgo_search", fake_duckduckgo)
+    asyncio.run(
+        module._corroborate_google_news_candidates_with_indexes(
+            [candidate],
+            1.5,
+            max_candidates=1,
+        )
+    )
+
+    assert candidate["provider_sources"] == ["duckduckgo", "google_news"]
 
 
 def test_google_news_top_stories_adapter_returns_publisher_linked_candidates(monkeypatch):
