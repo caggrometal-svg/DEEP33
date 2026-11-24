@@ -380,3 +380,44 @@ def test_recent_news_quorum_requires_provenance_on_extracted_pages():
         search_result,
     )
     assert rejected["met"] is False
+
+def test_web_search_recent_news_recovery_merges_into_endpoint_result(monkeypatch):
+    import asyncio
+    import backend.main as main
+
+    async def fake_enforce_client_controls(*_args, **_kwargs):
+        return None
+
+    async def fake_search_web(*_args, **_kwargs):
+        return {
+            "ok": False,
+            "results": [],
+            "sources": [],
+            "errors": ["NO_RESULTS"],
+            "verification": {},
+        }
+
+    async def fake_recent_news(*_args, **_kwargs):
+        return []
+
+    def mark_merge(target, _candidates):
+        target["news_recovery_merge_test"] = True
+
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+    monkeypatch.setattr(main, "session_id_from_request", lambda _request: "test-session")
+    monkeypatch.setattr(main, "enforce_client_controls", fake_enforce_client_controls)
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "news-recovery-regression")
+    monkeypatch.setattr(main, "search_web", fake_search_web)
+    monkeypatch.setattr(main, "search_recent_news_candidates", fake_recent_news)
+    monkeypatch.setattr(main, "_rank_recent_news_candidates", lambda _query, candidates: candidates)
+    monkeypatch.setattr(main, "_merge_recovered_provider_provenance", mark_merge)
+
+    response = asyncio.run(
+        main.web_search_endpoint(
+            object(),
+            q="Busca las últimas noticias de Chile hoy",
+        )
+    )
+
+    assert response["news_recovery_merge_test"] is True
+    assert "REALTIME_NEWS_QUORUM_NOT_MET" in response["errors"]
