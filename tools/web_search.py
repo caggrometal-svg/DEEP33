@@ -1038,7 +1038,10 @@ async def search_recent_news_candidates(
                     parsed_candidate.scheme.lower() != "https"
                     or len(candidate_path) < 2
                     or len(str(item.get("title") or "").strip()) < 12
-                    or len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+                    or (
+                        provider != "mwmbl"
+                        and len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+                    )
                 ):
                     continue
             try:
