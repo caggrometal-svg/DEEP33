@@ -2081,12 +2081,13 @@ class WebOrchestrator:
     ) -> dict:
         selected = list(results or [])
         realtime = is_realtime_query(query)
+        ranking_query = executed_query or query
         relevant_outcomes = [
             outcome
             for outcome in outcomes
             if outcome.ok
             and outcome.results
-            and rank_results(query, outcome.results, realtime=realtime)
+            and rank_results(ranking_query, outcome.results, realtime=realtime)
         ]
         providers_used = list(dict.fromkeys(o.provider for o in relevant_outcomes))
         provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
