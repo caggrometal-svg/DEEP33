@@ -975,7 +975,7 @@ async def _publisher_rss_search(
     return merged[:max_results]
 
 
-async def _corroborate_google_news_candidates_with_bing(
+async def _corroborate_google_news_candidates_with_indexes(
     candidates: list[dict],
     timeout_seconds: float,
     *,
@@ -999,18 +999,18 @@ async def _corroborate_google_news_candidates_with_bing(
     if not targets:
         return
 
-    jobs = [
-        _bing_recent_news_search(
-            f'"{str(item.get("title") or "").strip()}" site:{str(item.get("source_domain") or "").strip()}',
-            timeout_seconds,
-            2,
-        )
-        for item in targets
-    ]
-    settled = await asyncio.gather(*jobs, return_exceptions=True)
+    jobs: list[tuple[dict, str, Any]] = []
+    for item in targets:
+        query = f'"{str(item.get("title") or "").strip()}" site:{str(item.get("source_domain") or "").strip()}'
+        jobs.append((item, "bing", _bing_recent_news_search(query, timeout_seconds, 2)))
+        jobs.append((item, "duckduckgo", _duckduckgo_search(query, timeout_seconds, 2)))
+    settled = await asyncio.gather(
+        *(job[2] for job in jobs),
+        return_exceptions=True,
+    )
     stopwords = {"chile", "noticia", "noticias", "hoy", "ultima", "ultimas", "actualidad", "de", "del", "en", "el", "la"}
 
-    for candidate, results in zip(targets, settled):
+    for (candidate, provider_name, _job), results in zip(jobs, settled):
         if isinstance(results, BaseException) or not isinstance(results, list):
             continue
         target_domain = str(candidate.get("source_domain") or "").casefold().removeprefix("www.")
@@ -1035,15 +1035,21 @@ async def _corroborate_google_news_candidates_with_bing(
                 continue
             providers = candidate.get("provider_sources")
             providers = providers if isinstance(providers, list) else []
-            candidate["provider_sources"] = sorted({str(value) for value in [*providers, "google_news", "bing"] if value})
+            candidate["provider_sources"] = sorted({
+                str(value)
+                for value in [*providers, "google_news", provider_name]
+                if value
+            })
             candidate["providers"] = list(candidate["provider_sources"])
             logger.info(
-                "recent_news_provider_corroborated domain=%s providers=%s title=%s",
+                "recent_news_provider_corroborated domain=%s provider=%s providers=%s title=%s",
                 target_domain,
+                provider_name,
                 candidate["provider_sources"],
                 str(candidate.get("title") or "")[:140],
             )
             break
+
 
 
 async def search_recent_news_candidates(
@@ -1193,7 +1199,7 @@ async def search_recent_news_candidates(
     # Corroborate Google News article candidates against Bing by exact title
     # and publisher domain. A provider is added only when Bing returns a matching
     # article; mere provider availability never satisfies the quorum.
-    await _corroborate_google_news_candidates_with_bing(
+    await _corroborate_google_news_candidates_with_indexes(
         merged,
         budget,
         max_candidates=3,
