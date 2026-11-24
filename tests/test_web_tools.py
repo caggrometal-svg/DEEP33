@@ -380,6 +380,7 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
 
     providers = {item["provider"] for item in candidates}
     assert "publisher_rss" in providers
+    assert len([item for item in candidates if item["provider"] == "publisher_rss"]) == 5
     assert "mwmbl" in providers
     assert "google_news" in providers
     assert "bing" in providers
