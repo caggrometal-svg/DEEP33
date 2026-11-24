@@ -1029,7 +1029,7 @@ async def search_recent_news_candidates(
             if published_at:
                 if not _is_recently_published(item, cleaned):
                     continue
-            elif provider != "mwmbl":
+            elif provider not in {"mwmbl", "google_news"}:
                 continue
             else:
                 parsed_candidate = urlparse(url)
@@ -1039,7 +1039,7 @@ async def search_recent_news_candidates(
                     or len(candidate_path) < 2
                     or len(str(item.get("title") or "").strip()) < 12
                     or (
-                        provider != "mwmbl"
+                        provider == "publisher_rss"
                         and len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
                     )
                 ):
