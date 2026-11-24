@@ -507,7 +507,7 @@ def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch)
 
     class Client:
         async def get(self, url, **kwargs):
-            assert url == "https://news.google.com/rss/articles/TEST_ARTICLE_ID"
+            assert url == "https://news.google.com/rss/articles/TEST_ARTICLE_ID?oc=5"
             assert "CONSENT=PENDING+987" in kwargs["headers"]["Cookie"]
             return Response(
                 200,
@@ -539,6 +539,40 @@ def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch)
     resolved = asyncio.run(
         web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
     )
+    assert resolved == target
+
+
+
+def test_google_news_wrapper_accepts_validated_direct_publisher_redirect(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/REDIRECT_ID?oc=5"
+    target = "https://www.cooperativa.cl/noticias/pais/2026/11/24/article.shtml"
+
+    class Response:
+        status_code = 302
+        text = ""
+        headers = {"location": target}
+
+    class Client:
+        async def get(self, url, **kwargs):
+            assert url == wrapper
+            return Response()
+
+        async def post(self, *_args, **_kwargs):
+            raise AssertionError("RPC must not run after a validated publisher redirect")
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(web_fetch, "_fetch_http_client", client)
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda value: value)
+
+    resolved = asyncio.run(
+        web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
+    )
+
     assert resolved == target
 
 
