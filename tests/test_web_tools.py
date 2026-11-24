@@ -1969,6 +1969,65 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
     asyncio.run(exercise())
 
 
+def test_candidate_provider_names_falls_back_when_provenance_lists_are_empty():
+    import backend.main as main
+
+    assert main._candidate_provider_names(
+        {"provider_sources": [], "providers": []},
+        "google_news",
+    ) == ["google_news"]
+    assert main._candidate_provider_names(
+        {"provider_sources": [], "providers": ["bing", "google_news"]},
+        "unknown",
+    ) == ["bing", "google_news"]
+    assert main._candidate_provider_names(
+        {"provider_sources": ["publisher_rss"]},
+        "bing",
+    ) == ["publisher_rss"]
+
+
+def test_broad_chile_news_accepts_fresh_local_articles_not_unrelated_global_items():
+    import backend.main as main
+
+    query = "últimas noticias de Chile hoy"
+    published_at = datetime.now(timezone.utc).isoformat()
+    local_source = {
+        "provider": "publisher_rss",
+        "source_domain": "theclinic.cl",
+        "title": "Contrabando de especies exóticas en Hualpén",
+    }
+    local_page = {
+        "provider": "publisher_rss",
+        "domain": "theclinic.cl",
+        "final_url": "https://www.theclinic.cl/2026/11/24/noticia-hualpen-pdi/",
+        "title": "Contrabando de especies exóticas en Hualpén",
+        "published_at": published_at,
+        "text": (
+            "La PDI detuvo a un hombre en Hualpén por contrabando de especies exóticas. "
+            "El procedimiento ocurrió en la Región del Biobío. "
+        ) * 8,
+    }
+    global_source = {
+        "provider": "publisher_rss",
+        "source_domain": "df.cl",
+        "title": "Nvidia actualiza sus planes internacionales",
+    }
+    global_page = {
+        "provider": "publisher_rss",
+        "domain": "df.cl",
+        "final_url": "https://www.df.cl/internacional/multinacionales/nvidia-planes",
+        "title": "Nvidia actualiza sus planes internacionales",
+        "published_at": published_at,
+        "text": (
+            "La compañía anunció nuevas inversiones y cambios en sus operaciones "
+            "internacionales. " * 12
+        ),
+    }
+
+    assert main._is_publishable_realtime_news_source(query, local_source, local_page) is True
+    assert main._is_publishable_realtime_news_source(query, global_source, global_page) is False
+
+
 def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(monkeypatch):
     import backend.main as main
 
