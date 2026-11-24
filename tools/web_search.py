@@ -1023,7 +1023,7 @@ async def search_recent_news_candidates(
                 continue
             published_at = str(item.get("published_at") or "").strip()
             url = str(item.get("url") or "").strip()
-            provider = str(item.get("provider") or default_provider)
+            provider = str(default_provider or item.get("provider") or "unknown")
             if not url:
                 continue
             if published_at:
@@ -1091,6 +1091,15 @@ async def search_recent_news_candidates(
             by_url[canonical_url] = candidate
             merged.append(candidate)
             if len(merged) >= limit:
+                provider_mix: dict[str, int] = {}
+                for merged_item in merged:
+                    provider_name = str(merged_item.get("provider") or "unknown")
+                    provider_mix[provider_name] = provider_mix.get(provider_name, 0) + 1
+                logger.info(
+                    "recent_news_recovery_provider_mix candidates=%s providers=%s",
+                    len(merged),
+                    sorted(provider_mix.items()),
+                )
                 return merged
     provider_mix: dict[str, int] = {}
     for item in merged:
