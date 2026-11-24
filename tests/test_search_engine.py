@@ -1303,15 +1303,17 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
         }
 
         first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        first_call_count = calls["count"]
         second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
-        return first, second, orchestrator
+        return first, second, orchestrator, first_call_count, calls["count"]
 
-    first, second, orchestrator = asyncio.run(exercise())
+    first, second, orchestrator, first_call_count, second_call_count = asyncio.run(exercise())
     assert first["ok"] is True
     assert second["ok"] is True
-    # Each top-level realtime search executes two planned query variants. Both
-    # variants must execute again on the second call because realtime is cache-free.
-    assert calls["count"] == 8
+    # The second realtime request must issue fresh provider calls instead of
+    # reusing the first request's result, regardless of early-stop query count.
+    assert first_call_count >= 2
+    assert second_call_count > first_call_count
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
@@ -1353,14 +1355,14 @@ def test_research_contrast_requires_two_distinct_domains_not_two_providers(monke
         return (
             [("mojeek", [
                 {
-                    "title": "Research report A on battery recycling",
+                    "title": "Investigación comparativa sobre reciclaje de baterías",
                     "url": "https://research-a.example/battery-recycling",
-                    "snippet": "Comparative research on battery recycling technologies and results.",
+                    "snippet": "Estudio comparativo sobre tecnologías de reciclaje de baterías y sus resultados.",
                 },
                 {
-                    "title": "Research report B on battery recycling",
+                    "title": "Segundo estudio sobre reciclaje de baterías",
                     "url": "https://research-b.example/battery-recycling",
-                    "snippet": "A second research study comparing battery recycling methods.",
+                    "snippet": "Una segunda investigación compara métodos y tecnologías de reciclaje de baterías.",
                 },
             ])],
             [],
