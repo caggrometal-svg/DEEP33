@@ -163,6 +163,26 @@ TOTAL_SEARCH_TIMEOUT_SECONDS = max(
 )
 
 
+def _independent_provider_family(provider: str) -> str:
+    """Normalize provider aliases to the underlying independent search family."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    if "google" in name:
+        return "google"
+    if any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "mwmbl" in name:
+        return "mwmbl"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    return name
+
+
 def _requires_realtime_multidomain(query: str) -> bool:
     """Require broader corroboration only for Chile political current-news queries."""
     folded = " ".join(str(query or "").casefold().split())
@@ -1104,26 +1124,9 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
             names = [item.get("provider")]
         families = set()
         for raw_name in names:
-            name = str(raw_name or "").strip().casefold().replace("-", "_")
-            if not name:
-                continue
-            if "google" in name:
-                family = "google"
-            elif any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
-                family = "bing"
-            elif "mojeek" in name:
-                family = "mojeek"
-            elif "mwmbl" in name:
-                family = "mwmbl"
-            elif "marginalia" in name:
-                family = "marginalia"
-            elif "tavily" in name:
-                family = "tavily"
-            elif "cl0q" in name:
-                family = "cl0q"
-            else:
-                family = name
-            families.add(family)
+            family = _independent_provider_family(str(raw_name or ""))
+            if family:
+                families.add(family)
         return families
 
     # Pass 1: prefer one source from each independent provider family while
@@ -1364,6 +1367,18 @@ class SearchEngine:
             if fast_mode:
                 return bool(ranked)
             if plan_depth == "realtime":
+                if is_strict_news_query(planned_query):
+                    # Three domains from one index are not an independent news quorum.
+                    # Keep collecting until two underlying provider families contribute.
+                    provider_families = {
+                        _independent_provider_family(name)
+                        for name, _batch in successful
+                        if _independent_provider_family(name)
+                    }
+                    return (
+                        len(provider_families) >= 2
+                        and len(domains) >= min(3, self.max_results)
+                    )
                 if _requires_realtime_multidomain(planned_query):
                     return len(domains) >= min(3, self.max_results)
                 return bool(ranked)
@@ -1568,13 +1583,24 @@ class SearchEngine:
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
             if plan.depth == "realtime":
-                if _requires_realtime_multidomain(plan.original_query):
-                    first_domains = {
-                        _host(str(item.get("url") or ""))
-                        for _name, items in first_relevant_by_provider
-                        for item in items
-                        if _host(str(item.get("url") or ""))
+                first_domains = {
+                    _host(str(item.get("url") or ""))
+                    for _name, items in first_relevant_by_provider
+                    for item in items
+                    if _host(str(item.get("url") or ""))
+                }
+                if is_strict_news_query(plan.original_query):
+                    first_provider_families = {
+                        _independent_provider_family(name)
+                        for name, _items in first_relevant_by_provider
+                        if _independent_provider_family(name)
                     }
+                    sufficiently_verified = (
+                        len(first_provider_families) >= 2
+                        and len(first_domains) >= min(3, self.max_results)
+                        and first_result_count >= min(3, self.max_results)
+                    )
+                elif _requires_realtime_multidomain(plan.original_query):
                     sufficiently_verified = len(first_domains) >= min(3, self.max_results)
                 else:
                     sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
