@@ -987,7 +987,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "publisher_rss",
             None,
-            _publisher_rss_search(cleaned, budget, min(limit, 5)),
+            _publisher_rss_search(cleaned, budget, min(limit, 4)),
         ))
         # Mwmbl contributes an independent index. Its SERP may be undated;
         # the final article fetch must extract and validate publication time.
