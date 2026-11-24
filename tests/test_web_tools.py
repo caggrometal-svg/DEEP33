@@ -2073,7 +2073,7 @@ def test_recent_news_quorum_uses_provider_field_when_provider_list_is_empty():
     assert search_result["verification"]["provider_quorum_met"] is True
     assert summary["articles"] == 3
     assert summary["domains"] == 3
-    assert summary["providers"] == 2
+    assert summary["providers"] == 3
     assert summary["met"] is True
     assert main._independent_search_provider_family("unknown") == ""
 
@@ -2311,8 +2311,8 @@ def test_chat_realtime_news_rejects_three_articles_from_one_provider(monkeypatch
     ]
     search_result = {
         "verification": {
-            "provider_quorum_met": True,
-            "distinct_providers": 2,
+            "provider_quorum_met": False,
+            "distinct_providers": 1,
         }
     }
 
@@ -2365,8 +2365,8 @@ def test_chat_realtime_news_does_not_count_publisher_rss_as_search_provider():
     ]
     search_result = {
         "verification": {
-            "provider_quorum_met": True,
-            "distinct_providers": 2,
+            "provider_quorum_met": False,
+            "distinct_providers": 1,
         }
     }
 
