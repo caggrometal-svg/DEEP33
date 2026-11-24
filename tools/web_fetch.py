@@ -756,19 +756,19 @@ async def _resolve_google_news_wrapper(url: str, timeout_seconds: float) -> str:
         raise WebFetchError(f"GOOGLE_NEWS_WRAPPER_HTTP_{response.status_code}")
 
     body = response.text
-    signature_match = re.search(r'data-n-a-sg=["\\']([^"\\']+)["\\']', body)
-    timestamp_match = re.search(r'data-n-a-ts=["\\']([0-9]+)["\\']', body)
+    signature_match = re.search(r"""data-n-a-sg=["']([^"']+)["']""", body)
+    timestamp_match = re.search(r"""data-n-a-ts=["']([0-9]+)["']""", body)
     if not signature_match or not timestamp_match:
         # Google sometimes exposes a canonical publisher URL without the
         # signed RPC metadata. Accept only a non-Google public destination.
         canonical_match = re.search(
-            r'<link[^>]+rel=["\\']canonical["\\'][^>]+href=["\\']([^"\\']+)["\\']',
+            r"""<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']""",
             body,
             re.IGNORECASE,
         )
         if canonical_match is None:
             canonical_match = re.search(
-                r'<meta[^>]+property=["\\']og:url["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+                r"""<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']""",
                 body,
                 re.IGNORECASE,
             )
