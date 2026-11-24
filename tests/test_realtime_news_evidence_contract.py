@@ -21,8 +21,8 @@ def _fetched_page(*, published_at, url="https://noticias.example/2026/10/25/gobi
         "domain": "noticias.example",
         "published_at": published_at,
         "text": (
-            "Últimas noticias de Chile. El Gobierno anunció nuevas medidas hoy. "
-            "El comunicado confirma los cambios y entrega detalles de la medida. "
+            "Últimas noticias de Chile. El Gobierno de Chile anunció nuevas medidas hoy. "
+            "El comunicado oficial confirma los cambios y entrega detalles de la medida. "
         ) * 5,
     }
 
