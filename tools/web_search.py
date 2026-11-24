@@ -868,6 +868,10 @@ async def _bing_recent_news_search(
 PUBLISHER_NEWS_RSS_FEEDS = (
     ("latercera.com", "https://www.latercera.com/arcio/rss/"),
     ("cooperativa.cl", "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml"),
+    ("theclinic.cl", "https://www.theclinic.cl/feed/"),
+    ("ciperchile.cl", "https://www.ciperchile.cl/feed/"),
+    ("df.cl", "https://www.df.cl/noticias/site/list/port/rss.xml"),
+    ("publimetro.cl", "https://www.publimetro.cl/arc/outboundfeeds/rss/?outputType=xml"),
 )
 
 
