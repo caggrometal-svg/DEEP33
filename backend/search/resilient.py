@@ -4,6 +4,7 @@ import asyncio
 import copy
 import hashlib
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -64,8 +65,16 @@ def _requires_research_contrast(query: str) -> bool:
 
 
 
+def _bounded_env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 PROVIDER_TOTAL_SECONDS = 2.5
-GLOBAL_BUDGET_SECONDS = 5.0
+GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 6.0, 1.0, 6.0)
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
@@ -331,7 +340,7 @@ class WebOrchestrator:
     def __init__(
         self,
         *,
-        max_results: int = 5,
+        max_results: int = 8,
         provider_total_seconds: float = PROVIDER_TOTAL_SECONDS,
         global_budget_seconds: float = GLOBAL_BUDGET_SECONDS,
         fallback_delay_seconds: float = FALLBACK_DELAY_SECONDS,
@@ -340,7 +349,7 @@ class WebOrchestrator:
         self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
         self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
-        self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
+        self.global_budget_seconds = max(0.05, min(6.0, float(global_budget_seconds)))
         self.fallback_delay_seconds = max(0.0, min(2.0, float(fallback_delay_seconds)))
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
@@ -363,6 +372,8 @@ class WebOrchestrator:
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
+        if os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+            self.providers.pop("mojeek", None)
         # Mwmbl is a genuinely independent index. Its anonymous endpoint has a
         # 1,000-request monthly cap and 1 req/s limit, so reserve it for quorum
         # recovery rather than spending the free quota on every query. Yahoo is
