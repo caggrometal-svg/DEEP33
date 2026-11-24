@@ -1969,6 +1969,56 @@ def test_stream_gateway_emits_visible_fallback_when_provider_finishes_empty(monk
     asyncio.run(exercise())
 
 
+def test_fetch_web_source_preserves_google_news_and_resolver_providers(monkeypatch):
+    import asyncio
+    import backend.main as main
+
+    wrapper = "https://news.google.com/rss/articles/opaque-id?oc=5"
+    publisher_url = "https://www.theclinic.cl/2026/11/24/noticia-hualpen-pdi/"
+    source = {
+        "provider": "google_news",
+        "providers": ["google_news", "mwmbl"],
+        "source_domain": "theclinic.cl",
+        "title": "Hualpén: procedimiento de la PDI",
+        "url": wrapper,
+    }
+
+    async def fake_search(*_args, **_kwargs):
+        return {
+            "results": [{
+                "url": publisher_url,
+                "title": "Hualpén: procedimiento de la PDI",
+                "provider": "bing",
+            }]
+        }
+
+    async def fake_fetch(url, **_kwargs):
+        assert url == publisher_url
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": url,
+            "title": "Hualpén: procedimiento de la PDI",
+            "text": ("La PDI realizó un procedimiento en Hualpén, Región del Biobío. " * 8),
+            "published_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "fetch_page", fake_fetch)
+
+    page = asyncio.run(
+        main._fetch_web_source(
+            source,
+            request_id="test-provider-provenance",
+            timeout_seconds=2.0,
+        )
+    )
+
+    assert page is not None
+    assert page["provider"] == "bing"
+    assert page["providers"] == ["bing", "google_news", "mwmbl"]
+
+
 def test_recent_news_quorum_uses_provider_field_when_provider_list_is_empty():
     import backend.main as main
 
