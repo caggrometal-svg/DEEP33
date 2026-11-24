@@ -1838,7 +1838,7 @@ async def execute_web_tool(name, arguments, *, request_id: str = "unknown", prov
         try:
             return await search_web(
                 query,
-                timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","6")),
+                timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","5")),
                 max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","8")),
                 fast=not is_realtime_query(query),
                 fresh=True,
@@ -2219,7 +2219,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     try:
         search_result = await search_web(
             query,
-            timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "6"))),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
                 _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))),
@@ -3663,7 +3663,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
     try:
         result = await search_web(
             q,
-            timeout_seconds=max(3.0, min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "6")))),
+            timeout_seconds=max(3.0, min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")))),
             max_results=_web_search_result_limit(
                 q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))
             ),
