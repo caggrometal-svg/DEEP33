@@ -399,7 +399,6 @@ def test_recent_news_recovery_retries_google_news_with_short_chile_query(monkeyp
             "snippet": "Noticia reciente de Chile publicada hoy.",
             "source_domain": "google-news-source.example",
             "provider": "google_news",
-            "published_at": published_at,
         }]
 
     monkeypatch.setattr(module, "_publisher_rss_search", no_results)
