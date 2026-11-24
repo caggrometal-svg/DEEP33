@@ -3841,25 +3841,53 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if strict_news_request
             else max(3, min(6, configured_fetch_candidates))
         )
-        direct_sources = [
-            item for item in ordered_sources
-            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            != "news.google.com"
+        # Reserve fetch slots by discovery provider before filling the pool.
+        # Otherwise direct publisher RSS and Bing URLs can consume the entire
+        # candidate cap while Google News wrapper URLs are never opened, leaving
+        # the extracted pages with only one independent search-index family.
+        preferred_sources: list[dict[str, Any]] = []
+        preferred_urls: set[str] = set()
+        provider_quotas = (
+            ("publisher_rss", 2),
+            ("bing", 1),
+            ("mwmbl", 1),
+            ("google_news", 1),
+            ("mojeek", 1),
+            ("cl0q", 1),
+            ("tavily", 1),
+        )
+        for provider_name, quota in provider_quotas:
+            added = 0
+            for item in ordered_sources:
+                names = (
+                    item.get("providers")
+                    if isinstance(item.get("providers"), list)
+                    else [item.get("provider")]
+                )
+                normalized_names = {
+                    str(name or "").strip().casefold()
+                    for name in names
+                }
+                source_url = str(item.get("url") or "").strip()
+                if (
+                    provider_name not in normalized_names
+                    or not source_url
+                    or source_url in preferred_urls
+                ):
+                    continue
+                preferred_sources.append(item)
+                preferred_urls.add(source_url)
+                added += 1
+                if added >= quota:
+                    break
+
+        candidate_pool = [
+            *preferred_sources,
+            *(
+                item for item in ordered_sources
+                if str(item.get("url") or "").strip() not in preferred_urls
+            ),
         ]
-        wrapper_sources = [
-            item for item in ordered_sources
-            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            == "news.google.com"
-        ]
-        direct_editorial_domains = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
-            .casefold().removeprefix("www.")
-            for item in direct_sources
-        } - {""}
-        # Keep direct publisher URLs first, but retain wrapper candidates as a
-        # bounded fallback. A current-news quorum cannot be certified from two
-        # readable pages when the third editorial domain is behind a wrapper.
-        candidate_pool = [*direct_sources, *wrapper_sources]
         for source in candidate_pool:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
