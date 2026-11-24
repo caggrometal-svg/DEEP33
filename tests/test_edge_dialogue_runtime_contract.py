@@ -392,3 +392,14 @@ def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pa
         assert f'fallback_path: "{expected_candidates}"' in source
         assert f'recoverySearch.fallback_path === "{expected_candidates}"' in source
         assert "WEB_SEARCH_NO_VERIFIED_PAGES" in source
+
+
+def test_edge_provider_quorum_ignores_aggregate_and_wikipedia_provenance():
+    for path in EDGE_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert 'if (name.includes("wikipedia")) return "";' in source
+        coverage = source.split("const sufficientSearchCoverage", 1)[1].split(
+            "\n  };", 1
+        )[0]
+        assert "new Set(edgeProvidersForResults(results))" in coverage
+        assert "result.providers" not in coverage
