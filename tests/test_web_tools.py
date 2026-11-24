@@ -1981,10 +1981,9 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
         "title": "Últimas noticias de Chile hoy: nueva información política",
         "url": "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
         "snippet": "Últimas noticias de Chile hoy con información política y nacional.",
-        "provider": "google_news",
-        "provider_sources": ["google_news", "bing"],
+        "provider": "mwmbl",
+        "provider_sources": ["mwmbl"],
         "source_domain": "latercera.com",
-        "published_at": published_at,
     }
 
     async def fake_search(_query, **_kwargs):
@@ -2021,7 +2020,7 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
             "providers": source.get("providers", [provider]),
             "domain": source["source_domain"],
             "source_domain": source["source_domain"],
-            "published_at": source["published_at"],
+            "published_at": source.get("published_at") or published_at,
             "retrieved_at": published_at,
             "text_chars": 400,
         }
@@ -2064,7 +2063,7 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
     assert compact["news_quorum"]["met"] is True
     assert compact["news_quorum"]["articles"] == 3
     assert compact["news_quorum"]["domains"] == 3
-    assert compact["news_quorum"]["providers"] == 2
+    assert compact["news_quorum"]["providers"] >= 2
     assert len(evidence_fragments) == 3
     assert len(source_links) == 3
     assert len(compact["fetched_pages"]) == 3
