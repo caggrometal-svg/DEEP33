@@ -1632,6 +1632,7 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
             "url": "https://www.biobiochile.cl/noticias/2026/11/09/chile-politica-a.shtml",
             "snippet": "Últimas noticias de Chile hoy sobre Congreso, gobierno y actualidad nacional.",
             "provider": "bing",
+            "providers": ["bing"],
             "source_domain": "biobiochile.cl",
             "published_at": published_at,
         },
@@ -1639,27 +1640,30 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
             "title": "Últimas noticias de Chile hoy: autoridades anuncian cambios",
             "url": "https://www.cooperativa.cl/noticias/pais/2026/11/09/chile-actualidad.shtml",
             "snippet": "Noticias de Chile hoy, actualidad nacional y declaraciones de autoridades.",
-            "provider": "duckduckgo",
+            "provider": "google_news",
+            "providers": ["google_news"],
             "source_domain": "cooperativa.cl",
             "published_at": published_at,
         },
-        {
-            "title": "Últimas noticias de Chile hoy: nueva información política",
-            "url": "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
-            "snippet": "Últimas noticias de Chile hoy con información política y nacional.",
-            "provider": "google_news",
-            "source_domain": "latercera.com",
-            "published_at": published_at,
-        },
     ]
+    recovered_fixture = {
+        "title": "Últimas noticias de Chile hoy: nueva información política",
+        "url": "https://www.latercera.com/politica/noticia/chile-actualidad/ABC123/",
+        "snippet": "Últimas noticias de Chile hoy con información política y nacional.",
+        "provider": "google_news",
+        "provider_sources": ["google_news", "bing"],
+        "source_domain": "latercera.com",
+        "published_at": published_at,
+    }
 
     async def fake_search(_query, **_kwargs):
         return {
-            "ok": True,
+            "ok": False,
+            "status": "failed",
             "realtime": True,
             "fresh_request": True,
-            "providers": ["bing", "duckduckgo"],
-            "providers_attempted": ["bing", "duckduckgo", "google_news"],
+            "providers": ["bing", "google_news"],
+            "providers_attempted": ["bing", "google_news"],
             "verification": {
                 "provider_quorum_met": True,
                 "distinct_providers": 2,
@@ -1668,18 +1672,22 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
             "results": fixtures,
             "queries": [query],
             "retrieved_at": published_at,
+            "errors": ["REALTIME_NEWS_QUORUM_NOT_MET"],
         }
 
     async def fake_fetch(source, **_kwargs):
+        provider = source["provider"]
         return {
             "title": source["title"],
             "url": source["url"],
+            "final_url": source["url"],
             "text": (
                 "Últimas noticias de Chile hoy. "
                 "Información periodística actualizada sobre Congreso, autoridades, "
                 "gobierno y acontecimientos nacionales. " * 4
             ),
-            "provider": source["provider"],
+            "provider": provider,
+            "providers": source.get("providers", [provider]),
             "domain": source["source_domain"],
             "source_domain": source["source_domain"],
             "published_at": source["published_at"],
@@ -1707,7 +1715,11 @@ def test_chat_realtime_news_requires_three_fresh_publishers_and_two_providers(mo
     monkeypatch.setattr(main, "search_web", fake_search)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch)
     monkeypatch.setattr(main, "fetch_source_quorum", fake_fetch_quorum)
-    monkeypatch.setattr(main, "search_recent_news_candidates", lambda *args, **kwargs: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(
+        main,
+        "search_recent_news_candidates",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[recovered_fixture]),
+    )
 
     async def exercise():
         return await main.prepare_web_evidence(
