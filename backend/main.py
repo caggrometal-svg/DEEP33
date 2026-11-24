@@ -2320,9 +2320,12 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in snippet_evidence
     } - {""}
 
-    candidate_limit = max(
-        required_pages,
-        _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+    candidate_limit = min(
+        8,
+        max(
+            required_pages + 2,
+            _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+        ),
     )
     candidates: list[dict[str, Any]] = []
     seen_candidate_urls: set[str] = set()
