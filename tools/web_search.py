@@ -1003,7 +1003,7 @@ async def _corroborate_google_news_candidates_with_indexes(
     for item in targets:
         query = f'"{str(item.get("title") or "").strip()}" site:{str(item.get("source_domain") or "").strip()}'
         jobs.append((item, "bing", _bing_recent_news_search(query, timeout_seconds, 2)))
-        jobs.append((item, "duckduckgo", _duckduckgo_search(query, timeout_seconds, 2)))
+        jobs.append((item, "mwmbl", _mwmbl_search(query, timeout_seconds, 2)))
     settled = await asyncio.gather(
         *(job[2] for job in jobs),
         return_exceptions=True,
