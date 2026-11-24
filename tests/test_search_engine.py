@@ -957,9 +957,12 @@ def test_realtime_strict_news_does_not_accept_one_provider_as_quorum(monkeypatch
             fallback_ddg=True,
         )
     )
-    assert result["ok"] is True
+    # One provider and two SERP snippets are not a verified three-article news quorum.
+    assert result["ok"] is False
     assert len(queries) > 1
     assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
+    assert result["verification"]["fresh_news_items"] == 2
     assert result["queries_executed"] == queries
 
 
@@ -1159,11 +1162,11 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
             "https://www.bcn.cl/leychile",
             "https://www.consejotransparencia.cl/",
         }
-        # Official portal candidates are not a substitute for a second
-        # independent search provider.
-        assert result["ok"] is False, result
-        assert result["diagnostic_code"] == "INSUFFICIENT_PROVIDER_QUORUM"
-        assert result["verification"]["provider_quorum_met"] is False
+        # A general official-information lookup needs valid pages, not a
+        # second search index when the returned sources are independently distinct.
+        assert result["ok"] is True, result
+        assert result["diagnostic_code"] is None
+        assert result["verification"]["provider_quorum_met"] is True
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.gob.cl/" not in urls
@@ -1311,3 +1314,96 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
+
+
+def test_general_search_accepts_one_relevant_provider_result(monkeypatch):
+    from backend.search.engine import SearchEngine
+
+    async def one_provider(_providers, query, **kwargs):
+        return (
+            [("bing", [{
+                "title": "Official overview of the Eiffel Tower",
+                "url": "https://www.toureiffel.paris/en/the-monument",
+                "snippet": "Official information about the Eiffel Tower in Paris.",
+            }])],
+            [],
+            ["bing"],
+        )
+
+    monkeypatch.setattr(SearchEngine, "_run_query", one_provider)
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "Eiffel Tower official website",
+            provider="auto",
+            api_key="",
+            timeout_seconds=2,
+            fallback_ddg=False,
+        )
+    )
+    assert result["ok"] is True
+    assert result["verification"]["distinct_domains"] == 1
+    assert result["verification"]["distinct_providers"] == 1
+
+
+def test_research_contrast_requires_two_distinct_domains_not_two_providers(monkeypatch):
+    from backend.search.engine import SearchEngine
+
+    async def one_provider_two_domains(_providers, query, **kwargs):
+        return (
+            [("mojeek", [
+                {
+                    "title": "Research report A on battery recycling",
+                    "url": "https://research-a.example/battery-recycling",
+                    "snippet": "Comparative research on battery recycling technologies and results.",
+                },
+                {
+                    "title": "Research report B on battery recycling",
+                    "url": "https://research-b.example/battery-recycling",
+                    "snippet": "A second research study comparing battery recycling methods.",
+                },
+            ])],
+            [],
+            ["mojeek"],
+        )
+
+    monkeypatch.setattr(SearchEngine, "_run_query", one_provider_two_domains)
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "compara e investiga tecnologías de reciclaje de baterías",
+            provider="auto",
+            api_key="",
+            timeout_seconds=2,
+            fallback_ddg=False,
+        )
+    )
+    assert result["ok"] is True
+    assert result["verification"]["distinct_domains"] >= 2
+    assert result["verification"]["distinct_providers"] == 1
+
+
+def test_realtime_news_validator_requires_three_domains_and_two_provider_families():
+    from backend.search.engine import validate_realtime_evidence
+
+    now = datetime.now(timezone.utc).isoformat()
+    items = [
+        {
+            "title": f"Noticias de Chile hoy: actualización {index}",
+            "url": f"https://medio{index}.example/noticias/chile-{index}",
+            "snippet": "Noticias de Chile hoy con información reciente y confirmada.",
+            "published_at": now,
+            "provider": provider,
+        }
+        for index, provider in enumerate(("bing", "mojeek", "google_news"), start=1)
+    ]
+    accepted = validate_realtime_evidence("noticias de Chile hoy", items)
+    assert accepted["ok"] is True
+    assert accepted["domains"] == 3
+    assert accepted["providers"] == 3
+    assert len(accepted["fresh_items"]) == 3
+
+    rejected = validate_realtime_evidence(
+        "noticias de Chile hoy",
+        [{**item, "provider": "bing"} for item in items],
+    )
+    assert rejected["ok"] is False
+    assert rejected["providers"] == 1
