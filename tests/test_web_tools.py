@@ -212,6 +212,14 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
             "snippet": "Información reciente de Chile desde un índice independiente.",
         },
         {
+            "title": "Últimas noticias de Chile desde Google News",
+            "url": "https://news.google.com/rss/articles/current-chile-article",
+            "source_domain": "cooperativa.cl",
+            "provider": "google_news",
+            "published_at": published_at,
+            "snippet": "Información reciente de Chile y actualidad nacional.",
+        },
+        {
             "title": "Página genérica de noticias",
             "url": "https://www.chicureohoy.cl/",
             "source_domain": "chicureohoy.cl",
@@ -231,8 +239,13 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
         "theclinic.cl",
         "latercera.com",
         "mwmbl-source.example",
+        "cooperativa.cl",
     }
-    assert {item["provider"] for item in ranked} == {"publisher_rss", "mwmbl"}
+    assert {item["provider"] for item in ranked} == {
+        "publisher_rss",
+        "mwmbl",
+        "google_news",
+    }
 
 
 def test_publisher_rss_recovery_round_robins_editorial_domains(monkeypatch):
