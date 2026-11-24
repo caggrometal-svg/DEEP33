@@ -493,8 +493,9 @@ object Deep33Api {
                         }
                     }
 
-                    // A clean SSE EOF is valid even when the server omits the optional [DONE] frame.
-                    if (!emitted || output.toString().isBlank()) {
+                    // A clean SSE termination is valid even when the server omits the optional [DONE] frame.
+                    val hasVisibleOutput = emitted && output.toString().isNotBlank()
+                    if (!hasVisibleOutput) {
                         throw Deep33ApiException(
                             Deep33ApiException.Kind.BAD_RESPONSE,
                             statusCode = 502,
