@@ -1016,6 +1016,28 @@ class WebOrchestrator:
                 "noticia", "noticias", "today", "latest", "news", "actualidad",
             ))
         )
+        strict_news_request = (
+            strict_news_request
+            or chile_current_events_intent
+            or chile_general_news_intent
+            or chile_economic_news_intent
+            or broad_ai_news_intent
+        )
+        research_contrast_request = research_contrast_request or academic_ai_research_intent
+        required_domain_count = (
+            3 if strict_news_request
+            else 2 if research_contrast_request
+            else 1
+        )
+        minimum_coverage = required_domain_count
+        if (
+            chile_public_info_intent
+            or who_dengue_source_intent
+            or commercial_technology_site_intent
+            or academic_ai_research_intent
+            or chile_economic_news_intent
+        ):
+            minimum_coverage = max(minimum_coverage, min(3, self.max_results))
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -1296,8 +1318,8 @@ class WebOrchestrator:
                 }
                 distinct_providers = relevant_provider_names(outcomes)
                 enough_sources = (
-                    len(selected_now) >= min(3, self.max_results)
-                    and len(distinct_domains) >= min(3, len(selected_now))
+                    len(selected_now) >= minimum_coverage
+                    and len(distinct_domains) >= required_domain_count
                     and (
                         not who_dengue_source_intent
                         or _has_who_dengue_item(selected_now)
@@ -1451,17 +1473,16 @@ class WebOrchestrator:
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
         )
         needs_news_source_diversity = (
-            is_realtime_query(cleaned)
-            and news_intent
-            and len(selected_domains) < min(5, self.max_results)
+            strict_news_request
+            and len(selected_domains) < required_domain_count
         )
         successful_providers = relevant_provider_names(outcomes)
         needs_provider_diversity = (
             len(successful_providers) < required_provider_count
         )
         needs_recovery = (
-            len(selected) < min(3, self.max_results)
-            or len(selected_domains) < min(3, max(1, len(selected)))
+            len(selected) < minimum_coverage
+            or len(selected_domains) < required_domain_count
             or needs_news_source_diversity
             or needs_provider_diversity
             or (who_dengue_source_intent and not _has_who_dengue_item(selected))
@@ -1767,7 +1788,7 @@ class WebOrchestrator:
         }
         insufficient_evidence = (
             len(selected) < minimum_coverage
-            or len(selected_domains - {""}) < minimum_coverage
+            or len(selected_domains - {""}) < required_domain_count
         )
         selected_providers = relevant_provider_names(outcomes)
         insufficient_provider_diversity = (
