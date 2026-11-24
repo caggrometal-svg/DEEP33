@@ -1705,7 +1705,10 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             or len(path_parts) < 2
             or not publication_is_recent
             or len(str(item.get("title") or "").strip()) < 12
-            or len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+            or (
+                provider == "publisher_rss"
+                and len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+            )
         ):
             continue
         retained = dict(item)
@@ -3741,11 +3744,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     candidate["relevance_score"] = score_result(q, candidate)
                     candidate_sources.append(candidate)
                     candidate_domains.add(domain)
+                recovery_providers = sorted({
+                    str(item.get("provider") or "unknown")
+                    for item in recent_candidates
+                    if isinstance(item, dict)
+                })
                 logger.info(
-                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s",
                     request_id,
                     len(candidate_domains),
                     len(candidate_sources),
+                    recovery_providers,
                 )
             except Exception as rescue_exc:
                 logger.warning(
