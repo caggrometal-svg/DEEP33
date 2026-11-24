@@ -296,8 +296,26 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
         for index in range(1, 6)
     ]
 
-    async def fake_publisher_rss(*_args, **_kwargs):
-        return publisher_candidates
+    async def fake_publisher_rss(_query, _timeout, max_results):
+        return publisher_candidates[:max_results]
+
+    async def fake_mwmbl(*_args, **_kwargs):
+        return [
+            {
+                "title": "Chile actualidad desde el índice Mwmbl",
+                "url": "https://mwmbl-source.example/noticias/chile-mwmbl.html",
+                "snippet": "Noticia reciente de Chile desde un índice independiente.",
+                "source_domain": "mwmbl-source.example",
+                "provider": "mwmbl",
+            },
+            {
+                "title": "Otra noticia de Chile desde Mwmbl",
+                "url": "https://mwmbl-other.example/noticias/chile-mwmbl-2.html",
+                "snippet": "Otra noticia reciente de Chile desde un índice independiente.",
+                "source_domain": "mwmbl-other.example",
+                "provider": "mwmbl",
+            },
+        ]
 
     async def fake_google_news(*_args, **_kwargs):
         return [{
@@ -322,6 +340,7 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
         }]
 
     monkeypatch.setattr(module, "_publisher_rss_search", fake_publisher_rss)
+    monkeypatch.setattr(module, "_mwmbl_search", fake_mwmbl)
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_rss)
 
@@ -335,6 +354,7 @@ def test_recent_news_recovery_reserves_slots_for_independent_search_providers(mo
 
     providers = {item["provider"] for item in candidates}
     assert "publisher_rss" in providers
+    assert "mwmbl" in providers
     assert "google_news" in providers
     assert "bing" in providers
 
