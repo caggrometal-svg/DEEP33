@@ -1666,6 +1666,32 @@ def test_web_search_endpoint_reaches_third_publisher_when_top_two_are_unreadable
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    import tools.web_search as web
+
+    rescued_candidate = {
+        "title": "Presidente de la DC analiza las elecciones en Chile",
+        "url": "https://www.t13.cl/noticia/politica/presidente-dc-analiza-elecciones-15-10-2026",
+        "snippet": "Artículo periodístico con declaraciones sobre política chilena y elecciones.",
+        "source_domain": "t13.cl",
+        "published_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    async def fake_publisher_rss(*_args, **_kwargs):
+        return [rescued_candidate]
+
+    async def fake_empty_provider(*_args, **_kwargs):
+        return []
+
+    async def fake_corroboration(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(web, "_publisher_rss_search", fake_publisher_rss)
+    monkeypatch.setattr(web, "_google_news_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_google_news_top_stories_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_mwmbl_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_bing_recent_news_search", fake_empty_provider)
+    monkeypatch.setattr(web, "_corroborate_google_news_candidates_with_indexes", fake_corroboration)
+
     async def allow_controls(*_args, **_kwargs):
         return None
 
