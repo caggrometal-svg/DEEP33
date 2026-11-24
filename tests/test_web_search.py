@@ -68,10 +68,14 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
     async def no_publisher_rss(*_args, **_kwargs):
         return []
 
+    async def no_google_top_stories(*_args, **_kwargs):
+        return []
+
     async def no_mwmbl(*_args, **_kwargs):
         return []
 
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_google_top_stories)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_news)
     monkeypatch.setattr(module, "_publisher_rss_search", no_publisher_rss)
     monkeypatch.setattr(module, "_mwmbl_search", no_mwmbl)
@@ -93,6 +97,45 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
     assert len(seen["bing_queries"]) == 6
     assert any("site:biobiochile.cl" in query for query in seen["bing_queries"])
     assert any("site:cooperativa.cl" in query for query in seen["bing_queries"])
+
+
+
+def test_google_news_top_stories_adapter_returns_publisher_linked_candidates(monkeypatch):
+    import tools.web_search as module
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url == "https://news.google.com/rss"
+            assert kwargs["params"] == {
+                "hl": "es-419",
+                "gl": "CL",
+                "ceid": "CL:es-419",
+            }
+            xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+            <rss version="2.0"><channel><item>
+              <title>Chile anuncia nuevas medidas económicas - Cooperativa</title>
+              <link>https://news.google.com/rss/articles/example</link>
+              <description>Información actual de Chile y medidas económicas.</description>
+              <source url="https://www.cooperativa.cl">Cooperativa</source>
+              <pubDate>{datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")}</pubDate>
+            </item></channel></rss>"""
+            return httpx.Response(
+                200,
+                text=xml,
+                request=httpx.Request("GET", url),
+            )
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+    results = asyncio.run(module._google_news_top_stories_search(1.5, 5))
+
+    assert len(results) == 1
+    assert results[0]["provider"] == "google_news"
+    assert results[0]["source_domain"] == "www.cooperativa.cl"
+    assert results[0]["published_at"]
+    assert results[0]["url"].startswith("https://news.google.com/")
 
 
 def test_web_orchestrator_accepts_twelve_news_candidates() -> None:
