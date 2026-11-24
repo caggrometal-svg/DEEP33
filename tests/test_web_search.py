@@ -68,9 +68,13 @@ def test_recent_news_recovery_discards_stale_google_before_bing_fallback(monkeyp
     async def no_publisher_rss(*_args, **_kwargs):
         return []
 
+    async def no_mwmbl(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(module, "_google_news_search", fake_google_news)
     monkeypatch.setattr(module, "_bing_recent_news_search", fake_bing_news)
     monkeypatch.setattr(module, "_publisher_rss_search", no_publisher_rss)
+    monkeypatch.setattr(module, "_mwmbl_search", no_mwmbl)
     result = asyncio.run(
         module.search_recent_news_candidates(
             "Chile noticias hoy",
