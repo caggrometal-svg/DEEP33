@@ -204,6 +204,13 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
             "snippet": "Información reciente sobre Chile y el Congreso.",
         },
         {
+            "title": "Noticia de Chile desde índice independiente",
+            "url": "https://mwmbl-source.example/noticias/chile-actualidad/",
+            "source_domain": "mwmbl-source.example",
+            "provider": "mwmbl",
+            "snippet": "Información reciente de Chile desde un índice independiente.",
+        },
+        {
             "title": "Página genérica de noticias",
             "url": "https://www.chicureohoy.cl/",
             "source_domain": "chicureohoy.cl",
@@ -222,8 +229,9 @@ def test_recent_chile_rss_articles_survive_strict_query_ranking(monkeypatch):
     assert {item["source_domain"] for item in ranked} == {
         "theclinic.cl",
         "latercera.com",
+        "mwmbl-source.example",
     }
-    assert all(item["provider"] == "publisher_rss" for item in ranked)
+    assert {item["provider"] for item in ranked} == {"publisher_rss", "mwmbl"}
 
 
 def test_publisher_rss_recovery_round_robins_editorial_domains(monkeypatch):
