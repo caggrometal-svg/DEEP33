@@ -337,20 +337,20 @@ def test_html_fetch_extracts_date_published_from_news_article_jsonld():
     assert published_at == "2026-11-10T01:45:00Z"
 
 
-def test_recent_news_quorum_requires_provenance_on_extracted_pages():
+def test_recent_news_quorum_uses_verified_search_providers_and_publisher_domains():
     import backend.main as main
 
     now = datetime.now(timezone.utc).isoformat()
     pages = []
-    for index, provider in enumerate(("bing", "bing", "mojeek"), start=1):
+    for index in range(1, 4):
         url = f"https://medio{index}.example/2026/11/23/noticia-{index}"
         source = _news_source(published_at=now, url=url)
         fetched = _fetched_page(published_at=now, url=url)
         pages.append({
             **source,
             **fetched,
-            "provider": provider,
-            "provider_sources": [provider],
+            "provider": "publisher_rss",
+            "provider_sources": ["publisher_rss"],
         })
 
     search_result = {
@@ -370,14 +370,27 @@ def test_recent_news_quorum_requires_provenance_on_extracted_pages():
     assert summary["domains"] == 3
     assert summary["providers"] == 2
 
-    without_provenance = [
+    without_page_provider_labels = [
         {key: value for key, value in page.items() if key not in {"provider", "provider_sources", "providers"}}
         for page in pages
     ]
+    still_verified = main._recent_news_quorum_summary(
+        "últimas noticias de Chile hoy",
+        without_page_provider_labels,
+        search_result,
+    )
+    assert still_verified["met"] is True
+
+    unverified_search = {
+        "verification": {
+            "provider_quorum_met": False,
+            "distinct_providers": 1,
+        }
+    }
     rejected = main._recent_news_quorum_summary(
         "últimas noticias de Chile hoy",
-        without_provenance,
-        search_result,
+        pages,
+        unverified_search,
     )
     assert rejected["met"] is False
 
