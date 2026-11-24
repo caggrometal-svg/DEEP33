@@ -2790,7 +2790,11 @@ async def run_web_tool_loop(
     if force_web:
         # GPS-aware weather goes through a dedicated current-weather provider first.
         # Generic web search remains the fallback and the transport layer is untouched.
-        if weather is None and not is_forecast_weather_query(latest_user_query(messages)):
+        if (
+            weather is None
+            and is_weather_query(latest_user_query(messages))
+            and not is_forecast_weather_query(latest_user_query(messages))
+        ):
             try:
                 weather = await resolve_gps_weather(
                     messages,
