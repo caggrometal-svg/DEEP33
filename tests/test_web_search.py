@@ -191,7 +191,8 @@ def test_google_news_article_can_be_corroborated_by_mwmbl(monkeypatch):
         return []
 
     async def fake_mwmbl(query, timeout, limit):
-        assert "site:theclinic.cl" in query
+        assert '"Hombre detenido por contrabando de especies exóticas en Hualpén"' in query
+        assert "site:" not in query
         return [{
             "title": "Hombre detenido por contrabando de especies exóticas en Hualpén",
             "url": "https://www.theclinic.cl/2026/11/23/noticia-hualpen/",
