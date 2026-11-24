@@ -846,8 +846,10 @@ async def _google_news_search(query, timeout_seconds, max_results):
         },
         timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
     )
-    # Google News uses standard RSS; reuse the bounded XML parser and URL checks.
-    return await _parse_bing_rss(response, max_results)
+    # Google News uses standard RSS; reuse the bounded XML parser and URL checks,
+    # but retain its own provenance rather than inheriting the Bing parser name.
+    results = await _parse_bing_rss(response, max_results)
+    return [{**item, "provider": "google_news"} for item in results]
 
 async def _google_news_top_stories_search(timeout_seconds, max_results):
     """Recover current Chile headlines from Google's country-scoped top-stories RSS."""
