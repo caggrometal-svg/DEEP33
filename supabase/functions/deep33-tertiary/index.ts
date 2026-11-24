@@ -2721,7 +2721,7 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
   ];
   let last: Record<string, unknown> = { ok: false, results: [] };
 
-  const sufficientSearchCoverage = (result: Record<string, unknown>): boolean => {
+  const sufficientSearchCoverage = (result: Record<string, unknown>, query: string): boolean => {
     const results = Array.isArray(result.results)
       ? result.results.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
       : [];
@@ -2737,17 +2737,21 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
     // Quorum is based only on provenance attached to relevant retained URLs.
     // Aggregate provider lists may include irrelevant search hits.
     const providers = new Set(edgeProvidersForResults(results));
-    return result.ok === true && results.length >= 2 && domains.size >= 2 && providers.size >= 2;
+    const required = edgeCoverageRequirements(query);
+    return result.ok === true &&
+      results.length >= required.results &&
+      domains.size >= required.domains &&
+      providers.size >= required.providers;
   };
 
   for (let index = 0; index < candidates.length; index++) {
     try {
       let result = await edgeSearch(candidates[index], sessionId, userAuthorization, false, false);
-      if (!sufficientSearchCoverage(result) && userAuthorization.startsWith("Bearer ")) {
+      if (!sufficientSearchCoverage(result, candidates[index]) && userAuthorization.startsWith("Bearer ")) {
         result = await edgeSearch(candidates[index], sessionId, userAuthorization, true, false);
       }
       const results = Array.isArray(result.results) ? result.results : [];
-      if (sufficientSearchCoverage(result)) {
+      if (sufficientSearchCoverage(result, candidates[index])) {
         return { ...result, audit_query: candidates[index], audit_attempts: index + 1 };
       }
       last = { ...result, ok: false, results };
@@ -2922,6 +2926,16 @@ function hasRecentPublication(value: unknown, maxAgeDays = 7): boolean {
 
 function edgeCurrentNewsQuery(query: string): boolean {
   return /\b(?:noticia|noticias|última hora|ultima hora|actualidad|situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|emergencia|incidente|incidentes|contingencia|suceso|sucesos|alerta|guerra|acontecimiento|acontecimientos)\b/i.test(query);
+}
+
+function edgeResearchContrastQuery(query: string): boolean {
+  return /\b(?:investiga(?:r|ci[oó]n)?|research|contrasta(?:r)?|contrast|compara(?:r|ci[oó]n)?|compare|an[aá]lisis comparativo|comparative analysis)\b/i.test(query);
+}
+
+function edgeCoverageRequirements(query: string): { results: number; domains: number; providers: number } {
+  if (edgeCurrentNewsQuery(query)) return { results: 3, domains: 3, providers: 2 };
+  if (edgeResearchContrastQuery(query)) return { results: 2, domains: 2, providers: 1 };
+  return { results: 1, domains: 1, providers: 1 };
 }
 
 async function runPublicWebSearchQuery(
@@ -3709,11 +3723,18 @@ async function publicWebSearchUncached(
     ).slice(0, MAX_WEB_SEARCH_RESULTS);
   }
   const providerNames = edgeProvidersForResults(finalResults);
-  const requiredProviderCount = edgeCurrentDateTimeQuery(plan.original) ? 1 : 2;
+  const coverageRequirements = edgeCoverageRequirements(plan.original);
+  const requiredProviderCount = coverageRequirements.providers;
   const providerQuorumMet = providerNames.length >= requiredProviderCount;
+  const domainCount = new Set(finalResults.map((item) => {
+    const explicit = String(item.source_domain || "").trim().toLowerCase().replace(/^www\./, "");
+    if (explicit) return explicit;
+    try { return new URL(String(item.url || "")).hostname.toLowerCase().replace(/^www\./, ""); } catch { return ""; }
+  }).filter(Boolean)).size;
+  const domainQuorumMet = domainCount >= coverageRequirements.domains;
   const publicResults = finalResults.map(({ provider: _provider, domain: _domain, ...result }) => result);
   return {
-    ok: publicResults.length > 0 && providerQuorumMet,
+    ok: publicResults.length >= coverageRequirements.results && domainQuorumMet && providerQuorumMet,
     realtime: plan.depth === "realtime",
     fresh_request: true,
     realtime_news: /\b(?:situación actual|situacion actual|estado actual|qué ocurre|que ocurre|qué pasa|que pasa|qué está pasando|que esta pasando|emergencia|incidente|incidentes|contingencia|suceso|sucesos|noticia|noticias|última hora|ultima hora|actualidad|alerta|guerra)\b/i.test(plan.original),
@@ -3730,7 +3751,10 @@ async function publicWebSearchUncached(
     sources: publicResults,
     verification: {
       ...edgeSearchVerification(finalResults, providerNames),
+      required_results: coverageRequirements.results,
+      required_domains: coverageRequirements.domains,
       required_providers: requiredProviderCount,
+      domain_quorum_met: domainQuorumMet,
       provider_quorum_met: providerQuorumMet,
     },
     latency_ms: Math.round(performance.now() - started),
