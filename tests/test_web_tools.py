@@ -2006,13 +2006,16 @@ def test_recent_news_quorum_uses_provider_field_when_provider_list_is_empty():
     search_result = {
         "providers": ["bing", "duckduckgo"],
         "verification": {
-            "distinct_providers": 2,
-            "provider_quorum_met": True,
+            "distinct_providers": 1,
+            "provider_quorum_met": False,
         },
     }
+    main._merge_recovered_provider_provenance(search_result, pages)
 
     summary = main._recent_news_quorum_summary(query, pages, search_result)
 
+    assert search_result["verification"]["distinct_providers"] == 3
+    assert search_result["verification"]["provider_quorum_met"] is True
     assert summary["articles"] == 3
     assert summary["domains"] == 3
     assert summary["providers"] == 2
