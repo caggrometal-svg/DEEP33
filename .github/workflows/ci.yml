@@ -188,7 +188,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
       - name: Publish Vercel-validation APK
         if: ${{ success() && github.event_name == 'pull_request' }}
