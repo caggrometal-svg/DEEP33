@@ -1093,7 +1093,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "publisher_rss",
             None,
-            _publisher_rss_search(cleaned, budget, min(limit, 4)),
+            _publisher_rss_search(cleaned, budget, min(limit, 8)),
         ))
         # A country-scoped top-stories feed is a separate recovery path from
         # query RSS. It supplies additional publisher domains when Google News
