@@ -870,9 +870,10 @@ async def _bing_recent_news_search(
 
 PUBLISHER_NEWS_RSS_FEEDS = (
     ("latercera.com", "https://www.latercera.com/arcio/rss/"),
-    ("cooperativa.cl", "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml"),
+    ("eldesconcierto.cl", "https://eldesconcierto.cl/rss"),
     ("theclinic.cl", "https://www.theclinic.cl/feed/"),
     ("ciperchile.cl", "https://www.ciperchile.cl/feed/"),
+    ("cooperativa.cl", "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml"),
     ("df.cl", "https://www.df.cl/noticias/site/list/port/rss.xml"),
     ("publimetro.cl", "https://www.publimetro.cl/arc/outboundfeeds/rss/?outputType=xml"),
 )
@@ -972,14 +973,20 @@ async def search_recent_news_candidates(
             for domain in publisher_domains
         )
 
-    jobs = [
+    jobs = []
+    if "chile" in cleaned.casefold():
+        jobs.append((
+            "publisher_rss",
+            None,
+            _publisher_rss_search(cleaned, budget, limit),
+        ))
+    jobs.extend([
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         *(
             ("bing", expected_domain, _bing_recent_news_search(search_query, budget, limit))
             for search_query, expected_domain in queries
         ),
-        ("publisher_rss", None, _publisher_rss_search(cleaned, budget, limit)),
-    ]
+    ])
     settled = await asyncio.gather(
         *(job[2] for job in jobs),
         return_exceptions=True,
