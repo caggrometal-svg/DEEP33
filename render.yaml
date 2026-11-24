@@ -25,10 +25,6 @@ services:
         value: "auto"
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
-      - key: WEB_SEARCH_MAX_QUERIES
-        value: "3"
-      - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "2"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
@@ -62,10 +58,6 @@ services:
         value: "6"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
-      - key: WEB_SEARCH_MAX_QUERIES
-        value: "3"
-      - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "2"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
@@ -99,10 +91,6 @@ services:
         value: "6"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
         value: "5"
-      - key: WEB_SEARCH_MAX_QUERIES
-        value: "3"
-      - key: WEB_SEARCH_MAX_QUERY_FANOUT
-        value: "2"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
