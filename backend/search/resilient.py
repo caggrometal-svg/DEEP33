@@ -910,7 +910,6 @@ class WebOrchestrator:
         lowered_cleaned = cleaned.casefold()
         strict_news_request = is_strict_news_query(cleaned)
         research_contrast_request = _requires_research_contrast(cleaned)
-        required_provider_count = 2  # All web answers require two independent search-index families.
 
         def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
             # Provider success only counts when that provider independently
@@ -1024,6 +1023,13 @@ class WebOrchestrator:
             or broad_ai_news_intent
         )
         research_contrast_request = research_contrast_request or academic_ai_research_intent
+        # General web answers require two independent index families. For explicit
+        # research contrast or official public-information discovery, two distinct
+        # publisher domains are the controlling quorum; strict news always needs two indexes.
+        required_provider_count = (
+            1 if not strict_news_request and (research_contrast_request or chile_public_info_intent)
+            else 2
+        )
         required_domain_count = 3 if strict_news_request else 2
         minimum_coverage = required_domain_count
         if (
@@ -2053,7 +2059,10 @@ class WebOrchestrator:
         winner = next((o.provider for o in relevant_outcomes), None)
         strict_news_request = is_strict_news_query(query)
         research_contrast_request = _requires_research_contrast(query)
-        required_providers = 2
+        required_providers = (
+            1 if not strict_news_request and (research_contrast_request or chile_public_info_intent)
+            else 2
+        )
         provider_quorum_met = len(provider_families) >= required_providers
         domains = sorted({
             (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
