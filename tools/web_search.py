@@ -1001,9 +1001,13 @@ async def _corroborate_google_news_candidates_with_indexes(
 
     jobs: list[tuple[dict, str, Any]] = []
     for item in targets:
-        query = f'"{str(item.get("title") or "").strip()}" site:{str(item.get("source_domain") or "").strip()}'
-        jobs.append((item, "bing", _bing_recent_news_search(query, timeout_seconds, 2)))
-        jobs.append((item, "mwmbl", _mwmbl_search(query, timeout_seconds, 2)))
+        title_query = f'"{str(item.get("title") or "").strip()}"'
+        domain_query = f'{title_query} site:{str(item.get("source_domain") or "").strip()}'
+        jobs.append((item, "bing", _bing_recent_news_search(domain_query, timeout_seconds, 2)))
+        # Mwmbl is a full-text index and does not reliably implement the
+        # Google-style site: operator; constrain its results by publisher host
+        # after retrieval instead.
+        jobs.append((item, "mwmbl", _mwmbl_search(title_query, timeout_seconds, 2)))
     settled = await asyncio.gather(
         *(job[2] for job in jobs),
         return_exceptions=True,
@@ -1026,12 +1030,18 @@ async def _corroborate_google_news_candidates_with_indexes(
             result_domain = str(result.get("source_domain") or result_host).casefold().removeprefix("www.")
             if not result_url or result_domain != target_domain:
                 continue
+            result_text = " ".join((
+                str(result.get("title") or ""),
+                str(result.get("snippet") or ""),
+                str(result.get("content") or ""),
+            )).casefold()
             result_tokens = {
-                token for token in re.findall(r"[a-z0-9áéíóúüñ]+", str(result.get("title") or "").casefold())
+                token for token in re.findall(r"[a-z0-9áéíóúüñ]+", result_text)
                 if len(token) > 2 and token not in stopwords
             }
             overlap = len(target_tokens & result_tokens) / max(1, len(target_tokens))
-            if overlap < 0.45:
+            result_path_parts = [part for part in urlparse(result_url).path.split("/") if part]
+            if overlap < 0.30 or len(result_path_parts) < 2:
                 continue
             providers = candidate.get("provider_sources")
             providers = providers if isinstance(providers, list) else []
