@@ -53,6 +53,16 @@ def _provider_family(provider: str) -> str:
         return ""
     return name
 
+def _requires_research_contrast(query: str) -> bool:
+    """Require two distinct publisher domains for research and comparison tasks."""
+    return bool(re.search(
+        r"\b(?:investiga(?:r|ci[oó]n)?|research|contrasta(?:r)?|contrast|"
+        r"compara(?:r|ci[oó]n)?|compare|an[aá]lisis comparativo|comparative analysis)\b",
+        str(query or ""),
+        re.IGNORECASE,
+    ))
+
+
 
 PROVIDER_TOTAL_SECONDS = 2.5
 GLOBAL_BUDGET_SECONDS = 5.0
@@ -898,8 +908,9 @@ class WebOrchestrator:
         )
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
-        # A single configured provider is never enough to certify a web answer.
-        required_provider_count = 2
+        strict_news_request = is_strict_news_query(cleaned)
+        research_contrast_request = _requires_research_contrast(cleaned)
+        required_provider_count = 2 if strict_news_request else 1
 
         def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
             # Provider success only counts when that provider independently
@@ -2023,19 +2034,28 @@ class WebOrchestrator:
         provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
         attempted = list(dict.fromkeys(o.provider for o in outcomes))
         winner = next((o.provider for o in relevant_outcomes), None)
-        required_providers = 2
+        strict_news_request = is_strict_news_query(query)
+        research_contrast_request = _requires_research_contrast(query)
+        required_providers = 2 if strict_news_request else 1
         provider_quorum_met = len(provider_families) >= required_providers
-        final_ok = bool(selected) and provider_quorum_met
-        final_status = (
-            status
-            if final_ok or not selected
-            else "INSUFFICIENT_PROVIDER_QUORUM"
-        )
         domains = sorted({
-            (urlparse(str(item.get("url") or "")).hostname or "").casefold()
+            (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             for item in selected
             if str(item.get("url") or "").strip()
         } - {""})
+        required_domains = 3 if strict_news_request else 2 if research_contrast_request else 1
+        required_results = 3 if strict_news_request else 1
+        domain_quorum_met = len(domains) >= required_domains
+        final_ok = (
+            len(selected) >= required_results
+            and domain_quorum_met
+            and provider_quorum_met
+        )
+        final_status = (
+            status
+            if final_ok or not selected
+            else "INSUFFICIENT_EXTERNAL_EVIDENCE"
+        )
         verification_level = (
             "multi-source"
             if len(domains) >= 2
@@ -2072,7 +2092,9 @@ class WebOrchestrator:
                 "level": verification_level,
                 "distinct_domains": len(domains),
                 "distinct_providers": len(provider_families),
+                "required_domains": required_domains,
                 "required_providers": required_providers,
+                "domain_quorum_met": domain_quorum_met,
                 "provider_quorum_met": provider_quorum_met,
                 "corroborated_results": 0,
             },
