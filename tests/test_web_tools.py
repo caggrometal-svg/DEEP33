@@ -2731,3 +2731,19 @@ def test_search_recent_news_candidates_uses_rss_and_preserves_provenance(monkeyp
     recovered = next(item for item in results if item.get("url") == candidate["url"])
     assert recovered["provider"] == "publisher_rss"
     assert recovered["provider_sources"] == ["publisher_rss"]
+
+
+def test_web_search_status_reports_realtime_independent_provider_contract():
+    from tools.web_search import web_search_status
+
+    status = web_search_status()
+
+    assert status["engine_version"] == "1.4.0"
+    assert status["realtime"] is True
+    assert status["provider_independent"] is True
+    assert status["realtime_cache_bypass"] is True
+    assert status["minimum_provider_families"] == 2
+    assert status["minimum_publisher_domains"] == 2
+    assert status["realtime_news_minimum_provider_families"] == 2
+    assert status["realtime_news_minimum_publishers"] == 3
+    assert status["runtime_provider_mode"] == "parallel_multi_provider"
