@@ -2170,83 +2170,79 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             for item in sources.values()
             if item.get("published_at") and _is_recently_published(item, query)
         } - {""}
-        if len(recent_domains) < 3:
-            try:
-                rescue_query = (
-                    "Chile noticias hoy actualidad acontecimientos recientes"
-                    if "chile" in query.casefold()
-                    else query
-                )
-                recent_candidates = await search_recent_news_candidates(
-                    rescue_query,
-                    timeout_seconds=1.8,
-                    max_results=8,
-                )
-                recent_candidates = rank_results(
-                    query,
-                    recent_candidates,
-                    realtime=True,
-                )
-                for raw in recent_candidates:
-                    if not isinstance(raw, dict):
-                        continue
-                    published_at = raw.get("published_at")
-                    if not published_at or not _is_recently_published(raw, query):
-                        continue
-                    url = str(raw.get("url") or "").strip()
-                    domain = str(
-                        raw.get("source_domain")
-                        or (urlparse(url).hostname or "")
-                    ).casefold().removeprefix("www.")
-                    if (
-                        not url.startswith("https://")
-                        or not domain
-                        or domain in recent_domains
-                        or url in sources
-                    ):
-                        continue
-                    recovered_provider = str(raw.get("provider") or "google_news")
-                    recovered_providers = raw.get("provider_sources")
-                    if not isinstance(recovered_providers, list):
-                        recovered_providers = raw.get("providers")
-                    if not isinstance(recovered_providers, list):
-                        recovered_providers = [recovered_provider]
-                    recovered = {
-                        "title": str(raw.get("title") or url)[:300],
-                        "url": url[:2000],
-                        "snippet": str(raw.get("snippet") or "")[:1000],
-                        "provider": recovered_provider,
-                        "providers": list(dict.fromkeys(
-                            str(name).strip()
-                            for name in recovered_providers
-                            if str(name or "").strip()
-                        )),
-                        "source_domain": domain[:255],
-                        "published_at": published_at,
-                    }
-                    sources[url] = recovered
-                    compact_search_results.append({
-                        "title": recovered["title"],
-                        "url": recovered["url"],
-                        "snippet": recovered["snippet"][:700],
-                        "published_at": published_at,
-                        "provider": recovered["provider"],
-                    })
-                    recent_domains.add(domain)
-                    if len(recent_domains) >= 5:
-                        break
-                logger.info(
-                    "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
-                    request_id or "unknown",
-                    len(recent_domains),
-                    len(sources),
-                )
-            except Exception as rescue_exc:
-                logger.warning(
-                    "chat_recent_news_diversity_recovery_failed request_id=%s error=%s",
-                    request_id or "unknown",
-                    type(rescue_exc).__name__,
-                )
+        try:
+            rescue_query = (
+                "Chile noticias hoy actualidad acontecimientos recientes"
+                if "chile" in query.casefold()
+                else query
+            )
+            recent_candidates = await search_recent_news_candidates(
+                rescue_query,
+                timeout_seconds=1.8,
+                max_results=8,
+            )
+            recent_candidates = rank_results(
+                query,
+                recent_candidates,
+                realtime=True,
+            )
+            for raw in recent_candidates:
+                if not isinstance(raw, dict):
+                    continue
+                published_at = raw.get("published_at")
+                if not published_at or not _is_recently_published(raw, query):
+                    continue
+                url = str(raw.get("url") or "").strip()
+                domain = str(
+                    raw.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().removeprefix("www.")
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or url in sources
+                ):
+                    continue
+                recovered_provider = str(raw.get("provider") or "google_news")
+                recovered_providers = raw.get("provider_sources")
+                if not isinstance(recovered_providers, list):
+                    recovered_providers = raw.get("providers")
+                if not isinstance(recovered_providers, list):
+                    recovered_providers = [recovered_provider]
+                recovered = {
+                    "title": str(raw.get("title") or url)[:300],
+                    "url": url[:2000],
+                    "snippet": str(raw.get("snippet") or "")[:1000],
+                    "provider": recovered_provider,
+                    "providers": list(dict.fromkeys(
+                        str(name).strip()
+                        for name in recovered_providers
+                        if str(name or "").strip()
+                    )),
+                    "source_domain": domain[:255],
+                    "published_at": published_at,
+                }
+                sources[url] = recovered
+                compact_search_results.append({
+                    "title": recovered["title"],
+                    "url": recovered["url"],
+                    "snippet": recovered["snippet"][:700],
+                    "published_at": published_at,
+                    "provider": recovered["provider"],
+                })
+                recent_domains.add(domain)
+            logger.info(
+                "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
+                request_id or "unknown",
+                len(recent_domains),
+                len(sources),
+            )
+        except Exception as rescue_exc:
+            logger.warning(
+                "chat_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                request_id or "unknown",
+                type(rescue_exc).__name__,
+            )
 
     snippets_sufficient = (
         len(compact_search_results) >= 2
@@ -2279,7 +2275,25 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     )
     candidates: list[dict[str, Any]] = []
     seen_candidate_domains: set[str] = set()
-    for source in sources.values():
+    source_candidates = list(sources.values())
+    if is_strict_news_query(query):
+        def _chat_news_provider_priority(source: dict[str, Any]) -> int:
+            names = (
+                source.get("providers")
+                if isinstance(source.get("providers"), list)
+                else [source.get("provider")]
+            )
+            normalized = {str(name or "").casefold() for name in names}
+            if "publisher_rss" in normalized:
+                return 0
+            if "google_news" in normalized or "google" in normalized:
+                return 1
+            if "bing" in normalized:
+                return 2
+            return 3
+        source_candidates.sort(key=_chat_news_provider_priority)
+
+    for source in source_candidates:
         host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
         if not host:
             host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
