@@ -172,6 +172,16 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     assert result["provider"] == "tavily"
 
 
+
+
+def test_web_search_status_reflects_web_tools_enabled_flag(monkeypatch):
+    monkeypatch.setenv("DEEP33_WEB_TOOLS_ENABLED", "false")
+    assert web_search_status()["enabled"] is False
+
+    monkeypatch.setenv("DEEP33_WEB_TOOLS_ENABLED", "true")
+    assert web_search_status()["enabled"] is True
+
+
 def test_auto_provider_plan_includes_optional_mojeek_fallback(monkeypatch):
     from backend.search.engine import SearchEngine
 
