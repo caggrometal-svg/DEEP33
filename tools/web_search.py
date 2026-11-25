@@ -1558,6 +1558,7 @@ async def search_web(
 
 
 def web_search_status():
+    enabled = os.getenv("DEEP33_WEB_TOOLS_ENABLED", "true").strip().lower() == "true"
     provider = os.getenv("WEB_SEARCH_PROVIDER", "auto").strip().lower()
     key = bool(os.getenv("WEB_SEARCH_API_KEY", "").strip())
     bing = os.getenv("WEB_SEARCH_BING_ENABLED", "true").strip().lower() == "true"
@@ -1571,7 +1572,7 @@ def web_search_status():
         else "duckduckgo"
     )
     return {
-        "enabled": True,
+        "enabled": enabled,
         "engine": "DEEP33 Search Engine",
         "engine_version": "1.4.0",
         "realtime": True,
