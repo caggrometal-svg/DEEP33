@@ -1058,9 +1058,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
           PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         shell: bash
         run: |
           set -euo pipefail
+          test -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" || {
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET_MISSING"
+            exit 1
+          }
           # Vercel's GitHub integration publishes a commit status, not a GitHub
           # deployment object. The previous deployments API lookup therefore
           # waited forever even after Vercel had reported success.
@@ -1083,6 +1088,7 @@ jobs:
               --jq '[.statuses[]? | select(.context == "Vercel") | .state] | first // empty' 2>/dev/null || true)"
             if [ "$vercel_state" = "success" ]; then
               http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
+                -H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}" \
                 -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
                 "$alias/health" || true)"
               if [ "$http_status" = "200" ] && jq -e \
