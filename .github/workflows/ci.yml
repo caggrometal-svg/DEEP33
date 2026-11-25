@@ -1052,6 +1052,16 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      - name: Mint trusted OIDC token for protected Vercel preview preflight
+        id: vercel_preview_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
+
       - name: Resolve the exact protected Vercel preview for this commit
         if: ${{ github.event_name == 'pull_request' }}
         env:
@@ -1059,6 +1069,7 @@ jobs:
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
           PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.vercel_preview_oidc.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1089,6 +1100,8 @@ jobs:
             if [ "$vercel_state" = "success" ]; then
               http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
                 -H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}" \
+                -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_TRUSTED_OIDC_TOKEN}" \
+                -D "$RUNNER_TEMP/deep33-preview-health.headers" \
                 -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
                 "$alias/health" || true)"
               if [ "$http_status" = "200" ] && jq -e \
@@ -1253,20 +1266,24 @@ jobs:
         run: |
           set +e
           mkdir -p /tmp/deep33-e2e
-          echo "=== ADB DEVICES ==="
-          adb devices -l || true
-          echo "=== SDK ==="
-          timeout 10s adb shell getprop ro.build.version.sdk || true
-          timeout 10s adb shell getprop ro.build.version.release || true
-          echo "=== DNS ==="
-          timeout 10s adb shell getprop net.dns1 || true
-          timeout 10s adb shell getprop net.dns2 || true
-          echo "=== INSTRUMENTATION ==="
-          timeout 10s adb shell pm list instrumentation || true
-          echo "=== PROCESSES ==="
-          timeout 10s adb shell ps -A | grep -Ei 'instrument|deep33|gradle' || true
-          echo "=== CRASH BUFFER ==="
-          timeout 15s adb logcat -d -b crash -t 1200 > /tmp/deep33-e2e/crash.log || true
+          if command -v adb >/dev/null 2>&1; then
+            echo "=== ADB DEVICES ==="
+            adb devices -l || true
+            echo "=== SDK ==="
+            timeout 10s adb shell getprop ro.build.version.sdk || true
+            timeout 10s adb shell getprop ro.build.version.release || true
+            echo "=== DNS ==="
+            timeout 10s adb shell getprop net.dns1 || true
+            timeout 10s adb shell getprop net.dns2 || true
+            echo "=== INSTRUMENTATION ==="
+            timeout 10s adb shell pm list instrumentation || true
+            echo "=== PROCESSES ==="
+            timeout 10s adb shell ps -A | grep -Ei 'instrument|deep33|gradle' || true
+            echo "=== CRASH BUFFER ==="
+            timeout 15s adb logcat -d -b crash -t 1200 > /tmp/deep33-e2e/crash.log || true
+          else
+            echo "ANDROID_E2E_DIAGNOSTICS_SKIPPED_EMULATOR_NOT_STARTED"
+          fi
 
       - name: Publish APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
