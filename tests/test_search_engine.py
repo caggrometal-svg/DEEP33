@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
+from tools.web_search import web_search_status
 
 
 def test_search_engine_accepts_expanded_live_news_candidate_limit():
@@ -162,7 +163,8 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.3.0"
+    assert result["engine_version"] == "1.4.0"
+    assert web_search_status()["engine_version"] == "1.4.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
