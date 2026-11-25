@@ -1066,7 +1066,7 @@ jobs:
           # waited forever even after Vercel had reported success.
           case "$PREVIEW_BRANCH" in
             fix/phase1-routing-provider-quorum-071126)
-              alias="https://deep33-backend-git-fix-phase1-routing-provider-quorum-071126-iac33.vercel.app"
+              alias="https://deep33-backend-git-fix-phase1-routing-provider-quo-b6f4c4-iac33.vercel.app"
               ;;
             fix/vercel-android-route-221026)
               alias="https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app"
