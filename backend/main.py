@@ -2195,20 +2195,20 @@ def _normalize_web_search_query(query: str) -> str:
     if not normalized or not is_strict_news_query(normalized):
         return normalized
 
-    search_query = re.split(r"[.!?;\\n]", normalized, maxsplit=1)[0].strip()
+    search_query = re.split(r"[.!?;\n]", normalized, maxsplit=1)[0].strip()
     search_query = re.split(
-        r"\\b(?:resume|resumen|summarize|summary|explica|include|termina|finish|report)\\b",
+        r"\b(?:resume|resumen|summarize|summary|explica|include|termina|finish|report)\b",
         search_query,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0].strip()
     search_query = re.sub(
-        r"^(?:busca(?:r)?|encuentra|investiga|dame|muestra|show|find|search|look up)\\s+",
+        r"^(?:busca(?:r)?|encuentra|investiga|dame|muestra|show|find|search|look up)\s+",
         "",
         search_query,
         flags=re.IGNORECASE,
     ).strip()
-    search_query = re.sub(r"^(?:las?|the)\\s+", "", search_query, flags=re.IGNORECASE)
+    search_query = re.sub(r"^(?:las?|the)\s+", "", search_query, flags=re.IGNORECASE)
     return search_query or normalized
 
 
