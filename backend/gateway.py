@@ -178,6 +178,7 @@ class GatewayConfig:
             if _provider_url_is_secure(provider.url)
             and _provider_url_is_secure(provider.health_url)
             and "gemma-4" not in provider.model.casefold()
+            and "poolside/laguna-s-2.1" not in provider.model.casefold()
         )
         # A 200 response with no visible assistant text is an invalid inference,
         # not a successful completion. Keep a text-oriented free Kilo model as the
@@ -198,18 +199,33 @@ class GatewayConfig:
             for provider in secure_providers
         )
         if kilo_provider is not None and not has_free_text_fallback:
-            # Keep the deterministic fallback on a model currently listed as
-            # free by Kilo. The former Laguna fallback is no longer present in
-            # the live model catalog and can silently turn failover into a dead end.
+            # Keep a deterministic text-oriented free model as the first
+            # recovery choice, without forwarding any rejected primary token.
             secure_providers += (
                 GatewayProvider(
                     name="kilo-free-text-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
-                    # Kilo explicitly permits anonymous access to :free models.
-                    # Do not forward a rejected/expired primary credential to the fallback.
                     api_key="",
                     model="baidu/ernie-5.5-flash-preview:free",
+                ),
+            )
+
+        has_nvidia_fallback = any(
+            "nvidia/nemotron-3-ultra-550b-a55b:free" in provider.model.casefold()
+            for provider in secure_providers
+        )
+        if kilo_provider is not None and not has_nvidia_fallback:
+            # This free Kilo model has produced non-empty completions in the
+            # live DEEP33 deployment. Keep it as a final text fallback when
+            # the primary and ERNIE return empty or time out.
+            secure_providers += (
+                GatewayProvider(
+                    name="kilo-nemotron-free-fallback",
+                    url=kilo_provider.url,
+                    health_url=kilo_provider.health_url,
+                    api_key="",
+                    model="nvidia/nemotron-3-ultra-550b-a55b:free",
                 ),
             )
         return cls(
