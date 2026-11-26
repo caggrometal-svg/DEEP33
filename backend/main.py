@@ -68,6 +68,9 @@ def _resolve_git_sha() -> str:
     return "unknown"
 
 
+GIT_SHA = _resolve_git_sha()
+
+
 def _is_publishable_realtime_news_source(
     query: str,
     source: dict[str, Any],
