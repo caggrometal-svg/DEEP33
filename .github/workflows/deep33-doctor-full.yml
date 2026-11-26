@@ -114,7 +114,9 @@ jobs:
           path: android/deep33-performance.log
           if-no-files-found: warn
 
+  # This legacy production job targets Vercel; keep it off during Render-only recovery.
   production:
+    if: false
     needs: [backend, android]
     runs-on: ubuntu-latest
     timeout-minutes: 10
