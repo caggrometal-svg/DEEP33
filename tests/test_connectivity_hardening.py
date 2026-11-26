@@ -39,18 +39,25 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
 
 def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
     source = read("android/app/build.gradle.kts")
+    api_source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://deep33-backup.onrender.com"' in source
     assert '"https://deep33-api.onrender.com"' in source
     assert "vercel.app" not in source
+    assert 'onrender.com' in source.lower()
     assert 'immutable by build environment' in source
     assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
-    assert 'onrender.com' not in source.lower()
+    assert 'onrender.com' in source.lower()
     assert '/functions/v1/deep33-proxy' not in source
     assert '/functions/v1/deep33-tertiary' not in source
     assert 'railway.app' not in source.lower()
     assert 'http://' not in source
+    assert 'BuildConfig.DEEP33_PRIMARY_URL' in api_source
+    assert 'BuildConfig.DEEP33_SECONDARY_URL' in api_source
+    assert 'BuildConfig.DEEP33_TERTIARY_URL' in api_source
+    assert 'vercel.app' not in api_source.lower()
+    assert 'x-vercel-protection-bypass' not in api_source
 
 
 def test_backend_provider_and_memory_clients_are_redirect_strict() -> None:
@@ -74,7 +81,7 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         "supabase/functions/deep33-tertiary/index.ts",
     ):
         source = read(path)
-        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&' in source
+        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.onrender.com" &&' in source
         assert 'isSecureHttpsUrl(RAW_UPSTREAM)' in source
         assert 'url.port === "" || url.port === "443"' in source
         assert 'redirect: "error"' in source
@@ -88,8 +95,8 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert '!isSecureHttpsUrl(url)' in source
         assert '!isSecureHttpsUrl(MEMORY_FUNCTION_URL)' in source
         assert '!isSecureHttpsUrl(HYBRID_FUNCTION_URL)' in source
-        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&' in source
-        assert ".onrender.com" not in source.lower()
+        assert 'const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.onrender.com" &&' in source
+        assert ".onrender.com" in source.lower()
         assert ".railway.app" not in source.lower()
         assert "replit.app" not in source.lower()
 
@@ -183,7 +190,7 @@ def test_edge_connectivity_audit_reports_internet_dns_and_search_separately() ->
     assert "audit_attempts" in source
 
 
-def test_edge_vercel_backend_receives_the_authenticated_bearer() -> None:
+def test_edge_render_backend_receives_the_authenticated_bearer() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     assert 'idempotencyContext,\n            req.headers.get("authorization") || "",\n          );' in source
     assert 'provider.requires_auth && authorization ? { "Authorization": authorization }' in source
@@ -193,7 +200,7 @@ def test_edge_vercel_backend_receives_the_authenticated_bearer() -> None:
     assert 'const authorization = internalBackendFallback && userAuthorization.startsWith("Bearer ")' in source
 
 
-def test_vercel_backend_fallback_synthesizes_session_for_internal_diagnostics() -> None:
+def test_render_backend_fallback_synthesizes_session_for_internal_diagnostics() -> None:
     for path in (
         "supabase/functions/deep33-proxy/index.ts",
         "supabase/functions/deep33-tertiary/index.ts",
@@ -288,20 +295,25 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "needs.android_validation.result == 'success'" in recovery
     assert (
         "needs: [change_scope, backend_unit, production_realtime_search, "
-        "vercel_realtime_search, android_validation, performance_gate, "
+        "android_validation, performance_gate, "
         "android_feature_instrumentation, production_gate, android_e2e, recovery_gate]"
     ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
+    assert "vercel_realtime_search:\n    if: false" in source
+    assert "needs.vercel_realtime_search.result" not in release
+    android_e2e = source.split("  android_e2e:", 1)[1].split("  recovery_gate:", 1)[0]
+    assert "deep33-backend.onrender.com" in android_e2e
+    assert "vercel" not in android_e2e.lower()
     for gate in (
-        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "VERCEL_REALTIME",
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", 
         "ANDROID_VALIDATION", "PERFORMANCE_GATE", "ANDROID_FEATURE",
         "PRODUCTION_GATE", "ANDROID_E2E", "RECOVERY_GATE",
     ):
         assert f"DEEP33_{gate}_RESULT" in release
-    assert '"success success success success success success success success success success"' in release
+    assert '"success success success success success success success success success"' in release
 
-def test_secondary_edge_has_authenticated_vercel_ai_fallback() -> None:
+def test_secondary_edge_has_authenticated_render_ai_fallback() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
         "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
@@ -309,9 +321,9 @@ def test_secondary_edge_has_authenticated_vercel_ai_fallback() -> None:
     providers = source.split("function edgeProviders()", 1)[1].split(
         "\nfunction edgeAIConfigured()", 1
     )[0]
-    assert '"vercel-backend-primary"' in internal
-    assert '"https://deep33-backend.vercel.app"' in source
-    assert ".onrender.com" not in source
+    assert '"render-backend-primary"' in internal
+    assert '"https://deep33-backend.onrender.com"' in source
+    assert ".onrender.com" in source
     assert ".railway.app" not in source
     assert "replit.app" not in source
     assert 'const url = base + "/v1/ai/generate";' in internal
@@ -328,7 +340,7 @@ def test_android_edge_requests_include_publishable_key_and_bearer_auth() -> None
         '?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }'
     ) == 2
 
-def test_secondary_edge_vercel_fallback_supports_streaming() -> None:
+def test_secondary_edge_render_fallback_supports_streaming() -> None:
     source = read("supabase/functions/deep33-tertiary/index.ts")
     internal = source.split("function addInternalInferenceBackends(", 1)[1].split(
         "\nconst FREE_INFERENCE_REQUEST_TIMEOUT_MS", 1
@@ -340,7 +352,7 @@ def test_secondary_edge_vercel_fallback_supports_streaming() -> None:
     assert 'const stream_url = String(value.stream_url || url).trim();' in source
     assert 'if (!isSecureHttpsUrl(url) || !isSecureHttpsUrl(stream_url)' in source
 
-def test_edge_vercel_fallback_forwards_session_and_idempotency_headers() -> None:
+def test_edge_render_fallback_forwards_session_and_idempotency_headers() -> None:
     primary = read("supabase/functions/deep33-proxy/index.ts")
     secondary = read("supabase/functions/deep33-tertiary/index.ts")
     for source in (primary, secondary):
@@ -354,7 +366,7 @@ def test_edge_vercel_fallback_forwards_session_and_idempotency_headers() -> None
     assert 'leaseContext?.idempotencyKey || ""' in primary
     assert 'requestId + "-stream-fallback"' in primary
 
-def test_primary_edge_diagnostics_forward_session_to_vercel_fallback() -> None:
+def test_primary_edge_diagnostics_forward_session_to_render_fallback() -> None:
     source = read("supabase/functions/deep33-proxy/index.ts")
     signature = source.split("async function callEdgeAI(", 1)[1].split(
         "): Promise<{ body:", 1
@@ -556,3 +568,39 @@ def test_every_apk_artifact_workflow_requires_the_current_main_certification() -
         # a successful main release gate, not from a direct push to main.
         assert "branches: [main]" not in source, path
 
+
+
+def test_render_is_the_only_runtime_revision_source() -> None:
+    main = read("backend/main.py")
+    assert 'os.getenv("RENDER_GIT_COMMIT"' in main
+    assert 'os.getenv("DEEP33_GIT_SHA"' in main
+    assert "VERCEL_GIT_COMMIT_SHA" not in main
+    assert "RAILWAY_GIT_COMMIT_SHA" not in main
+
+
+def test_render_ai_and_search_budgets_are_explicit_and_bounded() -> None:
+    render = read("render.yaml")
+    assert render.count("key: AI_GATEWAY_MODEL") == 3
+    assert render.count("key: AI_GATEWAY_FALLBACKS_JSON") == 3
+    assert render.count('baidu/ernie-5.5-flash-preview:free') == 3
+    assert render.count('nvidia/nemotron-3.5-super-vl:free') == 3
+    assert render.count('nvidia/nemotron-3-ultra:free') == 3
+    assert render.count("key: AI_PROVIDER_TIMEOUT_SECONDS") == 3
+    assert render.count("key: AI_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "45"') == 3
+    assert render.count("key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "20"') == 3
+    assert render.count("key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "12"') >= 6
+    search = read("tools/web_search.py")
+    fetch = read("tools/web_fetch.py")
+    assert "pool=min(2.0, bounded)" in search
+    assert "max_connections=40" in search and "max_keepalive_connections=20" in search
+    assert "pool=2.0" in fetch
+    assert "max_connections=20" in fetch and "max_keepalive_connections=10" in fetch
+
+
+def test_android_build_is_versioned_for_render_migration() -> None:
+    gradle = read("android/app/build.gradle.kts")
+    assert "versionCode = 10" in gradle
+    assert 'versionName = "0.5.2"' in gradle
