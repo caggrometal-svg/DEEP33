@@ -1060,7 +1060,7 @@ def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
     primary_budget = gateway._complete_provider_timeout_budget(
         primary_deadline, 0, 2
     )
-    fallback_deadline = __import__("time").monotonic() + 12.0
+    fallback_deadline = time.monotonic() + 12.0
     fallback_budget = gateway._complete_provider_timeout_budget(
         fallback_deadline, 1, 2
     )
