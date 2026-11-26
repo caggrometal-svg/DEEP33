@@ -859,14 +859,14 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
 
 
-def test_complete_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
+def test_complete_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = __import__("json").loads(request.content)
         model = body.get("model")
         calls.append(str(model))
-        if model in {"primary-model", "ernie-model"}:
+        if model in {"primary-model", "ernie-model", "nvidia/nemotron-3-ultra-550b-a55b:free"}:
             return httpx.Response(
                 200,
                 request=request,
@@ -878,7 +878,7 @@ def test_complete_reaches_nemotron_after_primary_and_ernie_return_empty() -> Non
             json={
                 "model": model,
                 "choices": [
-                    {"message": {"role": "assistant", "content": "NEMOTRON_SYNTHESIS_OK"}}
+                    {"message": {"role": "assistant", "content": "NEMOTRON_VL_SYNTHESIS_OK"}}
                 ],
             },
         )
@@ -889,6 +889,7 @@ def test_complete_reaches_nemotron_after_primary_and_ernie_return_empty() -> Non
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
             provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
             provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+            provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
         ),
         timeout_seconds=2,
         max_retries=0,
@@ -909,27 +910,28 @@ def test_complete_reaches_nemotron_after_primary_and_ernie_return_empty() -> Non
     finally:
         httpx.AsyncClient = original
 
-    assert result["choices"][0]["message"]["content"] == "NEMOTRON_SYNTHESIS_OK"
-    assert result["_deep33_gateway"]["provider"] == "nemotron"
+    assert result["choices"][0]["message"]["content"] == "NEMOTRON_VL_SYNTHESIS_OK"
+    assert result["_deep33_gateway"]["provider"] == "nemotron-vl"
     assert calls == [
         "primary-model",
         "ernie-model",
         "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     ]
 
 
-def test_stream_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
+def test_stream_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = __import__("json").loads(request.content)
         model = body.get("model")
         calls.append(str(model))
-        if model in {"primary-model", "ernie-model"}:
+        if model in {"primary-model", "ernie-model", "nvidia/nemotron-3-ultra-550b-a55b:free"}:
             content = b"data: [DONE]\\n\\n"
         else:
             content = (
-                b'data: {"choices":[{"delta":{"content":"NEMOTRON_STREAM_SYNTHESIS_OK"}}]}\\n\\n'
+                b'data: {"choices":[{"delta":{"content":"NEMOTRON_VL_STREAM_SYNTHESIS_OK"}}]}\\n\\n'
                 b"data: [DONE]\\n\\n"
             )
         return httpx.Response(
@@ -945,6 +947,7 @@ def test_stream_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
             provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
             provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+            provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
         ),
         timeout_seconds=2,
         max_retries=0,
@@ -974,6 +977,7 @@ def test_stream_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
         "primary-model",
         "ernie-model",
         "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
     ]
-    assert output.count(b"NEMOTRON_STREAM_SYNTHESIS_OK") == 1
+    assert output.count(b"NEMOTRON_VL_STREAM_SYNTHESIS_OK") == 1
     assert output.count(b"data: [DONE]") == 1
