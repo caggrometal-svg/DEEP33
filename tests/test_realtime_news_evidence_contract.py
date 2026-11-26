@@ -39,6 +39,35 @@ def test_current_news_accepts_recent_relevant_extracted_article():
     )
 
 
+def test_current_news_accepts_recent_same_publisher_rss_timestamp():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    source["provider"] = "publisher_rss"
+    source["source_domain"] = "noticias.example"
+    page = _fetched_page(published_at=None)
+    page.pop("published_at", None)
+
+    assert _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
+def test_current_news_does_not_trust_search_index_timestamp_without_publisher_rss():
+    now = datetime.now(timezone.utc).isoformat()
+    source = _news_source(published_at=now)
+    source["provider"] = "bing"
+    page = _fetched_page(published_at=None)
+    page.pop("published_at", None)
+
+    assert not _is_publishable_realtime_news_source(
+        "últimas noticias de Chile hoy",
+        source,
+        page,
+    )
+
+
 def test_current_news_rejects_undated_evergreen_geography_page():
     source = _news_source(
         published_at=None,
