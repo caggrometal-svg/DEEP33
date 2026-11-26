@@ -5983,8 +5983,11 @@ async def stream_gateway(
                             for choice in frame_json.get("choices", []):
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
-                                if isinstance(content_value, str):
-                                    visible_delta = visible_stream_delta(delta)
+                                content_text = gateway._content_text(content_value)
+                                if content_text:
+                                    normalized_delta = dict(delta)
+                                    normalized_delta["content"] = content_text
+                                    visible_delta = visible_stream_delta(normalized_delta)
                                     safe_delta = tool_markup_filter.push(visible_delta)
                                     if safe_delta:
                                         assistant_parts.append(safe_delta)
@@ -6210,7 +6213,13 @@ async def stream_gateway(
             assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
             saw_done = saw_done or parsed_done
         assistant_text = sanitize_assistant_text(assistant_raw)
-        if not saw_done or not assistant_text:
+        if assistant_text and not saw_done:
+            logger.warning(
+                "stream_gateway_text_without_done_marker request_id=%s",
+                request_id,
+            )
+            saw_done = True
+        if not assistant_text:
             # Never terminate a successful HTTP/SSE turn with an empty visible answer.
             # Upstream streaming can occasionally finish without a usable content delta
             # after provider failover. Emit a factual, non-speculative retryable fallback
