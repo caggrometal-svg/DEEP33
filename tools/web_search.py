@@ -1622,8 +1622,13 @@ async def search_web(
         if is_weather_query(cleaned):
             weather = await fetch_named_location_weather(
                 cleaned,
-                timeout_seconds=min(2.5, float(timeout_seconds)),
+                timeout_seconds=min(4.0, float(timeout_seconds)),
             )
+            if weather is None:
+                logger.warning(
+                    "web_search_weather_fallback_unavailable query=%s",
+                    cleaned[:160],
+                )
             if weather is not None:
                 location = ", ".join(
                     part for part in (
@@ -1648,14 +1653,36 @@ async def search_web(
                     "published_at": str(weather.get("time") or ""),
                 }
                 result = copy.deepcopy(result)
+                existing_candidates = [
+                    candidate
+                    for candidate in (
+                        result.get("results")
+                        if isinstance(result.get("results"), list)
+                        else result.get("sources")
+                        if isinstance(result.get("sources"), list)
+                        else []
+                    )
+                    if isinstance(candidate, dict)
+                ]
+                combined_candidates = [item]
+                seen_urls = {str(item.get("url") or "").strip()}
+                for candidate in existing_candidates:
+                    candidate_url = str(candidate.get("url") or "").strip()
+                    if not candidate_url.startswith("https://") or candidate_url in seen_urls:
+                        continue
+                    combined_candidates.append(candidate)
+                    seen_urls.add(candidate_url)
+                    if len(combined_candidates) >= max_results:
+                        break
                 result.update({
                     "ok": True,
-                    "status": "OK",
+                    "status": "DEGRADED",
                     "diagnostic_code": None,
-                    "results": [item],
-                    "sources": [item],
+                    "results": combined_candidates,
+                    "sources": combined_candidates,
                     "provider": "open_meteo",
                     "winner_provider": "open_meteo",
+                    "specialist_provider": "open_meteo",
                 })
                 result["providers"] = list(dict.fromkeys([
                     *(result.get("providers") or []), "open_meteo"
@@ -1663,11 +1690,26 @@ async def search_web(
                 result["providers_attempted"] = list(dict.fromkeys([
                     *(result.get("providers_attempted") or []), "open_meteo"
                 ]))
+                domains = {
+                    str(candidate.get("source_domain") or (
+                        urlparse(str(candidate.get("url") or "")).hostname or ""
+                    )).casefold().removeprefix("www.")
+                    for candidate in combined_candidates
+                } - {""}
                 result["verification"] = {
-                    "level": "single-source",
-                    "distinct_domains": 1,
-                    "distinct_providers": 1,
+                    "level": "specialist-data-plus-web-context",
+                    "distinct_domains": len(domains),
+                    "distinct_providers": len(result["providers"]),
+                    "required_domains": 2,
+                    "required_providers": 2,
+                    "domain_quorum_met": len(domains) >= 2,
+                    # Open-Meteo is a specialist data source, not a second search index.
+                    "provider_quorum_met": False,
+                    "navigation_only": False,
+                    "navigation_candidates_present": False,
+                    "evidence_status": "DEGRADED",
                     "corroborated_results": 0,
+                    "specialist_provider": "open_meteo",
                 }
     result["fresh_request"] = bool(fresh)
     result["configured_provider"] = (
