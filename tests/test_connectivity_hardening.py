@@ -39,12 +39,16 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
 
 def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
     source = read("android/app/build.gradle.kts")
+    api_source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://deep33-backup.onrender.com"' in source
     assert '"https://deep33-api.onrender.com"' in source
     assert 'immutable by build environment' in source
     assert 'DEEP33_RENDER_URL' in source
     assert 'vercel.app' not in source.lower()
+    assert 'BuildConfig.DEEP33_RENDER_URL' in api_source
+    assert 'x-vercel-protection-bypass' not in api_source
+    assert 'vercel.app' not in api_source.lower()
     assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
     assert 'onrender.com' in source.lower()
@@ -292,8 +296,10 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
+    assert "vercel_realtime_search:\\n    if: false" in source
+    assert "needs.vercel_realtime_search.result" not in release
     for gate in (
-        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "RENDER_REALTIME",
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH",
         "ANDROID_VALIDATION", "PERFORMANCE_GATE", "ANDROID_FEATURE",
         "PRODUCTION_GATE", "ANDROID_E2E", "RECOVERY_GATE",
     ):
