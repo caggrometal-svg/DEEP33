@@ -28,7 +28,7 @@ services:
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
-        value: "8"
+        value: "6"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -61,7 +61,7 @@ services:
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
-        value: "8"
+        value: "6"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
@@ -94,7 +94,7 @@ services:
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
-        value: "8"
+        value: "6"
       - key: WEB_SEARCH_MIN_FALLBACK_RESULTS
         value: "2"
       - key: WEB_SEARCH_PROVIDER_RETRIES
