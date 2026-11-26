@@ -38,7 +38,7 @@ REALTIME_TERMS = (
 )
 
 REALTIME_NEWS_TERMS = (
-    "noticia", "noticias", "última hora", "ultima hora", "actualidad", "actual",
+    "noticia", "noticias", "última hora", "ultima hora", "actualidad",
     "situación actual", "situacion actual", "estado actual",
     "en desarrollo", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
     "qué ocurre", "que ocurre", "qué pasa", "que pasa", "emergencia", "incidente",
