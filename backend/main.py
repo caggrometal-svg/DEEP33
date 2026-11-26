@@ -2432,11 +2432,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         } - {""}
         try:
             rescue_query = search_query
-            recent_candidates = recovered_news_candidates or await search_recent_news_candidates(
-                rescue_query,
-                timeout_seconds=2.5,
-                max_results=12,
-            )
+            if recovered_news_candidates:
+                recent_candidates = recovered_news_candidates
+            else:
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=2.5,
+                    max_results=12,
+                )
             recent_candidates = _rank_recent_news_candidates(search_query, recent_candidates)
             recovered_provider_candidates: list[dict[str, Any]] = []
             for raw in recent_candidates:
