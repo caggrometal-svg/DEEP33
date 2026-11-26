@@ -159,7 +159,7 @@ MAX_QUERY_FANOUT = max(1, min(2, int(os.getenv("WEB_SEARCH_MAX_QUERY_FANOUT", "2
 MIN_VERIFIED_RESULTS = max(2, min(3, int(os.getenv("WEB_SEARCH_MIN_VERIFIED_RESULTS", "2"))))
 TOTAL_SEARCH_TIMEOUT_SECONDS = max(
     3.0,
-    min(5.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "5"))),
+    min(8.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "8"))),
 )
 
 
