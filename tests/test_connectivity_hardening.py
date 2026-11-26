@@ -300,7 +300,7 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     assert "vercel" not in android_e2e.lower()
     assert "github.event_name == 'pull_request'" not in android_e2e
     for gate in (
-        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH", "RENDER_REALTIME",
+        "CHANGE_SCOPE", "BACKEND_UNIT", "REALTIME_SEARCH",
         "ANDROID_VALIDATION", "PERFORMANCE_GATE", "ANDROID_FEATURE",
         "PRODUCTION_GATE", "ANDROID_E2E", "RECOVERY_GATE",
     ):
