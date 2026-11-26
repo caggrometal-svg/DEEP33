@@ -44,7 +44,7 @@ def _http_timeout(seconds: float) -> httpx.Timeout:
         connect=min(1.8, bounded),
         read=min(2.5, bounded),
         write=min(1.5, bounded),
-        pool=min(1.0, bounded),
+        pool=min(2.0, bounded),
     )
 
 
@@ -56,7 +56,7 @@ async def _search_http_client() -> httpx.AsyncClient:
             timeout=_http_timeout(DEFAULT_TIMEOUT_SECONDS),
             follow_redirects=True,
             limits=httpx.Limits(
-                max_connections=40,
+                max_connections=64,
                 max_keepalive_connections=20,
                 keepalive_expiry=30.0,
             ),
