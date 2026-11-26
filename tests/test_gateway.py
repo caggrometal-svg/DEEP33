@@ -1059,7 +1059,7 @@ def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
     primary_budget = gateway._complete_provider_timeout_budget(
         primary_deadline, 0, 2
     )
-    fallback_deadline = time.monotonic() + 12.0
+    fallback_deadline = time.monotonic() + 16.7
     fallback_budget = gateway._complete_provider_timeout_budget(
         fallback_deadline, 1, 2
     )
