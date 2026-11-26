@@ -2189,10 +2189,34 @@ async def _fetch_web_source(
     }
 
 
+def _normalize_web_search_query(query: str) -> str:
+    """Remove answer instructions from a user prompt before sending it to search providers."""
+    normalized = " ".join(str(query or "").split()).strip()
+    if not normalized or not is_strict_news_query(normalized):
+        return normalized
+
+    search_query = re.split(r"[.!?;\\n]", normalized, maxsplit=1)[0].strip()
+    search_query = re.split(
+        r"\\b(?:resume|resumen|summarize|summary|explica|include|termina|finish|report)\\b",
+        search_query,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    search_query = re.sub(
+        r"^(?:busca(?:r)?|encuentra|investiga|dame|muestra|show|find|search|look up)\\s+",
+        "",
+        search_query,
+        flags=re.IGNORECASE,
+    ).strip()
+    search_query = re.sub(r"^(?:las?|the)\\s+", "", search_query, flags=re.IGNORECASE)
+    return search_query or normalized
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
     explicitly_forced = should_force_web(messages)
+    search_query = _normalize_web_search_query(query)
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
@@ -2205,8 +2229,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
+        logger.info("web_evidence_query_normalized request_id=%s strict_news=%s search_query=%s", request_id or "unknown", is_strict_news_query(query), search_query[:240])
         search_result = await search_web(
-            query,
+            search_query,
             timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
@@ -2317,14 +2342,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             rescue_query = (
                 "Chile noticias hoy actualidad acontecimientos recientes"
                 if "chile" in query.casefold()
-                else query
+                else search_query
             )
             recent_candidates = await search_recent_news_candidates(
                 rescue_query,
                 timeout_seconds=1.8,
                 max_results=8,
             )
-            recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
+            recent_candidates = _rank_recent_news_candidates(search_query, recent_candidates)
             recovered_provider_candidates: list[dict[str, Any]] = []
             for raw in recent_candidates:
                 if not isinstance(raw, dict):
