@@ -565,3 +565,27 @@ def test_every_apk_artifact_workflow_requires_the_current_main_certification() -
         # a successful main release gate, not from a direct push to main.
         assert "branches: [main]" not in source, path
 
+
+
+def test_render_is_the_only_runtime_revision_source() -> None:
+    main = read("backend/main.py")
+    assert 'os.getenv("RENDER_GIT_COMMIT"' in main
+    assert 'os.getenv("DEEP33_GIT_SHA"' in main
+    assert "VERCEL_GIT_COMMIT_SHA" not in main
+    assert "RAILWAY_GIT_COMMIT_SHA" not in main
+
+
+def test_render_ai_and_search_budgets_are_explicit_and_bounded() -> None:
+    render = read("render.yaml")
+    assert render.count("key: AI_GATEWAY_MODEL") == 3
+    assert render.count('value: "baidu/ernie-5.5-flash-preview:free"') == 3
+    assert render.count("key: AI_PROVIDER_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "12"') >= 3
+    assert render.count("key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "12"') >= 6
+
+
+def test_android_build_is_versioned_for_render_endpoint_migration() -> None:
+    gradle = read("android/app/build.gradle.kts")
+    assert "versionCode = 10" in gradle
+    assert 'versionName = "0.5.2"' in gradle
