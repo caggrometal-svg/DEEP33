@@ -58,36 +58,10 @@ object Deep33FailoverPolicy {
 object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     @Volatile private var authContext: Context? = null
-    @Volatile private var e2eBackendUrl: String? = null
     
     fun configureAuth(context: Context) {
         authContext = context.applicationContext
     }
-
-    /**
-     * Routes a debug/instrumentation run through an isolated invalid host to verify
-     * failover. Release builds always use the immutable Render service list.
-     */
-    fun configureE2EBackend(baseUrl: String) {
-        check(BuildConfig.DEBUG) { "E2E backend override is debug-only" }
-        val endpoint = validateEndpoint(baseUrl, allowIsolatedTestEndpoint = true)
-            ?: throw IllegalArgumentException("Invalid E2E backend URL")
-        val host = URI(endpoint).host.orEmpty().lowercase()
-        val renderHosts = setOf(
-            "deep33-backend.onrender.com",
-            "deep33-backup.onrender.com",
-            "deep33-api.onrender.com",
-        )
-        val isolatedTestHost = host == "deep33-e2e.invalid"
-        require(host in renderHosts || isolatedTestHost) {
-            "E2E backend must be a canonical Render service or the isolated .invalid test host"
-        }
-        e2eBackendUrl = endpoint
-    }
-
-    fun e2eEndpointUrl(): String =
-        if (BuildConfig.DEBUG) e2eBackendUrl ?: BuildConfig.DEEP33_PRIMARY_URL
-        else BuildConfig.DEEP33_PRIMARY_URL
 
     private fun authorizationToken(forceRefresh: Boolean = false): String? {
         val context = authContext ?: return null
@@ -149,14 +123,7 @@ object Deep33Api {
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val canonical = canonicalEndpoints()
-        if (overrides == null) {
-            if (BuildConfig.DEBUG) e2eBackendUrl?.let { selectedEndpoint ->
-                // A PR E2E must exercise only the exact preview under test.
-                // Falling through to production aliases could hide a broken preview.
-                return listOf(selectedEndpoint)
-            }
-            return canonical
-        }
+        if (overrides == null) return canonical
 
         // Production/release transport can never be redirected to an arbitrary HTTPS host.
         // Debug instrumentation may inject only isolated loopback/.invalid endpoints to
@@ -169,8 +136,7 @@ object Deep33Api {
             .toList()
         if (requested.isEmpty() || requested.size != overrides.distinct().size) return emptyList()
 
-        val configuredE2EEndpoint = if (BuildConfig.DEBUG) e2eBackendUrl else null
-        val nonCanonical = requested.filter { it !in canonical && it != configuredE2EEndpoint }
+        val nonCanonical = requested.filter { it !in canonical }
         if (nonCanonical.isNotEmpty()) {
             if (!BuildConfig.DEBUG) return emptyList()
             if (nonCanonical.any { validateEndpoint(it, allowIsolatedTestEndpoint = true) == null }) {
