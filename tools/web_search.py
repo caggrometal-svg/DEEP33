@@ -6,6 +6,7 @@ import copy
 import hashlib
 import html
 import inspect
+import json
 import logging
 import os
 import re
@@ -706,7 +707,7 @@ async def _youcom_search(query, timeout_seconds, max_results):
         messages = [response.json()]
     else:
         messages = []
-        raw = response.text.replace("\\r\\n", "\\n")
+        raw = response.text.replace("\r\n", "\n")
         for event in raw.split("\\n\\n"):
             data_lines = [
                 line[5:].lstrip()
