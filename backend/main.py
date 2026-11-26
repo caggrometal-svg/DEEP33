@@ -4751,7 +4751,19 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
     request_id = request_id_from_request(request)
-    status, data, text = await run_inference_check(request_id)
+    try:
+        status, data, text = await run_inference_check(request_id)
+    except Exception as exc:
+        # Diagnostics must report inference failure as structured data, not turn
+        # an unavailable provider into an opaque HTTP 500 for the caller.
+        logger.exception(
+            "inference_check_unhandled request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        status, data, text = "FAIL", {
+            "_deep33_gateway": {"error_type": type(exc).__name__, "attempts": []}
+        }, None
     gateway_meta = data.get("_deep33_gateway", {}) if isinstance(data, dict) else {}
     attempts = gateway_meta.get("attempts", []) if isinstance(gateway_meta, dict) else []
     last_attempt = attempts[-1] if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else {}
