@@ -5765,13 +5765,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         "clara y conversacional en el idioma del usuario. Distingue hechos verificados "
         "de hipótesis o datos no confirmados. No copies frases de las páginas, no "
         "enumeres extractos ni conviertas las fuentes en la respuesta. Cuando el usuario "
-        "pida un resumen de noticias y haya tres o más noticias distintas verificadas, "
-        "resume al menos tres hechos/noticias en puntos breves, uno por historia; no "
-        "concentres la respuesta en el primer artículo. Excluye publirreportajes y "
-        "contenido promocional del recuento de noticias. Si sólo hay una o dos noticias "
-        "con evidencia suficiente, indica ese límite con claridad. Cierra las ideas y "
-        "no termines a mitad de una frase. Si la evidencia no basta, explica brevemente "
-        "qué no se pudo confirmar. No inventes datos. Las referencias se adjuntarán "
+        "pida un resumen de noticias, resume cada historia distinta con evidencia suficiente en viñetas; cada viñeta debe explicar qué ocurrió y el dato temporal o geográfico disponible. Si hay tres o más historias válidas, incluye al menos tres; si solo hay una o dos, resume cada una y di explícitamente cuántas pudieron verificarse. Nunca respondas solo con el número de noticias ni con una lista de fuentes. Excluye publirreportajes y contenido promocional tanto del recuento como del resumen. Si el usuario solicita un marcador de validación, inclúyelo exactamente al final de la respuesta. Cierra las ideas y no termines a mitad de una frase. No inventes datos. Las referencias se adjuntarán "
         "por separado."
     )
     compact_payload = {
