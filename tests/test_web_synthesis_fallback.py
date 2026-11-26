@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
+import backend.main as main
 from backend.main import (
     _compact_web_synthesis_payload,
     _extractive_web_evidence_fallback,
@@ -74,3 +76,18 @@ def test_compacted_retry_keeps_source_evidence_for_model_synthesis() -> None:
     assert compacted["messages"][2]["content"] == "Investiga y responde quién fue."
     assert compacted["max_tokens"] == 768
     assert compacted["stream"] is False
+
+
+def test_inference_diagnostic_returns_structured_failure_instead_of_http_500(monkeypatch) -> None:
+    async def fail_inference(_request_id: str):
+        raise RuntimeError("provider chain unavailable")
+
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "diagnostic-test")
+    monkeypatch.setattr(main, "run_inference_check", fail_inference)
+
+    result = asyncio.run(main.inference_check(object()))
+
+    assert result["status"] == "FAIL"
+    assert result["request_id"] == "diagnostic-test"
+    assert result["error_type"] == "RuntimeError"
+    assert result["attempts"] == []
