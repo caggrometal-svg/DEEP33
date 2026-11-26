@@ -329,7 +329,7 @@ const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
 // Internal DEEP33 fallback: keep the public API unchanged. Try the canonical
 // Render backend first, then preserve the existing Render backend fallbacks as-is.
 // The secondary Edge route uses the same canonical Render backend.
-// Do not route through retired Railway, Render, Replit, or IAC33 hosts.
+// Do not route through retired Railway, Replit, or IAC33 hosts.
 const EDGE_AI_UPSTREAM_URLS = [
   "https://deep33-backend.onrender.com",
 ] as const;
