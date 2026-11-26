@@ -2189,10 +2189,85 @@ async def _fetch_web_source(
     }
 
 
+def _news_recovery_search_result(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Build a discovery result only when RSS recovery has independent index and publisher diversity."""
+    usable = [item for item in candidates if isinstance(item, dict)]
+    providers: set[str] = set()
+    domains: set[str] = set()
+    for item in usable:
+        raw_names = item.get("provider_sources")
+        if not isinstance(raw_names, list):
+            raw_names = item.get("providers")
+        if not isinstance(raw_names, list):
+            raw_names = [item.get("provider")]
+        providers.update(
+            str(name or "").strip().casefold()
+            for name in raw_names
+            if str(name or "").strip()
+            and str(name or "").strip().casefold() not in {
+                "publisher_rss", "publisher_feed", "unknown",
+            }
+        )
+        domain = str(item.get("source_domain") or "").casefold().removeprefix("www.")
+        if not domain:
+            domain = (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        if domain:
+            domains.add(domain)
+
+    if len(providers) < 2 or len(domains) < 3:
+        return None
+
+    return {
+        "ok": True,
+        "results": usable,
+        "sources": usable,
+        "providers": sorted(providers),
+        "winner_provider": "multi-source-news-recovery",
+        "verification": {
+            "level": "multi-source",
+            "distinct_domains": len(domains),
+            "distinct_providers": len(providers),
+            "required_domains": 3,
+            "required_providers": 2,
+            "domain_quorum_met": True,
+            "provider_quorum_met": True,
+            "navigation_only": False,
+            "navigation_candidates_present": False,
+            "evidence_status": "DISCOVERY_VERIFIED",
+            "corroborated_results": 0,
+        },
+    }
+
+
+def _normalize_web_search_query(query: str) -> str:
+    """Remove answer instructions from a user prompt before sending it to search providers."""
+    normalized = " ".join(str(query or "").split()).strip()
+    if not normalized or not is_strict_news_query(normalized):
+        return normalized
+
+    search_query = re.split(r"[.!?;\n]", normalized, maxsplit=1)[0].strip()
+    search_query = re.split(
+        r"\b(?:resume|resumen|summarize|summary|explica|include|termina|finish|report)\b",
+        search_query,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    search_query = re.sub(
+        r"^(?:busca(?:r)?|encuentra|investiga|dame|muestra|show|find|search|look up)\s+",
+        "",
+        search_query,
+        flags=re.IGNORECASE,
+    ).strip()
+    search_query = re.sub(r"^(?:las?|the)\s+", "", search_query, flags=re.IGNORECASE)
+    return search_query or normalized
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
     explicitly_forced = should_force_web(messages)
+    search_query = _normalize_web_search_query(query)
+    strict_news_request = is_strict_news_query(query)
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
@@ -2205,8 +2280,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
+        logger.info("web_evidence_query_normalized request_id=%s strict_news=%s search_query=%s", request_id or "unknown", is_strict_news_query(query), search_query[:240])
         search_result = await search_web(
-            query,
+            search_query,
             timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
@@ -2221,19 +2297,22 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             request_id, type(exc).__name__,
             (time.perf_counter() - search_started) * 1000, str(exc)[:300],
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if not strict_news_request:
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+        search_result = {"ok": False, "results": [], "sources": [], "providers": [], "errors": [type(exc).__name__]}
 
     if not isinstance(search_result, dict):
         logger.warning(
             "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
             request_id, (time.perf_counter() - search_started) * 1000,
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if not strict_news_request:
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+        search_result = {"ok": False, "results": [], "sources": [], "providers": [], "errors": ["INVALID_SEARCH_RESULT"]}
 
     raw_sources = _source_from_result(search_result)
-    strict_news_request = is_strict_news_query(query)
     search_verification = search_result.get("verification")
     search_verification = (
         search_verification if isinstance(search_verification, dict) else {}
@@ -2252,6 +2331,44 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         search_result.get("ok") is True
         or (strict_news_request and discovery_provider_quorum)
     )
+    recovered_news_candidates: list[dict[str, Any]] = []
+    if not search_usable and strict_news_request:
+        try:
+            recovery_candidates = await search_recent_news_candidates(
+                search_query,
+                timeout_seconds=2.5,
+                max_results=12,
+            )
+            recovery_candidates = _rank_recent_news_candidates(
+                search_query,
+                recovery_candidates,
+            )
+            recovered_news_candidates = recovery_candidates
+            recovery_result = _news_recovery_search_result(recovery_candidates)
+            if recovery_result is not None:
+                search_result = recovery_result
+                raw_sources = _source_from_result(search_result)
+                search_usable = True
+                logger.info(
+                    "chat_news_search_recovery_quorum request_id=%s articles=%s domains=%s providers=%s",
+                    request_id or "unknown",
+                    len(recovery_candidates),
+                    search_result["verification"]["distinct_domains"],
+                    search_result["providers"],
+                )
+            else:
+                logger.warning(
+                    "chat_news_search_recovery_quorum_missing request_id=%s candidates=%s",
+                    request_id or "unknown",
+                    len(recovery_candidates),
+                )
+        except Exception as recovery_exc:
+            logger.warning(
+                "chat_news_search_recovery_failed request_id=%s error=%s",
+                request_id or "unknown",
+                type(recovery_exc).__name__,
+            )
+
     if not search_usable:
         errors = search_result.get("errors")
         logger.warning(
@@ -2314,17 +2431,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if item.get("published_at") and _is_recently_published(item, query)
         } - {""}
         try:
-            rescue_query = (
-                "Chile noticias hoy actualidad acontecimientos recientes"
-                if "chile" in query.casefold()
-                else query
-            )
-            recent_candidates = await search_recent_news_candidates(
-                rescue_query,
-                timeout_seconds=1.8,
-                max_results=8,
-            )
-            recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
+            rescue_query = search_query
+            if recovered_news_candidates:
+                recent_candidates = recovered_news_candidates
+            else:
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=2.5,
+                    max_results=12,
+                )
+            recent_candidates = _rank_recent_news_candidates(search_query, recent_candidates)
             recovered_provider_candidates: list[dict[str, Any]] = []
             for raw in recent_candidates:
                 if not isinstance(raw, dict):
