@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
+import backend.main as main
 from backend.main import (
     _compact_web_synthesis_payload,
     _extractive_web_evidence_fallback,
+    _normalize_web_search_query,
+    _news_recovery_search_result,
 )
 
 
@@ -49,11 +53,17 @@ def evidence_payload() -> dict:
 
 
 def test_web_evidence_is_never_emitted_as_extractive_answer() -> None:
-    assert _extractive_web_evidence_fallback(evidence_payload()) is None
+    payload = evidence_payload()
+
+    fallback = _extractive_web_evidence_fallback(payload)
+
+    assert fallback is None
 
 
-def test_compacted_retry_keeps_source_evidence_for_concise_synthesis() -> None:
-    compacted = _compact_web_synthesis_payload(evidence_payload())
+def test_compacted_retry_keeps_source_evidence_for_model_synthesis() -> None:
+    payload = evidence_payload()
+
+    compacted = _compact_web_synthesis_payload(payload)
 
     assert compacted is not None
     instruction = compacted["messages"][0]["content"]
@@ -72,3 +82,73 @@ def test_compacted_retry_keeps_source_evidence_for_concise_synthesis() -> None:
     assert compacted["messages"][2]["content"] == "Investiga y responde quién fue."
     assert compacted["max_tokens"] == 768
     assert compacted["stream"] is False
+
+
+def test_inference_diagnostic_returns_structured_failure_instead_of_http_500(monkeypatch) -> None:
+    async def fail_inference(_request_id: str):
+        raise RuntimeError("provider chain unavailable")
+
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "diagnostic-test")
+    monkeypatch.setattr(main, "run_inference_check", fail_inference)
+
+    result = asyncio.run(main.inference_check(object()))
+
+    assert result["status"] == "FAIL"
+    assert result["request_id"] == "diagnostic-test"
+    assert result["error_type"] == "RuntimeError"
+    assert result["attempts"] == []
+
+
+
+def test_news_search_query_drops_answer_instructions_before_provider_search() -> None:
+    query = (
+        "Busca las últimas noticias de Chile hoy. "
+        "Resume cada historia distinta con evidencia suficiente y termina con NEWS_STREAM_PASS."
+    )
+
+    assert _normalize_web_search_query(query) == "últimas noticias de Chile hoy"
+
+
+
+def test_news_recovery_requires_independent_indexes_and_three_publishers() -> None:
+    candidates = [
+        {
+            "title": "Noticia A",
+            "url": "https://one.example/news/a",
+            "source_domain": "one.example",
+            "provider": "google_news",
+        },
+        {
+            "title": "Noticia B",
+            "url": "https://two.example/news/b",
+            "source_domain": "two.example",
+            "provider": "bing",
+        },
+        {
+            "title": "Noticia C",
+            "url": "https://three.example/news/c",
+            "source_domain": "three.example",
+            "provider": "publisher_rss",
+        },
+    ]
+
+    result = _news_recovery_search_result(candidates)
+
+    assert result is not None
+    assert result["verification"]["distinct_domains"] == 3
+    assert result["verification"]["distinct_providers"] == 2
+    assert result["verification"]["provider_quorum_met"] is True
+
+
+def test_news_recovery_does_not_count_publisher_rss_as_search_index() -> None:
+    candidates = [
+        {
+            "title": f"Noticia {index}",
+            "url": f"https://publisher{index}.example/news/item",
+            "source_domain": f"publisher{index}.example",
+            "provider": "publisher_rss",
+        }
+        for index in range(3)
+    ]
+
+    assert _news_recovery_search_result(candidates) is None
