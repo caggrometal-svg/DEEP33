@@ -1102,3 +1102,29 @@ def test_complete_timeout_budget_prioritizes_text_fallback_in_four_provider_chai
     assert 13.0 <= budgets[1] <= 14.0
     assert 4.0 <= budgets[2] <= 5.0
     assert 4.0 <= budgets[3] <= 5.0
+
+
+
+def test_generic_fallback_does_not_receive_ernie_text_priority() -> None:
+    providers = (
+        provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        provider("secondary", "https://secondary.test/chat", "https://secondary.test/models", "secondary-model"),
+    )
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=providers,
+            timeout_seconds=30,
+            provider_timeout_seconds=30,
+        )
+    )
+    deadline = time.monotonic() + 30.0
+
+    primary_budget = gateway._complete_provider_timeout_budget(
+        deadline, providers[0], 0, list(providers)
+    )
+    generic_fallback_budget = gateway._complete_provider_timeout_budget(
+        deadline, providers[1], 1, list(providers)
+    )
+
+    assert primary_budget > generic_fallback_budget
