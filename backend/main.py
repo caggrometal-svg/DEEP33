@@ -2331,6 +2331,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         search_result.get("ok") is True
         or (strict_news_request and discovery_provider_quorum)
     )
+    recovered_news_candidates: list[dict[str, Any]] = []
     if not search_usable and strict_news_request:
         try:
             recovery_candidates = await search_recent_news_candidates(
@@ -2342,6 +2343,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 search_query,
                 recovery_candidates,
             )
+            recovered_news_candidates = recovery_candidates
             recovery_result = _news_recovery_search_result(recovery_candidates)
             if recovery_result is not None:
                 search_result = recovery_result
@@ -2430,7 +2432,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         } - {""}
         try:
             rescue_query = search_query
-            recent_candidates = await search_recent_news_candidates(
+            recent_candidates = recovered_news_candidates or await search_recent_news_candidates(
                 rescue_query,
                 timeout_seconds=2.5,
                 max_results=12,
