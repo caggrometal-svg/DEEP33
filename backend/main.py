@@ -50,18 +50,10 @@ from backend.decision_router import DecisionRoute, classify_query, format_struct
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
-    # Prefer Vercel's immutable source revision for the currently active Vercel
-    # backend. This value is what CI compares with the exact tested commit.
-    vercel_sha = os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
-    if vercel_sha:
-        return vercel_sha
-    # Preserve revision reporting for the existing non-Vercel fallback runtimes.
-    railway_sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()
-    if railway_sha:
-        return railway_sha
-    runtime = os.getenv("RENDER_GIT_COMMIT", "").strip()
-    if runtime:
-        return runtime
+    # Render provides the immutable source revision for the live service.
+    runtime_sha = os.getenv("RENDER_GIT_COMMIT", "").strip()
+    if runtime_sha:
+        return runtime_sha
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
     if env_sha:
         return env_sha
@@ -72,13 +64,6 @@ def _resolve_git_sha() -> str:
     except OSError:
         pass
     return "unknown"
-
-GIT_SHA = _resolve_git_sha()
-BUILD_ID = os.getenv("DEEP33_BUILD_ID", "").strip() or f"{APP_VERSION}-{GIT_SHA[:12] or 'unknown'}"
-GIT_BRANCH = os.getenv("RENDER_GIT_BRANCH", "main").strip() or "main"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("deep33")
 
 
 def _is_publishable_realtime_news_source(
