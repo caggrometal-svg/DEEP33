@@ -829,6 +829,25 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert "Authorization" not in AIGateway._headers(config.providers[4])
 
 
+def test_default_kilo_model_uses_verified_free_text_model(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "invalid-primary-test-token")
+    monkeypatch.delenv("AI_GATEWAY_MODEL", raising=False)
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[0].model == "baidu/ernie-5.5-flash-preview:free"
+    assert config.providers[0].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[0])
+    assert [item.model for item in config.providers[1:]] == [
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+    ]
+
+
 def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
