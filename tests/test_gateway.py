@@ -993,3 +993,51 @@ def test_stream_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
     ]
     assert output.count(b"NEMOTRON_VL_STREAM_SYNTHESIS_OK") == 1
     assert output.count(b"data: [DONE]") == 1
+
+
+
+def test_gateway_config_allows_longer_evidence_synthesis_budget(monkeypatch) -> None:
+    monkeypatch.setenv("AI_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AI_PROVIDER_TIMEOUT_SECONDS", "24")
+    config = GatewayConfig.from_env()
+
+    assert config.timeout_seconds == 30
+    assert config.provider_timeout_seconds == 24
+
+
+@pytest.mark.asyncio
+async def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(
+                provider(
+                    "primary",
+                    "https://primary.test/chat",
+                    "https://primary.test/models",
+                    "primary-model",
+                ),
+            ),
+            timeout_seconds=30,
+            provider_timeout_seconds=24,
+        )
+    )
+    captured: dict = {}
+
+    async def fake_complete(payload, *, request_id=None, idempotency_key=None, deadline=None, prefer_ttft=False):
+        captured["payload"] = payload
+        captured["deadline"] = deadline
+        captured["started"] = asyncio.get_running_loop().time()
+        return {
+            "choices": [
+                {"message": {"role": "assistant", "content": "DEEP33_DIAGNOSTIC_OK"}}
+            ]
+        }
+
+    gateway.complete = fake_complete
+    before = asyncio.get_running_loop().time()
+    result = await gateway.diagnostic_inference(request_id="budget-test")
+    budget = captured["deadline"] - before
+
+    assert budget <= 20.1
+    assert budget >= 19.0
+    assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
