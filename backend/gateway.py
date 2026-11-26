@@ -452,7 +452,7 @@ class AIGateway:
                 provider_timeout,
                 max(1.5, remaining_total - fallback_reserve),
             )
-        elif prefer_ttft:
+        else:
             provider_timeout = min(provider_timeout, max(1.5, remaining_total))
         return provider_timeout
 
