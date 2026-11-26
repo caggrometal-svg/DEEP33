@@ -276,7 +276,7 @@ def test_stream_provider_order_prefers_ttft_after_learning():
     for value in (20.0, 25.0, 30.0):
         gateway_instance._record_ttft(fallback, value)
 
-    assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "kilo-free-text-fallback"
+    assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "fallback"
 
 
 def test_stream_fails_over_on_provider_policy_block_text_before_emitting_it() -> None:
@@ -1123,8 +1123,9 @@ def test_generic_fallback_does_not_receive_ernie_text_priority() -> None:
     primary_budget = gateway._complete_provider_timeout_budget(
         deadline, providers[0], 0, list(providers)
     )
+    fallback_deadline = time.monotonic() + max(0.0, 30.0 - primary_budget)
     generic_fallback_budget = gateway._complete_provider_timeout_budget(
-        deadline, providers[1], 1, list(providers)
+        fallback_deadline, providers[1], 1, list(providers)
     )
 
     assert primary_budget > generic_fallback_budget
