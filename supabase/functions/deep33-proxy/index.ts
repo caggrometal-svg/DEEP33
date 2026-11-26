@@ -327,7 +327,7 @@ const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/c
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
 // The only internal DEEP33 backend target is the canonical Render deployment.
-// No Render, Railway, Replit, or legacy IAC33 host is part of the runtime.
+// Retired Railway, Replit, and legacy IAC33 hosts are excluded from the runtime.
 const EDGE_AI_UPSTREAM_URLS = [
   "https://deep33-backend.onrender.com",
 ] as const;
