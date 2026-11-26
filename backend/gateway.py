@@ -432,18 +432,21 @@ class AIGateway:
         provider_index: int,
         provider_count: int,
     ) -> float:
-        """Share the remaining completion window fairly across configured providers."""
+        """Prioritize the known text fallback while preserving later recovery attempts."""
         provider_timeout = min(30.0, self.config.provider_timeout_seconds)
         if deadline is None:
             return provider_timeout
 
         remaining_total = max(0.0, deadline - time.monotonic())
-        providers_left = max(1, provider_count - provider_index)
-        # Equal bounded slices prevent the primary or an early fallback from
-        # consuming the entire deadline and starving later free text models.
+        weights = (0.25, 0.45, 0.15, 0.15)
+        weights_left = weights[provider_index:provider_count]
+        if not weights_left:
+            weights_left = (1.0,)
+        weight_total = sum(weights_left)
+        provider_weight = weights_left[0] / max(0.0001, weight_total)
         provider_timeout = min(
             provider_timeout,
-            max(1.5, remaining_total / providers_left),
+            max(1.5, remaining_total * provider_weight),
         )
         return provider_timeout
 
