@@ -69,6 +69,8 @@ def test_compacted_retry_keeps_source_evidence_for_model_synthesis() -> None:
     instruction = compacted["messages"][0]["content"]
     evidence_content = compacted["messages"][1]["content"]
     assert "Responde directamente a la última pregunta" in instruction
+    assert "Mantén la respuesta acotada" in instruction
+    assert "prioriza las tres más relevantes como máximo" in instruction
     assert "resume cada historia distinta" in instruction
     assert "Nunca respondas solo con el número de noticias" in instruction
     assert "resume cada una" in instruction
