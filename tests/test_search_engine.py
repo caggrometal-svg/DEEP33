@@ -1427,3 +1427,52 @@ def test_realtime_news_validator_requires_three_domains_and_two_provider_familie
     )
     assert rejected["ok"] is False
     assert rejected["providers"] == 1
+
+
+def test_mwmbl_independent_fallback_runs_before_search_budget_expires():
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario():
+        calls = {"mwmbl": 0}
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+
+        async def bing(query, timeout, limit):
+            return [
+                {
+                    "title": f"Python official documentation result {index}",
+                    "url": f"https://python{index}.example.org/releases/",
+                    "snippet": "Python stable release documentation and downloads.",
+                }
+                for index in range(1, 4)
+            ]
+
+        async def ddg(query, timeout, limit):
+            return []
+
+        async def mwmbl(query, timeout, limit):
+            calls["mwmbl"] += 1
+            return [{
+                "title": "Python documentation — stable release",
+                "url": "https://docs.python.org/3/whatsnew/",
+                "snippet": "Official Python release notes and documentation.",
+            }]
+
+        orchestrator.providers = {"bing": bing, "duckduckgo": ddg}
+        orchestrator.fallback_providers = {"mwmbl": mwmbl}
+        result = await orchestrator.search(
+            "latest stable Python release official documentation",
+            fresh=True,
+        )
+        return result, calls
+
+    result, calls = asyncio.run(scenario())
+    assert calls["mwmbl"] == 1
+    assert result["ok"] is True, result
+    assert "mwmbl" in result["providers"], result
+    assert result["verification"]["distinct_providers"] == 2, result
+    assert result["verification"]["provider_quorum_met"] is True, result
