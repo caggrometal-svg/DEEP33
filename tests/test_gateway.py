@@ -828,3 +828,43 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
 
     assert config.providers[0].api_key == "paid-test-token"
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
+
+
+def test_gateway_extracts_text_from_openai_content_blocks() -> None:
+    content = [
+        {"type": "text", "text": "Respuesta "},
+        {"type": "text", "text": {"value": "verificada."}},
+    ]
+    assert AIGateway._content_text(content) == "Respuesta verificada."
+
+
+def test_stream_extractors_accept_text_block_content_without_done_marker() -> None:
+    frame = (
+        b'data: {"choices":[{"delta":{"content":['
+        b'{"type":"text","text":"DEEP33 "},'
+        b'{"type":"text","text":"STREAM_TEXT_PASS"}]}}]}\n\n'
+    )
+    assert AIGateway._stream_has_visible_content(frame)
+    assert AIGateway._stream_text_content(frame) == "DEEP33 STREAM_TEXT_PASS"
+
+
+def test_kilo_primary_uses_configured_nemotron_free_fallbacks(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "stale-primary-token")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
+    monkeypatch.setenv(
+        "AI_GATEWAY_FALLBACKS_JSON",
+        '[{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
+    )
+
+    config = GatewayConfig.from_env()
+
+    assert [provider.model for provider in config.providers] == [
+        "baidu/ernie-5.5-flash-preview:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+        "nvidia/nemotron-3-ultra:free",
+    ]
+    assert all(provider.api_key == "" for provider in config.providers)
+    assert all("Authorization" not in AIGateway._headers(provider) for provider in config.providers)
