@@ -1099,10 +1099,13 @@ jobs:
             vercel_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status" \
               --jq '[.statuses[]? | select(.context == "Vercel") | .state] | first // empty' 2>/dev/null || true)"
             if [ "$vercel_state" = "success" ]; then
+              request_headers=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_TRUSTED_OIDC_TOKEN}" \
+                -H "x-vercel-set-bypass-cookie: true")
+              if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+                request_headers+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+              fi
               http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
-                -H "x-vercel-trusted-oidc-idp-token: ${VERCEL_TRUSTED_OIDC_TOKEN}" \
-                ${VERCEL_AUTOMATION_BYPASS_SECRET:+-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"} \
-                -H "x-vercel-set-bypass-cookie: true" \
+                "${request_headers[@]}" \
                 -D "$RUNNER_TEMP/deep33-preview-health.headers" \
                 -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
                 "$alias/health" || true)"
