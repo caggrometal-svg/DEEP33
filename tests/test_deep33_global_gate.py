@@ -892,6 +892,98 @@ def test_stream_gateway_emits_visible_fallback_after_provider_timeout(monkeypatc
     assert "data: [DONE]" in raw
 
 
+def test_stream_gateway_recovers_with_nonstream_text_after_empty_stream(monkeypatch) -> None:
+    import backend.main as main
+
+    class RecoveringGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def stream(self, *args, **kwargs):
+            if False:
+                yield b""
+            raise main.GatewayTimeoutError()
+
+        async def complete(self, payload, **kwargs):
+            self.calls.append((payload, kwargs))
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "La respuesta breve se generó con evidencia contrastada.",
+                        }
+                    }
+                ],
+                "_deep33_gateway": {
+                    "provider": "kilo-nemotron-free-fallback",
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+                },
+            }
+
+    fake_gateway = RecoveringGateway()
+    monkeypatch.setattr(main, "gateway", fake_gateway)
+
+    async def scenario() -> bytes:
+        output = bytearray()
+        async for chunk in main.stream_gateway(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Contexto de síntesis. Server-side web evidence for this request follows."
+                            + json.dumps(
+                                {
+                                    "query": "hechos recientes",
+                                    "fetched_pages": [
+                                        {
+                                            "title": "Fuente uno",
+                                            "url": "https://example.org/a",
+                                            "domain": "example.org",
+                                            "provider": "provider-a",
+                                            "text": "Evidencia contrastable de la primera fuente.",
+                                        },
+                                        {
+                                            "title": "Fuente dos",
+                                            "url": "https://example.net/b",
+                                            "domain": "example.net",
+                                            "provider": "provider-b",
+                                            "text": "Evidencia contrastable de la segunda fuente.",
+                                        },
+                                    ],
+                                    "search_results": [],
+                                    "verification": {"distinct_providers": 2},
+                                    "contrast_required": True,
+                                },
+                                ensure_ascii=False,
+                            )
+                        ),
+                    },
+                    {"role": "user", "content": "Responde con los puntos principales."},
+                ],
+                "stream": True,
+            },
+            "session-nonstream-recovery",
+            "NEUTRO",
+            request_id="stream-nonstream-recovery-test",
+            idempotency_key="stream-nonstream-recovery-test",
+            request_hash="hash",
+            lease_token="lease",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    raw = asyncio.run(scenario()).decode("utf-8", errors="replace")
+    assert "La respuesta breve se generó con evidencia contrastada." in raw
+    assert "No pude completar la síntesis" not in raw
+    assert "data: [DONE]" in raw
+    assert len(fake_gateway.calls) == 1
+    fallback_payload = fake_gateway.calls[0][0]
+    assert fallback_payload["stream"] is False
+    assert fallback_payload["max_tokens"] == 768
+
+
 def test_web_query_emits_visible_progress_before_waiting_for_live_evidence() -> None:
     import inspect
     import backend.main as main
