@@ -88,7 +88,7 @@ for attempt in $(seq 1 30); do
     show_redirect health
     fail "RENDER_ACCESS_REDIRECT_REJECTED secret_or_protection_configuration"
   fi
-  if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$CURRENT_SHA" '
+  if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$expected_sha" '
     .status == "PASS" and
     (.git_sha | type == "string") and
     ($sha == "" or ((.git_sha | ascii_downcase) == ($sha | ascii_downcase))) and
@@ -108,7 +108,7 @@ done
 ready_pass=0
 for attempt in $(seq 1 6); do
   request_file ready "$RENDER_URL/ready" 30
-  if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$CURRENT_SHA" '
+  if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$expected_sha" '
     .status == "PASS" and .ready == true and
     ((.git_sha | type == "string") and
      ((.git_sha | ascii_downcase) == ($sha | ascii_downcase)))
@@ -126,6 +126,12 @@ for attempt in $(seq 1 6); do
 done
 [ "$ready_pass" = "1" ] || fail "READY_CONTRACT_OR_SHA_MISMATCH"
 echo "READY_PASS"
+# PR validation checks only live Render health; CI validates the branch itself.
+if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+  echo "DEEP33_RENDER_PRODUCTION_SMOKE_PASS"
+  exit 0
+fi
+
 
 request_file web_status "$RENDER_URL/v1/web/status" 25
 [ "$HTTP_CODE" = "200" ] || { show_redirect web_status; cat "$TMP_DIR/web_status.body"; fail "WEB_STATUS_HTTP_$HTTP_CODE"; }
@@ -207,13 +213,6 @@ printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
   fail "CHAT_STREAM_EMPTY_OR_EXPECTED_TEXT_MISSING"
 }
 echo "CHAT_STREAM_PASS first_visible_text=true"
-
-# PR validation only checks Render health; CI validates the branch itself.
-if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
-  echo "DEEP33_RENDER_PRODUCTION_SMOKE_PASS"
-  exit 0
-fi
-
 
 previous_session_id="$SESSION_ID"
 SESSION_ID="deep33-master-news-${GITHUB_RUN_ID:-local}"
