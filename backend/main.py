@@ -4346,7 +4346,16 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             or not news_quorum_met
         ):
             status = "failed"
-        elif not has_extracted_content or fetch_failures or supplemental_snippet_results:
+        elif (
+            not has_extracted_content
+            or fetch_failures
+            or supplemental_snippet_results
+            or (
+                is_weather_query(q)
+                and result.get("specialist_provider") == "open_meteo"
+                and not discovery_provider_quorum
+            )
+        ):
             status = "degraded"
         else:
             status = "success"
