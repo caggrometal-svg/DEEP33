@@ -76,8 +76,8 @@ object Deep33Api {
             ?: throw IllegalArgumentException("Invalid E2E backend URL")
         val host = URI(endpoint).host.orEmpty().lowercase()
         val isCanonicalProduction = host == "deep33-backend.vercel.app"
-        val isDEEP33Preview = host.endsWith(".iac33.vercel.app") && (
-            host.contains("deep33-backend-git-fix-vercel-android-route-221026") ||
+        val isDEEP33Preview = host.endsWith("-iac33.vercel.app") && (
+            host == "deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app" ||
                 host.startsWith("deep33-backend-git-fix-phase1-routing-provider-quo-")
             )
         require(isCanonicalProduction || isDEEP33Preview) {
