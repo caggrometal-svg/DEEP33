@@ -5656,7 +5656,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         return None
 
     compact_pages = []
-    for page in pages[:5]:
+    for page in pages[:3]:
         if not isinstance(page, dict):
             continue
         compact_pages.append({
@@ -5669,7 +5669,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
                 str(page.get("provider") or "unknown"),
             ),
             "published_at": page.get("published_at"),
-            "text": str(page.get("text") or "")[:700],
+            "text": str(page.get("text") or "")[:450],
         })
     if not compact_pages:
         return None
@@ -5677,7 +5677,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     results = evidence.get("search_results")
     compact_results = []
     if isinstance(results, list):
-        for item in results[:5]:
+        for item in results[:3]:
             if not isinstance(item, dict):
                 continue
             compact_results.append({
@@ -5685,7 +5685,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
                 "url": str(item.get("url") or "")[:1000],
                 "provider": str(item.get("provider") or "")[:80],
                 "published_at": item.get("published_at"),
-                "snippet": str(item.get("snippet") or "")[:300],
+                "snippet": str(item.get("snippet") or "")[:180],
             })
 
     compact_verification = {
@@ -5787,7 +5787,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         },
         *compact_conversation,
     ]
-    compact_payload["max_tokens"] = 1024
+    compact_payload["max_tokens"] = 768
     compact_payload["stream"] = False
     return compact_payload
 
