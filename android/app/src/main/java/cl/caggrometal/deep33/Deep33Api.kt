@@ -59,48 +59,29 @@ object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     @Volatile private var authContext: Context? = null
     @Volatile private var e2eBackendUrl: String? = null
-    @Volatile private var e2eVercelProtectionBypassSecret: String? = null
 
     fun configureAuth(context: Context) {
         authContext = context.applicationContext
     }
 
     /**
-     * Routes a debug/instrumentation run to the exact tested Vercel deployment.
-     * The Vercel protection bypass is supplied only at instrumentation runtime; it is
-     * never compiled into BuildConfig and this method cannot affect a release build.
+     * Debug/instrumentation overrides are restricted to the canonical Render services.
+     * No Vercel protection-bypass header or host is used.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun configureE2EBackend(baseUrl: String, protectionBypassSecret: String? = null) {
         check(BuildConfig.DEBUG) { "E2E backend override is debug-only" }
         val endpoint = validateEndpoint(baseUrl)
             ?: throw IllegalArgumentException("Invalid E2E backend URL")
-        val host = URI(endpoint).host.orEmpty().lowercase()
-        val isCanonicalProduction = host == "deep33-backend.vercel.app"
-        val isDEEP33Preview = host.endsWith("-iac33.vercel.app") && (
-            host == "deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app" ||
-                host.startsWith("deep33-backend-git-fix-phase1-routing-provider-quo-")
-            )
-        require(isCanonicalProduction || isDEEP33Preview) {
-            "E2E backend must be the canonical DEEP33 Vercel production or approved PR preview"
-        }
-        val bypassSecret = protectionBypassSecret?.trim().orEmpty()
-        require(isCanonicalProduction || bypassSecret.isNotBlank()) {
-            "Protected Vercel preview requires the automation protection bypass secret"
+        require(endpoint in canonicalEndpoints()) {
+            "E2E backend must be one of the canonical DEEP33 Render endpoints"
         }
         e2eBackendUrl = endpoint
-        e2eVercelProtectionBypassSecret = bypassSecret.ifBlank { null }
     }
 
     fun e2eEndpointUrl(): String =
-        if (BuildConfig.DEBUG) e2eBackendUrl ?: BuildConfig.DEEP33_VERCEL_URL
-        else BuildConfig.DEEP33_VERCEL_URL
-
-    private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
-        if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
-        e2eVercelProtectionBypassSecret?.takeIf { it.isNotBlank() }?.let {
-            connection.setRequestProperty("x-vercel-protection-bypass", it)
-        }
-    }
+        if (BuildConfig.DEBUG) e2eBackendUrl ?: BuildConfig.DEEP33_RENDER_URL
+        else BuildConfig.DEEP33_RENDER_URL
 
     private fun authorizationToken(forceRefresh: Boolean = false): String? {
         val context = authContext ?: return null
@@ -155,7 +136,7 @@ object Deep33Api {
     }
 
     private fun canonicalEndpoints(): List<String> = listOf(
-        BuildConfig.DEEP33_VERCEL_URL,
+        BuildConfig.DEEP33_RENDER_URL,
         BuildConfig.DEEP33_PRIMARY_URL,
         BuildConfig.DEEP33_SECONDARY_URL,
         BuildConfig.DEEP33_TERTIARY_URL,
@@ -404,8 +385,6 @@ object Deep33Api {
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
                     connection.setRequestProperty("X-DEEP33-Personality", activePersonality)
-                    applyE2EAccessHeader(connection, endpoint)
-
                     connection.connect()
                     requestBodyStarted = true
                     connection.outputStream.use {
@@ -653,8 +632,6 @@ object Deep33Api {
                         ?.let { connection.setRequestProperty("Authorization", "Bearer " + it) }
                     connection.setRequestProperty("X-Request-ID", requestId)
                     connection.setRequestProperty("X-Idempotency-Key", idempotencyKey)
-                    applyE2EAccessHeader(connection, endpoint)
-
                     if (body != null) {
                         requestBodyStarted = true
                         connection.doOutput = true
