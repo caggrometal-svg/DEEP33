@@ -47,6 +47,8 @@ from backend.search.resilience import DiagnosticCode, graceful_payload, structur
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
 from backend.decision_router import DecisionRoute, classify_query, format_structured_answer, universal_router, validate_evidence
 
+logger = logging.getLogger(__name__)
+
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
