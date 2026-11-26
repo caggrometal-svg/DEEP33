@@ -65,9 +65,11 @@ def test_compacted_retry_keeps_source_evidence_for_model_synthesis() -> None:
     instruction = compacted["messages"][0]["content"]
     evidence_content = compacted["messages"][1]["content"]
     assert "Responde directamente a la última pregunta" in instruction
+    assert "resume al menos tres hechos/noticias" in instruction
+    assert "Excluye publirreportajes" in instruction
     assert "Fuente histórica" in evidence_content
     assert "example.org/history" in evidence_content
     assert "no debe convertirse en la respuesta final" in evidence_content
     assert compacted["messages"][2]["content"] == "Investiga y responde quién fue."
-    assert compacted["max_tokens"] == 768
+    assert compacted["max_tokens"] == 1024
     assert compacted["stream"] is False
