@@ -93,11 +93,11 @@ def test_edge_upstream_is_https_only_and_redirect_strict() -> None:
         assert "replit.app" not in source.lower()
 
 
-def test_transport_workflows_keep_canonical_vercel_endpoint_set() -> None:
+def test_transport_workflows_keep_canonical_render_endpoint_set() -> None:
     expected = {
-        "https://deep33-backend.vercel.app",
-        "https://deep33-backend-iac33.vercel.app",
-        "https://deep33-backend-git-main-iac33.vercel.app",
+        "https://deep33-backend.onrender.com",
+        "https://deep33-backup.onrender.com",
+        "https://deep33-api.onrender.com",
     }
     full_set_paths = [
         ".github/workflows/android-debug-apk.yml",
@@ -113,10 +113,12 @@ def test_transport_workflows_keep_canonical_vercel_endpoint_set() -> None:
         assert "c-33.blitz.cloud" not in source.lower()
 
     production_e2e = read(".github/workflows/production-e2e.yml")
-    assert "https://deep33-backend.vercel.app" in production_e2e
+    assert "https://deep33-backend.onrender.com" in production_e2e
+    assert "https://deep33-backup.onrender.com" in production_e2e
+    assert "https://deep33-api.onrender.com" in production_e2e
     assert "RAILWAY_BASE_URL" not in production_e2e
     assert "railway.app" not in production_e2e.lower()
-    assert "onrender.com" not in production_e2e.lower()
+    assert "vercel.app" not in production_e2e.lower()
     assert "http://" not in production_e2e
     assert "c-33.blitz.cloud" not in production_e2e.lower()
 
