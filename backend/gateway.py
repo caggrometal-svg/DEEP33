@@ -248,10 +248,10 @@ class GatewayConfig:
             )
         return cls(
             providers=secure_providers,
-            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
+            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "30"))),
             provider_timeout_seconds=max(
                 3.0,
-                min(30.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "20"))),
+                min(30.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "30"))),
             ),
             first_visible_timeout_seconds=max(
                 0.8, min(
@@ -432,26 +432,19 @@ class AIGateway:
         provider_index: int,
         provider_count: int,
     ) -> float:
-        """Reserve enough time for a distinct inference fallback provider."""
-        provider_timeout = min(25.0, self.config.provider_timeout_seconds)
+        """Share the remaining completion window fairly across configured providers."""
+        provider_timeout = min(30.0, self.config.provider_timeout_seconds)
         if deadline is None:
             return provider_timeout
 
         remaining_total = max(0.0, deadline - time.monotonic())
         providers_left = max(1, provider_count - provider_index)
-        if providers_left > 1:
-            # The fallback is a different free model and needs a real completion
-            # window. A 4-second reserve made failover nominal but unusable.
-            fallback_reserve = min(
-                remaining_total * 0.55,
-                12.0 * (providers_left - 1),
-            )
-            provider_timeout = min(
-                provider_timeout,
-                max(1.5, remaining_total - fallback_reserve),
-            )
-        else:
-            provider_timeout = min(provider_timeout, max(1.5, remaining_total))
+        # Equal bounded slices prevent the primary or an early fallback from
+        # consuming the entire deadline and starving later free text models.
+        provider_timeout = min(
+            provider_timeout,
+            max(1.5, remaining_total / providers_left),
+        )
         return provider_timeout
 
     def _stream_visible_budget(self, provider_index: int, provider_count: int) -> float:
@@ -907,7 +900,7 @@ class AIGateway:
         # reasoning and return HTTP 200 with empty assistant content. Give the
         # diagnostic enough room to emit the sentinel, but cap the whole check so
         # a slow provider cannot hold the production gate open indefinitely.
-        local_deadline = time.monotonic() + 20.0
+        local_deadline = time.monotonic() + 30.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         return await self.complete(
             {
