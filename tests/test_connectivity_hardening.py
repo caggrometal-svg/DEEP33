@@ -37,11 +37,12 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
     assert 'android:exported="false"' in source
 
 
-def test_android_endpoint_contract_is_immutable_and_vercel_only() -> None:
+def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
     source = read("android/app/build.gradle.kts")
-    assert '"https://deep33-backend.vercel.app"' in source
-    assert '"https://deep33-backend-iac33.vercel.app"' in source
-    assert '"https://deep33-backend-git-main-iac33.vercel.app"' in source
+    assert '"https://deep33-backend.onrender.com"' in source
+    assert '"https://deep33-backup.onrender.com"' in source
+    assert '"https://deep33-api.onrender.com"' in source
+    assert "vercel.app" not in source
     assert 'immutable by build environment' in source
     assert 'rejected overrides' in source
     assert 'canonicalEndpoints.distinct().size == canonicalEndpoints.size' in source
