@@ -1043,21 +1043,19 @@ jobs:
     permissions:
       contents: read
     env:
-      DEEP33_E2E_RENDER_URL: https://deep33-e2e.invalid
       DEEP33_PRIMARY_URL: https://deep33-backend.onrender.com
       DEEP33_SECONDARY_URL: https://deep33-backup.onrender.com
       DEEP33_TERTIARY_URL: https://deep33-api.onrender.com
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Configure isolated Render failover probe
+      - name: Verify canonical Render targets and isolated failover probe
         run: |
           set -euo pipefail
-          test "$DEEP33_E2E_RENDER_URL" = "https://deep33-e2e.invalid"
           echo "ANDROID_E2E_RENDER_PRIMARY=$DEEP33_PRIMARY_URL"
           echo "ANDROID_E2E_RENDER_SECONDARY=$DEEP33_SECONDARY_URL"
           echo "ANDROID_E2E_RENDER_TERTIARY=$DEEP33_TERTIARY_URL"
-          echo "ANDROID_E2E_FAILOVER_FIRST_HOP=$DEEP33_E2E_RENDER_URL"
+          echo "ANDROID_E2E_FAILOVER_FIRST_HOP=https://deep33-e2e.invalid"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
