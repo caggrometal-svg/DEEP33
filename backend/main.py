@@ -5646,7 +5646,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     parsed = _web_evidence_from_payload(payload)
     if parsed is None:
         return None
-    message_index, evidence, prefix = parsed
+    _message_index, evidence, _prefix = parsed
     verification = evidence.get("verification")
     verification = verification if isinstance(verification, dict) else {}
     news_quorum = evidence.get("news_quorum")
@@ -5779,7 +5779,8 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         {"role": "system", "content": synthesis_instruction},
         {
             "role": "system",
-            "content": prefix + json.dumps(
+            "content": "Server-side web evidence for this request follows. "
+            + json.dumps(
                 compact_evidence,
                 ensure_ascii=False,
                 separators=(",", ":"),
