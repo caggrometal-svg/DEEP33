@@ -307,6 +307,18 @@ def _realtime_query_variants(lookup_query: str, lowered: str, local_date: str) -
     elif any(term in lowered for term in ("política", "politica", "presidente", "elecciones", "elección", "gobierno", "congreso", "senado", "ministro")):
         variants.append(f"{lookup_query} actualidad política hoy {local_date}".strip())
         variants.append(f"{lookup_query} últimas novedades y cambios {local_date}".strip())
+    elif any(term in lowered for term in (
+        "smartphone", "celular", "teléfono", "telefono", "móvil", "movil",
+        "tablet", "laptop", "notebook", "computador", "computadora",
+        "producto tecnológico", "producto tecnologico", "especificaciones",
+        "ficha técnica", "ficha tecnica", "características", "caracteristicas",
+    )):
+        variants.append(
+            f"{lookup_query} modelos actuales ficha técnica especificaciones fabricante {local_date}".strip()
+        )
+        variants.append(
+            f"{lookup_query} current models official specifications manufacturer {local_date}".strip()
+        )
     else:
         variants.append(f"{lookup_query} actualización de hoy {local_date}".strip())
         variants.append(f"{lookup_query} información más reciente {local_date}".strip())
