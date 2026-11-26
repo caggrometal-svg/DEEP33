@@ -34,7 +34,7 @@ def test_complete_fails_over_once_after_primary_5xx_without_retrying_primary() -
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
         ),
         timeout_seconds=2,
         max_retries=2,
@@ -1057,11 +1057,11 @@ def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
     )
     primary_deadline = time.monotonic() + 26.0
     primary_budget = gateway._complete_provider_timeout_budget(
-        primary_deadline, 0, 2
+        primary_deadline, gateway.config.providers[0], 0, list(gateway.config.providers)
     )
     fallback_deadline = time.monotonic() + 16.7
     fallback_budget = gateway._complete_provider_timeout_budget(
-        fallback_deadline, 1, 2
+        fallback_deadline, gateway.config.providers[1], 1, list(gateway.config.providers)
     )
 
     assert 9.0 <= primary_budget <= 9.5
@@ -1070,14 +1070,11 @@ def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
 
 
 def test_complete_timeout_budget_prioritizes_text_fallback_in_four_provider_chain() -> None:
-    providers = tuple(
-        provider(
-            f"provider-{index}",
-            f"https://provider-{index}.test/chat",
-            f"https://provider-{index}.test/models",
-            f"model-{index}",
-        )
-        for index in range(4)
+    providers = (
+        provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        provider("kilo-free-text-fallback", "https://ernie.test/chat", "https://ernie.test/models", "baidu/ernie-5.5-flash-preview:free"),
+        provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+        provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
     )
     gateway = AIGateway(
         GatewayConfig(
@@ -1093,8 +1090,9 @@ def test_complete_timeout_budget_prioritizes_text_fallback_in_four_provider_chai
         deadline = time.monotonic() + remaining
         budget = gateway._complete_provider_timeout_budget(
             deadline,
+            providers[index],
             index,
-            len(providers),
+            list(providers),
         )
         budgets.append(budget)
         remaining -= budget
