@@ -429,8 +429,9 @@ class AIGateway:
     def _complete_provider_timeout_budget(
         self,
         deadline: float | None,
+        provider: GatewayProvider,
         provider_index: int,
-        provider_count: int,
+        ordered_providers: list[GatewayProvider],
     ) -> float:
         """Prioritize the known text fallback while preserving later recovery attempts."""
         provider_timeout = min(30.0, self.config.provider_timeout_seconds)
@@ -438,12 +439,22 @@ class AIGateway:
             return provider_timeout
 
         remaining_total = max(0.0, deadline - time.monotonic())
-        weights = (0.25, 0.45, 0.15, 0.15)
-        weights_left = weights[provider_index:provider_count]
-        if not weights_left:
-            weights_left = (1.0,)
-        weight_total = sum(weights_left)
-        provider_weight = weights_left[0] / max(0.0001, weight_total)
+
+        def weight(candidate: GatewayProvider, index: int) -> float:
+            if (
+                "kilo-free-text-fallback" in candidate.name.casefold()
+                or "baidu/ernie-5.5-flash-preview:free" in candidate.model.casefold()
+            ):
+                return 0.45
+            return 0.25 if index == 0 else 0.15
+
+        weights_left = [
+            weight(candidate, index)
+            for index, candidate in enumerate(ordered_providers)
+            if index >= provider_index
+        ]
+        weight_total = sum(weights_left) or 1.0
+        provider_weight = weight(provider, provider_index) / weight_total
         provider_timeout = min(
             provider_timeout,
             max(1.5, remaining_total * provider_weight),
@@ -687,8 +698,9 @@ class AIGateway:
                     started_request = time.perf_counter()
                     provider_timeout = self._complete_provider_timeout_budget(
                         deadline,
+                        provider,
                         provider_index,
-                        len(ordered_providers),
+                        ordered_providers,
                     )
                     timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
