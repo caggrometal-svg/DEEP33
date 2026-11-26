@@ -1006,8 +1006,7 @@ def test_gateway_config_allows_longer_evidence_synthesis_budget(monkeypatch) -> 
     assert config.provider_timeout_seconds == 24
 
 
-@pytest.mark.asyncio
-async def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
+def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
     gateway = AIGateway(
         GatewayConfig(
             providers=(
@@ -1036,7 +1035,7 @@ async def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
 
     gateway.complete = fake_complete
     before = asyncio.get_running_loop().time()
-    result = await gateway.diagnostic_inference(request_id="budget-test")
+    result = asyncio.run(gateway.diagnostic_inference(request_id="budget-test"))
     budget = captured["deadline"] - before
 
     assert budget <= 20.1
