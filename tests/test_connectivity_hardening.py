@@ -604,3 +604,10 @@ def test_android_build_is_versioned_for_render_migration() -> None:
     gradle = read("android/app/build.gradle.kts")
     assert "versionCode = 10" in gradle
     assert 'versionName = "0.5.2"' in gradle
+
+
+def test_valid_stream_text_survives_missing_done_marker() -> None:
+    main = read("backend/main.py")
+    assert "stream_gateway_text_without_done_marker" in main
+    assert "if not saw_done or not assistant_text" not in main
+    assert "gateway._content_text(content_value)" in main
