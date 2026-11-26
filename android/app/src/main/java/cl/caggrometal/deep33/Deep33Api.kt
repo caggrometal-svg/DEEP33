@@ -59,7 +59,7 @@ object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     @Volatile private var authContext: Context? = null
     @Volatile private var e2eBackendUrl: String? = null
-    @Volatile private var e2eVercelOidcToken: String? = null
+    @Volatile private var e2eVercelProtectionBypassSecret: String? = null
 
     fun configureAuth(context: Context) {
         authContext = context.applicationContext
@@ -67,10 +67,10 @@ object Deep33Api {
 
     /**
      * Routes a debug/instrumentation run to the exact tested Vercel deployment.
-     * The preview OIDC token is supplied at test runtime; it is never compiled into
-     * BuildConfig and this method cannot affect a release build.
+     * The Vercel protection bypass is supplied only at instrumentation runtime; it is
+     * never compiled into BuildConfig and this method cannot affect a release build.
      */
-    fun configureE2EBackend(baseUrl: String, oidcToken: String? = null) {
+    fun configureE2EBackend(baseUrl: String, protectionBypassSecret: String? = null) {
         check(BuildConfig.DEBUG) { "E2E backend override is debug-only" }
         val endpoint = validateEndpoint(baseUrl)
             ?: throw IllegalArgumentException("Invalid E2E backend URL")
@@ -83,12 +83,12 @@ object Deep33Api {
         require(isCanonicalProduction || isDEEP33Preview) {
             "E2E backend must be the canonical DEEP33 Vercel production or approved PR preview"
         }
-        val token = oidcToken?.trim().orEmpty()
-        require(isCanonicalProduction || token.isNotBlank()) {
-            "Protected Vercel preview requires a short-lived OIDC token"
+        val bypassSecret = protectionBypassSecret?.trim().orEmpty()
+        require(isCanonicalProduction || bypassSecret.isNotBlank()) {
+            "Protected Vercel preview requires the automation protection bypass secret"
         }
         e2eBackendUrl = endpoint
-        e2eVercelOidcToken = token.ifBlank { null }
+        e2eVercelProtectionBypassSecret = bypassSecret.ifBlank { null }
     }
 
     fun e2eEndpointUrl(): String =
@@ -97,8 +97,8 @@ object Deep33Api {
 
     private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
         if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
-        e2eVercelOidcToken?.takeIf { it.isNotBlank() }?.let {
-            connection.setRequestProperty("x-vercel-trusted-oidc-idp-token", it)
+        e2eVercelProtectionBypassSecret?.takeIf { it.isNotBlank() }?.let {
+            connection.setRequestProperty("x-vercel-protection-bypass", it)
         }
     }
 
