@@ -69,6 +69,16 @@ def _resolve_git_sha() -> str:
 
 
 GIT_SHA = _resolve_git_sha()
+# Render is the production source of deployment identity. Keep health endpoints
+# deterministic even when optional platform metadata is absent (local/tests).
+GIT_BRANCH = (
+    os.getenv("RENDER_GIT_BRANCH", os.getenv("DEEP33_GIT_BRANCH", "unknown")).strip()
+    or "unknown"
+)
+BUILD_ID = (
+    os.getenv("RENDER_GIT_COMMIT", os.getenv("DEEP33_GIT_SHA", GIT_SHA)).strip()
+    or GIT_SHA
+)
 
 
 def _is_publishable_realtime_news_source(
