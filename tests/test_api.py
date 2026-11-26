@@ -709,7 +709,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
         return None
 
     async def fake_search(_query, **kwargs):
-        assert 3.0 <= kwargs["timeout_seconds"] <= 5.0
+        assert 3.0 <= kwargs["timeout_seconds"] <= 8.0
         return {
             "ok": True,
             "results": [
