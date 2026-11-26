@@ -1421,6 +1421,40 @@ class WebOrchestrator:
         ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
 
+        # You.com is a separate live-search index with a keyless free
+        # profile capped at 100 queries/day. Try it before the slower, lower-cap
+        # Mwmbl fallback whenever the primary wave has not met independent quorum.
+        youcom_available = (
+            len(relevant_provider_names(outcomes)) < required_provider_count
+            and "youcom" in self.fallback_providers
+            and "youcom" in self.circuits
+            and not any(outcome.provider == "youcom" for outcome in outcomes)
+        )
+        if youcom_available:
+            remaining = deadline - loop.time()
+            if remaining >= 0.25:
+                try:
+                    youcom_outcome = await asyncio.wait_for(
+                        self._bounded_call_provider("youcom", provider_query or cleaned),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    youcom_outcome = ProviderOutcome(
+                        provider="youcom", ok=False, error_code="PROVIDER_TIMEOUT"
+                    )
+                outcomes.append(youcom_outcome)
+                if youcom_outcome.ok and youcom_outcome.results:
+                    merged = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked = rank_results(
+                        provider_query, merged, realtime=is_realtime_query(cleaned)
+                    )
+                    selected = deduplicate(ranked, self.max_results)
+
         # Mwmbl is an independent index (unlike DuckDuckGo/Yahoo, which share
         # Bing's index). Try its anonymous free endpoint immediately after the
         # primary wave when the provider quorum is still missing. Running it
