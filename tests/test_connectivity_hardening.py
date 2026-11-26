@@ -296,6 +296,10 @@ def test_ci_recovery_and_release_gates_report_failures_instead_of_skipping() -> 
     ) in release
     assert "always() && github.event_name == 'push' && github.ref == 'refs/heads/main'" in release
     assert "DEEP33_RELEASE_BLOCKED" in release
+    android_e2e = source.split("  android_e2e:", 1)[1].split("  recovery_gate:", 1)[0]
+    assert "deep33-backend.onrender.com" in android_e2e
+    assert "vercel" not in android_e2e.lower()
+    assert "github.event_name == 'pull_request'" not in android_e2e
     assert "vercel_realtime_search:\\n    if: false" in source
     assert "needs.vercel_realtime_search.result" not in release
     for gate in (
