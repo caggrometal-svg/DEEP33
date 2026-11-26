@@ -1044,7 +1044,7 @@ def test_diagnostic_inference_has_bounded_thirty_second_budget() -> None:
 
 
 
-def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
+def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
     gateway = AIGateway(
         GatewayConfig(
             providers=(
@@ -1064,12 +1064,12 @@ def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
         fallback_deadline, 1, 2
     )
 
-    assert 12.5 <= primary_budget <= 13.5
-    assert 11.5 <= fallback_budget <= 12.0
+    assert 9.0 <= primary_budget <= 9.5
+    assert 16.5 <= fallback_budget <= 17.0
 
 
 
-def test_complete_timeout_budget_shares_thirty_seconds_across_four_providers() -> None:
+def test_complete_timeout_budget_prioritizes_text_fallback_in_four_provider_chain() -> None:
     providers = tuple(
         provider(
             f"provider-{index}",
@@ -1100,4 +1100,7 @@ def test_complete_timeout_budget_shares_thirty_seconds_across_four_providers() -
         remaining -= budget
 
     assert len(budgets) == 4
-    assert all(7.0 <= budget <= 8.0 for budget in budgets)
+    assert 7.0 <= budgets[0] <= 8.0
+    assert 13.0 <= budgets[1] <= 14.0
+    assert 4.0 <= budgets[2] <= 5.0
+    assert 4.0 <= budgets[3] <= 5.0
