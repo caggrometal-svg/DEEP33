@@ -71,5 +71,5 @@ def test_compacted_retry_keeps_source_evidence_for_model_synthesis() -> None:
     assert "example.org/history" in evidence_content
     assert "no debe convertirse en la respuesta final" in evidence_content
     assert compacted["messages"][2]["content"] == "Investiga y responde quién fue."
-    assert compacted["max_tokens"] == 1024
+    assert compacted["max_tokens"] == 768
     assert compacted["stream"] is False
