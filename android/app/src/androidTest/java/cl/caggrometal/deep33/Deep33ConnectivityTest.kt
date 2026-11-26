@@ -119,7 +119,7 @@ class Deep33ConnectivityTest {
         val json = Deep33Api.get(
             "/v1/web/search?q=" + encodedQuery,
             sessionId,
-            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+            endpointOverride = listOf(BuildConfig.DEEP33_PRIMARY_URL)
         )
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
 
@@ -364,7 +364,7 @@ class Deep33ConnectivityTest {
                 }
                 answer.append(chunk)
             },
-            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+            endpointOverride = listOf(BuildConfig.DEEP33_PRIMARY_URL)
         )
         val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
         val text = result.trim()
