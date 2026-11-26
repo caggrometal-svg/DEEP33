@@ -16,7 +16,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Temporarily suspended: this legacy pipeline resolves Vercel preview aliases
+  # and runs Vercel live-web/SSE gates. DEEP33 is Render-only during the recovery window.
+  # Re-enable only after the Vercel exclusion window ends and the Render gates replace it.
   validate-and-gate:
+    if: false
     name: validate-and-gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
