@@ -39,10 +39,8 @@ case "$DEEP33_E2E_VERCEL_URL" in
     is_protected_preview=1
     ;;
 esac
-if [ "$is_protected_preview" = "1" ] && {
-  [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ];
-}; then
-  echo "ANDROID_E2E_OIDC_REQUEST_UNAVAILABLE"
+if [ "$is_protected_preview" = "1" ] && [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+  echo "ANDROID_E2E_VERCEL_BYPASS_SECRET_MISSING"
   exit 2
 fi
 # A PR E2E must target only its exact preview. Production multi-endpoint
@@ -72,20 +70,12 @@ adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
 if [ "$is_protected_preview" = "1" ]; then
-  oidc_request_url="$ACTIONS_ID_TOKEN_REQUEST_URL"
-  separator='?'
-  [[ "$oidc_request_url" == *\?* ]] && separator='&'
-  oidc_request_url="${oidc_request_url}${separator}audience=https%3A%2F%2Fgithub.com%2Fcaggrometal-svg"
-  oidc_response="$(curl -fsS --connect-timeout 10 --max-time 20 \
-    -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-    "$oidc_request_url")"
-  DEEP33_E2E_VERCEL_OIDC_TOKEN="$(printf '%s' "$oidc_response" | jq -er '.value')"
-  echo "::add-mask::$DEEP33_E2E_VERCEL_OIDC_TOKEN"
+  echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
 fi
 INSTRUMENTATION_ARGS=(-w -r)
 INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_url "$DEEP33_E2E_VERCEL_URL")
-if [ -n "${DEEP33_E2E_VERCEL_OIDC_TOKEN:-}" ]; then
-  INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_oidc_token "$DEEP33_E2E_VERCEL_OIDC_TOKEN")
+if [ "$is_protected_preview" = "1" ]; then
+  INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_bypass_secret "$VERCEL_AUTOMATION_BYPASS_SECRET")
 fi
 if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
   INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
