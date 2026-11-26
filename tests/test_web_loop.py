@@ -420,7 +420,11 @@ def test_required_web_search_failure_returns_one_explicit_answer_without_stale_m
     async def forbidden_gateway(*_args, **_kwargs):
         raise AssertionError("Must not answer a current question from model memory")
 
+    async def no_news_recovery(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "search_web", failing_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_news_recovery)
     monkeypatch.setattr(main, "resolve_gps_weather", no_weather)
     monkeypatch.setattr(main, "call_gateway", forbidden_gateway)
 
