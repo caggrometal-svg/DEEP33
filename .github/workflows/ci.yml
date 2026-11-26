@@ -200,7 +200,7 @@ jobs:
           retention-days: 14
 
   vercel_realtime_search:
-    if: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026') }}
+    if: false
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -1034,9 +1034,8 @@ jobs:
           echo "PRIMARY_WEB_SEARCH_ENGINE_PASS"
 
   android_e2e:
-    # On a PR, run the real Android app against that PR's protected Vercel preview
-    # using Vercel's project-scoped automation bypass; on main, test production.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/phase1-routing-provider-quorum-071126'))) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    # Run Android against Render production after all three services serve the main commit.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1047,80 +1046,32 @@ jobs:
       issues: read
       statuses: read
     env:
-      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-      DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
+      DEEP33_E2E_RENDER_URL: https://deep33-backend.onrender.com
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Resolve the exact protected Vercel preview for this commit
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Wait for all Render services to serve this commit
         env:
-          GH_TOKEN: ${{ github.token }}
-          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
-          PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
-          VERCEL_PROTECTION_BYPASS: ${{ env.VERCEL_PROTECTION_BYPASS }}
+          EXPECTED_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${VERCEL_PROTECTION_BYPASS:-}" || {
-            echo "VERCEL_PROTECTION_BYPASS_MISSING"
-            exit 1
-          }
-          # Verify the Actions secret matches the Vercel automation bypass without exposing it.
-          bypass_sha256="$(printf '%s' "$VERCEL_PROTECTION_BYPASS" | sha256sum | awk '{print $1}')"
-          if [ "$bypass_sha256" != "cdfc69654261f66d84f9b52f6500a1a9db5b64558c9087d2ab8d625348eb15f8" ]; then
-            echo "VERCEL_BYPASS_SECRET_MISMATCH"
-            exit 1
-          fi
-          echo "VERCEL_BYPASS_SECRET_MATCH=1"
-          # Vercel's GitHub integration publishes a commit status, not a GitHub
-          # deployment object. The previous deployments API lookup therefore
-          # waited forever even after Vercel had reported success.
-          case "$PREVIEW_BRANCH" in
-            fix/phase1-routing-provider-quorum-071126)
-              alias="https://deep33-backend-git-fix-phase1-routing-provider-quo-b6f4c4-iac33.vercel.app"
-              ;;
-            fix/vercel-android-route-221026)
-              alias="https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app"
-              ;;
-            *)
-              echo "ANDROID_E2E_UNAPPROVED_PREVIEW_BRANCH=$PREVIEW_BRANCH"
-              exit 1
-              ;;
-          esac
-
-          ready=0
-          for attempt in $(seq 1 36); do
-            vercel_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status" \
-              --jq '[.statuses[]? | select(.context == "Vercel") | .state] | first // empty' 2>/dev/null || true)"
-            if [ "$vercel_state" = "success" ]; then
-              http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
-                -H "x-vercel-protection-bypass: ${VERCEL_PROTECTION_BYPASS}" \
-                -D "$RUNNER_TEMP/deep33-preview-health.headers" \
-                -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
-                "$alias/health" || true)"
-              if [ "$http_status" = "200" ] && jq -e \
-                '.status == "PASS" and (.service == "DEEP33 Backend" or .service == "DEEP33 Edge Gateway")' \
-                "$RUNNER_TEMP/deep33-preview-health.json" >/dev/null 2>&1; then
+          services=("$PRIMARY_URL" "$SECONDARY_URL" "$TERTIARY_URL")
+          for url in "${services[@]}"; do
+            ready=0
+            for attempt in $(seq 1 36); do
+              code="$(curl -sS --connect-timeout 8 --max-time 20 -o "$RUNNER_TEMP/render-health.json" -w '%{http_code}' "$url/health" || true)"
+              actual="$(jq -r '.git_sha // empty' "$RUNNER_TEMP/render-health.json" 2>/dev/null || true)"
+              if [ "$code" = "200" ] && [ "${actual,,}" = "${EXPECTED_SHA,,}" ]; then
                 ready=1
+                echo "RENDER_COMMIT_PASS url=$url sha=$actual"
                 break
               fi
-              location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub("\\r", ""); print}' "$RUNNER_TEMP/deep33-preview-health.headers" 2>/dev/null | tail -n 1 || true)"
-            echo "WAITING_FOR_PREVIEW_HEALTH attempt=$attempt http=$http_status location=${location:-none}"
-            else
-              echo "WAITING_FOR_VERCEL_COMMIT_STATUS attempt=$attempt state=${vercel_state:-missing} sha=$CURRENT_SHA"
-            fi
-            [ "$attempt" -lt 36 ] && sleep 5
+              echo "WAITING_FOR_RENDER_COMMIT url=$url attempt=$attempt http=$code sha=${actual:-missing}"
+              [ "$attempt" -lt 36 ] && sleep 5
+            done
+            [ "$ready" = "1" ] || { echo "RENDER_COMMIT_NOT_READY url=$url expected=$EXPECTED_SHA"; exit 1; }
           done
-          test "$ready" = "1" || {
-            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_READY sha=$CURRENT_SHA url=$alias"
-            cat "$RUNNER_TEMP/deep33-preview-health.json" 2>/dev/null || true
-            exit 1
-          }
-          echo "DEEP33_E2E_VERCEL_URL=$alias" >> "$GITHUB_ENV"
-          echo "ANDROID_E2E_TARGET=$alias"
-          echo "ANDROID_E2E_VERIFIED_COMMIT=$CURRENT_SHA"
+
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
@@ -1381,7 +1332,7 @@ jobs:
 
 
   release_gate:
-    needs: [change_scope, backend_unit, production_realtime_search, vercel_realtime_search, android_validation, performance_gate, android_feature_instrumentation, production_gate, android_e2e, recovery_gate]
+    needs: [change_scope, backend_unit, production_realtime_search, android_validation, performance_gate, android_feature_instrumentation, production_gate, android_e2e, recovery_gate]
     # Run on every main push; fail explicitly when a required gate did not pass.
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
@@ -1397,7 +1348,6 @@ jobs:
           DEEP33_CHANGE_SCOPE_RESULT: ${{ needs.change_scope.result }}
           DEEP33_BACKEND_UNIT_RESULT: ${{ needs.backend_unit.result }}
           DEEP33_REALTIME_SEARCH_RESULT: ${{ needs.production_realtime_search.result }}
-          DEEP33_VERCEL_REALTIME_RESULT: ${{ needs.vercel_realtime_search.result }}
           DEEP33_ANDROID_VALIDATION_RESULT: ${{ needs.android_validation.result }}
           DEEP33_PERFORMANCE_GATE_RESULT: ${{ needs.performance_gate.result }}
           DEEP33_ANDROID_FEATURE_RESULT: ${{ needs.android_feature_instrumentation.result }}
@@ -1410,7 +1360,6 @@ jobs:
             "$DEEP33_CHANGE_SCOPE_RESULT"
             "$DEEP33_BACKEND_UNIT_RESULT"
             "$DEEP33_REALTIME_SEARCH_RESULT"
-            "$DEEP33_VERCEL_REALTIME_RESULT"
             "$DEEP33_ANDROID_VALIDATION_RESULT"
             "$DEEP33_PERFORMANCE_GATE_RESULT"
             "$DEEP33_ANDROID_FEATURE_RESULT"
@@ -1418,8 +1367,8 @@ jobs:
             "$DEEP33_ANDROID_E2E_RESULT"
             "$DEEP33_RECOVERY_GATE_RESULT"
           )
-          if [[ "${results[*]}" != "success success success success success success success success success success" ]]; then
-            echo "DEEP33_RELEASE_BLOCKED change_scope=$DEEP33_CHANGE_SCOPE_RESULT backend_unit=$DEEP33_BACKEND_UNIT_RESULT realtime_search=$DEEP33_REALTIME_SEARCH_RESULT vercel_realtime_search=$DEEP33_VERCEL_REALTIME_RESULT android_validation=$DEEP33_ANDROID_VALIDATION_RESULT performance_gate=$DEEP33_PERFORMANCE_GATE_RESULT android_feature_instrumentation=$DEEP33_ANDROID_FEATURE_RESULT production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
+          if [[ "${results[*]}" != "success success success success success success success success success" ]]; then
+            echo "DEEP33_RELEASE_BLOCKED change_scope=$DEEP33_CHANGE_SCOPE_RESULT backend_unit=$DEEP33_BACKEND_UNIT_RESULT realtime_search=$DEEP33_REALTIME_SEARCH_RESULT android_validation=$DEEP33_ANDROID_VALIDATION_RESULT performance_gate=$DEEP33_PERFORMANCE_GATE_RESULT android_feature_instrumentation=$DEEP33_ANDROID_FEATURE_RESULT production=$DEEP33_PRODUCTION_GATE_RESULT android_e2e=$DEEP33_ANDROID_E2E_RESULT recovery=$DEEP33_RECOVERY_GATE_RESULT"
             exit 1
           fi
           echo "DEEP33_RELEASE_PRECONDITIONS_PASS $GITHUB_SHA"
