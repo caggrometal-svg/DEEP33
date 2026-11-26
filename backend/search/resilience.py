@@ -30,11 +30,11 @@ class DiagnosticCode(StrEnum):
 
 @dataclass(frozen=True)
 class NetworkBudgets:
-    connect_seconds: float = 1.0
-    first_byte_seconds: float = 1.5
-    provider_total_seconds: float = 2.5
+    connect_seconds: float = 1.8
+    first_byte_seconds: float = 2.5
+    provider_total_seconds: float = 3.5
     fallback_delay_seconds: float = 2.0
-    global_search_seconds: float = 5.0
+    global_search_seconds: float = 8.0
 
 
 @dataclass
