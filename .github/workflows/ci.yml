@@ -1046,11 +1046,22 @@ jobs:
       deployments: read
       issues: read
       statuses: read
+      id-token: write
     env:
       VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Mint short-lived GitHub OIDC token for protected Vercel preview
+        id: android_vercel_oidc
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput("token", token);
 
       - name: Resolve the exact protected Vercel preview for this commit
         if: ${{ github.event_name == 'pull_request' }}
@@ -1059,6 +1070,7 @@ jobs:
           CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
           PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
           VERCEL_PROTECTION_BYPASS: ${{ env.VERCEL_PROTECTION_BYPASS }}
+          VERCEL_TRUSTED_OIDC_TOKEN: ${{ steps.android_vercel_oidc.outputs.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1096,6 +1108,9 @@ jobs:
             if [ "$vercel_state" = "success" ]; then
               request_headers=(-H "x-vercel-protection-bypass: ${VERCEL_PROTECTION_BYPASS}" \
                 -H "x-vercel-set-bypass-cookie: true")
+              if [ -n "${VERCEL_TRUSTED_OIDC_TOKEN:-}" ]; then
+                request_headers+=(-H "x-vercel-trusted-oidc-idp-token: ${VERCEL_TRUSTED_OIDC_TOKEN}")
+              fi
               http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
                 "${request_headers[@]}" \
                 -D "$RUNNER_TEMP/deep33-preview-health.headers" \
