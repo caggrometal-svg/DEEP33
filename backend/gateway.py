@@ -426,6 +426,36 @@ class AIGateway:
             raise GatewayTimeoutError
         return max(0.5, min(default, remaining))
 
+    def _complete_provider_timeout_budget(
+        self,
+        deadline: float | None,
+        provider_index: int,
+        provider_count: int,
+        *,
+        prefer_ttft: bool = False,
+    ) -> float:
+        """Reserve enough time for a distinct inference fallback provider."""
+        provider_timeout = min(25.0, self.config.provider_timeout_seconds)
+        if deadline is None:
+            return provider_timeout
+
+        remaining_total = max(0.0, deadline - time.monotonic())
+        providers_left = max(1, provider_count - provider_index)
+        if providers_left > 1:
+            # The fallback is a different free model and needs a real completion
+            # window. A 4-second reserve made failover nominal but unusable.
+            fallback_reserve = min(
+                remaining_total * 0.55,
+                12.0 * (providers_left - 1),
+            )
+            provider_timeout = min(
+                provider_timeout,
+                max(1.5, remaining_total - fallback_reserve),
+            )
+        elif prefer_ttft:
+            provider_timeout = min(provider_timeout, max(1.5, remaining_total))
+        return provider_timeout
+
     def _stream_visible_budget(self, provider_index: int, provider_count: int) -> float:
         """Reserve a sub-3s first-visible envelope across provider failover."""
         configured = self.config.first_visible_timeout_seconds
@@ -661,24 +691,12 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     started_request = time.perf_counter()
-                    provider_timeout = min(25.0, self.config.provider_timeout_seconds)
-                    if deadline is not None:
-                        # Every provider attempt must preserve enough wall-clock budget
-                        # for a distinct fallback. This prevents a slow primary from
-                        # consuming the caller/proxy deadline before failover can run.
-                        remaining_total = max(0.0, deadline - time.monotonic())
-                        providers_left = max(1, len(ordered_providers) - provider_index)
-                        if providers_left > 1:
-                            fallback_reserve = min(
-                                remaining_total * 0.40,
-                                4.0 * (providers_left - 1),
-                            )
-                            provider_timeout = min(
-                                provider_timeout,
-                                max(1.5, remaining_total - fallback_reserve),
-                            )
-                        elif prefer_ttft:
-                            provider_timeout = min(provider_timeout, max(1.5, remaining_total))
+                    provider_timeout = self._complete_provider_timeout_budget(
+                        deadline,
+                        provider_index,
+                        len(ordered_providers),
+                        prefer_ttft=prefer_ttft,
+                    )
                     timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
                     response = await self._client().post(
