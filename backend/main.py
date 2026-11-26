@@ -5958,86 +5958,97 @@ async def stream_gateway(
     tool_markup_filter = _InternalToolMarkupStreamFilter()
     gateway_failure: str | None = None
 
+    web_synthesis = _web_evidence_from_payload(payload) is not None
     try:
-        async for chunk in gateway.stream(
-            payload,
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-            deadline=deadline,
-        ):
-            collected.extend(chunk)
-            frame_buffer.extend(chunk)
-            while b"\n\n" in frame_buffer:
-                frame, _, remainder = frame_buffer.partition(b"\n\n")
-                frame_buffer = bytearray(remainder)
-                if b"data: [DONE]" in frame:
-                    saw_done = True
-                    continue
-                if frame.strip():
-                    outbound_frame = bytes(frame)
-                    has_visible_content = False
-                    frame_changed = False
-                    if b"data:" in frame and b'"content"' in frame:
-                        try:
-                            frame_json = json.loads(frame[len(b"data:"):].strip())
-                            for choice in frame_json.get("choices", []):
-                                delta = choice.get("delta") or {}
-                                content_value = delta.get("content")
-                                if isinstance(content_value, str):
-                                    visible_delta = visible_stream_delta(delta)
-                                    safe_delta = tool_markup_filter.push(visible_delta)
-                                    if safe_delta:
-                                        assistant_parts.append(safe_delta)
-                                    if safe_delta != content_value:
-                                        delta["content"] = safe_delta
-                                        frame_changed = True
-                                    if safe_delta:
-                                        has_visible_content = True
-                            if frame_changed:
-                                outbound_frame = (
-                                    b"data: "
-                                    + json.dumps(
-                                        frame_json,
-                                        ensure_ascii=False,
-                                        separators=(",", ":"),
-                                    ).encode("utf-8")
-                                )
-                        except (
-                            json.JSONDecodeError,
-                            UnicodeDecodeError,
-                            TypeError,
-                            ValueError,
-                        ):
-                            outbound_frame = bytes(frame)
+        if web_synthesis:
+            gateway_failure = "nonstream_fallback_pending"
+            logger.info(
+                "stream_web_synthesis_nonstream_first request_id=%s",
+                request_id,
+            )
+        else:
+            async for chunk in gateway.stream(
+                payload,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                deadline=deadline,
+            ):
+                collected.extend(chunk)
+                frame_buffer.extend(chunk)
+                while b"\n\n" in frame_buffer:
+                    frame, _, remainder = frame_buffer.partition(b"\n\n")
+                    frame_buffer = bytearray(remainder)
+                    if b"data: [DONE]" in frame:
+                        saw_done = True
+                        continue
+                    if frame.strip():
+                        outbound_frame = bytes(frame)
+                        has_visible_content = False
+                        frame_changed = False
+                        if b"data:" in frame and b'"content"' in frame:
+                            try:
+                                frame_json = json.loads(frame[len(b"data:"):].strip())
+                                for choice in frame_json.get("choices", []):
+                                    delta = choice.get("delta") or {}
+                                    content_value = delta.get("content")
+                                    content_text = gateway._content_text(content_value)
+                                    if content_text:
+                                        normalized_delta = dict(delta)
+                                        normalized_delta["content"] = content_text
+                                        visible_delta = visible_stream_delta(normalized_delta)
+                                        safe_delta = tool_markup_filter.push(visible_delta)
+                                        if safe_delta:
+                                            assistant_parts.append(safe_delta)
+                                        if safe_delta != content_value:
+                                            delta["content"] = safe_delta
+                                            frame_changed = True
+                                        if safe_delta:
+                                            has_visible_content = True
+                                if frame_changed:
+                                    outbound_frame = (
+                                        b"data: "
+                                        + json.dumps(
+                                            frame_json,
+                                            ensure_ascii=False,
+                                            separators=(",", ":"),
+                                        ).encode("utf-8")
+                                    )
+                            except (
+                                json.JSONDecodeError,
+                                UnicodeDecodeError,
+                                TypeError,
+                                ValueError,
+                            ):
+                                outbound_frame = bytes(frame)
 
-                    if first_output_at is None and has_visible_content:
-                        first_output_at = time.perf_counter()
-                        performance.mark(request_id, "T7_FIRST_TOKEN")
-                        ttft_ms = (first_output_at - stream_started) * 1000
-                        _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
-                        logger.info(
-                            "stream_ttft request_id=%s ttft_ms=%.2f",
-                            request_id,
-                            ttft_ms,
-                        )
-                        if request_started_at is not None:
+                        if first_output_at is None and has_visible_content:
+                            first_output_at = time.perf_counter()
+                            performance.mark(request_id, "T7_FIRST_TOKEN")
+                            ttft_ms = (first_output_at - stream_started) * 1000
+                            _metric_latency["chat_stream_ttft_ms"].append(ttft_ms)
                             logger.info(
-                                "stream_end_to_end_ttft request_id=%s elapsed_ms=%.2f path=inference",
+                                "stream_ttft request_id=%s ttft_ms=%.2f",
                                 request_id,
-                                (first_output_at - request_started_at) * 1000,
+                                ttft_ms,
                             )
-                    yield outbound_frame + b"\n\n"
-        if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
-            tail_text = frame_buffer.decode("utf-8", errors="ignore").lower()
-            if any(token in tail_text for token in ("<dots_", "<invoke", "<function_", "<tool_call", "<|tool_call")):
-                tool_markup_filter.suppressed = True
-            else:
-                yield bytes(frame_buffer) + b"\n\n"
-        safe_tail = tool_markup_filter.finish()
-        if safe_tail:
-            assistant_parts.append(safe_tail)
-            yield _sse_delta(safe_tail)
-        performance.mark(request_id, "T8_STREAM_FINISHED")
+                            if request_started_at is not None:
+                                logger.info(
+                                    "stream_end_to_end_ttft request_id=%s elapsed_ms=%.2f path=inference",
+                                    request_id,
+                                    (first_output_at - request_started_at) * 1000,
+                                )
+                        yield outbound_frame + b"\n\n"
+            if frame_buffer.strip() and b"data: [DONE]" not in frame_buffer:
+                tail_text = frame_buffer.decode("utf-8", errors="ignore").lower()
+                if any(token in tail_text for token in ("<dots_", "<invoke", "<function_", "<tool_call", "<|tool_call")):
+                    tool_markup_filter.suppressed = True
+                else:
+                    yield bytes(frame_buffer) + b"\n\n"
+            safe_tail = tool_markup_filter.finish()
+            if safe_tail:
+                assistant_parts.append(safe_tail)
+                yield _sse_delta(safe_tail)
+            performance.mark(request_id, "T8_STREAM_FINISHED")
     except GatewayTimeoutError:
         gateway_failure = "timeout"
         logger.warning(
@@ -6143,7 +6154,7 @@ async def stream_gateway(
                     type(exc).__name__,
                     json.dumps(safe_attempts[:6], ensure_ascii=False, separators=(",", ":")),
                 )
-                gateway_failure = gateway_failure or "nonstream_fallback_failed"
+                gateway_failure = "nonstream_fallback_failed"
 
     if not assistant_parts and not tool_markup_filter.suppressed:
         extractive_fallback = _extractive_web_evidence_fallback(payload)
