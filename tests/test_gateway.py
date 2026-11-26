@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import httpx
 import pytest
 
@@ -1055,7 +1056,7 @@ def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
             provider_timeout_seconds=24,
         )
     )
-    primary_deadline = __import__("time").monotonic() + 26.0
+    primary_deadline = time.monotonic() + 26.0
     primary_budget = gateway._complete_provider_timeout_budget(
         primary_deadline, 0, 2
     )
