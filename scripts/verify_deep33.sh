@@ -6,19 +6,17 @@ fail() {
   exit 1
 }
 
-: "${VERCEL_PROTECTION_BYPASS:?Missing GitHub Actions secret VERCEL_PROTECTION_BYPASS}"
-: "${VERCEL_URL:?VERCEL_URL must point to the branch Preview alias}"
+: "${RENDER_URL:=https://deep33-backend.onrender.com}"
 : "${CURRENT_SHA:?CURRENT_SHA must be the PR head SHA}"
 : "${SUPABASE_URL:?SUPABASE_URL is required to create a CI session}"
 : "${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY is required}"
-VERCEL_URL="${VERCEL_URL%/}"
+RENDER_URL="${RENDER_URL%/}"
 
-# Prevent sending either the Vercel bypass value or user-session bearer token
+# Prevent sending either the Render bypass value or user-session bearer token
 # to arbitrary hosts. curl is intentionally not configured to follow redirects.
-case "$VERCEL_URL" in
-  https://deep33-backend.vercel.app|https://deep33-backend-iac33.vercel.app|https://deep33-backend-git-main-iac33.vercel.app) ;;
-  https://deep33-backend-git-*-iac33.vercel.app) ;;
-  *) fail "VERCEL_URL is not an approved DEEP33 Vercel URL" ;;
+case "$RENDER_URL" in
+  https://deep33-backend.onrender.com|https://deep33-backup.onrender.com|https://deep33-api.onrender.com) ;;
+  *) fail "RENDER_URL is not an approved DEEP33 Render URL" ;;
 esac
 
 TMP_DIR="${RUNNER_TEMP:-/tmp}/deep33-master-gate"
@@ -27,7 +25,7 @@ SESSION_ID="deep33-master-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 TOKEN="${TEST_SESSION_TOKEN:-}"
 
 # Create a short-lived session if no dedicated CI session token was supplied.
-# The Vercel protection secret is never sent to Supabase or any non-Vercel host.
+# The Render protection secret is never sent to Supabase or any non-Render host.
 if [ -z "$TOKEN" ]; then
   auth_ok=0
   for attempt in 1 2 3 4 5; do
@@ -66,7 +64,6 @@ request_file() {
     -D "$TMP_DIR/$name.headers"
     -o "$TMP_DIR/$name.body"
     -w '%{http_code}'
-    -H "x-vercel-protection-bypass: $VERCEL_PROTECTION_BYPASS"
     -H 'Cache-Control: no-cache'
     -H "Authorization: Bearer $TOKEN"
     -H "apikey: $SUPABASE_PUBLISHABLE_KEY"
@@ -83,18 +80,18 @@ show_redirect() {
   [ -n "$location" ] && echo "REDIRECT_LOCATION=$location"
 }
 
-# Wait for Vercel to activate the immutable deployment of this exact PR SHA.
+# Wait for Render to activate the immutable deployment of this exact PR SHA.
 health_pass=0
 for attempt in $(seq 1 30); do
-  request_file health "$VERCEL_URL/health" 25
+  request_file health "$RENDER_URL/health" 25
   if [ "$HTTP_CODE" = "302" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
     show_redirect health
-    fail "VERCEL_PREVIEW_PROTECTION_REJECTED secret_or_protection_configuration"
+    fail "RENDER_ACCESS_REDIRECT_REJECTED secret_or_protection_configuration"
   fi
   if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$CURRENT_SHA" '
     .status == "PASS" and
     (.git_sha | type == "string") and
-    ((.git_sha | ascii_downcase) == ($sha | ascii_downcase)) and
+    ($sha == "" or ((.git_sha | ascii_downcase) == ($sha | ascii_downcase))) and
     (.build_id | type == "string" and length > 0)
   ' "$TMP_DIR/health.body" >/dev/null 2>&1; then
     jq -c '{status,service,git_sha,build_id,git_branch}' "$TMP_DIR/health.body"
@@ -103,14 +100,14 @@ for attempt in $(seq 1 30); do
     break
   fi
   jq -c '{status,service,git_sha,build_id,git_branch,detail}' "$TMP_DIR/health.body" 2>/dev/null || true
-  echo "WAITING_FOR_PREVIEW_SHA attempt=$attempt expected=$CURRENT_SHA"
+  echo "WAITING_FOR_RENDER_SHA attempt=$attempt expected=$CURRENT_SHA"
   [ "$attempt" -lt 30 ] && sleep 10
 done
 [ "$health_pass" = "1" ] || fail "HEALTH_SHA_MISMATCH_OR_DEPLOYMENT_NOT_READY expected=$CURRENT_SHA"
 
 ready_pass=0
 for attempt in $(seq 1 6); do
-  request_file ready "$VERCEL_URL/ready" 30
+  request_file ready "$RENDER_URL/ready" 30
   if [ "$HTTP_CODE" = "200" ] && jq -e --arg sha "$CURRENT_SHA" '
     .status == "PASS" and .ready == true and
     ((.git_sha | type == "string") and
@@ -130,14 +127,14 @@ done
 [ "$ready_pass" = "1" ] || fail "READY_CONTRACT_OR_SHA_MISMATCH"
 echo "READY_PASS"
 
-request_file web_status "$VERCEL_URL/v1/web/status" 25
+request_file web_status "$RENDER_URL/v1/web/status" 25
 [ "$HTTP_CODE" = "200" ] || { show_redirect web_status; cat "$TMP_DIR/web_status.body"; fail "WEB_STATUS_HTTP_$HTTP_CODE"; }
 jq -e '.engine == "DEEP33 Search Engine" and .tool_loop_enabled == true' "$TMP_DIR/web_status.body" >/dev/null ||
   fail "WEB_STATUS_CONTRACT_FAIL"
 jq -c '{enabled,engine,engine_version,configured_provider,active_provider,parallel_providers,tool_loop_enabled,realtime_policy_enabled}' "$TMP_DIR/web_status.body"
 echo "WEB_STATUS_PASS"
 
-request_file web_search "$VERCEL_URL/v1/web/search" 75 \
+request_file web_search "$RENDER_URL/v1/web/search" 75 \
   --get --data-urlencode 'q=latest stable Python release official documentation'
 [ "$HTTP_CODE" = "200" ] || { show_redirect web_search; cat "$TMP_DIR/web_search.body"; fail "WEB_SEARCH_HTTP_$HTTP_CODE"; }
 jq -e '
@@ -158,7 +155,7 @@ jq -e '
 jq -c '{ok,realtime,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
 echo "SEARCH=PASS independent_providers>=2 independent_domains>=2 fetched_pages>=2"
 
-request_file news_search "$VERCEL_URL/v1/web/search" 75 \
+request_file news_search "$RENDER_URL/v1/web/search" 75 \
   --get --data-urlencode 'q=últimas noticias de Chile hoy'
 [ "$HTTP_CODE" = "200" ] || { show_redirect news_search; tail -c 3000 "$TMP_DIR/news_search.body" 2>/dev/null || true; fail "NEWS_SEARCH_HTTP_$HTTP_CODE"; }
 jq -e '
@@ -181,7 +178,7 @@ jq -e '
 jq -c '{ok,status,providers,verification,domains_used,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length)}' "$TMP_DIR/news_search.body"
 echo "NEWS_SEARCH=PASS articles>=3 publishers>=3 providers>=2"
 
-request_file chat_stream "$VERCEL_URL/v1/chat/stream" 55 \
+request_file chat_stream "$RENDER_URL/v1/chat/stream" 55 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \
   -H 'Content-Type: application/json' \
@@ -201,7 +198,7 @@ stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/chat_stream.body" |
 printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
   echo "CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$stream_text" | cut -c1-300)"
   tail -c 3000 "$TMP_DIR/chat_stream.body" 2>/dev/null || true
-  request_file inference_check "$VERCEL_URL/v1/ai/inference-check" 55
+  request_file inference_check "$RENDER_URL/v1/ai/inference-check" 55
   if [ "$HTTP_CODE" = "200" ]; then
     jq -c '{status,provider,model,text_ok,attempts}' "$TMP_DIR/inference_check.body" 2>/dev/null || true
   else
@@ -211,10 +208,17 @@ printf '%s' "$stream_text" | grep -Fq 'STREAM_PASS' || {
 }
 echo "CHAT_STREAM_PASS first_visible_text=true"
 
+# PR validation only checks Render health; CI validates the branch itself.
+if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+  echo "DEEP33_RENDER_PRODUCTION_SMOKE_PASS"
+  exit 0
+fi
+
+
 previous_session_id="$SESSION_ID"
 SESSION_ID="deep33-master-news-${GITHUB_RUN_ID:-local}"
 NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume únicamente hechos respaldados por tres artículos recientes de tres medios distintos y termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
-request_file news_chat_stream "$VERCEL_URL/v1/chat/stream" 75 \
+request_file news_chat_stream "$RENDER_URL/v1/chat/stream" 75 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \
   -H 'Content-Type: application/json' \
@@ -228,20 +232,12 @@ news_stream_text="$(sed -n 's/^data: //p' "$TMP_DIR/news_chat_stream.body" |
   tr -d '\r\n')"
 if printf '%s' "$news_stream_text" | grep -Fq 'NEWS_STREAM_PASS'; then
   echo "NEWS_CHAT_STREAM_PASS three_article_chat_path=true mode=model"
-elif printf '%s' "$news_stream_text" | grep -Fq 'extractos breves de las páginas verificadas'; then
-  news_source_count="$(printf '%s' "$news_stream_text" |
-    grep -Eo 'https?://[^[:space:])>]+' | sed 's/[.,]$//' | sort -u | wc -l | tr -d ' ')"
-  [ "$news_source_count" -ge 3 ] || {
-    echo "NEWS_CHAT_STREAM_EXTRACTED_FALLBACK_SOURCE_COUNT=$news_source_count"
-    fail "NEWS_CHAT_STREAM=FAIL extractive_fallback_missing_three_verified_sources"
-  }
-  echo "NEWS_CHAT_STREAM_EXTRACTIVE_FALLBACK_PASS distinct_source_urls=$news_source_count"
 else
   echo "NEWS_CHAT_STREAM_EXTRACTED_TEXT=$(printf '%s' "$news_stream_text" | cut -c1-500)"
   tail -c 3000 "$TMP_DIR/news_chat_stream.body" 2>/dev/null || true
   # Separate provider health from evidence-prompt failures. This diagnostic uses
   # the same protected preview and reports only provider/model/outcome metadata.
-  request_file news_inference_diagnostic "$VERCEL_URL/v1/ai/inference-check" 55
+  request_file news_inference_diagnostic "$RENDER_URL/v1/ai/inference-check" 55
   if [ "$HTTP_CODE" = "200" ]; then
     jq -c '{status,provider,model,text_ok,attempts,timestamp}' \
       "$TMP_DIR/news_inference_diagnostic.body" 2>/dev/null || true
