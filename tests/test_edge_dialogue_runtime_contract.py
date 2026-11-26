@@ -52,7 +52,8 @@ def test_edge_internal_backend_is_canonical_render_only() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const EDGE_AI_UPSTREAM_URLS = [" in source
-        assert source.count('"https://deep33-backend.onrender.com"') == 1
+        assert source.count('"https://deep33-backend.onrender.com"') == 2
+        assert 'const EDGE_AI_UPSTREAM_URLS = [\n  "https://deep33-backend.onrender.com",\n] as const;' in source
         assert "const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];" in source
         # The canonical Render hostname is expected; only retired providers are forbidden.
         assert ".railway.app" not in source
