@@ -213,7 +213,7 @@ echo "CHAT_STREAM_PASS first_visible_text=true"
 
 previous_session_id="$SESSION_ID"
 SESSION_ID="deep33-master-news-${GITHUB_RUN_ID:-local}"
-NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume únicamente hechos respaldados por tres artículos recientes de tres medios distintos y termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
+NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume cada historia distinta que tenga evidencia suficiente en una viñeta. Si solo hay una o dos historias válidas, resume todas y explica ese límite; no inventes una tercera ni respondas solo con el recuento. Excluye publirreportajes. Termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
 request_file news_chat_stream "$VERCEL_URL/v1/chat/stream" 75 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \
