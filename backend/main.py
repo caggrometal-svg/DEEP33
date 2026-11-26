@@ -5656,7 +5656,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         return None
 
     compact_pages = []
-    for page in pages[:3]:
+    for page in pages[:5]:
         if not isinstance(page, dict):
             continue
         compact_pages.append({
@@ -5669,7 +5669,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
                 str(page.get("provider") or "unknown"),
             ),
             "published_at": page.get("published_at"),
-            "text": str(page.get("text") or "")[:450],
+            "text": str(page.get("text") or "")[:700],
         })
     if not compact_pages:
         return None
@@ -5677,7 +5677,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     results = evidence.get("search_results")
     compact_results = []
     if isinstance(results, list):
-        for item in results[:3]:
+        for item in results[:5]:
             if not isinstance(item, dict):
                 continue
             compact_results.append({
@@ -5685,7 +5685,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
                 "url": str(item.get("url") or "")[:1000],
                 "provider": str(item.get("provider") or "")[:80],
                 "published_at": item.get("published_at"),
-                "snippet": str(item.get("snippet") or "")[:180],
+                "snippet": str(item.get("snippet") or "")[:300],
             })
 
     compact_verification = {
@@ -5752,9 +5752,15 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         "Analiza y contrasta la evidencia entregada; redacta una síntesis original, "
         "clara y conversacional en el idioma del usuario. Distingue hechos verificados "
         "de hipótesis o datos no confirmados. No copies frases de las páginas, no "
-        "enumeres extractos ni conviertas las fuentes en la respuesta. Si la evidencia "
-        "no basta, explica brevemente qué no se pudo confirmar. No inventes datos. "
-        "Las referencias se adjuntarán por separado."
+        "enumeres extractos ni conviertas las fuentes en la respuesta. Cuando el usuario "
+        "pida un resumen de noticias y haya tres o más noticias distintas verificadas, "
+        "resume al menos tres hechos/noticias en puntos breves, uno por historia; no "
+        "concentres la respuesta en el primer artículo. Excluye publirreportajes y "
+        "contenido promocional del recuento de noticias. Si sólo hay una o dos noticias "
+        "con evidencia suficiente, indica ese límite con claridad. Cierra las ideas y "
+        "no termines a mitad de una frase. Si la evidencia no basta, explica brevemente "
+        "qué no se pudo confirmar. No inventes datos. Las referencias se adjuntarán "
+        "por separado."
     )
     compact_payload = {
         key: value
@@ -5781,7 +5787,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         },
         *compact_conversation,
     ]
-    compact_payload["max_tokens"] = 768
+    compact_payload["max_tokens"] = 1024
     compact_payload["stream"] = False
     return compact_payload
 
