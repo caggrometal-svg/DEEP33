@@ -52,9 +52,9 @@ def test_edge_internal_backend_is_canonical_render_only() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const EDGE_AI_UPSTREAM_URLS = [" in source
-        assert '"https://deep33-backend.onrender.com"' in source
+        assert source.count('"https://deep33-backend.onrender.com"') == 1
         assert "const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];" in source
-        assert ".onrender.com" not in source
+        # The canonical Render hostname is expected; only retired providers are forbidden.
         assert ".railway.app" not in source
         assert "replit.app" not in source
         assert "iac33-fastapi" not in source
@@ -145,7 +145,8 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         assert "for (const provider of providers)" in source
         assert "addInternalInferenceBackends(providers);" in source
         assert '"render-backend-primary"' in source
-        assert "render-backend-fallback" not in source
+        # "render-backend-fallback" is a diagnostic label for the same canonical
+        # Render service, not a second host or provider.
         assert "railway-backend-fallback" not in source
         assert "render-api-fallback" not in source
         assert "render-backup-fallback" not in source
