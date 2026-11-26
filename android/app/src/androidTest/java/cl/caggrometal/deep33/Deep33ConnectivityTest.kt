@@ -26,12 +26,6 @@ class Deep33ConnectivityTest {
         // Configure the per-profile auth manager so all production endpoints receive a JWT.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         Deep33Api.configureAuth(context)
-        val args = InstrumentationRegistry.getArguments()
-        val e2eUrl = args.getString("deep33_e2e_render_url").orEmpty().trim()
-        if (e2eUrl.isNotBlank()) {
-            Deep33Api.configureE2EBackend(e2eUrl)
-            println("ANDROID_E2E_BACKEND_CONFIGURED host=" + java.net.URL(e2eUrl).host)
-        }
     }
 
     @Test
@@ -201,7 +195,7 @@ class Deep33ConnectivityTest {
             requestId = requestId,
             idempotencyKey = requestId,
             endpointOverride = listOf(
-                Deep33Api.e2eEndpointUrl(),
+                "https://deep33-e2e.invalid",
                 BuildConfig.DEEP33_PRIMARY_URL
             )
         )
