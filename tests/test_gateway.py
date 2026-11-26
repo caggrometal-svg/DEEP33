@@ -1026,7 +1026,7 @@ def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
     async def fake_complete(payload, *, request_id=None, idempotency_key=None, deadline=None, prefer_ttft=False):
         captured["payload"] = payload
         captured["deadline"] = deadline
-        captured["started"] = asyncio.get_running_loop().time()
+        captured["started"] = time.monotonic()
         return {
             "choices": [
                 {"message": {"role": "assistant", "content": "DEEP33_DIAGNOSTIC_OK"}}
@@ -1034,7 +1034,7 @@ def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
         }
 
     gateway.complete = fake_complete
-    before = asyncio.get_running_loop().time()
+    before = time.monotonic()
     result = asyncio.run(gateway.diagnostic_inference(request_id="budget-test"))
     budget = captured["deadline"] - before
 
