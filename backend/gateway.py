@@ -671,15 +671,28 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # A POST 5xx is ambiguous: the provider may have accepted
-                            # the inference before returning the error. Preserve the
-                            # no-failover contract here; the endpoint layer converts
-                            # the gateway error into a bounded degraded response.
+                            # Do not retry the same provider after an ambiguous 5xx:
+                            # it may already have processed the request. Move once to
+                            # the next configured provider/model so a failed primary
+                            # cannot suppress the synthesis recovery chain.
+                            provider_failed_transiently = True
                             circuit.failure(
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            raise GatewayHTTPError
+                            next_provider = (
+                                ordered_providers[provider_index + 1].name
+                                if provider_index + 1 < len(ordered_providers)
+                                else "none"
+                            )
+                            logger.warning(
+                                "ai_provider_5xx_failover request_id=%s failed_provider=%s status=%s next_provider=%s",
+                                request_id,
+                                provider.name,
+                                status,
+                                next_provider,
+                            )
+                            break
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
