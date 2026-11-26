@@ -1066,6 +1066,13 @@ jobs:
             echo "VERCEL_PROTECTION_BYPASS_MISSING"
             exit 1
           }
+          # Verify the Actions secret matches the Vercel automation bypass without exposing it.
+          bypass_sha256="$(printf '%s' "$VERCEL_PROTECTION_BYPASS" | sha256sum | awk '{print $1}')"
+          if [ "$bypass_sha256" != "cdfc69654261f66d84f9b52f6500a1a9db5b64558c9087d2ab8d625348eb15f8" ]; then
+            echo "VERCEL_BYPASS_SECRET_MISMATCH"
+            exit 1
+          fi
+          echo "VERCEL_BYPASS_SECRET_MATCH=1"
           # Vercel's GitHub integration publishes a commit status, not a GitHub
           # deployment object. The previous deployments API lookup therefore
           # waited forever even after Vercel had reported success.
@@ -1100,7 +1107,8 @@ jobs:
                 ready=1
                 break
               fi
-              echo "WAITING_FOR_PREVIEW_HEALTH attempt=$attempt http=$http_status"
+              location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub("\\r", ""); print}' "$RUNNER_TEMP/deep33-preview-health.headers" 2>/dev/null | tail -n 1 || true)"
+            echo "WAITING_FOR_PREVIEW_HEALTH attempt=$attempt http=$http_status location=${location:-none}"
             else
               echo "WAITING_FOR_VERCEL_COMMIT_STATUS attempt=$attempt state=${vercel_state:-missing} sha=$CURRENT_SHA"
             fi
