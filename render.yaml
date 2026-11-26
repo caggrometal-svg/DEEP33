@@ -18,9 +18,9 @@ services:
       - key: WEB_SEARCH_FALLBACK_DDG
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_PROVIDER
         value: "auto"
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
@@ -55,9 +55,9 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
@@ -88,9 +88,9 @@ services:
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
         value: "true"
       - key: WEB_SEARCH_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "5"
+        value: "8"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
