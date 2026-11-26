@@ -15,8 +15,8 @@ android {
         buildConfigField("boolean", "DEEP33_MULTIUSER_MODE", "true")
         buildConfigField("String", "DEEP33_SUPABASE_URL", "\"https://opocgzydeknuchtrqzfa.supabase.co\"")
         buildConfigField("String", "DEEP33_SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA\"")
-        versionCode = 9
-        versionName = "0.5.1"
+        versionCode = 10
+        versionName = "0.5.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -78,13 +78,12 @@ android {
     fun quoteBuildConfig(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    // The Android client uses Vercel as its sole backend gateway.
-    // These URLs are aliases of the same Vercel project, not alternate platforms.
-    // The endpoint contract is immutable by build environment.
-    val canonicalVercelUrl = "https://deep33-backend.vercel.app"
-    val canonicalPrimaryUrl = "https://deep33-backend-iac33.vercel.app"
-    val canonicalSecondaryUrl = "https://deep33-backend-git-main-iac33.vercel.app"
-    val canonicalTertiaryUrl = canonicalVercelUrl
+    // Render is the only production hosting target during this migration window.
+    // Primary, backup and API are separate services with immutable build endpoints.
+    val canonicalBackendUrl = "https://deep33-backend.onrender.com"
+    val canonicalPrimaryUrl = canonicalBackendUrl
+    val canonicalSecondaryUrl = "https://deep33-backup.onrender.com"
+    val canonicalTertiaryUrl = "https://deep33-api.onrender.com"
 
     val suppliedEndpoints = listOf(
         "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
@@ -92,9 +91,9 @@ android {
         "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
     )
     val canonicalEndpoints = listOf(
-        canonicalVercelUrl,
         canonicalPrimaryUrl,
         canonicalSecondaryUrl,
+        canonicalTertiaryUrl,
     )
     val endpointByName = listOf(
         canonicalPrimaryUrl,
@@ -122,7 +121,7 @@ android {
     val tertiaryUrl = canonicalTertiaryUrl
 
     buildTypes.all {
-        buildConfigField("String", "DEEP33_VERCEL_URL", quoteBuildConfig(canonicalVercelUrl))
+        buildConfigField("String", "DEEP33_RENDER_URL", quoteBuildConfig(canonicalBackendUrl))
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
