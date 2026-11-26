@@ -458,7 +458,11 @@ class AIGateway:
         # frames several seconds before the first assistant text. Keep reasoning
         # enabled, but bound it to the provider-supported low effort so fallback
         # remains useful for interactive chat instead of becoming the TTFT bottleneck.
-        if "dots-studio/dots-3-note-preview" in provider.model.casefold():
+        normalized_model = provider.model.casefold()
+        if (
+            "dots-studio/dots-3-note-preview" in normalized_model
+            or "nvidia/nemotron-3-ultra" in normalized_model
+        ):
             result["reasoning_effort"] = "low"
         return result
 
