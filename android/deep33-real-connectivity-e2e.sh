@@ -28,29 +28,13 @@ echo "=== EMULATOR DNS ==="
 adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
-echo "=== ENDPOINT PREFLIGHT ==="
-: "${DEEP33_E2E_VERCEL_URL:=https://deep33-backend.vercel.app}"
-: "${DEEP33_PRIMARY_URL:=https://deep33-backend-iac33.vercel.app}"
-: "${DEEP33_SECONDARY_URL:=https://deep33-backend-git-main-iac33.vercel.app}"
-: "${DEEP33_TERTIARY_URL:=https://deep33-backend.vercel.app}"
-is_protected_preview=0
-case "$DEEP33_E2E_VERCEL_URL" in
-  https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app|https://deep33-backend-git-fix-phase1-routing-provider-quo-*-iac33.vercel.app)
-    is_protected_preview=1
-    ;;
-esac
-if [ "$is_protected_preview" = "1" ] && [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
-  echo "ANDROID_E2E_VERCEL_BYPASS_SECRET_MISSING"
-  exit 2
-fi
-# A PR E2E must target only its exact preview. Production multi-endpoint
-# failover checks are reserved for the production workflow.
-urls=("$DEEP33_E2E_VERCEL_URL")
-if [ "$DEEP33_E2E_VERCEL_URL" = "https://deep33-backend.vercel.app" ]; then
-  urls+=("${DEEP33_PRIMARY_URL}")
-  [ -n "${DEEP33_SECONDARY_URL}" ] && urls+=("${DEEP33_SECONDARY_URL}")
-  [ -n "${DEEP33_TERTIARY_URL}" ] && urls+=("${DEEP33_TERTIARY_URL}")
-fi
+echo "=== RENDER ENDPOINT PREFLIGHT ==="
+: "${DEEP33_E2E_RENDER_URL:=https://deep33-e2e.invalid}"
+: "${DEEP33_PRIMARY_URL:=https://deep33-backend.onrender.com}"
+: "${DEEP33_SECONDARY_URL:=https://deep33-backup.onrender.com}"
+: "${DEEP33_TERTIARY_URL:=https://deep33-api.onrender.com}"
+# The .invalid E2E host is deliberately not resolved; it forces Android failover.
+urls=("$DEEP33_PRIMARY_URL" "$DEEP33_SECONDARY_URL" "$DEEP33_TERTIARY_URL")
 for url in "${urls[@]}"; do
   host="${url#https://}"
   host="${host%%/*}"
@@ -69,14 +53,8 @@ test -n "$TEST_APK"
 adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
-if [ "$is_protected_preview" = "1" ]; then
-  echo "::add-mask::$VERCEL_AUTOMATION_BYPASS_SECRET"
-fi
 INSTRUMENTATION_ARGS=(-w -r)
-INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_url "$DEEP33_E2E_VERCEL_URL")
-if [ "$is_protected_preview" = "1" ]; then
-  INSTRUMENTATION_ARGS+=(-e deep33_e2e_vercel_bypass_secret "$VERCEL_AUTOMATION_BYPASS_SECRET")
-fi
+INSTRUMENTATION_ARGS+=(-e deep33_e2e_render_url "$DEEP33_E2E_RENDER_URL")
 if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
   INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
   echo "INSTRUMENTATION_CLASS_FILTER=${DEEP33_INSTRUMENTATION_CLASS}"
