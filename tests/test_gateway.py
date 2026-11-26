@@ -173,7 +173,7 @@ def test_complete_fails_over_after_primary_rate_limit() -> None:
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
         ),
         timeout_seconds=2,
         max_retries=0,
