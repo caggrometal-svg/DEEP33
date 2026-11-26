@@ -24,7 +24,7 @@ from tools.web_fetch import validate_public_url
 DEFAULT_TAVILY_URL = "https://api.tavily.com/search"
 DUCKDUCKGO_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
-DEFAULT_TIMEOUT_SECONDS = 5.0
+DEFAULT_TIMEOUT_SECONDS = 8.0
 DEFAULT_MAX_RESULTS = 8
 MAX_QUERY_CHARS = 1000
 SEARCH_CACHE_TTL_SECONDS = max(
@@ -37,14 +37,14 @@ _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
 
 
 def _http_timeout(seconds: float) -> httpx.Timeout:
-    bounded = max(0.5, min(2.5, float(seconds)))
+    bounded = max(0.5, min(3.5, float(seconds)))
     return httpx.Timeout(
         # One second was too tight for external-provider connection setup on Render.
         # The provider and global search deadlines still cap total latency.
-        connect=min(1.5, bounded),
-        read=min(1.5, bounded),
-        write=min(1.0, bounded),
-        pool=min(0.5, bounded),
+        connect=min(1.8, bounded),
+        read=min(2.5, bounded),
+        write=min(1.5, bounded),
+        pool=min(1.0, bounded),
     )
 
 
@@ -56,8 +56,8 @@ async def _search_http_client() -> httpx.AsyncClient:
             timeout=_http_timeout(DEFAULT_TIMEOUT_SECONDS),
             follow_redirects=True,
             limits=httpx.Limits(
-                max_connections=20,
-                max_keepalive_connections=10,
+                max_connections=40,
+                max_keepalive_connections=20,
                 keepalive_expiry=30.0,
             ),
         )
@@ -1588,7 +1588,7 @@ async def search_web(
     # The fast flag was previously accepted but ignored. A bounded budget on
     # this path protects first-token latency; fallback still has a reserved slice.
     if fast and isinstance(orchestrator, WebOrchestrator):
-        fast_budget = max(0.8, min(2.4, float(timeout_seconds)))
+        fast_budget = max(1.0, min(3.5, float(timeout_seconds)))
         result = await orchestrator.search(
             cleaned,
             fresh=fresh,
@@ -1600,7 +1600,7 @@ async def search_web(
         # request 5 seconds while the orchestrator still used its shorter default
         # budget and returned zero candidates before slower providers completed.
         if isinstance(orchestrator, WebOrchestrator):
-            full_budget = max(1.0, min(5.0, float(timeout_seconds)))
+            full_budget = max(1.0, min(8.0, float(timeout_seconds)))
             search_parameters = inspect.signature(orchestrator.search).parameters
             if "budget_seconds" in search_parameters:
                 result = await orchestrator.search(
@@ -1716,6 +1716,6 @@ def web_search_status():
         ),
         "timeout_seconds": max(
             1.0,
-            min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))),
+            min(8.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)))),
         ),
     }
