@@ -48,11 +48,11 @@ def test_web_final_style_lock_reasserts_conversation_policy() -> None:
         ) in source
 
 
-def test_edge_internal_backend_is_canonical_vercel_only() -> None:
+def test_edge_internal_backend_is_canonical_render_only() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const EDGE_AI_UPSTREAM_URLS = [" in source
-        assert '"https://deep33-backend.vercel.app"' in source
+        assert '"https://deep33-backend.onrender.com"' in source
         assert "const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];" in source
         assert ".onrender.com" not in source
         assert ".railway.app" not in source
@@ -104,7 +104,7 @@ def test_edge_fallback_accepts_native_deep33_response_text() -> None:
         assert 'if (result && typeof result.text === "string") return result.text;' in source
 
 
-def test_internal_vercel_backend_failover_uses_circuit_breaker_when_critical() -> None:
+def test_internal_render_backend_failover_uses_circuit_breaker_when_critical() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         assert "const criticalInternalBackendFallback =" in source
@@ -144,7 +144,7 @@ def test_provider_failover_switches_without_retry_waits() -> None:
         assert "const EDGE_AI_RETRY_COUNT = 0;" in source
         assert "for (const provider of providers)" in source
         assert "addInternalInferenceBackends(providers);" in source
-        assert '"vercel-backend-primary"' in source
+        assert '"render-backend-primary"' in source
         assert "render-backend-fallback" not in source
         assert "railway-backend-fallback" not in source
         assert "render-api-fallback" not in source
@@ -172,20 +172,20 @@ def test_realtime_search_uses_bounded_first_query_and_lazy_fallback() -> None:
         assert "const broadFallbackPromise = realtimeNewsPlan" not in search
         assert "realtimeNewsPlan &&" in search
 
-def test_edge_search_uses_authenticated_bounded_vercel_backend_fallback() -> None:
+def test_edge_search_uses_authenticated_bounded_render_backend_fallback() -> None:
     for path in EDGE_FILES:
         source = path.read_text(encoding="utf-8")
         search = source.split("async function edgeSearch(", 1)[1].split(
             "async function readinessResponse()", 1
         )[0]
-        search_url_name = "vercelBackendSearchUrl"
-        recovery_flag = "vercelBackendOnly"
+        search_url_name = "renderBackendSearchUrl"
+        recovery_flag = "renderBackendOnly"
         assert f'const {search_url_name} = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q="' in search
         assert f"await fetch({search_url_name}" in search
         assert '"Authorization": userAuthorization' in search
         assert "AbortSignal.timeout(Math.max(6500, Math.min(8000, EDGE_INTERNAL_FETCH_TIMEOUT_MS)))" in search
-        assert 'fallback_path: "vercel-backend"' in search
-        assert f'logSearchStage("success", {recovery_flag} ? "vercel-backend-recovery" : "vercel-backend-fallback", response)' in search
+        assert 'fallback_path: "render-backend"' in search
+        assert f'logSearchStage("success", {recovery_flag} ? "render-backend-recovery" : "render-backend-fallback", response)' in search
         assert "if (!UPSTREAM" not in search
         assert "fetchUpstream(" not in search
 
@@ -226,7 +226,7 @@ def test_edge_navigation_recovery_uses_new_domains_and_preserves_readable_source
         chat_start = source.index('if (path === "/v1/chat/stream" && req.method === "POST")')
         chat_end = source.index("if (!edgeAIConfigured())", chat_start)
         chat = source[chat_start:chat_end]
-        assert 'search.fallback_path !== "vercel-backend"' in chat
+        assert 'search.fallback_path !== "render-backend"' in chat
         assert "buildWebSearchQuery(query)," in chat
         assert "userAuthorization," in chat
         assert "recoverySearch," in chat
@@ -247,7 +247,7 @@ def test_edge_generate_uses_navigation_recovery_and_date_time_single_authoritati
         assert "if (edgeCurrentDateTimeQuery(query)) return 1;" in source
         assert 'const recoverySearch = await edgeSearch(' in generate
         assert '!excludedDomains.has(hostname)' in generate
-        expected_recovery = "vercel-backend-recovery"
+        expected_recovery = "render-backend-recovery"
         assert f'fallback_path: "{expected_recovery}"' in generate
 
 def test_web_recovery_rejects_single_provider_evidence() -> None:
@@ -390,7 +390,7 @@ def test_verified_edge_search_uses_authenticated_fallback_and_reads_candidate_pa
         assert "requireExtractedEvidence = false" in source
         assert "const verifyCandidatePayload = async (" in source
         assert "source.page_text.trim().length >= 80" in source
-        expected_candidates = "vercel-backend-candidates"
+        expected_candidates = "render-backend-candidates"
         assert f'fallback_path: "{expected_candidates}"' in source
         assert f'recoverySearch.fallback_path === "{expected_candidates}"' in source
         assert "WEB_SEARCH_NO_VERIFIED_PAGES" in source
