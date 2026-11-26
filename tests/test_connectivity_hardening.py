@@ -43,7 +43,7 @@ def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://deep33-backup.onrender.com"' in source
     assert '"https://deep33-api.onrender.com"' in source
-    assert 'immutable by build environment' in source
+    assert 'immutable build endpoints' in source
     assert 'DEEP33_RENDER_URL' in source
     assert 'vercel.app' not in source.lower()
     assert 'BuildConfig.DEEP33_RENDER_URL' in api_source
