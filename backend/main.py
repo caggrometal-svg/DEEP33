@@ -2429,15 +2429,11 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if item.get("published_at") and _is_recently_published(item, query)
         } - {""}
         try:
-            rescue_query = (
-                "Chile noticias hoy actualidad acontecimientos recientes"
-                if "chile" in query.casefold()
-                else search_query
-            )
+            rescue_query = search_query
             recent_candidates = await search_recent_news_candidates(
                 rescue_query,
-                timeout_seconds=1.8,
-                max_results=8,
+                timeout_seconds=2.5,
+                max_results=12,
             )
             recent_candidates = _rank_recent_news_candidates(search_query, recent_candidates)
             recovered_provider_candidates: list[dict[str, Any]] = []
