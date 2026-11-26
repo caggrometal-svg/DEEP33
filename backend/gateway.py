@@ -676,10 +676,6 @@ class AIGateway:
                             # the next configured provider/model so a failed primary
                             # cannot suppress the synthesis recovery chain.
                             provider_failed_transiently = True
-                            circuit.failure(
-                                self.config.circuit_failure_threshold,
-                                self.config.circuit_cooldown_seconds,
-                            )
                             next_provider = (
                                 ordered_providers[provider_index + 1].name
                                 if provider_index + 1 < len(ordered_providers)
