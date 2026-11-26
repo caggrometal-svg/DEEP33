@@ -707,6 +707,26 @@ def test_realtime_weather_search_targets_local_conditions_and_official_source():
     assert any("site:meteochile.gob.cl" in query for query in plan.queries[1:])
 
 
+def test_realtime_product_search_targets_current_manufacturer_specifications():
+    plan = SearchEngine(max_queries=3).plan(
+        "producto tecnológico smartphone actual especificaciones"
+    )
+    assert plan.depth == "realtime"
+    assert plan.queries[0]
+    assert len(plan.queries) == 3
+    assert any(
+        "ficha técnica" in query.lower()
+        and "fabricante" in query.lower()
+        and "smartphone" in query.lower()
+        for query in plan.queries[1:]
+    )
+    assert any(
+        "official specifications manufacturer" in query.lower()
+        for query in plan.queries[1:]
+    )
+    assert all("noticias" not in query.lower() for query in plan.queries[1:])
+
+
 def test_realtime_search_uses_multiple_providers(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "true")
 
