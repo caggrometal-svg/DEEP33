@@ -250,7 +250,7 @@ def test_news_synthesis_fallback_payload_is_bounded_for_free_inference():
     compact = _compact_web_synthesis_payload(payload)
 
     assert compact is not None
-    assert compact["max_tokens"] == 384
+    assert compact["max_tokens"] == 768
     compact_evidence = json.loads(
         compact["messages"][0]["content"].split(
             "Server-side web evidence for this request follows.", 1
