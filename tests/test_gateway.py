@@ -91,7 +91,7 @@ def test_complete_fails_over_once_after_ambiguous_timeout_without_retrying_prima
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
         ),
         timeout_seconds=2,
         max_retries=2,
