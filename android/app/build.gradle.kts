@@ -15,8 +15,8 @@ android {
         buildConfigField("boolean", "DEEP33_MULTIUSER_MODE", "true")
         buildConfigField("String", "DEEP33_SUPABASE_URL", "\"https://opocgzydeknuchtrqzfa.supabase.co\"")
         buildConfigField("String", "DEEP33_SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA\"")
-        versionCode = 9
-        versionName = "0.5.1"
+        versionCode = 10
+        versionName = "0.5.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
