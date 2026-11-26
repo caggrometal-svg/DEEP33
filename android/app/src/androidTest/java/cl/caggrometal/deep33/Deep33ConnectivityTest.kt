@@ -27,10 +27,9 @@ class Deep33ConnectivityTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         Deep33Api.configureAuth(context)
         val args = InstrumentationRegistry.getArguments()
-        val e2eUrl = args.getString("deep33_e2e_vercel_url").orEmpty().trim()
+        val e2eUrl = args.getString("deep33_e2e_render_url").orEmpty().trim()
         if (e2eUrl.isNotBlank()) {
-            val bypassSecret = args.getString("deep33_e2e_vercel_bypass_secret")
-            Deep33Api.configureE2EBackend(e2eUrl, bypassSecret)
+            Deep33Api.configureE2EBackend(e2eUrl)
             println("ANDROID_E2E_BACKEND_CONFIGURED host=" + java.net.URL(e2eUrl).host)
         }
     }
@@ -38,8 +37,6 @@ class Deep33ConnectivityTest {
     @Test
     fun allFailoverEndpointHostsResolveInsideAndroid() {
         val urls = listOf(
-            Deep33Api.e2eEndpointUrl(),
-            BuildConfig.DEEP33_VERCEL_URL,
             BuildConfig.DEEP33_PRIMARY_URL,
             BuildConfig.DEEP33_SECONDARY_URL,
             BuildConfig.DEEP33_TERTIARY_URL
@@ -73,18 +70,18 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun vercelPrimaryHealthIsVerifiedWithoutFailover() {
+    fun renderPrimaryHealthIsVerifiedWithoutFailover() {
         val json = Deep33Api.get(
             "/health",
             sessionId,
-            endpointOverride = listOf(Deep33Api.e2eEndpointUrl())
+            endpointOverride = listOf(BuildConfig.DEEP33_PRIMARY_URL)
         )
-        assertTrue("Vercel health: " + json, json.optString("status") == "PASS")
-        assertTrue("Vercel service was not directly reached: " + json, json.optString("service") == "DEEP33 Backend")
-        assertTrue("Vercel version missing: " + json, json.optString("version").isNotBlank())
-        assertTrue("Vercel build id missing: " + json, json.optString("build_id").isNotBlank())
-        assertTrue("Vercel timestamp missing: " + json, json.optString("timestamp").isNotBlank())
-        println("ANDROID_VERCEL_DIRECT_HEALTH_PASS service=${json.optString("service")} build_id=${json.optString("build_id")}")
+        assertTrue("Render health: " + json, json.optString("status") == "PASS")
+        assertTrue("Render service was not directly reached: " + json, json.optString("service") == "DEEP33 Backend")
+        assertTrue("Render version missing: " + json, json.optString("version").isNotBlank())
+        assertTrue("Render build id missing: " + json, json.optString("build_id").isNotBlank())
+        assertTrue("Render timestamp missing: " + json, json.optString("timestamp").isNotBlank())
+        println("ANDROID_RENDER_DIRECT_HEALTH_PASS service=${json.optString("service")} build_id=${json.optString("build_id")}")
     }
 
     @Test
@@ -94,7 +91,7 @@ class Deep33ConnectivityTest {
 
         when (json.optString("service")) {
             "DEEP33 Backend" -> {
-                // Vercel is the canonical Android endpoint; it reports the FastAPI
+                // Render is the canonical Android endpoint; it reports the FastAPI
                 // backend contract, not the older Supabase edge-gateway contract.
                 assertTrue("backend version missing: " + json, json.optString("version").isNotBlank())
                 assertTrue("backend build id missing: " + json, json.optString("build_id").isNotBlank())
@@ -102,7 +99,7 @@ class Deep33ConnectivityTest {
             }
             "DEEP33 Edge Gateway" -> {
                 // Keep compatibility with the Supabase edge endpoint when failover
-                // selected it after the canonical Vercel endpoint was unavailable.
+                // selected it after the canonical Render endpoint was unavailable.
                 assertTrue("edge runtime: " + json, json.optString("runtime") == "supabase-edge")
                 assertTrue("edge transport: " + json, json.optString("transport") == "https")
                 assertTrue(
@@ -115,7 +112,7 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun vercelPrimaryLiveSearchExtractsMultipleSourcesWithoutFailover() {
+    fun renderPrimaryLiveSearchExtractsMultipleSourcesWithoutFailover() {
         val query = "Busca en Internet cuál es la versión estable más reciente de Python publicada oficialmente. Contrasta las páginas oficiales recuperadas y cita enlaces directos."
         val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
         val requestStartedAt = System.nanoTime()
@@ -126,18 +123,18 @@ class Deep33ConnectivityTest {
         )
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartedAt)
 
-        assertTrue("Vercel live search was not successful: " + json, json.optBoolean("ok", false))
-        assertTrue("Vercel live search was not realtime: " + json, json.optBoolean("realtime", false))
+        assertTrue("Render live search was not successful: " + json, json.optBoolean("ok", false))
+        assertTrue("Render live search was not realtime: " + json, json.optBoolean("realtime", false))
         val results = json.optJSONArray("results") ?: JSONArray()
         val pages = json.optJSONArray("fetched_pages") ?: JSONArray()
         val domainsUsed = json.optInt("domains_used", 0)
         val extractedChars = json.optInt("extracted_text_chars", 0)
         val providers = json.optJSONArray("providers") ?: JSONArray()
-        assertTrue("Vercel search used fewer than two independent providers: " + json, providers.length() >= 2)
-        assertTrue("Vercel search returned fewer than two results: " + json, results.length() >= 2)
-        assertTrue("Vercel search extracted fewer than two pages: " + json, pages.length() >= 2)
-        assertTrue("Vercel search used fewer than two domains: " + json, domainsUsed >= 2)
-        assertTrue("Vercel extraction was too short: " + json, extractedChars >= 80)
+        assertTrue("Render search used fewer than two independent providers: " + json, providers.length() >= 2)
+        assertTrue("Render search returned fewer than two results: " + json, results.length() >= 2)
+        assertTrue("Render search extracted fewer than two pages: " + json, pages.length() >= 2)
+        assertTrue("Render search used fewer than two domains: " + json, domainsUsed >= 2)
+        assertTrue("Render extraction was too short: " + json, extractedChars >= 80)
 
         val summaries = buildString {
             for (index in 0 until results.length()) {
@@ -151,12 +148,12 @@ class Deep33ConnectivityTest {
             }
         }
         assertTrue(
-            "Vercel results were not relevant to the Python query: " + json,
+            "Render results were not relevant to the Python query: " + json,
             summaries.contains("python", ignoreCase = true)
         )
-        assertTrue("Vercel search exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
+        assertTrue("Render search exceeded the 180-second deadline: ${elapsedMs}ms", elapsedMs < 180_000)
         println(
-            "ANDROID_VERCEL_LIVE_SEARCH_PASS results=${results.length()} pages=${pages.length()} " +
+            "ANDROID_RENDER_LIVE_SEARCH_PASS results=${results.length()} pages=${pages.length()} " +
                 "domains=${domainsUsed} extracted_chars=${extractedChars} total_ms=${elapsedMs}"
         )
     }
@@ -191,7 +188,7 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun realAndroidTransportFallsBackFromProtectedVercelPreviewToLivePrimary() {
+    fun realAndroidTransportFallsBackFromUnavailableFirstEndpointToLivePrimary() {
         val payload = JSONArray().put(
             JSONObject().put("role", "user")
                 .put("content", "Respond with one short sentence confirming backend connectivity.")
@@ -209,10 +206,10 @@ class Deep33ConnectivityTest {
             )
         )
         val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
-        assertGenerationEnvelope(body, "vercel-preview-fallback-to-primary")
-        assertTrue("Vercel-to-primary failover exceeded 180 seconds: ${elapsedMs}ms", elapsedMs < 180_000)
+        assertGenerationEnvelope(body, "render-invalid-first-endpoint-fallback-to-primary")
+        assertTrue("Render-to-primary failover exceeded 180 seconds: ${elapsedMs}ms", elapsedMs < 180_000)
         println(
-            "ANDROID_REAL_VERCEL_FALLBACK_PASS preview_first=true primary_fallback=available total_ms=${elapsedMs}"
+            "ANDROID_REAL_RENDER_FALLBACK_PASS invalid_first=true primary_fallback=available total_ms=${elapsedMs}"
         )
     }
 
@@ -346,7 +343,7 @@ class Deep33ConnectivityTest {
     }
 
     @Test
-    fun vercelFinanceStreamReturnsCurrentSourceBackedChileanDollar() {
+    fun renderFinanceStreamReturnsCurrentSourceBackedChileanDollar() {
         val query = "Valor del dólar en Chile hoy. Indica el valor en pesos chilenos, fecha u hora de la cotización y la fuente."
         val payload = JSONArray().put(
             JSONObject().put("role", "user").put("content", query)
@@ -371,9 +368,9 @@ class Deep33ConnectivityTest {
         )
         val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
         val text = result.trim()
-        assertTrue("Vercel finance stream returned no answer", text.isNotBlank())
-        assertTrue("Vercel finance stream exceeded 12-second first-text deadline: ${firstTextMs}ms", (firstTextMs ?: Long.MAX_VALUE) < 12_000)
-        assertTrue("Vercel finance stream exceeded 180-second deadline: ${totalMs}ms", totalMs < 180_000)
+        assertTrue("Render finance stream returned no answer", text.isNotBlank())
+        assertTrue("Render finance stream exceeded 12-second first-text deadline: ${firstTextMs}ms", (firstTextMs ?: Long.MAX_VALUE) < 12_000)
+        assertTrue("Render finance stream exceeded 180-second deadline: ${totalMs}ms", totalMs < 180_000)
         assertTrue("Current quote lacks Chilean peso units: " + text, text.contains("pesos chilenos", ignoreCase = true))
 
         val quoteMatch = Regex(
@@ -412,7 +409,7 @@ class Deep33ConnectivityTest {
                 text.contains("Hora de mercado reportada", ignoreCase = true)
         )
         println(
-            "ANDROID_VERCEL_FINANCE_STREAM_PASS quote=${quoteRaw} domains=${domains.size} " +
+            "ANDROID_RENDER_FINANCE_STREAM_PASS quote=${quoteRaw} domains=${domains.size} " +
                 "ttft_ms=${firstTextMs} total_ms=${totalMs}"
         )
     }
