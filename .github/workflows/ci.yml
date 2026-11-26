@@ -200,7 +200,7 @@ jobs:
           retention-days: 14
 
   vercel_realtime_search:
-    if: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    if: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026') }}
     needs: [backend_unit, android_validation]
     runs-on: ubuntu-latest
     timeout-minutes: 12
