@@ -29,7 +29,6 @@ adb shell getprop net.dns1 || true
 adb shell getprop net.dns2 || true
 
 echo "=== RENDER ENDPOINT PREFLIGHT ==="
-: "${DEEP33_E2E_RENDER_URL:=https://deep33-e2e.invalid}"
 : "${DEEP33_PRIMARY_URL:=https://deep33-backend.onrender.com}"
 : "${DEEP33_SECONDARY_URL:=https://deep33-backup.onrender.com}"
 : "${DEEP33_TERTIARY_URL:=https://deep33-api.onrender.com}"
@@ -54,7 +53,6 @@ adb install -r "$TEST_APK"
 
 echo "=== ANDROID CONNECTIVITY INSTRUMENTATION ==="
 INSTRUMENTATION_ARGS=(-w -r)
-INSTRUMENTATION_ARGS+=(-e deep33_e2e_render_url "$DEEP33_E2E_RENDER_URL")
 if [ -n "${DEEP33_INSTRUMENTATION_CLASS:-}" ]; then
   INSTRUMENTATION_ARGS+=(-e class "${DEEP33_INSTRUMENTATION_CLASS}")
   echo "INSTRUMENTATION_CLASS_FILTER=${DEEP33_INSTRUMENTATION_CLASS}"
