@@ -23,6 +23,7 @@ from tools.web_search import (
     _looks_realtime_news,
     _mojeek_search,
     _mwmbl_search,
+    _youcom_search,
     _yahoo_search,
 )
 
@@ -47,6 +48,8 @@ def _provider_family(provider: str) -> str:
         return "marginalia"
     if "tavily" in name:
         return "tavily"
+    if "youcom" in name or "you.com" in name:
+        return "youcom"
     if "cl0q" in name:
         return "cl0q"
     # Wikipedia is a content corpus, not an independent web-search index.
@@ -363,6 +366,7 @@ class WebOrchestrator:
             "duckduckgo": CircuitState(),
             "yahoo": CircuitState(),
             "mwmbl": CircuitState(),
+            "youcom": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
@@ -374,11 +378,12 @@ class WebOrchestrator:
         }
         if os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
             self.providers.pop("mojeek", None)
-        # Mwmbl is a genuinely independent index. Its anonymous endpoint has a
-        # 1,000-request monthly cap and 1 req/s limit, so reserve it for quorum
-        # recovery rather than spending the free quota on every query. Yahoo is
-        # only a Bing-family coverage fallback, never independent corroboration.
+        # You.com offers a keyless free MCP search profile (100 queries/day).
+        # Mwmbl is also independent but its anonymous endpoint is limited to
+        # 1,000 requests/month and 1 req/s, so keep it as a secondary recovery.
+        # Yahoo is only a Bing-family coverage fallback, never corroboration.
         self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
+            "youcom": self._youcom,
             "mwmbl": self._mwmbl,
             "yahoo": self._yahoo,
         }
@@ -424,6 +429,9 @@ class WebOrchestrator:
 
     async def _mwmbl(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _mwmbl_search(query, timeout, limit)
+
+    async def _youcom(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _youcom_search(query, timeout, limit)
 
     async def _yahoo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _yahoo_search(query, timeout, limit, preserve_candidates=True)
