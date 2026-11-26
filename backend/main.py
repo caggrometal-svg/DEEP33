@@ -5732,100 +5732,12 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
 
 
 def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
-    parsed = _web_evidence_from_payload(payload)
-    if parsed is None:
-        return None
-    _message_index, evidence, _prefix = parsed
-    verification = evidence.get("verification")
-    verification = verification if isinstance(verification, dict) else {}
-    news_quorum = evidence.get("news_quorum")
-    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    """Never present source excerpts as a substitute for an AI-generated answer.
 
-    try:
-        provider_count = int(
-            verification.get("distinct_providers")
-            or news_quorum.get("providers")
-            or 0
-        )
-    except (TypeError, ValueError):
-        provider_count = 0
-    strict_news = news_quorum.get("required") is True
-    contrast_required = evidence.get("contrast_required") is True
-    if strict_news and (
-        provider_count < 2
-        or not (
-            verification.get("provider_quorum_met") is True
-            or news_quorum.get("provider_quorum_met") is True
-        )
-        or news_quorum.get("met") is not True
-        or int(news_quorum.get("articles") or 0) < 3
-        or int(news_quorum.get("domains") or 0) < 3
-    ):
-        return None
-
-    pages = evidence.get("fetched_pages")
-    if not isinstance(pages, list):
-        return None
-    minimum_sources = 3 if strict_news else 2 if contrast_required else 1
-    selected: list[tuple[str, str, str]] = []
-    seen_domains: set[str] = set()
-    junk_sentence = re.compile(
-        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
-        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
-        r"ignore all previous instructions|system prompt)\b",
-        re.IGNORECASE,
-    )
-    for page in pages:
-        if not isinstance(page, dict):
-            continue
-        url = str(page.get("url") or "").strip()
-        parsed_url = urlparse(url)
-        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
-            continue
-        domain = str(page.get("domain") or parsed_url.hostname).casefold()
-        domain = domain.removeprefix("www.").rstrip(".")
-        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
-        if not domain or domain in seen_domains or len(page_text) < 80:
-            continue
-        sentences = [
-            sentence.strip(" \t\r\n-•")
-            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
-            if sentence.strip()
-        ]
-        sentence = next(
-            (
-                item for item in sentences
-                if 8 <= len(item.split()) <= 45
-                and not junk_sentence.search(item)
-            ),
-            "",
-        )
-        if not sentence:
-            sentence = page_text
-        words = sentence.split()
-        excerpt = " ".join(words[:20]).strip()
-        if len(words) > 20:
-            excerpt += "…"
-        if len(excerpt) < 40:
-            continue
-        title = str(page.get("title") or domain).strip()[:160]
-        selected.append((domain, title, excerpt))
-        seen_domains.add(domain)
-        if len(selected) >= 3:
-            break
-
-    required_domains = 3 if strict_news else 2 if contrast_required else 1
-    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
-        return None
-
-    lines = [
-        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
-    ]
-    lines.extend(
-        f"• {title}: «{excerpt}»"
-        for _domain, title, excerpt in selected
-    )
-    return "\n".join(lines)
+    Kept as a compatibility guard for older callers and tests. Web evidence is
+    context for synthesis, not user-facing answer text.
+    """
+    return None
 
 
 async def stream_gateway(
@@ -5966,13 +5878,17 @@ async def stream_gateway(
             candidates.append((compact_payload, "compact"))
         candidates.append((payload, "standard"))
 
+        # The streaming attempt may have consumed its entire deadline. Give the
+        # non-stream synthesis recovery its own bounded budget so a timed-out or
+        # empty stream does not make every recovery attempt expire immediately.
+        synthesis_retry_deadline = time.monotonic() + NON_STREAM_AI_TIMEOUT
         for candidate_payload, fallback_kind in candidates:
             try:
                 fallback_data = await nonstream_complete(
                     candidate_payload,
                     request_id=request_id,
                     idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
-                    deadline=deadline,
+                    deadline=synthesis_retry_deadline,
                 )
                 fallback_message = _choice_message(fallback_data)
                 raw_fallback_text = fallback_message.get("content")
@@ -6036,25 +5952,6 @@ async def stream_gateway(
                 )
                 gateway_failure = gateway_failure or "nonstream_fallback_failed"
 
-    if not assistant_parts and not tool_markup_filter.suppressed:
-        extractive_fallback = _extractive_web_evidence_fallback(payload)
-        if extractive_fallback:
-            assistant_parts.append(extractive_fallback)
-            saw_done = True
-            gateway_failure = None
-            if first_output_at is None:
-                first_output_at = time.perf_counter()
-                performance.mark(request_id, "T7_FIRST_TOKEN")
-                _metric_latency["chat_stream_ttft_ms"].append(
-                    (first_output_at - stream_started) * 1000
-                )
-            for piece in _sse_text_chunks(extractive_fallback):
-                yield _sse_delta(piece)
-            logger.warning(
-                "stream_extractive_web_evidence_fallback request_id=%s sources=%s",
-                request_id,
-                3 if "extractos breves" in extractive_fallback else 2,
-            )
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)
