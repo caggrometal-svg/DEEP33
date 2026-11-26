@@ -442,7 +442,7 @@ class AIGateway:
 
         def weight(candidate: GatewayProvider, index: int) -> float:
             if (
-                "kilo-free-text-fallback" in candidate.name.casefold()
+                "fallback" in candidate.name.casefold()
                 or "baidu/ernie-5.5-flash-preview:free" in candidate.model.casefold()
             ):
                 return 0.45
