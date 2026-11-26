@@ -987,3 +987,48 @@ def test_web_evidence_never_becomes_an_extractive_answer():
         }]
     }
     assert main._extractive_web_evidence_fallback(one_provider_payload) is None
+
+
+@pytest.mark.parametrize(
+    "gateway_error,expected_status",
+    [
+        ("http", "FAIL"),
+        ("invalid", "FAIL"),
+        ("timeout", "TIMEOUT"),
+    ],
+)
+def test_inference_diagnostics_never_crash_when_provider_errors_have_no_attempt_list(
+    monkeypatch,
+    gateway_error: str,
+    expected_status: str,
+) -> None:
+    import backend.main as main
+    from backend.gateway import (
+        GatewayHTTPError,
+        GatewayInvalidResponseError,
+        GatewayTimeoutError,
+    )
+
+    error_types = {
+        "http": GatewayHTTPError,
+        "invalid": GatewayInvalidResponseError,
+        "timeout": GatewayTimeoutError,
+    }
+    error_type = error_types[gateway_error]
+
+    async def fail_diagnostic(**_kwargs):
+        raise error_type()
+
+    monkeypatch.setattr(main.gateway, "diagnostic_inference", fail_diagnostic)
+    monkeypatch.setattr(main.gateway, "diagnostic_stream_inference", fail_diagnostic)
+
+    status, data, text_value = asyncio.run(
+        main.run_inference_check(f"diagnostic-{gateway_error}-without-attempts")
+    )
+
+    assert status == expected_status
+    assert data is not None
+    metadata = data["_deep33_gateway"]
+    assert metadata["error_type"] == error_type.__name__
+    assert metadata["attempts"] == []
+    assert text_value is None
