@@ -44,7 +44,7 @@ def _http_timeout(seconds: float) -> httpx.Timeout:
         connect=min(1.8, bounded),
         read=min(2.5, bounded),
         write=min(1.5, bounded),
-        pool=min(1.0, bounded),
+        pool=min(2.0, bounded),
     )
 
 
