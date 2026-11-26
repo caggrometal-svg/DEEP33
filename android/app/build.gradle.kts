@@ -78,10 +78,9 @@ android {
     fun quoteBuildConfig(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    // Render is the only production hosting target during this migration window.
-    // Primary, backup and API are separate services with immutable build endpoints.
-    val canonicalBackendUrl = "https://deep33-backend.onrender.com"
-    val canonicalPrimaryUrl = canonicalBackendUrl
+    // Render is the canonical backend cluster: primary, backup, and API.
+    // The endpoint contract is immutable by build environment.
+    val canonicalPrimaryUrl = "https://deep33-backend.onrender.com"
     val canonicalSecondaryUrl = "https://deep33-backup.onrender.com"
     val canonicalTertiaryUrl = "https://deep33-api.onrender.com"
 
@@ -121,7 +120,7 @@ android {
     val tertiaryUrl = canonicalTertiaryUrl
 
     buildTypes.all {
-        buildConfigField("String", "DEEP33_RENDER_URL", quoteBuildConfig(canonicalBackendUrl))
+        buildConfigField("String", "DEEP33_RENDER_URL", quoteBuildConfig(canonicalPrimaryUrl))
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
