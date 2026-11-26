@@ -78,13 +78,11 @@ android {
     fun quoteBuildConfig(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
-    // The Android client uses Vercel as its sole backend gateway.
-    // These URLs are aliases of the same Vercel project, not alternate platforms.
+    // Render is the canonical backend cluster: primary, backup, and API.
     // The endpoint contract is immutable by build environment.
-    val canonicalVercelUrl = "https://deep33-backend.vercel.app"
-    val canonicalPrimaryUrl = "https://deep33-backend-iac33.vercel.app"
-    val canonicalSecondaryUrl = "https://deep33-backend-git-main-iac33.vercel.app"
-    val canonicalTertiaryUrl = canonicalVercelUrl
+    val canonicalPrimaryUrl = "https://deep33-backend.onrender.com"
+    val canonicalSecondaryUrl = "https://deep33-backup.onrender.com"
+    val canonicalTertiaryUrl = "https://deep33-api.onrender.com"
 
     val suppliedEndpoints = listOf(
         "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
@@ -92,9 +90,9 @@ android {
         "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
     )
     val canonicalEndpoints = listOf(
-        canonicalVercelUrl,
         canonicalPrimaryUrl,
         canonicalSecondaryUrl,
+        canonicalTertiaryUrl,
     )
     val endpointByName = listOf(
         canonicalPrimaryUrl,
@@ -122,7 +120,6 @@ android {
     val tertiaryUrl = canonicalTertiaryUrl
 
     buildTypes.all {
-        buildConfigField("String", "DEEP33_VERCEL_URL", quoteBuildConfig(canonicalVercelUrl))
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
