@@ -35,7 +35,7 @@ echo "=== ENDPOINT PREFLIGHT ==="
 : "${DEEP33_TERTIARY_URL:=https://deep33-backend.vercel.app}"
 is_protected_preview=0
 case "$DEEP33_E2E_VERCEL_URL" in
-  https://deep33-backend-git-fix-vercel-android-route-221026-*.iac33.vercel.app|https://deep33-backend-git-fix-phase1-routing-provider-quo-*.iac33.vercel.app)
+  https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app|https://deep33-backend-git-fix-phase1-routing-provider-quo-*-iac33.vercel.app)
     is_protected_preview=1
     ;;
 esac
