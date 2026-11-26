@@ -5713,21 +5713,76 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         "snippet_fallback": bool(evidence.get("snippet_fallback")),
         "model_context_compacted": True,
     }
-    compact_payload = dict(payload)
-    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
-    compact_messages[message_index] = {
-        **compact_messages[message_index],
-        "content": prefix + json.dumps(
-            compact_evidence,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-    }
-    compact_payload["messages"] = compact_messages
-    compact_payload["max_tokens"] = min(
-        384,
-        max(256, int(payload.get("max_tokens") or 384)),
+    # Rebuild the recovery prompt instead of carrying every long system
+    # instruction and the full conversation into a second inference attempt.
+    # Large reasoning prompts were causing free models to spend their output
+    # budget internally and return no visible assistant text.
+    conversation = [
+        dict(item)
+        for item in payload.get("messages", [])
+        if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+    ][-6:]
+    if not any(item.get("role") == "user" for item in conversation):
+        return None
+
+    compact_conversation = []
+    for item in conversation:
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        limit = 1800 if item.get("role") == "user" else 900
+        compact_conversation.append({
+            "role": item["role"],
+            "content": content[-limit:],
+        })
+    if not compact_conversation or compact_conversation[-1].get("role") != "user":
+        last_user = next(
+            (item for item in reversed(compact_conversation) if item.get("role") == "user"),
+            None,
+        )
+        if last_user is None:
+            return None
+        compact_conversation = [
+            item for item in compact_conversation
+            if item is not last_user
+        ] + [last_user]
+
+    synthesis_instruction = (
+        "Eres DEEP33. Responde directamente a la última pregunta del usuario. "
+        "Analiza y contrasta la evidencia entregada; redacta una síntesis original, "
+        "clara y conversacional en el idioma del usuario. Distingue hechos verificados "
+        "de hipótesis o datos no confirmados. No copies frases de las páginas, no "
+        "enumeres extractos ni conviertas las fuentes en la respuesta. Si la evidencia "
+        "no basta, explica brevemente qué no se pudo confirmar. No inventes datos. "
+        "Las referencias se adjuntarán por separado."
     )
+    compact_payload = {
+        key: value
+        for key, value in payload.items()
+        if key in {
+            "model",
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "user",
+        }
+    }
+    compact_payload["messages"] = [
+        {"role": "system", "content": synthesis_instruction},
+        {
+            "role": "system",
+            "content": prefix + json.dumps(
+                compact_evidence,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+        *compact_conversation,
+    ]
+    compact_payload["max_tokens"] = 768
+    compact_payload["stream"] = False
     return compact_payload
 
 
