@@ -35,9 +35,9 @@ permissions:
 env:
   SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
   SUPABASE_PUBLISHABLE_KEY: sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA
-  PRIMARY_URL: https://deep33-backend.vercel.app
-  SECONDARY_URL: https://deep33-backend-iac33.vercel.app
-  TERTIARY_URL: https://deep33-backend-git-main-iac33.vercel.app
+  PRIMARY_URL: https://deep33-backend.onrender.com
+  SECONDARY_URL: https://deep33-backup.onrender.com
+  TERTIARY_URL: https://deep33-api.onrender.com
 
 jobs:
   production-e2e:
@@ -77,22 +77,22 @@ jobs:
           done
           test -n "$token" || { echo "AUTH_SESSION_FAILED retries_exhausted"; exit 1; }
           echo "DEEP33_E2E_TOKEN=$token" >> "$GITHUB_ENV"
-      - name: Wait for exact main SHA on Vercel
+      - name: Wait for exact main SHA on Render
         run: |
           set -euo pipefail
           ready=0
           for attempt in $(seq 1 36); do
-            code="$(curl -sS --connect-timeout 8 --max-time 20 -o /tmp/vercel-health.json -w "%{http_code}" "$PRIMARY_URL/health" || true)"
-            live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-health.json 2>/dev/null || true)"
-            live_status="$(jq -r '.status // empty' /tmp/vercel-health.json 2>/dev/null || true)"
-            echo "VERCEL_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status http=$code"
+            code="$(curl -sS --connect-timeout 8 --max-time 20 -o /tmp/render-health.json -w "%{http_code}" "$PRIMARY_URL/health" || true)"
+            live_sha="$(jq -r '.git_sha // empty' /tmp/render-health.json 2>/dev/null || true)"
+            live_status="$(jq -r '.status // empty' /tmp/render-health.json 2>/dev/null || true)"
+            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$live_status http=$code"
             if [ "$code" = "200" ] && [ "$live_status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
               ready=1
               break
             fi
             sleep 5
           done
-          test "$ready" = "1" || { echo "VERCEL_EXACT_SHA_FAIL expected=$GITHUB_SHA"; cat /tmp/vercel-health.json 2>/dev/null || true; exit 1; }
+          test "$ready" = "1" || { echo "RENDER_EXACT_SHA_FAIL expected=$GITHUB_SHA"; cat /tmp/render-health.json 2>/dev/null || true; exit 1; }
 
       - name: Verify cross-route idempotent replay without 409 or duplicate generation
         run: |
@@ -171,7 +171,7 @@ jobs:
           print("DEEP33_IDEMPOTENCY_REPLAY_PASS generate=2 stream=1 http409=0 duplicate_generation=0")
           PY
 
-      - name: Verify the production Vercel aliases
+      - name: Verify the production Render aliases
         run: |
           set -euo pipefail
           entries=("PRIMARY|$PRIMARY_URL" "SECONDARY|$SECONDARY_URL" "TERTIARY|$TERTIARY_URL")
@@ -203,7 +203,7 @@ jobs:
           test "$PRIMARY_URL" != "$SECONDARY_URL"
           test "$PRIMARY_URL" != "$TERTIARY_URL"
           test "$SECONDARY_URL" != "$TERTIARY_URL"
-          echo "DEEP33_VERCEL_ALIASES_PASS"
+          echo "DEEP33_RENDER_ALIASES_PASS"
 
       - name: Verify DEEP33 edge connectivity and search
         run: |
@@ -211,23 +211,23 @@ jobs:
           curl -fsS --connect-timeout 8 --max-time 60 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/health" | jq -e '.status=="PASS" and .service=="DEEP33 Backend"'
           audit_ok=0
           for attempt in $(seq 1 5); do
-            echo "DEEP33_VERCEL_AUDIT_ATTEMPT=$attempt"
+            echo "DEEP33_RENDER_AUDIT_ATTEMPT=$attempt"
             curl -sS --connect-timeout 8 --max-time 90 -H "Authorization: Bearer $DEEP33_E2E_TOKEN" "$PRIMARY_URL/v1/connectivity/audit" -o /tmp/audit.json || true
             if jq -e '.status=="PASS" and .edge=="PASS" and .internet=="PASS" and .upstream.ready==true and .search.ok==true and (.search.results|length)>=1' /tmp/audit.json >/dev/null 2>&1; then
               audit_ok=1
               break
             fi
-            echo "DEEP33_VERCEL_AUDIT_NOT_READY"
+            echo "DEEP33_RENDER_AUDIT_NOT_READY"
             jq -c '{status,checks,search_ok:.search.ok,results:(.search.results|length),timestamp}' /tmp/audit.json 2>/dev/null || true
             sleep 5
           done
           if [ "$audit_ok" != "1" ]; then
-            echo "DEEP33_VERCEL_AUDIT_FAIL"
+            echo "DEEP33_RENDER_AUDIT_FAIL"
             cat /tmp/audit.json 2>/dev/null || true
             exit 1
           fi
           cat /tmp/audit.json
-          echo "DEEP33_VERCEL_AUDIT_PASS"
+          echo "DEEP33_RENDER_AUDIT_PASS"
 
 # Validate broad Internet navigation (not a news-aggregator-only path).
       - name: Verify broad Internet search and multi-domain source navigation
@@ -370,7 +370,7 @@ jobs:
             -H "X-Request-ID: edge-web-e2e-$GITHUB_RUN_ID" \
             --data-binary "$payload" || true)"
           if [ "$status" != "200" ]; then
-            echo "DEEP33_VERCEL_WEB_CHAT_FAIL http=$status"
+            echo "DEEP33_RENDER_WEB_CHAT_FAIL http=$status"
             head -c 1000 /tmp/deep33-edge-web-chat.sse 2>/dev/null || true
             exit 1
           fi
@@ -380,7 +380,7 @@ jobs:
 
           raw = Path("/tmp/deep33-edge-web-chat.sse").read_text(errors="replace")
           if "event: error" in raw:
-              print("DEEP33_VERCEL_WEB_CHAT_FAIL error_event=true")
+              print("DEEP33_RENDER_WEB_CHAT_FAIL error_event=true")
               raise SystemExit(1)
           chunks = []
           done = False
@@ -404,9 +404,9 @@ jobs:
                           chunks.append(value)
           answer = "".join(chunks).strip()
           if not done or len(answer) < 20:
-              print(f"DEEP33_VERCEL_WEB_CHAT_FAIL done={done} text_chars={len(answer)}")
+              print(f"DEEP33_RENDER_WEB_CHAT_FAIL done={done} text_chars={len(answer)}")
               raise SystemExit(1)
-          print(f"DEEP33_VERCEL_WEB_NAVIGATION_E2E_PASS text_chars={len(answer)}")
+          print(f"DEEP33_RENDER_WEB_NAVIGATION_E2E_PASS text_chars={len(answer)}")
           PY
 
       - name: Verify secondary Edge chat navigates and answers
@@ -511,7 +511,7 @@ jobs:
               audit_ok=1
               break
             fi
-            echo "DEEP33_VERCEL_AUDIT_RECHECK_NOT_READY attempt=$attempt"
+            echo "DEEP33_RENDER_AUDIT_RECHECK_NOT_READY attempt=$attempt"
             sleep 5
           done
           test "$audit_ok" = "1" || { cat /tmp/audit-recheck.json 2>/dev/null || true; exit 1; }
