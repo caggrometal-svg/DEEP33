@@ -929,7 +929,37 @@ def test_stream_gateway_recovers_with_nonstream_text_after_empty_stream(monkeypa
         async for chunk in main.stream_gateway(
             {
                 "messages": [
-                    {"role": "system", "content": "Contexto de síntesis."},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Contexto de síntesis. Server-side web evidence for this request follows."
+                            + json.dumps(
+                                {
+                                    "query": "hechos recientes",
+                                    "fetched_pages": [
+                                        {
+                                            "title": "Fuente uno",
+                                            "url": "https://example.org/a",
+                                            "domain": "example.org",
+                                            "provider": "provider-a",
+                                            "text": "Evidencia contrastable de la primera fuente.",
+                                        },
+                                        {
+                                            "title": "Fuente dos",
+                                            "url": "https://example.net/b",
+                                            "domain": "example.net",
+                                            "provider": "provider-b",
+                                            "text": "Evidencia contrastable de la segunda fuente.",
+                                        },
+                                    ],
+                                    "search_results": [],
+                                    "verification": {"distinct_providers": 2},
+                                    "contrast_required": True,
+                                },
+                                ensure_ascii=False,
+                            )
+                        ),
+                    },
                     {"role": "user", "content": "Responde con los puntos principales."},
                 ],
                 "stream": True,
