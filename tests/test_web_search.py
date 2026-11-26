@@ -1711,6 +1711,80 @@ def test_search_web_propagates_non_fast_budget_to_orchestrator(monkeypatch):
     assert seen["budget_seconds"] == 4.75
 
 
+def test_weather_specialist_fallback_keeps_web_candidates(monkeypatch):
+    import backend.search.resilient as resilient
+    import backend.weather as weather
+    from tools import web_search
+
+    class FakeOrchestrator:
+        async def search(self, query, *, fresh=False, budget_seconds=None):
+            return {
+                "ok": False,
+                "status": "INSUFFICIENT_PROVIDER_QUORUM",
+                "results": [
+                    {
+                        "title": "Clima en Santiago",
+                        "url": "https://weather.example/santiago",
+                        "snippet": "Pronóstico y condiciones actuales en Santiago.",
+                        "source_domain": "weather.example",
+                        "provider": "duckduckgo",
+                        "providers": ["duckduckgo"],
+                    },
+                    {
+                        "title": "Pronóstico de Santiago",
+                        "url": "https://forecast.example/santiago",
+                        "snippet": "Temperatura y condiciones del tiempo.",
+                        "source_domain": "forecast.example",
+                        "provider": "duckduckgo",
+                        "providers": ["duckduckgo"],
+                    },
+                ],
+                "sources": [],
+                "providers": ["duckduckgo"],
+                "providers_attempted": ["duckduckgo"],
+                "errors": ["INSUFFICIENT_PROVIDER_QUORUM"],
+            }
+
+    async def fake_weather(query, *, timeout_seconds):
+        assert "Santiago" in query
+        assert timeout_seconds == 4.0
+        return {
+            "provider": "Open-Meteo",
+            "source_url": "https://api.open-meteo.com/v1/forecast?latitude=-33.45&longitude=-70.66",
+            "location_name": "Santiago",
+            "country": "Chile",
+            "temperature_c": 22,
+            "condition": "cielo despejado",
+            "relative_humidity_pct": 45,
+            "wind_speed_kmh": 6,
+            "time": "2026-11-26T04:00",
+            "timezone": "America/Santiago",
+        }
+
+    monkeypatch.setattr(resilient, "WebOrchestrator", FakeOrchestrator)
+    monkeypatch.setattr(resilient, "get_web_orchestrator", lambda _limit: FakeOrchestrator())
+    monkeypatch.setattr(weather, "fetch_named_location_weather", fake_weather)
+    monkeypatch.setattr(weather, "is_weather_query", lambda _query: True)
+
+    result = asyncio.run(
+        web_search.search_web(
+            "clima actual Santiago Chile",
+            timeout_seconds=8.0,
+            max_results=6,
+            fresh=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["specialist_provider"] == "open_meteo"
+    assert result["provider"] == "open_meteo"
+    assert result["verification"]["level"] == "specialist-data-plus-web-context"
+    assert result["verification"]["provider_quorum_met"] is False
+    assert any(item["provider"] == "open_meteo" for item in result["results"])
+    assert any(item["provider"] == "duckduckgo" for item in result["results"])
+    assert len({item["source_domain"] for item in result["results"]}) >= 3
+
+
 def test_known_reference_query_uses_general_web_search_fanout(monkeypatch):
     import backend.search.resilient as resilient
     from backend.search.resilient import WebOrchestrator
