@@ -586,8 +586,18 @@ def test_render_ai_and_search_budgets_are_explicit_and_bounded() -> None:
     assert render.count('nvidia/nemotron-3.5-super-vl:free') == 3
     assert render.count('nvidia/nemotron-3-ultra:free') == 3
     assert render.count("key: AI_PROVIDER_TIMEOUT_SECONDS") == 3
+    assert render.count("key: AI_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "45"') == 3
+    assert render.count("key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS") == 3
+    assert render.count('value: "20"') == 3
     assert render.count("key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS") == 3
     assert render.count('value: "12"') >= 6
+    search = read("tools/web_search.py")
+    fetch = read("tools/web_fetch.py")
+    assert "pool=min(2.0, bounded)" in search
+    assert "max_connections=40" in search and "max_keepalive_connections=20" in search
+    assert "pool=2.0" in fetch
+    assert "max_connections=20" in fetch and "max_keepalive_connections=10" in fetch
 
 
 def test_android_build_is_versioned_for_render_migration() -> None:
