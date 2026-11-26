@@ -1006,7 +1006,7 @@ def test_gateway_config_allows_longer_evidence_synthesis_budget(monkeypatch) -> 
     assert config.provider_timeout_seconds == 24
 
 
-def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
+def test_diagnostic_inference_has_bounded_thirty_second_budget() -> None:
     gateway = AIGateway(
         GatewayConfig(
             providers=(
@@ -1038,8 +1038,8 @@ def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
     result = asyncio.run(gateway.diagnostic_inference(request_id="budget-test"))
     budget = captured["deadline"] - before
 
-    assert budget <= 20.1
-    assert budget >= 19.0
+    assert budget <= 30.1
+    assert budget >= 29.0
     assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
 
 
@@ -1064,5 +1064,40 @@ def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
         fallback_deadline, 1, 2
     )
 
-    assert 13.5 <= primary_budget <= 14.5
+    assert 12.5 <= primary_budget <= 13.5
     assert 11.5 <= fallback_budget <= 12.0
+
+
+
+def test_complete_timeout_budget_shares_thirty_seconds_across_four_providers() -> None:
+    providers = tuple(
+        provider(
+            f"provider-{index}",
+            f"https://provider-{index}.test/chat",
+            f"https://provider-{index}.test/models",
+            f"model-{index}",
+        )
+        for index in range(4)
+    )
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=providers,
+            timeout_seconds=30,
+            provider_timeout_seconds=30,
+        )
+    )
+
+    remaining = 30.0
+    budgets = []
+    for index in range(len(providers)):
+        deadline = time.monotonic() + remaining
+        budget = gateway._complete_provider_timeout_budget(
+            deadline,
+            index,
+            len(providers),
+        )
+        budgets.append(budget)
+        remaining -= budget
+
+    assert len(budgets) == 4
+    assert all(7.0 <= budget <= 8.0 for budget in budgets)
