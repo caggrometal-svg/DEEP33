@@ -750,7 +750,7 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 3
+    assert len(config.providers) == 4
     assert config.providers[0].name == "kilo-dots-fallback"
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
     ernie = config.providers[1]
@@ -763,6 +763,11 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
     assert nvidia.model == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert nvidia.api_key == ""
     assert "Authorization" not in AIGateway._headers(nvidia)
+    vl = config.providers[3]
+    assert vl.name == "kilo-nemotron-vl-free-fallback"
+    assert vl.model == "nvidia/nemotron-3.5-super-vl:free"
+    assert vl.api_key == ""
+    assert "Authorization" not in AIGateway._headers(vl)
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
     assert all("laguna" not in item.model.casefold() for item in config.providers)
 
@@ -786,7 +791,7 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 4
+    assert len(config.providers) == 5
     assert config.providers[0].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[0])
     assert config.providers[1].api_key == ""
@@ -796,6 +801,7 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
         "configured-fallback",
         "kilo-free-text-fallback",
         "kilo-nemotron-free-fallback",
+        "kilo-nemotron-vl-free-fallback",
     ]
     assert config.providers[2].model == "baidu/ernie-5.5-flash-preview:free"
     assert config.providers[2].api_key == ""
@@ -805,6 +811,9 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
     assert "Authorization" not in AIGateway._headers(config.providers[3])
     assert config.providers[3].url == config.providers[0].url
     assert config.providers[3].health_url == config.providers[0].health_url
+    assert config.providers[4].model == "nvidia/nemotron-3.5-super-vl:free"
+    assert config.providers[4].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[4])
 
 
 def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
@@ -817,7 +826,7 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 3
+    assert len(config.providers) == 4
     assert config.providers[0].model == "kilo-auto/free"
     assert config.providers[0].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[0])
@@ -831,6 +840,9 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
     assert "Authorization" not in AIGateway._headers(config.providers[2])
     assert config.providers[2].url == config.providers[0].url
     assert config.providers[2].health_url == config.providers[0].health_url
+    assert config.providers[3].model == "nvidia/nemotron-3.5-super-vl:free"
+    assert config.providers[3].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[3])
 
 
 def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
