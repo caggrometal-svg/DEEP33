@@ -217,8 +217,8 @@ class GatewayConfig:
         )
         if kilo_provider is not None and not has_nvidia_fallback:
             # This free Kilo model has produced non-empty completions in the
-            # live DEEP33 deployment. Keep it as a final text fallback when
-            # the primary and ERNIE return empty or time out.
+            # live DEEP33 deployment. Keep it as a fallback when primary and
+            # ERNIE return empty or time out.
             secure_providers += (
                 GatewayProvider(
                     name="kilo-nemotron-free-fallback",
@@ -226,6 +226,24 @@ class GatewayConfig:
                     health_url=kilo_provider.health_url,
                     api_key="",
                     model="nvidia/nemotron-3-ultra-550b-a55b:free",
+                ),
+            )
+
+        has_nemotron_vl_fallback = any(
+            "nvidia/nemotron-3.5-super-vl:free" in provider.model.casefold()
+            for provider in secure_providers
+        )
+        if kilo_provider is not None and not has_nemotron_vl_fallback:
+            # Kilo's current free catalog includes this text-capable
+            # multimodal model. Keep it last so it receives the full visible
+            # response window if the other free models do not emit text.
+            secure_providers += (
+                GatewayProvider(
+                    name="kilo-nemotron-vl-free-fallback",
+                    url=kilo_provider.url,
+                    health_url=kilo_provider.health_url,
+                    api_key="",
+                    model="nvidia/nemotron-3.5-super-vl:free",
                 ),
             )
         return cls(
