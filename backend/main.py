@@ -266,7 +266,7 @@ NON_STREAM_AI_TIMEOUT = max(
     10.0,
     min(
         30.0,
-        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "26")),
+        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "30")),
     ),
 )
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
