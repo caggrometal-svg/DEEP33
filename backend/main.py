@@ -263,10 +263,10 @@ NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/gener
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
 NON_STREAM_AI_TIMEOUT = max(
-    8.0,
+    10.0,
     min(
-        18.0,
-        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "16")),
+        30.0,
+        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "30")),
     ),
 )
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
@@ -5646,7 +5646,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     parsed = _web_evidence_from_payload(payload)
     if parsed is None:
         return None
-    message_index, evidence, prefix = parsed
+    _message_index, evidence, _prefix = parsed
     verification = evidence.get("verification")
     verification = verification if isinstance(verification, dict) else {}
     news_quorum = evidence.get("news_quorum")
@@ -5713,119 +5713,97 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         "snippet_fallback": bool(evidence.get("snippet_fallback")),
         "model_context_compacted": True,
     }
-    compact_payload = dict(payload)
-    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
-    compact_messages[message_index] = {
-        **compact_messages[message_index],
-        "content": prefix + json.dumps(
-            compact_evidence,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-    }
-    compact_payload["messages"] = compact_messages
-    compact_payload["max_tokens"] = min(
-        384,
-        max(256, int(payload.get("max_tokens") or 384)),
+    # Rebuild the recovery prompt instead of carrying every long system
+    # instruction and the full conversation into a second inference attempt.
+    # Large reasoning prompts were causing free models to spend their output
+    # budget internally and return no visible assistant text.
+    conversation = [
+        dict(item)
+        for item in payload.get("messages", [])
+        if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+    ][-6:]
+    if not any(item.get("role") == "user" for item in conversation):
+        return None
+
+    compact_conversation = []
+    for item in conversation:
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        limit = 1800 if item.get("role") == "user" else 900
+        compact_conversation.append({
+            "role": item["role"],
+            "content": content[-limit:],
+        })
+    if not compact_conversation or compact_conversation[-1].get("role") != "user":
+        last_user = next(
+            (item for item in reversed(compact_conversation) if item.get("role") == "user"),
+            None,
+        )
+        if last_user is None:
+            return None
+        compact_conversation = [
+            item for item in compact_conversation
+            if item is not last_user
+        ] + [last_user]
+
+    synthesis_instruction = (
+        "Eres DEEP33. Responde directamente a la última pregunta del usuario. "
+        "Analiza y contrasta la evidencia entregada; redacta una síntesis original, "
+        "clara y conversacional en el idioma del usuario. Mantén la respuesta acotada: "
+        "normalmente 2 a 5 frases; destaca solo los puntos importantes y evita informes, "
+        "secciones y detalles secundarios salvo que el usuario los solicite. Distingue "
+        "hechos verificados de hipótesis o datos no confirmados. No copies frases de las "
+        "páginas, no enumeres extractos ni conviertas las fuentes en la respuesta. Cuando "
+        "el usuario pida un resumen de noticias, resume cada historia distinta con evidencia "
+        "suficiente en viñetas breves de una frase; prioriza las tres más relevantes como "
+        "máximo. Si hay tres o más historias válidas, incluye hasta tres; si solo hay una "
+        "o dos, resume cada una y di explícitamente cuántas pudieron verificarse. Nunca "
+        "respondas solo con el número de noticias ni con una lista de fuentes. Excluye "
+        "publirreportajes y contenido promocional tanto del recuento como del resumen. Si "
+        "el usuario solicita un marcador de validación, inclúyelo exactamente al final de "
+        "la respuesta. Cierra las ideas y no termines a mitad de una frase. No inventes "
+        "datos. Las referencias se adjuntarán "
+        "por separado."
     )
+    compact_payload = {
+        key: value
+        for key, value in payload.items()
+        if key in {
+            "model",
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "user",
+        }
+    }
+    compact_payload["messages"] = [
+        {"role": "system", "content": synthesis_instruction},
+        {
+            "role": "system",
+            "content": "Server-side web evidence for this request follows. "
+            + json.dumps(
+                compact_evidence,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+        *compact_conversation,
+    ]
+    compact_payload["max_tokens"] = 768
+    compact_payload["stream"] = False
     return compact_payload
 
 
 def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
-    parsed = _web_evidence_from_payload(payload)
-    if parsed is None:
-        return None
-    _message_index, evidence, _prefix = parsed
-    verification = evidence.get("verification")
-    verification = verification if isinstance(verification, dict) else {}
-    news_quorum = evidence.get("news_quorum")
-    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    """Never present source excerpts as a substitute for an AI-generated answer.
 
-    try:
-        provider_count = int(
-            verification.get("distinct_providers")
-            or news_quorum.get("providers")
-            or 0
-        )
-    except (TypeError, ValueError):
-        provider_count = 0
-    strict_news = news_quorum.get("required") is True
-    contrast_required = evidence.get("contrast_required") is True
-    if strict_news and (
-        provider_count < 2
-        or not (
-            verification.get("provider_quorum_met") is True
-            or news_quorum.get("provider_quorum_met") is True
-        )
-        or news_quorum.get("met") is not True
-        or int(news_quorum.get("articles") or 0) < 3
-        or int(news_quorum.get("domains") or 0) < 3
-    ):
-        return None
-
-    pages = evidence.get("fetched_pages")
-    if not isinstance(pages, list):
-        return None
-    minimum_sources = 3 if strict_news else 2 if contrast_required else 1
-    selected: list[tuple[str, str, str]] = []
-    seen_domains: set[str] = set()
-    junk_sentence = re.compile(
-        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
-        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
-        r"ignore all previous instructions|system prompt)\b",
-        re.IGNORECASE,
-    )
-    for page in pages:
-        if not isinstance(page, dict):
-            continue
-        url = str(page.get("url") or "").strip()
-        parsed_url = urlparse(url)
-        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
-            continue
-        domain = str(page.get("domain") or parsed_url.hostname).casefold()
-        domain = domain.removeprefix("www.").rstrip(".")
-        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
-        if not domain or domain in seen_domains or len(page_text) < 80:
-            continue
-        sentences = [
-            sentence.strip(" \t\r\n-•")
-            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
-            if sentence.strip()
-        ]
-        sentence = next(
-            (
-                item for item in sentences
-                if 8 <= len(item.split()) <= 45
-                and not junk_sentence.search(item)
-            ),
-            "",
-        )
-        if not sentence:
-            sentence = page_text
-        words = sentence.split()
-        excerpt = " ".join(words[:20]).strip()
-        if len(words) > 20:
-            excerpt += "…"
-        if len(excerpt) < 40:
-            continue
-        title = str(page.get("title") or domain).strip()[:160]
-        selected.append((domain, title, excerpt))
-        seen_domains.add(domain)
-        if len(selected) >= 3:
-            break
-
-    required_domains = 3 if strict_news else 2 if contrast_required else 1
-    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
-        return None
-
-    lines = [
-        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
-    ]
-    lines.extend(
-        f"• {title}: «{excerpt}»"
-        for _domain, title, excerpt in selected
-    )
-    return "\n".join(lines)
+    Kept as a compatibility guard for older callers and tests. Web evidence is
+    context for synthesis, not user-facing answer text.
+    """
+    return None
 
 
 async def stream_gateway(
@@ -5857,7 +5835,7 @@ async def stream_gateway(
             payload,
             request_id=request_id,
             idempotency_key=idempotency_key,
-            deadline=deadline,
+            deadline=synthesis_retry_deadline,
         ):
             collected.extend(chunk)
             frame_buffer.extend(chunk)
@@ -5966,6 +5944,9 @@ async def stream_gateway(
             candidates.append((compact_payload, "compact"))
         candidates.append((payload, "standard"))
 
+        # Streaming may consume its full deadline. Give synthesis recovery
+        # an independent, bounded budget so an empty stream can still return text.
+        synthesis_retry_deadline = time.monotonic() + NON_STREAM_AI_TIMEOUT
         for candidate_payload, fallback_kind in candidates:
             try:
                 fallback_data = await nonstream_complete(
