@@ -11,7 +11,7 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
 const RAW_UPSTREAM = (Deno.env.get("DEEP33_UPSTREAM_URL") || "").replace(/\/+$/, "");
 // The dedicated DEEP33 Edge is canonical. Ignore legacy hosting targets even if
 // an old environment variable still exists in the project.
-const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.vercel.app" &&
+const UPSTREAM = RAW_UPSTREAM === "https://deep33-backend.onrender.com" &&
     isSecureHttpsUrl(RAW_UPSTREAM)
   ? RAW_UPSTREAM
   : "";
@@ -326,10 +326,10 @@ const EDGE_AI_PROVIDER = (Deno.env.get("AI_GATEWAY_PROVIDER") || "vireonix").tri
 const EDGE_AI_URL = (Deno.env.get("AI_GATEWAY_URL") || "https://vireonix.ai/v1/chat/completions").trim();
 const EDGE_AI_KEY = (Deno.env.get("AI_GATEWAY_API_KEY") || "").trim();
 const EDGE_AI_MODEL = (Deno.env.get("AI_GATEWAY_MODEL") || "auto").trim();
-// The only internal DEEP33 backend target is the canonical Vercel deployment.
+// The only internal DEEP33 backend target is the canonical Render deployment.
 // No Render, Railway, Replit, or legacy IAC33 host is part of the runtime.
 const EDGE_AI_UPSTREAM_URLS = [
-  "https://deep33-backend.vercel.app",
+  "https://deep33-backend.onrender.com",
 ] as const;
 const EDGE_AI_UPSTREAM_URL = EDGE_AI_UPSTREAM_URLS[0];
 const EDGE_AI_REQUIRES_AUTH =
@@ -588,7 +588,7 @@ function isInternalBackendProvider(provider: EdgeAIProvider): boolean {
 }
 
 function addInternalInferenceBackends(providers: EdgeAIProvider[]): void {
-  const names = ["vercel-backend-primary"] as const;
+  const names = ["render-backend-primary"] as const;
   EDGE_AI_UPSTREAM_URLS.forEach((base, index) => {
     const url = base + "/v1/ai/generate";
     const streamUrl = base + "/v1/chat/stream";
@@ -612,7 +612,7 @@ function isFreeInferenceProvider(provider: EdgeAIProvider): boolean {
 }
 
 // Free alternatives are opt-in and read credentials only from server-side function secrets.
-// They are inserted before the cold Vercel backend fallback so a rate-limited/slow upstream can fail fast.
+// They are inserted before the cold Render backend fallback so a rate-limited/slow upstream can fail fast.
 function addFreeInferenceProviders(providers: EdgeAIProvider[]): void {
   if (
     (Deno.env.get("DEEP33_ENABLE_FREE_INFERENCE_FALLBACKS") || "")
@@ -892,18 +892,18 @@ async function providerRequestHeaders(
     : provider.api_key
       ? "Bearer " + provider.api_key
       : userAuthorization.startsWith("Bearer ") ? userAuthorization : "";
-  // Vercel backend must claim its own child operation while Edge retains the public request
+  // Render backend must claim its own child operation while Edge retains the public request
   // lease. This avoids two concurrent claims on the same shared row but keeps the
-  // public X-Idempotency-Key unchanged across Edge and direct Vercel backend retries.
+  // public X-Idempotency-Key unchanged across Edge and direct Render backend retries.
   const delegatedIdempotencyKey = internalBackendFallback && idempotencyKey
-    ? "edge-vercel:" + await sha256("deep33|vercel-fallback|" + idempotencyKey)
+    ? "edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)
     : idempotencyKey;
   return {
     "Content-Type": "application/json",
     "Accept": accept,
     ...(provider.requires_auth && authorization ? { "Authorization": authorization } : {}),
     // The edge gateway already ran web search and appended evidence before entering
-    // the provider loop. Prevent the Vercel backend fallback from launching a second nested
+    // the provider loop. Prevent the Render backend fallback from launching a second nested
     // web-tool loop, which can turn a valid researched response into a 502/503.
     ...(internalBackendFallback ? { "X-DEEP33-Skip-Web-Tools": "true" } : {}),
     ...(internalBackendFallback ? { "X-DEEP33-Personality": normalizePersonality(personality) } : {}),
@@ -1069,8 +1069,8 @@ async function buildEdgeIdempotencyContext(
   if (!key || !session) return null;
 
   // Match backend/main.py generation_request_hash(): the shared key must have one
-  // request fingerprint across Edge, direct Vercel backend, /v1/ai/generate and /v1/chat/stream.
-  // System prompts injected by Edge are excluded exactly as Vercel backend excludes system
+  // request fingerprint across Edge, direct Render backend, /v1/ai/generate and /v1/chat/stream.
+  // System prompts injected by Edge are excluded exactly as Render backend excludes system
   // messages; provider, operation and transport mode must not change request identity.
   const messages = (Array.isArray(payload.messages) ? payload.messages : [])
     .filter((item): item is Record<string, unknown> =>
@@ -1376,7 +1376,7 @@ async function callEdgeAI(
             lastError = provider.name + "_EMPTY_RESPONSE";
           } else {
             if (
-              provider.name === "vercel-backend-primary" &&
+              provider.name === "render-backend-primary" &&
               response.status >= 500 &&
               provider.stream_url
             ) {
@@ -2806,7 +2806,7 @@ async function auditSearch(sessionId: string, userAuthorization = ""): Promise<R
       results: combined,
       sources: combined,
       providers,
-      fallback_path: "combined-edge-and-vercel-backend",
+      fallback_path: "combined-edge-and-render-backend",
     };
     const evidence = metrics(merged);
     merged.verification = {
@@ -3923,7 +3923,7 @@ async function edgeSearch(
   query: string,
   sessionId = "deep33-edge-search",
   userAuthorization = "",
-  vercelBackendOnly = false,
+  renderBackendOnly = false,
   requireExtractedEvidence = false,
 ): Promise<Record<string, unknown>> {
   const q = normalizeEdgeSearchQuery(query.trim()) || query.trim();
@@ -4132,11 +4132,11 @@ async function edgeSearch(
   };
 
   // Search public Edge providers first. Recovery mode skips them and queries
-  // the canonical DEEP33 Vercel backend exactly once.
-  const direct: Record<string, unknown> = vercelBackendOnly
+  // the canonical DEEP33 Render backend exactly once.
+  const direct: Record<string, unknown> = renderBackendOnly
     ? {
         ok: false,
-        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_VERCEL_BACKEND_RECOVERY",
+        error: "EDGE_DIRECT_SEARCH_SKIPPED_FOR_RENDER_BACKEND_RECOVERY",
         results: [],
         providers: [],
       }
@@ -4148,7 +4148,7 @@ async function edgeSearch(
       })) as Record<string, unknown>;
 
   if (
-    !vercelBackendOnly &&
+    !renderBackendOnly &&
     direct.ok === true &&
     Array.isArray(direct.results) &&
     direct.results.length > 0
@@ -4169,13 +4169,13 @@ async function edgeSearch(
     const unavailable = requireExtractedEvidence
       ? { ...direct, ok: false, results: [], sources: [], error: "SOURCE_VERIFICATION_AUTH_REQUIRED" }
       : direct;
-    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "edge-direct", unavailable);
+    logSearchStage("unavailable", renderBackendOnly ? "render-backend-recovery" : "edge-direct", unavailable);
     return unavailable;
   }
 
   try {
-    const vercelBackendSearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
-    const res = await fetch(vercelBackendSearchUrl, {
+    const renderBackendSearchUrl = EDGE_AI_UPSTREAM_URL + "/v1/web/search?q=" + encodeURIComponent(q);
+    const res = await fetch(renderBackendSearchUrl, {
       method: "GET",
       headers: {
         "Authorization": userAuthorization,
@@ -4198,10 +4198,10 @@ async function edgeSearch(
         if (requireExtractedEvidence) {
           const verified = await verifyCandidatePayload(
             { ...data, results: filtered },
-            "vercel-backend-page-recovery",
+            "render-backend-page-recovery",
           );
           if (verified) {
-            logSearchStage("success", "vercel-backend-page-recovery", verified);
+            logSearchStage("success", "render-backend-page-recovery", verified);
             return verified;
           }
         } else if (data.ok === true) {
@@ -4215,9 +4215,9 @@ async function edgeSearch(
             results: publicResults,
             sources: publicResults,
             verification: edgeSearchVerification(filtered, providers),
-            fallback_path: "vercel-backend",
+            fallback_path: "render-backend",
           };
-          logSearchStage("success", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", response);
+          logSearchStage("success", renderBackendOnly ? "render-backend-recovery" : "render-backend-fallback", response);
           return response;
         } else if (!requireExtractedEvidence) {
           // Keep candidate URLs available to chat so its navigation phase can read
@@ -4232,29 +4232,29 @@ async function edgeSearch(
             results: publicResults,
             sources: publicResults,
             verification: edgeSearchVerification(filtered, providers),
-            fallback_path: "vercel-backend-candidates",
+            fallback_path: "render-backend-candidates",
           };
-          logSearchStage("degraded", vercelBackendOnly ? "vercel-backend-recovery" : "backend-candidate-recovery", candidatePayload);
+          logSearchStage("degraded", renderBackendOnly ? "render-backend-recovery" : "backend-candidate-recovery", candidatePayload);
           return candidatePayload;
         }
       }
     }
     const unavailable = requireExtractedEvidence
-      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
-      : { ...direct, fallback_path: "vercel-backend" };
-    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", unavailable);
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "render-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "render-backend" };
+    logSearchStage("unavailable", renderBackendOnly ? "render-backend-recovery" : "render-backend-fallback", unavailable);
     return unavailable;
   } catch (error) {
     console.warn(JSON.stringify({
       event: "edge_web_search_fallback_error",
-      path: vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback",
+      path: renderBackendOnly ? "render-backend-recovery" : "render-backend-fallback",
       error: error instanceof Error ? error.name : "UNKNOWN",
       request_scope: sessionId.slice(0, 128),
     }));
     const unavailable = requireExtractedEvidence
-      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "vercel-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
-      : { ...direct, fallback_path: "vercel-backend" };
-    logSearchStage("unavailable", vercelBackendOnly ? "vercel-backend-recovery" : "vercel-backend-fallback", unavailable);
+      ? { ...direct, ok: false, results: [], sources: [], fallback_path: "render-backend", error: "WEB_SEARCH_NO_VERIFIED_PAGES" }
+      : { ...direct, fallback_path: "render-backend" };
+    logSearchStage("unavailable", renderBackendOnly ? "render-backend-recovery" : "render-backend-fallback", unavailable);
     return unavailable;
   }
 }
@@ -4478,11 +4478,11 @@ Deno.serve(async (req) => {
         const requiredReadableSources = requestedReadableSourceCount(query);
 
         // If Edge search returned candidates but source pages were unreadable,
-        // try the canonical Vercel backend recovery once. Exclude every attempted URL
+        // try the canonical Render backend recovery once. Exclude every attempted URL
         // and domain, so this is genuine failover rather than a repeated fetch.
         if (
           readableSources.length < requiredReadableSources &&
-          search.fallback_path !== "vercel-backend" &&
+          search.fallback_path !== "render-backend" &&
           userAuthorization.startsWith("Bearer ")
         ) {
           const recoverySearch = await edgeSearch(
@@ -4512,7 +4512,7 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "vercel-backend-candidates") && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "render-backend-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
@@ -4551,7 +4551,7 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "vercel-backend-recovery",
+              fallback_path: "render-backend-recovery",
             };
           }
         }
@@ -4736,7 +4736,7 @@ Deno.serve(async (req) => {
                     : "UnknownError",
                 }));
 
-                // The Vercel backend SSE route can terminate without a valid final frame
+                // The Render backend SSE route can terminate without a valid final frame
                 // when a model returns internal control output. Recover once through
                 // the non-streaming completion endpoint; keep the public SSE contract
                 // by emitting the complete, validated answer as bounded text chunks.
@@ -5042,11 +5042,11 @@ Deno.serve(async (req) => {
         const requiredReadableSources = requestedReadableSourceCount(searchQuery);
 
         // Keep JSON generation on the same resilient web path as streaming:
-        // if Edge candidates cannot be read, ask the canonical Vercel backend recovery
+        // if Edge candidates cannot be read, ask the canonical Render backend recovery
         // once and never refetch a URL/domain already attempted.
         if (
           readableSources.length < requiredReadableSources &&
-          search.fallback_path !== "vercel-backend" &&
+          search.fallback_path !== "render-backend" &&
           userAuthorization.startsWith("Bearer ")
         ) {
           const recoverySearch = await edgeSearch(
@@ -5076,7 +5076,7 @@ Deno.serve(async (req) => {
                 }
               })
             : [];
-          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "vercel-backend-candidates") && fallbackResults.length > 0) {
+          if ((recoverySearch.ok === true || recoverySearch.fallback_path === "render-backend-candidates") && fallbackResults.length > 0) {
             const recoveryNavigation = await buildNavigatedWebEvidence(
               { ...recoverySearch, results: fallbackResults },
               sessionId,
@@ -5115,7 +5115,7 @@ Deno.serve(async (req) => {
                 ...(Array.isArray(search.providers) ? search.providers : []),
                 ...(Array.isArray(recoverySearch.providers) ? recoverySearch.providers : []),
               ])],
-              fallback_path: "vercel-backend-recovery",
+              fallback_path: "render-backend-recovery",
             };
           }
         }
