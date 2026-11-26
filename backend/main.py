@@ -263,10 +263,10 @@ NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/gener
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
 NON_STREAM_AI_TIMEOUT = max(
-    8.0,
+    10.0,
     min(
-        18.0,
-        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "16")),
+        30.0,
+        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "26")),
     ),
 )
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
