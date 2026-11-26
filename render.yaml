@@ -13,6 +13,14 @@ services:
         value: "sb_publishable_7SoFLxFrXYC7IvEuWYLi2w_PglkkzKA"
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
+      - key: AI_TIMEOUT_SECONDS
+        value: "45"
+      - key: AI_PROVIDER_TIMEOUT_SECONDS
+        value: "12"
+      - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
+        value: "20"
       - key: WEB_SEARCH_BING_ENABLED
         value: "true"
       - key: WEB_SEARCH_FALLBACK_DDG
@@ -20,7 +28,7 @@ services:
       - key: WEB_SEARCH_TIMEOUT_SECONDS
         value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "8"
+        value: "12"
       - key: WEB_SEARCH_PROVIDER
         value: "auto"
       - key: WEB_SEARCH_PARALLEL_PROVIDERS
@@ -46,6 +54,14 @@ services:
     envVars:
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
+      - key: AI_TIMEOUT_SECONDS
+        value: "45"
+      - key: AI_PROVIDER_TIMEOUT_SECONDS
+        value: "12"
+      - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
+        value: "20"
       - key: WEB_SEARCH_PROVIDER
         value: "auto"
       - key: WEB_SEARCH_BING_ENABLED
@@ -57,7 +73,7 @@ services:
       - key: WEB_SEARCH_TIMEOUT_SECONDS
         value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "8"
+        value: "12"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
@@ -79,6 +95,14 @@ services:
     envVars:
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
+      - key: AI_TIMEOUT_SECONDS
+        value: "45"
+      - key: AI_PROVIDER_TIMEOUT_SECONDS
+        value: "12"
+      - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
+        value: "20"
       - key: WEB_SEARCH_PROVIDER
         value: "auto"
       - key: WEB_SEARCH_BING_ENABLED
@@ -90,7 +114,7 @@ services:
       - key: WEB_SEARCH_TIMEOUT_SECONDS
         value: "8"
       - key: WEB_SEARCH_TOTAL_TIMEOUT_SECONDS
-        value: "8"
+        value: "12"
       - key: WEB_SEARCH_MOJEEK_ENABLED
         value: "true"
       - key: WEB_SEARCH_MAX_RESULTS
