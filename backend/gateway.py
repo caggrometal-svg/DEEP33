@@ -431,8 +431,6 @@ class AIGateway:
         deadline: float | None,
         provider_index: int,
         provider_count: int,
-        *,
-        prefer_ttft: bool = False,
     ) -> float:
         """Reserve enough time for a distinct inference fallback provider."""
         provider_timeout = min(25.0, self.config.provider_timeout_seconds)
@@ -695,7 +693,6 @@ class AIGateway:
                         deadline,
                         provider_index,
                         len(ordered_providers),
-                        prefer_ttft=prefer_ttft,
                     )
                     timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
