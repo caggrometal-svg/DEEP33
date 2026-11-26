@@ -845,3 +845,123 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
 
     assert config.providers[0].api_key == "paid-test-token"
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
+
+
+def test_complete_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        model = body.get("model")
+        calls.append(str(model))
+        if model in {"primary-model", "ernie-model"}:
+            return httpx.Response(
+                200,
+                request=request,
+                json={"choices": [{"message": {"role": "assistant", "content": ""}}]},
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "model": model,
+                "choices": [
+                    {"message": {"role": "assistant", "content": "NEMOTRON_SYNTHESIS_OK"}}
+                ],
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
+            provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    try:
+        result = asyncio.run(
+            gateway.complete({"messages": [{"role": "user", "content": "synthesize evidence"}]})
+        )
+    finally:
+        httpx.AsyncClient = original
+
+    assert result["choices"][0]["message"]["content"] == "NEMOTRON_SYNTHESIS_OK"
+    assert result["_deep33_gateway"]["provider"] == "nemotron"
+    assert calls == [
+        "primary-model",
+        "ernie-model",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    ]
+
+
+def test_stream_reaches_nemotron_after_primary_and_ernie_return_empty() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        model = body.get("model")
+        calls.append(str(model))
+        if model in {"primary-model", "ernie-model"}:
+            content = b"data: [DONE]\\n\\n"
+        else:
+            content = (
+                b'data: {"choices":[{"delta":{"content":"NEMOTRON_STREAM_SYNTHESIS_OK"}}]}\\n\\n'
+                b"data: [DONE]\\n\\n"
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=content,
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
+            provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+        first_visible_timeout_seconds=1.0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def collect() -> bytes:
+        output = bytearray()
+        async for chunk in gateway.stream({"messages": [{"role": "user", "content": "synthesize evidence"}]}):
+            output.extend(chunk)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(collect())
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == [
+        "primary-model",
+        "ernie-model",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    ]
+    assert output.count(b"NEMOTRON_STREAM_SYNTHESIS_OK") == 1
+    assert output.count(b"data: [DONE]") == 1
