@@ -90,15 +90,10 @@ def _is_publishable_realtime_news_source(
     if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
 
-    # A SERP timestamp describes the index candidate, not necessarily the page
-    # opened by DEEP33. Only publisher metadata extracted from that page qualifies.
+    # Prefer publication metadata extracted from the article itself. When a
+    # publisher's own RSS feed supplied the candidate, its timestamp is also
+    # trustworthy if the fetched article resolves to that same publisher domain.
     published_at = fetched_page.get("published_at")
-    if not published_at or not _is_recently_published(
-        {"published_at": published_at},
-        query,
-    ):
-        return False
-
     page_url = str(
         fetched_page.get("final_url")
         or fetched_page.get("url")
@@ -108,6 +103,23 @@ def _is_publishable_realtime_news_source(
     if parsed.scheme.casefold() != "https" or not parsed.hostname:
         return False
     page_host = parsed.hostname.casefold().rstrip(".").removeprefix("www.")
+    if not published_at:
+        source_providers = _candidate_provider_names(
+            source,
+            str(source.get("provider") or "unknown"),
+        )
+        source_domain = str(source.get("source_domain") or "").casefold().removeprefix("www.")
+        same_publisher = (
+            source_domain
+            and (page_host == source_domain or page_host.endswith("." + source_domain))
+        )
+        if "publisher_rss" in source_providers and same_publisher:
+            published_at = source.get("published_at")
+    if not published_at or not _is_recently_published(
+        {"published_at": published_at},
+        query,
+    ):
+        return False
     # A signed Google News wrapper is not an independently readable publisher article.
     if page_host in {"news.google.com", "news.googleusercontent.com"}:
         return False
