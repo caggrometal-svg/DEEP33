@@ -1413,6 +1413,45 @@ class WebOrchestrator:
         ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
 
+        # Mwmbl is an independent index (unlike DuckDuckGo/Yahoo, which share
+        # Bing's index). Try its anonymous free endpoint immediately after the
+        # primary wave when the provider quorum is still missing. Running it
+        # here preserves the reserved time budget; the old tail fallback often
+        # never ran because the preceding recovery waves consumed the deadline.
+        # Keep it out of strict-news searches, where its small index cannot
+        # establish publication freshness.
+        mwmbl_available = (
+            not strict_news_request
+            and len(relevant_provider_names(outcomes)) < required_provider_count
+            and "mwmbl" in self.fallback_providers
+            and "mwmbl" in self.circuits
+            and not any(outcome.provider == "mwmbl" for outcome in outcomes)
+        )
+        if mwmbl_available:
+            remaining = deadline - loop.time()
+            if remaining >= 0.25:
+                try:
+                    mwmbl_outcome = await asyncio.wait_for(
+                        self._bounded_call_provider("mwmbl", provider_query or cleaned),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    mwmbl_outcome = ProviderOutcome(
+                        provider="mwmbl", ok=False, error_code="PROVIDER_TIMEOUT"
+                    )
+                outcomes.append(mwmbl_outcome)
+                if mwmbl_outcome.ok and mwmbl_outcome.results:
+                    merged = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked = rank_results(
+                        provider_query, merged, realtime=is_realtime_query(cleaned)
+                    )
+                    selected = deduplicate(ranked, self.max_results)
+
         # Official/public-information discovery is a special case where one broad
         # SERP often collapses every result onto gob.cl. If primary coverage is
         # sparse, fan out a few distinct *search queries* to independent official
