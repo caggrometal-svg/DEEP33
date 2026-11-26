@@ -1145,8 +1145,6 @@ jobs:
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "1"
           DEEP33_REQUIRE_REDUNDANCY: "false"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1176,8 +1174,6 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "2"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1207,8 +1203,6 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "3"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
