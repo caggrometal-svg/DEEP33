@@ -76,8 +76,8 @@ def _bounded_env_float(name: str, default: float, minimum: float, maximum: float
     return max(minimum, min(maximum, value))
 
 
-PROVIDER_TOTAL_SECONDS = 2.5
-GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 5.0, 1.0, 5.0)
+PROVIDER_TOTAL_SECONDS = 3.5
+GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 8.0, 1.0, 8.0)
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
@@ -351,8 +351,8 @@ class WebOrchestrator:
     ) -> None:
         self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
-        self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
-        self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
+        self.provider_total_seconds = max(0.05, min(3.5, float(provider_total_seconds)))
+        self.global_budget_seconds = max(0.05, min(8.0, float(global_budget_seconds)))
         self.fallback_delay_seconds = max(0.0, min(2.0, float(fallback_delay_seconds)))
         self.cache_ttl_seconds = max(30.0, min(120.0, float(cache_ttl_seconds)))
         self.cache = TTLRUCache()
