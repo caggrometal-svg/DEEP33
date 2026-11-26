@@ -4526,7 +4526,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -4538,7 +4538,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             break
         except GatewayInvalidResponseError as exc:
             last_error_type = type(exc).__name__
-            last_gateway_attempts = [dict(item) for item in exc.attempts]
+            last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -4550,7 +4550,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayHTTPError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -4595,7 +4595,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -4605,7 +4605,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
