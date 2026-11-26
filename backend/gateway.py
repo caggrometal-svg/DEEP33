@@ -922,7 +922,7 @@ class AIGateway:
         deadline: float | None = None,
     ) -> dict:
         """Probe the production streaming path when non-stream diagnostics fail."""
-        local_deadline = time.monotonic() + 8.0
+        local_deadline = time.monotonic() + 20.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         payload = {
             "messages": [
