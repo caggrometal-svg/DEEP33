@@ -122,7 +122,7 @@ class GatewayConfig:
         ).strip()
         primary_model = os.getenv(
             "AI_GATEWAY_MODEL",
-            "dots-studio/dots-3-note-preview:free",
+            "kilo-auto/free",
         ).strip()
         primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
         primary_host = _provider_hostname(primary_url)
