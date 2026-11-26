@@ -659,6 +659,124 @@ async def _cl0q_search(query, timeout_seconds, max_results):
     return _cl0q_result_items(payload, max_results)
 
 
+async def _youcom_search(query, timeout_seconds, max_results):
+    """Search You.com's independent web index through its keyless 100/day MCP profile."""
+    client = await _search_http_client()
+    protocol = "2026-07-28"
+    rpc_id = 2
+    body = {
+        "jsonrpc": "2.0",
+        "id": rpc_id,
+        "method": "tools/call",
+        "params": {
+            "name": "you-search",
+            "arguments": {
+                "query": str(query or "")[:400],
+                "count": max(1, min(8, int(max_results))),
+                "extraction": "none",
+            },
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": protocol,
+                "io.modelcontextprotocol/clientInfo": {
+                    "name": "DEEP33",
+                    "version": "1.0",
+                },
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }
+    response = await client.post(
+        "https://api.you.com/mcp/free",
+        json=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": protocol,
+            "Mcp-Method": "tools/call",
+            "Mcp-Name": "you-search",
+            "User-Agent": "DEEP33-WebSearch/1.0",
+        },
+        timeout=_http_timeout(min(float(timeout_seconds), 2.5)),
+    )
+    if response.status_code >= 400:
+        raise WebSearchError(f"WEB_SEARCH_YOUCOM_HTTP_{response.status_code}")
+
+    content_type = str(response.headers.get("content-type") or "").casefold()
+    if "application/json" in content_type:
+        messages = [response.json()]
+    else:
+        messages = []
+        raw = response.text.replace("\\r\\n", "\\n")
+        for event in raw.split("\\n\\n"):
+            data_lines = [
+                line[5:].lstrip()
+                for line in event.splitlines()
+                if line.startswith("data:")
+            ]
+            if data_lines:
+                try:
+                    messages.append(json.loads("\\n".join(data_lines)))
+                except ValueError as exc:
+                    raise WebSearchError("WEB_SEARCH_YOUCOM_INVALID_SSE") from exc
+
+    reply = next(
+        (message for message in messages if isinstance(message, dict) and message.get("id") == rpc_id),
+        None,
+    )
+    if reply is None:
+        raise WebSearchError("WEB_SEARCH_YOUCOM_MISSING_RPC_REPLY")
+    if "error" in reply:
+        raise WebSearchError("WEB_SEARCH_YOUCOM_RPC_ERROR")
+    result = reply.get("result") if isinstance(reply.get("result"), dict) else {}
+    if result.get("isError"):
+        raise WebSearchError("WEB_SEARCH_YOUCOM_TOOL_ERROR")
+
+    payload = result.get("structuredContent")
+    if not isinstance(payload, dict):
+        text_blocks = result.get("content") if isinstance(result.get("content"), list) else []
+        text_value = next(
+            (block.get("text") for block in text_blocks if isinstance(block, dict) and block.get("type") == "text"),
+            "",
+        )
+        try:
+            payload = json.loads(text_value) if text_value else {}
+        except ValueError as exc:
+            raise WebSearchError("WEB_SEARCH_YOUCOM_INVALID_RESULT_JSON") from exc
+
+    results_container = payload.get("results") if isinstance(payload, dict) else {}
+    raw_items = []
+    if isinstance(results_container, dict):
+        for key in ("web", "news"):
+            values = results_container.get(key)
+            if isinstance(values, list):
+                raw_items.extend(values)
+
+    normalized = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        snippets = item.get("snippets")
+        snippet_parts = []
+        if isinstance(snippets, list):
+            for snippet in snippets:
+                if isinstance(snippet, str):
+                    snippet_parts.append(snippet)
+                elif isinstance(snippet, dict):
+                    snippet_parts.append(
+                        str(snippet.get("text") or snippet.get("snippet") or snippet.get("content") or "")
+                    )
+        contents = item.get("contents")
+        if isinstance(contents, dict) and isinstance(contents.get("highlights"), list):
+            snippet_parts.extend(str(value) for value in contents["highlights"] if value)
+        normalized.append({
+            "title": item.get("title") or "",
+            "url": item.get("url") or "",
+            "snippet": item.get("description") or " ".join(snippet_parts),
+            "published_at": item.get("page_age") or item.get("published_date") or item.get("date") or "",
+        })
+    return _normalise_results(normalized, max_results)
+
+
 async def _mwmbl_search(query, timeout_seconds, max_results):
     """Search Mwmbl's independent index using its anonymous no-key free tier."""
     client = await _search_http_client()
