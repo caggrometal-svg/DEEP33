@@ -34,7 +34,7 @@ def test_complete_fails_over_once_after_primary_5xx_without_retrying_primary() -
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
         max_retries=2,
@@ -91,7 +91,7 @@ def test_complete_fails_over_once_after_ambiguous_timeout_without_retrying_prima
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
         max_retries=2,
@@ -173,7 +173,7 @@ def test_complete_fails_over_after_primary_rate_limit() -> None:
     config = GatewayConfig(
         providers=(
             provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
         max_retries=0,
@@ -1049,7 +1049,7 @@ def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
         GatewayConfig(
             providers=(
                 provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-                provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+                provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
             ),
             timeout_seconds=30,
             provider_timeout_seconds=24,
