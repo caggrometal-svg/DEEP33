@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import httpx
 import pytest
 
@@ -11,7 +12,7 @@ def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvide
     return GatewayProvider(name=name, url=url, health_url=health_url, api_key="", model=model)
 
 
-def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
+def test_complete_fails_over_once_after_primary_5xx_without_retrying_primary() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -36,7 +37,7 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
             provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
-        max_retries=0,
+        max_retries=2,
     )
     gateway = AIGateway(config)
 
@@ -49,19 +50,22 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
 
     httpx.AsyncClient = Client
     try:
-        import asyncio
-
-        with pytest.raises(GatewayHTTPError):
-            asyncio.run(
-                gateway.complete(
-                    {"model": "requested", "messages": [{"role": "user", "content": "hi"}]}
-                )
+        result = asyncio.run(
+            gateway.complete(
+                {"model": "requested", "messages": [{"role": "user", "content": "hi"}]},
+                request_id="5xx-failover-test",
+                idempotency_key="5xx-failover-test",
             )
+        )
     finally:
         httpx.AsyncClient = original
 
-    assert calls == ["https://primary.test/chat"]
-
+    assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
+    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
 
 
 @pytest.mark.parametrize("timeout_type", [httpx.ReadTimeout, httpx.WriteTimeout])
@@ -437,7 +441,7 @@ def test_default_model_is_explicitly_free(monkeypatch):
 
     config = GatewayConfig.from_env()
 
-    assert config.model == "dots-studio/dots-3-note-preview:free"
+    assert config.model == "baidu/ernie-5.5-flash-preview:free"
 
 
 def test_stream_fails_over_after_empty_200_without_forwarding_empty_chunks() -> None:
@@ -687,7 +691,19 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
         laguna,
     )
 
+    nemotron = provider(
+        "kilo-nemotron-free-fallback",
+        "https://api.kilo.ai/api/gateway/chat/completions",
+        "https://api.kilo.ai/api/gateway/models",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    )
+    nemotron_payload = AIGateway._provider_payload(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        nemotron,
+    )
+
     assert dots_payload["reasoning_effort"] == "low"
+    assert nemotron_payload["reasoning_effort"] == "low"
     assert "reasoning_effort" not in laguna_payload
 
 
@@ -747,15 +763,26 @@ def test_dots_primary_gets_free_kilo_fallback_when_no_valid_fallback_exists(monk
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 2
+    assert len(config.providers) == 4
     assert config.providers[0].name == "kilo-dots-fallback"
     assert config.providers[0].model == "dots-studio/dots-3-note-preview:free"
-    fallback = config.providers[1]
-    assert fallback.name == "kilo-free-text-fallback"
-    assert fallback.model == "baidu/ernie-5.5-flash-preview:free"
-    assert fallback.url == config.providers[0].url
-    assert fallback.health_url == config.providers[0].health_url
+    ernie = config.providers[1]
+    assert ernie.name == "kilo-free-text-fallback"
+    assert ernie.model == "baidu/ernie-5.5-flash-preview:free"
+    assert ernie.url == config.providers[0].url
+    assert ernie.health_url == config.providers[0].health_url
+    nvidia = config.providers[2]
+    assert nvidia.name == "kilo-nemotron-free-fallback"
+    assert nvidia.model == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert nvidia.api_key == ""
+    assert "Authorization" not in AIGateway._headers(nvidia)
+    vl = config.providers[3]
+    assert vl.name == "kilo-nemotron-vl-free-fallback"
+    assert vl.model == "nvidia/nemotron-3.5-super-vl:free"
+    assert vl.api_key == ""
+    assert "Authorization" not in AIGateway._headers(vl)
     assert all("gemma-4" not in item.model.casefold() for item in config.providers)
+    assert all("laguna" not in item.model.casefold() for item in config.providers)
 
 def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(monkeypatch) -> None:
     import json
@@ -777,7 +804,7 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 3
+    assert len(config.providers) == 5
     assert config.providers[0].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[0])
     assert config.providers[1].api_key == ""
@@ -786,12 +813,39 @@ def test_dots_gets_free_kilo_fallback_even_when_another_provider_is_configured(m
         "kilo-dots-fallback",
         "configured-fallback",
         "kilo-free-text-fallback",
+        "kilo-nemotron-free-fallback",
+        "kilo-nemotron-vl-free-fallback",
     ]
-    assert config.providers[-1].model == "baidu/ernie-5.5-flash-preview:free"
-    assert config.providers[-1].api_key == ""
-    assert "Authorization" not in AIGateway._headers(config.providers[-1])
-    assert config.providers[-1].url == config.providers[0].url
-    assert config.providers[-1].health_url == config.providers[0].health_url
+    assert config.providers[2].model == "baidu/ernie-5.5-flash-preview:free"
+    assert config.providers[2].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[2])
+    assert config.providers[3].model == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert config.providers[3].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[3])
+    assert config.providers[3].url == config.providers[0].url
+    assert config.providers[3].health_url == config.providers[0].health_url
+    assert config.providers[4].model == "nvidia/nemotron-3.5-super-vl:free"
+    assert config.providers[4].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[4])
+
+
+def test_default_kilo_model_uses_verified_free_text_model(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "invalid-primary-test-token")
+    monkeypatch.delenv("AI_GATEWAY_MODEL", raising=False)
+    monkeypatch.delenv("AI_GATEWAY_FALLBACKS_JSON", raising=False)
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[0].model == "baidu/ernie-5.5-flash-preview:free"
+    assert config.providers[0].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[0])
+    assert [item.model for item in config.providers[1:]] == [
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+    ]
 
 
 def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) -> None:
@@ -804,7 +858,7 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
 
     config = GatewayConfig.from_env()
 
-    assert len(config.providers) == 2
+    assert len(config.providers) == 4
     assert config.providers[0].model == "kilo-auto/free"
     assert config.providers[0].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[0])
@@ -812,8 +866,15 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
     assert config.providers[1].model == "baidu/ernie-5.5-flash-preview:free"
     assert config.providers[1].api_key == ""
     assert "Authorization" not in AIGateway._headers(config.providers[1])
-    assert config.providers[1].url == config.providers[0].url
-    assert config.providers[1].health_url == config.providers[0].health_url
+    assert config.providers[2].name == "kilo-nemotron-free-fallback"
+    assert config.providers[2].model == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert config.providers[2].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[2])
+    assert config.providers[2].url == config.providers[0].url
+    assert config.providers[2].health_url == config.providers[0].health_url
+    assert config.providers[3].model == "nvidia/nemotron-3.5-super-vl:free"
+    assert config.providers[3].api_key == ""
+    assert "Authorization" not in AIGateway._headers(config.providers[3])
 
 
 def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
@@ -828,3 +889,262 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
 
     assert config.providers[0].api_key == "paid-test-token"
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
+
+
+def test_complete_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        model = body.get("model")
+        calls.append(str(model))
+        if model in {"primary-model", "ernie-model", "nvidia/nemotron-3-ultra-550b-a55b:free"}:
+            return httpx.Response(
+                200,
+                request=request,
+                json={"choices": [{"message": {"role": "assistant", "content": ""}}]},
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "model": model,
+                "choices": [
+                    {"message": {"role": "assistant", "content": "NEMOTRON_VL_SYNTHESIS_OK"}}
+                ],
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
+            provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+            provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    try:
+        result = asyncio.run(
+            gateway.complete({"messages": [{"role": "user", "content": "synthesize evidence"}]})
+        )
+    finally:
+        httpx.AsyncClient = original
+
+    assert result["choices"][0]["message"]["content"] == "NEMOTRON_VL_SYNTHESIS_OK"
+    assert result["_deep33_gateway"]["provider"] == "nemotron-vl"
+    assert calls == [
+        "primary-model",
+        "ernie-model",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+    ]
+
+
+def test_stream_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        model = body.get("model")
+        calls.append(str(model))
+        if model in {"primary-model", "ernie-model", "nvidia/nemotron-3-ultra-550b-a55b:free"}:
+            content = b"data: [DONE]\n\n"
+        else:
+            content = (
+                b'data: {"choices":[{"delta":{"content":"NEMOTRON_VL_STREAM_SYNTHESIS_OK"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=content,
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("ernie", "https://ernie.test/chat", "https://ernie.test/models", "ernie-model"),
+            provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+            provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
+        ),
+        timeout_seconds=2,
+        max_retries=0,
+        first_visible_timeout_seconds=1.0,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def collect() -> bytes:
+        output = bytearray()
+        async for chunk in gateway.stream({"messages": [{"role": "user", "content": "synthesize evidence"}]}):
+            output.extend(chunk)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(collect())
+    finally:
+        httpx.AsyncClient = original
+
+    assert calls == [
+        "primary-model",
+        "ernie-model",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+    ]
+    assert output.count(b"NEMOTRON_VL_STREAM_SYNTHESIS_OK") == 1
+    assert output.count(b"data: [DONE]") == 1
+
+
+
+def test_gateway_config_allows_longer_evidence_synthesis_budget(monkeypatch) -> None:
+    monkeypatch.setenv("AI_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("AI_PROVIDER_TIMEOUT_SECONDS", "24")
+    config = GatewayConfig.from_env()
+
+    assert config.timeout_seconds == 30
+    assert config.provider_timeout_seconds == 24
+
+
+def test_diagnostic_inference_has_bounded_thirty_second_budget() -> None:
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(
+                provider(
+                    "primary",
+                    "https://primary.test/chat",
+                    "https://primary.test/models",
+                    "primary-model",
+                ),
+            ),
+            timeout_seconds=30,
+            provider_timeout_seconds=24,
+        )
+    )
+    captured: dict = {}
+
+    async def fake_complete(payload, *, request_id=None, idempotency_key=None, deadline=None, prefer_ttft=False):
+        captured["payload"] = payload
+        captured["deadline"] = deadline
+        captured["started"] = time.monotonic()
+        return {
+            "choices": [
+                {"message": {"role": "assistant", "content": "DEEP33_DIAGNOSTIC_OK"}}
+            ]
+        }
+
+    gateway.complete = fake_complete
+    before = time.monotonic()
+    result = asyncio.run(gateway.diagnostic_inference(request_id="budget-test"))
+    budget = captured["deadline"] - before
+
+    assert budget <= 30.1
+    assert budget >= 29.0
+    assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
+
+
+
+def test_complete_timeout_budget_prioritizes_fallback_provider() -> None:
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(
+                provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+                provider("kilo-free-text-fallback", "https://fallback.test/chat", "https://fallback.test/models", "baidu/ernie-5.5-flash-preview:free"),
+            ),
+            timeout_seconds=30,
+            provider_timeout_seconds=24,
+        )
+    )
+    primary_deadline = time.monotonic() + 26.0
+    primary_budget = gateway._complete_provider_timeout_budget(
+        primary_deadline, gateway.config.providers[0], 0, list(gateway.config.providers)
+    )
+    fallback_deadline = time.monotonic() + 16.7
+    fallback_budget = gateway._complete_provider_timeout_budget(
+        fallback_deadline, gateway.config.providers[1], 1, list(gateway.config.providers)
+    )
+
+    assert 9.0 <= primary_budget <= 9.5
+    assert 16.5 <= fallback_budget <= 17.0
+
+
+
+def test_complete_timeout_budget_prioritizes_text_fallback_in_four_provider_chain() -> None:
+    providers = (
+        provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        provider("kilo-free-text-fallback", "https://ernie.test/chat", "https://ernie.test/models", "baidu/ernie-5.5-flash-preview:free"),
+        provider("nemotron", "https://nemotron.test/chat", "https://nemotron.test/models", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+        provider("nemotron-vl", "https://nemotron-vl.test/chat", "https://nemotron-vl.test/models", "nvidia/nemotron-3.5-super-vl:free"),
+    )
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=providers,
+            timeout_seconds=30,
+            provider_timeout_seconds=30,
+        )
+    )
+
+    remaining = 30.0
+    budgets = []
+    for index in range(len(providers)):
+        deadline = time.monotonic() + remaining
+        budget = gateway._complete_provider_timeout_budget(
+            deadline,
+            providers[index],
+            index,
+            list(providers),
+        )
+        budgets.append(budget)
+        remaining -= budget
+
+    assert len(budgets) == 4
+    assert 7.0 <= budgets[0] <= 8.0
+    assert 13.0 <= budgets[1] <= 14.0
+    assert 4.0 <= budgets[2] <= 5.0
+    assert 4.0 <= budgets[3] <= 5.0
+
+
+
+def test_generic_fallback_does_not_receive_ernie_text_priority() -> None:
+    providers = (
+        provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+        provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        provider("secondary", "https://secondary.test/chat", "https://secondary.test/models", "secondary-model"),
+    )
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=providers,
+            timeout_seconds=30,
+            provider_timeout_seconds=30,
+        )
+    )
+    deadline = time.monotonic() + 30.0
+
+    primary_budget = gateway._complete_provider_timeout_budget(
+        deadline, providers[0], 0, list(providers)
+    )
+    fallback_deadline = time.monotonic() + max(0.0, 30.0 - primary_budget)
+    generic_fallback_budget = gateway._complete_provider_timeout_budget(
+        fallback_deadline, providers[1], 1, list(providers)
+    )
+
+    assert primary_budget > generic_fallback_budget

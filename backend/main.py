@@ -263,10 +263,10 @@ NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/gener
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
 GLOBAL_AI_TIMEOUT = max(10.0, float(os.getenv("AI_TIMEOUT_SECONDS", "75")))
 NON_STREAM_AI_TIMEOUT = max(
-    8.0,
+    10.0,
     min(
-        18.0,
-        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "16")),
+        30.0,
+        float(os.getenv("DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS", "30")),
     ),
 )
 RATE_LIMIT_COUNT = max(1, int(os.getenv("DEEP33_RATE_LIMIT_COUNT", "60")))
@@ -2189,10 +2189,85 @@ async def _fetch_web_source(
     }
 
 
+def _news_recovery_search_result(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Build a discovery result only when RSS recovery has independent index and publisher diversity."""
+    usable = [item for item in candidates if isinstance(item, dict)]
+    providers: set[str] = set()
+    domains: set[str] = set()
+    for item in usable:
+        raw_names = item.get("provider_sources")
+        if not isinstance(raw_names, list):
+            raw_names = item.get("providers")
+        if not isinstance(raw_names, list):
+            raw_names = [item.get("provider")]
+        providers.update(
+            str(name or "").strip().casefold()
+            for name in raw_names
+            if str(name or "").strip()
+            and str(name or "").strip().casefold() not in {
+                "publisher_rss", "publisher_feed", "unknown",
+            }
+        )
+        domain = str(item.get("source_domain") or "").casefold().removeprefix("www.")
+        if not domain:
+            domain = (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        if domain:
+            domains.add(domain)
+
+    if len(providers) < 2 or len(domains) < 3:
+        return None
+
+    return {
+        "ok": True,
+        "results": usable,
+        "sources": usable,
+        "providers": sorted(providers),
+        "winner_provider": "multi-source-news-recovery",
+        "verification": {
+            "level": "multi-source",
+            "distinct_domains": len(domains),
+            "distinct_providers": len(providers),
+            "required_domains": 3,
+            "required_providers": 2,
+            "domain_quorum_met": True,
+            "provider_quorum_met": True,
+            "navigation_only": False,
+            "navigation_candidates_present": False,
+            "evidence_status": "DISCOVERY_VERIFIED",
+            "corroborated_results": 0,
+        },
+    }
+
+
+def _normalize_web_search_query(query: str) -> str:
+    """Remove answer instructions from a user prompt before sending it to search providers."""
+    normalized = " ".join(str(query or "").split()).strip()
+    if not normalized or not is_strict_news_query(normalized):
+        return normalized
+
+    search_query = re.split(r"[.!?;\n]", normalized, maxsplit=1)[0].strip()
+    search_query = re.split(
+        r"\b(?:resume|resumen|summarize|summary|explica|include|termina|finish|report)\b",
+        search_query,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    search_query = re.sub(
+        r"^(?:busca(?:r)?|encuentra|investiga|dame|muestra|show|find|search|look up)\s+",
+        "",
+        search_query,
+        flags=re.IGNORECASE,
+    ).strip()
+    search_query = re.sub(r"^(?:las?|the)\s+", "", search_query, flags=re.IGNORECASE)
+    return search_query or normalized
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
     explicitly_forced = should_force_web(messages)
+    search_query = _normalize_web_search_query(query)
+    strict_news_request = is_strict_news_query(query)
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
@@ -2205,8 +2280,9 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
+        logger.info("web_evidence_query_normalized request_id=%s strict_news=%s search_query=%s", request_id or "unknown", is_strict_news_query(query), search_query[:240])
         search_result = await search_web(
-            query,
+            search_query,
             timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
@@ -2221,19 +2297,22 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             request_id, type(exc).__name__,
             (time.perf_counter() - search_started) * 1000, str(exc)[:300],
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if not strict_news_request:
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+        search_result = {"ok": False, "results": [], "sources": [], "providers": [], "errors": [type(exc).__name__]}
 
     if not isinstance(search_result, dict):
         logger.warning(
             "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
             request_id, (time.perf_counter() - search_started) * 1000,
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if not strict_news_request:
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
+        search_result = {"ok": False, "results": [], "sources": [], "providers": [], "errors": ["INVALID_SEARCH_RESULT"]}
 
     raw_sources = _source_from_result(search_result)
-    strict_news_request = is_strict_news_query(query)
     search_verification = search_result.get("verification")
     search_verification = (
         search_verification if isinstance(search_verification, dict) else {}
@@ -2252,6 +2331,44 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         search_result.get("ok") is True
         or (strict_news_request and discovery_provider_quorum)
     )
+    recovered_news_candidates: list[dict[str, Any]] = []
+    if not search_usable and strict_news_request:
+        try:
+            recovery_candidates = await search_recent_news_candidates(
+                search_query,
+                timeout_seconds=2.5,
+                max_results=12,
+            )
+            recovery_candidates = _rank_recent_news_candidates(
+                search_query,
+                recovery_candidates,
+            )
+            recovered_news_candidates = recovery_candidates
+            recovery_result = _news_recovery_search_result(recovery_candidates)
+            if recovery_result is not None:
+                search_result = recovery_result
+                raw_sources = _source_from_result(search_result)
+                search_usable = True
+                logger.info(
+                    "chat_news_search_recovery_quorum request_id=%s articles=%s domains=%s providers=%s",
+                    request_id or "unknown",
+                    len(recovery_candidates),
+                    search_result["verification"]["distinct_domains"],
+                    search_result["providers"],
+                )
+            else:
+                logger.warning(
+                    "chat_news_search_recovery_quorum_missing request_id=%s candidates=%s",
+                    request_id or "unknown",
+                    len(recovery_candidates),
+                )
+        except Exception as recovery_exc:
+            logger.warning(
+                "chat_news_search_recovery_failed request_id=%s error=%s",
+                request_id or "unknown",
+                type(recovery_exc).__name__,
+            )
+
     if not search_usable:
         errors = search_result.get("errors")
         logger.warning(
@@ -2314,17 +2431,16 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             if item.get("published_at") and _is_recently_published(item, query)
         } - {""}
         try:
-            rescue_query = (
-                "Chile noticias hoy actualidad acontecimientos recientes"
-                if "chile" in query.casefold()
-                else query
-            )
-            recent_candidates = await search_recent_news_candidates(
-                rescue_query,
-                timeout_seconds=1.8,
-                max_results=8,
-            )
-            recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
+            rescue_query = search_query
+            if recovered_news_candidates:
+                recent_candidates = recovered_news_candidates
+            else:
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=2.5,
+                    max_results=12,
+                )
+            recent_candidates = _rank_recent_news_candidates(search_query, recent_candidates)
             recovered_provider_candidates: list[dict[str, Any]] = []
             for raw in recent_candidates:
                 if not isinstance(raw, dict):
@@ -4526,7 +4642,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -4538,7 +4654,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             break
         except GatewayInvalidResponseError as exc:
             last_error_type = type(exc).__name__
-            last_gateway_attempts = [dict(item) for item in exc.attempts]
+            last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -4550,7 +4666,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayHTTPError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -4595,7 +4711,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -4605,7 +4721,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = [dict(item) for item in getattr(exc, "attempts", [])]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -4635,7 +4751,19 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
     request_id = request_id_from_request(request)
-    status, data, text = await run_inference_check(request_id)
+    try:
+        status, data, text = await run_inference_check(request_id)
+    except Exception as exc:
+        # Diagnostics must report inference failure as structured data, not turn
+        # an unavailable provider into an opaque HTTP 500 for the caller.
+        logger.exception(
+            "inference_check_unhandled request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        status, data, text = "FAIL", {
+            "_deep33_gateway": {"error_type": type(exc).__name__, "attempts": []}
+        }, None
     gateway_meta = data.get("_deep33_gateway", {}) if isinstance(data, dict) else {}
     attempts = gateway_meta.get("attempts", []) if isinstance(gateway_meta, dict) else []
     last_attempt = attempts[-1] if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else {}
@@ -5646,7 +5774,7 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
     parsed = _web_evidence_from_payload(payload)
     if parsed is None:
         return None
-    message_index, evidence, prefix = parsed
+    _message_index, evidence, _prefix = parsed
     verification = evidence.get("verification")
     verification = verification if isinstance(verification, dict) else {}
     news_quorum = evidence.get("news_quorum")
@@ -5713,119 +5841,97 @@ def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | 
         "snippet_fallback": bool(evidence.get("snippet_fallback")),
         "model_context_compacted": True,
     }
-    compact_payload = dict(payload)
-    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
-    compact_messages[message_index] = {
-        **compact_messages[message_index],
-        "content": prefix + json.dumps(
-            compact_evidence,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ),
-    }
-    compact_payload["messages"] = compact_messages
-    compact_payload["max_tokens"] = min(
-        384,
-        max(256, int(payload.get("max_tokens") or 384)),
+    # Rebuild the recovery prompt instead of carrying every long system
+    # instruction and the full conversation into a second inference attempt.
+    # Large reasoning prompts were causing free models to spend their output
+    # budget internally and return no visible assistant text.
+    conversation = [
+        dict(item)
+        for item in payload.get("messages", [])
+        if isinstance(item, dict) and item.get("role") in {"user", "assistant"}
+    ][-6:]
+    if not any(item.get("role") == "user" for item in conversation):
+        return None
+
+    compact_conversation = []
+    for item in conversation:
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        limit = 1800 if item.get("role") == "user" else 900
+        compact_conversation.append({
+            "role": item["role"],
+            "content": content[-limit:],
+        })
+    if not compact_conversation or compact_conversation[-1].get("role") != "user":
+        last_user = next(
+            (item for item in reversed(compact_conversation) if item.get("role") == "user"),
+            None,
+        )
+        if last_user is None:
+            return None
+        compact_conversation = [
+            item for item in compact_conversation
+            if item is not last_user
+        ] + [last_user]
+
+    synthesis_instruction = (
+        "Eres DEEP33. Responde directamente a la última pregunta del usuario. "
+        "Analiza y contrasta la evidencia entregada; redacta una síntesis original, "
+        "clara y conversacional en el idioma del usuario. Mantén la respuesta acotada: "
+        "normalmente 2 a 5 frases; destaca solo los puntos importantes y evita informes, "
+        "secciones y detalles secundarios salvo que el usuario los solicite. Distingue "
+        "hechos verificados de hipótesis o datos no confirmados. No copies frases de las "
+        "páginas, no enumeres extractos ni conviertas las fuentes en la respuesta. Cuando "
+        "el usuario pida un resumen de noticias, resume cada historia distinta con evidencia "
+        "suficiente en viñetas breves de una frase; prioriza las tres más relevantes como "
+        "máximo. Si hay tres o más historias válidas, incluye hasta tres; si solo hay una "
+        "o dos, resume cada una y di explícitamente cuántas pudieron verificarse. Nunca "
+        "respondas solo con el número de noticias ni con una lista de fuentes. Excluye "
+        "publirreportajes y contenido promocional tanto del recuento como del resumen. Si "
+        "el usuario solicita un marcador de validación, inclúyelo exactamente al final de "
+        "la respuesta. Cierra las ideas y no termines a mitad de una frase. No inventes "
+        "datos. Las referencias se adjuntarán "
+        "por separado."
     )
+    compact_payload = {
+        key: value
+        for key, value in payload.items()
+        if key in {
+            "model",
+            "temperature",
+            "top_p",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "user",
+        }
+    }
+    compact_payload["messages"] = [
+        {"role": "system", "content": synthesis_instruction},
+        {
+            "role": "system",
+            "content": "Server-side web evidence for this request follows. "
+            + json.dumps(
+                compact_evidence,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+        *compact_conversation,
+    ]
+    compact_payload["max_tokens"] = 768
+    compact_payload["stream"] = False
     return compact_payload
 
 
 def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
-    parsed = _web_evidence_from_payload(payload)
-    if parsed is None:
-        return None
-    _message_index, evidence, _prefix = parsed
-    verification = evidence.get("verification")
-    verification = verification if isinstance(verification, dict) else {}
-    news_quorum = evidence.get("news_quorum")
-    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    """Never present source excerpts as a substitute for an AI-generated answer.
 
-    try:
-        provider_count = int(
-            verification.get("distinct_providers")
-            or news_quorum.get("providers")
-            or 0
-        )
-    except (TypeError, ValueError):
-        provider_count = 0
-    strict_news = news_quorum.get("required") is True
-    contrast_required = evidence.get("contrast_required") is True
-    if strict_news and (
-        provider_count < 2
-        or not (
-            verification.get("provider_quorum_met") is True
-            or news_quorum.get("provider_quorum_met") is True
-        )
-        or news_quorum.get("met") is not True
-        or int(news_quorum.get("articles") or 0) < 3
-        or int(news_quorum.get("domains") or 0) < 3
-    ):
-        return None
-
-    pages = evidence.get("fetched_pages")
-    if not isinstance(pages, list):
-        return None
-    minimum_sources = 3 if strict_news else 2 if contrast_required else 1
-    selected: list[tuple[str, str, str]] = []
-    seen_domains: set[str] = set()
-    junk_sentence = re.compile(
-        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
-        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
-        r"ignore all previous instructions|system prompt)\b",
-        re.IGNORECASE,
-    )
-    for page in pages:
-        if not isinstance(page, dict):
-            continue
-        url = str(page.get("url") or "").strip()
-        parsed_url = urlparse(url)
-        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
-            continue
-        domain = str(page.get("domain") or parsed_url.hostname).casefold()
-        domain = domain.removeprefix("www.").rstrip(".")
-        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
-        if not domain or domain in seen_domains or len(page_text) < 80:
-            continue
-        sentences = [
-            sentence.strip(" \t\r\n-•")
-            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
-            if sentence.strip()
-        ]
-        sentence = next(
-            (
-                item for item in sentences
-                if 8 <= len(item.split()) <= 45
-                and not junk_sentence.search(item)
-            ),
-            "",
-        )
-        if not sentence:
-            sentence = page_text
-        words = sentence.split()
-        excerpt = " ".join(words[:20]).strip()
-        if len(words) > 20:
-            excerpt += "…"
-        if len(excerpt) < 40:
-            continue
-        title = str(page.get("title") or domain).strip()[:160]
-        selected.append((domain, title, excerpt))
-        seen_domains.add(domain)
-        if len(selected) >= 3:
-            break
-
-    required_domains = 3 if strict_news else 2 if contrast_required else 1
-    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
-        return None
-
-    lines = [
-        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
-    ]
-    lines.extend(
-        f"• {title}: «{excerpt}»"
-        for _domain, title, excerpt in selected
-    )
-    return "\n".join(lines)
+    Kept as a compatibility guard for older callers and tests. Web evidence is
+    context for synthesis, not user-facing answer text.
+    """
+    return None
 
 
 async def stream_gateway(
@@ -5966,13 +6072,17 @@ async def stream_gateway(
             candidates.append((compact_payload, "compact"))
         candidates.append((payload, "standard"))
 
+        # The streaming attempt may have consumed its entire deadline. Give the
+        # non-stream synthesis recovery its own bounded budget so a timed-out or
+        # empty stream does not make every recovery attempt expire immediately.
+        synthesis_retry_deadline = time.monotonic() + NON_STREAM_AI_TIMEOUT
         for candidate_payload, fallback_kind in candidates:
             try:
                 fallback_data = await nonstream_complete(
                     candidate_payload,
                     request_id=request_id,
                     idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
-                    deadline=deadline,
+                    deadline=synthesis_retry_deadline,
                 )
                 fallback_message = _choice_message(fallback_data)
                 raw_fallback_text = fallback_message.get("content")
@@ -6036,25 +6146,6 @@ async def stream_gateway(
                 )
                 gateway_failure = gateway_failure or "nonstream_fallback_failed"
 
-    if not assistant_parts and not tool_markup_filter.suppressed:
-        extractive_fallback = _extractive_web_evidence_fallback(payload)
-        if extractive_fallback:
-            assistant_parts.append(extractive_fallback)
-            saw_done = True
-            gateway_failure = None
-            if first_output_at is None:
-                first_output_at = time.perf_counter()
-                performance.mark(request_id, "T7_FIRST_TOKEN")
-                _metric_latency["chat_stream_ttft_ms"].append(
-                    (first_output_at - stream_started) * 1000
-                )
-            for piece in _sse_text_chunks(extractive_fallback):
-                yield _sse_delta(piece)
-            logger.warning(
-                "stream_extractive_web_evidence_fallback request_id=%s sources=%s",
-                request_id,
-                3 if "extractos breves" in extractive_fallback else 2,
-            )
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)
@@ -6101,7 +6192,18 @@ async def stream_gateway(
             assistant_raw, parsed_done = await _parse_stream_payload(bytes(collected))
             saw_done = saw_done or parsed_done
         assistant_text = sanitize_assistant_text(assistant_raw)
-        if not saw_done or not assistant_text:
+        # Some OpenAI-compatible providers close a valid text stream without the
+        # optional [DONE] frame. A non-empty assistant message is usable evidence
+        # of a completed generation; do not discard it and replace it with the
+        # generic inference-failure message solely because the terminator is absent.
+        if assistant_text and not saw_done:
+            logger.warning(
+                "stream_completed_without_done_marker request_id=%s chars=%s",
+                request_id,
+                len(assistant_text),
+            )
+            saw_done = True
+        if not assistant_text:
             # Never terminate a successful HTTP/SSE turn with an empty visible answer.
             # Upstream streaming can occasionally finish without a usable content delta
             # after provider failover. Emit a factual, non-speculative retryable fallback

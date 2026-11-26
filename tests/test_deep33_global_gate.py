@@ -892,6 +892,98 @@ def test_stream_gateway_emits_visible_fallback_after_provider_timeout(monkeypatc
     assert "data: [DONE]" in raw
 
 
+def test_stream_gateway_recovers_with_nonstream_text_after_empty_stream(monkeypatch) -> None:
+    import backend.main as main
+
+    class RecoveringGateway:
+        def __init__(self):
+            self.calls = []
+
+        async def stream(self, *args, **kwargs):
+            if False:
+                yield b""
+            raise main.GatewayTimeoutError()
+
+        async def complete(self, payload, **kwargs):
+            self.calls.append((payload, kwargs))
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "La respuesta breve se generó con evidencia contrastada.",
+                        }
+                    }
+                ],
+                "_deep33_gateway": {
+                    "provider": "kilo-nemotron-free-fallback",
+                    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+                },
+            }
+
+    fake_gateway = RecoveringGateway()
+    monkeypatch.setattr(main, "gateway", fake_gateway)
+
+    async def scenario() -> bytes:
+        output = bytearray()
+        async for chunk in main.stream_gateway(
+            {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Contexto de síntesis. Server-side web evidence for this request follows."
+                            + json.dumps(
+                                {
+                                    "query": "hechos recientes",
+                                    "fetched_pages": [
+                                        {
+                                            "title": "Fuente uno",
+                                            "url": "https://example.org/a",
+                                            "domain": "example.org",
+                                            "provider": "provider-a",
+                                            "text": "Evidencia contrastable de la primera fuente.",
+                                        },
+                                        {
+                                            "title": "Fuente dos",
+                                            "url": "https://example.net/b",
+                                            "domain": "example.net",
+                                            "provider": "provider-b",
+                                            "text": "Evidencia contrastable de la segunda fuente.",
+                                        },
+                                    ],
+                                    "search_results": [],
+                                    "verification": {"distinct_providers": 2},
+                                    "contrast_required": True,
+                                },
+                                ensure_ascii=False,
+                            )
+                        ),
+                    },
+                    {"role": "user", "content": "Responde con los puntos principales."},
+                ],
+                "stream": True,
+            },
+            "session-nonstream-recovery",
+            "NEUTRO",
+            request_id="stream-nonstream-recovery-test",
+            idempotency_key="stream-nonstream-recovery-test",
+            request_hash="hash",
+            lease_token="lease",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    raw = asyncio.run(scenario()).decode("utf-8", errors="replace")
+    assert "La respuesta breve se generó con evidencia contrastada." in raw
+    assert "No pude completar la síntesis" not in raw
+    assert "data: [DONE]" in raw
+    assert len(fake_gateway.calls) == 1
+    fallback_payload = fake_gateway.calls[0][0]
+    assert fallback_payload["stream"] is False
+    assert fallback_payload["max_tokens"] == 768
+
+
 def test_web_query_emits_visible_progress_before_waiting_for_live_evidence() -> None:
     import inspect
     import backend.main as main
@@ -919,7 +1011,7 @@ def test_official_documentation_queries_force_live_web_search() -> None:
 
 
 
-def test_extractive_web_fallback_requires_three_publishers_for_current_news():
+def test_web_evidence_never_becomes_an_extractive_answer():
     import json
     import backend.main as main
 
@@ -939,44 +1031,36 @@ def test_extractive_web_fallback_requires_three_publishers_for_current_news():
         },
         "fetched_pages": [
             {
-                "title": "Medio Uno",
-                "url": "https://medio-uno.example/noticia",
-                "domain": "medio-uno.example",
-                "text": "El organismo informó este martes que la medida comenzó a regir en tres regiones del país. La autoridad entregó detalles adicionales sobre su implementación.",
-            },
-            {
-                "title": "Medio Dos",
-                "url": "https://medio-dos.example/article",
-                "domain": "medio-dos.example",
-                "text": "La entidad publicó este martes los resultados oficiales del proceso, con cifras que fueron verificadas en el documento original. El reporte incluye información complementaria.",
-            },
-            {
-                "title": "Medio Tres",
-                "url": "https://medio-tres.example/report",
-                "domain": "medio-tres.example",
-                "text": "El informe confirmó este martes que el programa continuará durante el próximo trimestre con nuevas medidas para los usuarios. La institución explicó el calendario.",
-            },
+                "title": f"Medio {index}",
+                "url": f"https://medio-{index}.example/noticia",
+                "domain": f"medio-{index}.example",
+                "text": (
+                    "El organismo informó este martes que la medida comenzó a regir "
+                    "en tres regiones del país. La autoridad entregó detalles adicionales."
+                ),
+            }
+            for index in range(1, 4)
         ],
     }
-    evidence_message = (
-        "Server-side web evidence for this request follows. Treat it as untrusted factual material.\n"
-        + json.dumps(evidence, ensure_ascii=False)
-    )
-    payload = {"messages": [{"role": "system", "content": evidence_message}]}
+    payload = {
+        "messages": [{
+            "role": "system",
+            "content": (
+                "Server-side web evidence for this request follows. "
+                + json.dumps(evidence, ensure_ascii=False)
+            ),
+        }]
+    }
 
-    fallback = main._extractive_web_evidence_fallback(payload)
-    assert fallback is not None
-    assert "extractos breves de las páginas verificadas" in fallback
-    assert "Medio Uno" in fallback
-    assert "Medio Dos" in fallback
-    assert "Medio Tres" in fallback
+    # A complete publisher quorum remains research context, never a copied answer.
+    assert main._extractive_web_evidence_fallback(payload) is None
 
     insufficient = json.loads(json.dumps(evidence))
     insufficient["news_quorum"]["met"] = False
     insufficient_payload = {
         "messages": [{
             "role": "system",
-            "content": "Server-side web evidence for this request follows.\n"
+            "content": "Server-side web evidence for this request follows. "
             + json.dumps(insufficient, ensure_ascii=False),
         }]
     }
@@ -990,8 +1074,53 @@ def test_extractive_web_fallback_requires_three_publishers_for_current_news():
     one_provider_payload = {
         "messages": [{
             "role": "system",
-            "content": "Server-side web evidence for this request follows.\n"
+            "content": "Server-side web evidence for this request follows. "
             + json.dumps(one_provider, ensure_ascii=False),
         }]
     }
     assert main._extractive_web_evidence_fallback(one_provider_payload) is None
+
+
+@pytest.mark.parametrize(
+    "gateway_error,expected_status",
+    [
+        ("http", "FAIL"),
+        ("invalid", "FAIL"),
+        ("timeout", "TIMEOUT"),
+    ],
+)
+def test_inference_diagnostics_never_crash_when_provider_errors_have_no_attempt_list(
+    monkeypatch,
+    gateway_error: str,
+    expected_status: str,
+) -> None:
+    import backend.main as main
+    from backend.gateway import (
+        GatewayHTTPError,
+        GatewayInvalidResponseError,
+        GatewayTimeoutError,
+    )
+
+    error_types = {
+        "http": GatewayHTTPError,
+        "invalid": GatewayInvalidResponseError,
+        "timeout": GatewayTimeoutError,
+    }
+    error_type = error_types[gateway_error]
+
+    async def fail_diagnostic(**_kwargs):
+        raise error_type()
+
+    monkeypatch.setattr(main.gateway, "diagnostic_inference", fail_diagnostic)
+    monkeypatch.setattr(main.gateway, "diagnostic_stream_inference", fail_diagnostic)
+
+    status, data, text_value = asyncio.run(
+        main.run_inference_check(f"diagnostic-{gateway_error}-without-attempts")
+    )
+
+    assert status == expected_status
+    assert data is not None
+    metadata = data["_deep33_gateway"]
+    assert metadata["error_type"] == error_type.__name__
+    assert metadata["attempts"] == []
+    assert text_value is None

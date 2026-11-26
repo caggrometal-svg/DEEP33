@@ -7,6 +7,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
       - key: DEEP33_AUTH_SUPABASE_URL
         value: "https://opocgzydeknuchtrqzfa.supabase.co"
       - key: DEEP33_AUTH_API_KEY
@@ -44,6 +46,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
       - key: WEB_SEARCH_PROVIDER
@@ -77,6 +81,8 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      - key: AI_GATEWAY_MODEL
+        value: "baidu/ernie-5.5-flash-preview:free"
       - key: DEEP33_WEB_TOOLS_ENABLED
         value: "true"
       - key: WEB_SEARCH_PROVIDER

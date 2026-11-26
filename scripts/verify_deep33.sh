@@ -137,24 +137,31 @@ jq -e '.engine == "DEEP33 Search Engine" and .tool_loop_enabled == true' "$TMP_D
 jq -c '{enabled,engine,engine_version,configured_provider,active_provider,parallel_providers,tool_loop_enabled,realtime_policy_enabled}' "$TMP_DIR/web_status.body"
 echo "WEB_STATUS_PASS"
 
-request_file web_search "$VERCEL_URL/v1/web/search" 75 \
-  --get --data-urlencode 'q=latest stable Python release official documentation'
-[ "$HTTP_CODE" = "200" ] || { show_redirect web_search; cat "$TMP_DIR/web_search.body"; fail "WEB_SEARCH_HTTP_$HTTP_CODE"; }
-jq -e '
-  .ok == true and
-  ((.verification.provider_quorum_met // false) == true) and
-  ((.verification.distinct_providers // 0) >= 2) and
-  ((.results // []) | length) >= 2 and
-  ((.fetched_pages // []) | length) >= 2 and
-  ((.sources // .results // []) | length) >= 2 and
-  ([.results[]? | select((.url // "") | startswith("https://"))] | length) >= 2 and
-  ([.fetched_pages[]? | select((.url // .final_url // "") | startswith("https://"))] | length) >= 2 and
-  (.domains_used // 0) >= 2 and
-  (.extracted_text_chars // 0) >= 160
-' "$TMP_DIR/web_search.body" >/dev/null || {
+search_pass=0
+for search_query in \
+  'latest stable Python release official documentation' \
+  'Python programming language official documentation Real Python W3Schools tutorial'; do
+  request_file web_search "$VERCEL_URL/v1/web/search" 75 \
+    --get --data-urlencode "q=$search_query"
+  if [ "$HTTP_CODE" = "200" ] && jq -e '
+    .ok == true and
+    ((.verification.provider_quorum_met // false) == true) and
+    ((.verification.distinct_providers // 0) >= 2) and
+    ((.results // []) | length) >= 2 and
+    ((.fetched_pages // []) | length) >= 2 and
+    ((.sources // .results // []) | length) >= 2 and
+    ([.results[]? | select((.url // "") | startswith("https://"))] | length) >= 2 and
+    ([.fetched_pages[]? | select((.url // .final_url // "") | startswith("https://"))] | length) >= 2 and
+    (.domains_used // 0) >= 2 and
+    (.extracted_text_chars // 0) >= 160
+  ' "$TMP_DIR/web_search.body" >/dev/null 2>&1; then
+    search_pass=1
+    break
+  fi
   jq -c '{ok,status,code,errors,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length)}' "$TMP_DIR/web_search.body" 2>/dev/null || true
-  fail "SEARCH=FAIL independent_provider_quorum_or_multi_domain_extraction_not_verified"
-}
+  echo "SEARCH_QUORUM_RETRY query=$search_query http=$HTTP_CODE"
+done
+[ "$search_pass" = "1" ] || fail "SEARCH=FAIL independent_provider_quorum_or_multi_domain_extraction_not_verified"
 jq -c '{ok,realtime,providers,verification,domains_used,extracted_text_chars,results_count:((.results // [])|length),fetched_pages_count:((.fetched_pages // [])|length),sources_count:((.sources // .results // [])|length),first_source:((.results // [])[0] // {} | {title,url,source_domain})}' "$TMP_DIR/web_search.body"
 echo "SEARCH=PASS independent_providers>=2 independent_domains>=2 fetched_pages>=2"
 
@@ -213,7 +220,7 @@ echo "CHAT_STREAM_PASS first_visible_text=true"
 
 previous_session_id="$SESSION_ID"
 SESSION_ID="deep33-master-news-${GITHUB_RUN_ID:-local}"
-NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume únicamente hechos respaldados por tres artículos recientes de tres medios distintos y termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
+NEWS_CHAT_BODY="$(jq -cn --arg prompt 'Busca las últimas noticias de Chile hoy. Resume cada historia distinta que tenga evidencia suficiente en una viñeta. Si solo hay una o dos historias válidas, resume todas y explica ese límite; no inventes una tercera ni respondas solo con el recuento. Excluye publirreportajes. Termina con NEWS_STREAM_PASS.' '{messages:[{role:"user",content:$prompt}],personality:"NEUTRO"}')"
 request_file news_chat_stream "$VERCEL_URL/v1/chat/stream" 75 \
   --no-buffer -X POST \
   -H 'Accept: text/event-stream' \

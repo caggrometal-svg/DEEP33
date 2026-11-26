@@ -122,7 +122,7 @@ class GatewayConfig:
         ).strip()
         primary_model = os.getenv(
             "AI_GATEWAY_MODEL",
-            "dots-studio/dots-3-note-preview:free",
+            "baidu/ernie-5.5-flash-preview:free",
         ).strip()
         primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
         primary_host = _provider_hostname(primary_url)
@@ -178,6 +178,7 @@ class GatewayConfig:
             if _provider_url_is_secure(provider.url)
             and _provider_url_is_secure(provider.health_url)
             and "gemma-4" not in provider.model.casefold()
+            and "poolside/laguna-s-2.1" not in provider.model.casefold()
         )
         # A 200 response with no visible assistant text is an invalid inference,
         # not a successful completion. Keep a text-oriented free Kilo model as the
@@ -198,26 +199,59 @@ class GatewayConfig:
             for provider in secure_providers
         )
         if kilo_provider is not None and not has_free_text_fallback:
-            # Keep the deterministic fallback on a model currently listed as
-            # free by Kilo. The former Laguna fallback is no longer present in
-            # the live model catalog and can silently turn failover into a dead end.
+            # Keep a deterministic text-oriented free model as the first
+            # recovery choice, without forwarding any rejected primary token.
             secure_providers += (
                 GatewayProvider(
                     name="kilo-free-text-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
-                    # Kilo explicitly permits anonymous access to :free models.
-                    # Do not forward a rejected/expired primary credential to the fallback.
                     api_key="",
                     model="baidu/ernie-5.5-flash-preview:free",
                 ),
             )
+
+        has_nvidia_fallback = any(
+            "nvidia/nemotron-3-ultra-550b-a55b:free" in provider.model.casefold()
+            for provider in secure_providers
+        )
+        if kilo_provider is not None and not has_nvidia_fallback:
+            # This free Kilo model has produced non-empty completions in the
+            # live DEEP33 deployment. Keep it as a fallback when primary and
+            # ERNIE return empty or time out.
+            secure_providers += (
+                GatewayProvider(
+                    name="kilo-nemotron-free-fallback",
+                    url=kilo_provider.url,
+                    health_url=kilo_provider.health_url,
+                    api_key="",
+                    model="nvidia/nemotron-3-ultra-550b-a55b:free",
+                ),
+            )
+
+        has_nemotron_vl_fallback = any(
+            "nvidia/nemotron-3.5-super-vl:free" in provider.model.casefold()
+            for provider in secure_providers
+        )
+        if kilo_provider is not None and not has_nemotron_vl_fallback:
+            # Kilo's current free catalog includes this text-capable
+            # multimodal model. Keep it last so it receives the full visible
+            # response window if the other free models do not emit text.
+            secure_providers += (
+                GatewayProvider(
+                    name="kilo-nemotron-vl-free-fallback",
+                    url=kilo_provider.url,
+                    health_url=kilo_provider.health_url,
+                    api_key="",
+                    model="nvidia/nemotron-3.5-super-vl:free",
+                ),
+            )
         return cls(
             providers=secure_providers,
-            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
+            timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "30"))),
             provider_timeout_seconds=max(
                 3.0,
-                min(12.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))),
+                min(30.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "30"))),
             ),
             first_visible_timeout_seconds=max(
                 0.8, min(
@@ -392,6 +426,41 @@ class AIGateway:
             raise GatewayTimeoutError
         return max(0.5, min(default, remaining))
 
+    def _complete_provider_timeout_budget(
+        self,
+        deadline: float | None,
+        provider: GatewayProvider,
+        provider_index: int,
+        ordered_providers: list[GatewayProvider],
+    ) -> float:
+        """Prioritize the known text fallback while preserving later recovery attempts."""
+        provider_timeout = min(30.0, self.config.provider_timeout_seconds)
+        if deadline is None:
+            return provider_timeout
+
+        remaining_total = max(0.0, deadline - time.monotonic())
+
+        def weight(candidate: GatewayProvider, index: int) -> float:
+            if (
+                "kilo-free-text-fallback" in candidate.name.casefold()
+                or "baidu/ernie-5.5-flash-preview:free" in candidate.model.casefold()
+            ):
+                return 0.45
+            return 0.25 if index == 0 else 0.15
+
+        weights_left = [
+            weight(candidate, index)
+            for index, candidate in enumerate(ordered_providers)
+            if index >= provider_index
+        ]
+        weight_total = sum(weights_left) or 1.0
+        provider_weight = weight(provider, provider_index) / weight_total
+        provider_timeout = min(
+            provider_timeout,
+            max(1.5, remaining_total * provider_weight),
+        )
+        return provider_timeout
+
     def _stream_visible_budget(self, provider_index: int, provider_count: int) -> float:
         """Reserve a sub-3s first-visible envelope across provider failover."""
         configured = self.config.first_visible_timeout_seconds
@@ -424,7 +493,11 @@ class AIGateway:
         # frames several seconds before the first assistant text. Keep reasoning
         # enabled, but bound it to the provider-supported low effort so fallback
         # remains useful for interactive chat instead of becoming the TTFT bottleneck.
-        if "dots-studio/dots-3-note-preview" in provider.model.casefold():
+        normalized_model = provider.model.casefold()
+        if (
+            "dots-studio/dots-3-note-preview" in normalized_model
+            or "nvidia/nemotron-3-ultra" in normalized_model
+        ):
             result["reasoning_effort"] = "low"
         return result
 
@@ -623,24 +696,12 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     started_request = time.perf_counter()
-                    provider_timeout = min(12.0, self.config.provider_timeout_seconds)
-                    if deadline is not None:
-                        # Every provider attempt must preserve enough wall-clock budget
-                        # for a distinct fallback. This prevents a slow primary from
-                        # consuming the caller/proxy deadline before failover can run.
-                        remaining_total = max(0.0, deadline - time.monotonic())
-                        providers_left = max(1, len(ordered_providers) - provider_index)
-                        if providers_left > 1:
-                            fallback_reserve = min(
-                                remaining_total * 0.40,
-                                4.0 * (providers_left - 1),
-                            )
-                            provider_timeout = min(
-                                provider_timeout,
-                                max(1.5, remaining_total - fallback_reserve),
-                            )
-                        elif prefer_ttft:
-                            provider_timeout = min(provider_timeout, max(1.5, remaining_total))
+                    provider_timeout = self._complete_provider_timeout_budget(
+                        deadline,
+                        provider,
+                        provider_index,
+                        ordered_providers,
+                    )
                     timeout = self._remaining(deadline, provider_timeout)
                     body = self._provider_payload(payload, provider)
                     response = await self._client().post(
@@ -671,15 +732,24 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # A POST 5xx is ambiguous: the provider may have accepted
-                            # the inference before returning the error. Preserve the
-                            # no-failover contract here; the endpoint layer converts
-                            # the gateway error into a bounded degraded response.
-                            circuit.failure(
-                                self.config.circuit_failure_threshold,
-                                self.config.circuit_cooldown_seconds,
+                            # Do not retry the same provider after an ambiguous 5xx:
+                            # it may already have processed the request. Move once to
+                            # the next configured provider/model so a failed primary
+                            # cannot suppress the synthesis recovery chain.
+                            provider_failed_transiently = True
+                            next_provider = (
+                                ordered_providers[provider_index + 1].name
+                                if provider_index + 1 < len(ordered_providers)
+                                else "none"
                             )
-                            raise GatewayHTTPError
+                            logger.warning(
+                                "ai_provider_5xx_failover request_id=%s failed_provider=%s status=%s next_provider=%s",
+                                request_id,
+                                provider.name,
+                                status,
+                                next_provider,
+                            )
+                            break
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
@@ -845,7 +915,7 @@ class AIGateway:
         # reasoning and return HTTP 200 with empty assistant content. Give the
         # diagnostic enough room to emit the sentinel, but cap the whole check so
         # a slow provider cannot hold the production gate open indefinitely.
-        local_deadline = time.monotonic() + 8.0
+        local_deadline = time.monotonic() + 30.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         return await self.complete(
             {
@@ -875,7 +945,7 @@ class AIGateway:
         deadline: float | None = None,
     ) -> dict:
         """Probe the production streaming path when non-stream diagnostics fail."""
-        local_deadline = time.monotonic() + 8.0
+        local_deadline = time.monotonic() + 20.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         payload = {
             "messages": [
