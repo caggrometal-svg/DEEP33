@@ -15,15 +15,16 @@ def test_tertiary_uses_shared_generation_idempotency_contract() -> None:
 
 def test_tertiary_delegates_child_backend_idempotency_key() -> None:
     assert "delegatedIdempotencyKey" in TERTIARY
-    assert '"edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)' in TERTIARY
+    assert '"edge-vercel:" + await sha256("deep33|vercel-fallback|" + idempotencyKey)' in TERTIARY
     assert '"X-Idempotency-Key": delegatedIdempotencyKey' in TERTIARY
 
 
-def test_tertiary_names_railway_backend_explicitly() -> None:
-    assert '"railway-backend-fallback"' in TERTIARY
-    assert '"render-backend-fallback"' in TERTIARY
-    assert '"render-api-fallback"' in TERTIARY
-    assert '"render-backup-fallback"' in TERTIARY
+def test_tertiary_names_the_canonical_vercel_backend_only() -> None:
+    assert '"vercel-backend-primary"' in TERTIARY
+    assert '"https://deep33-backend.vercel.app"' in TERTIARY
+    assert ".railway.app" not in TERTIARY
+    assert ".onrender.com" not in TERTIARY
+    assert "replit.app" not in TERTIARY
 
 def test_edge_realtime_news_keeps_publisher_provenance_and_ignores_time_fillers() -> None:
     proxy = (ROOT / "supabase/functions/deep33-proxy/index.ts").read_text(encoding="utf-8")

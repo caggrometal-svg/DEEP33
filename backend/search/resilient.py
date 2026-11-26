@@ -4,6 +4,7 @@ import asyncio
 import copy
 import hashlib
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, rank_results
+from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, is_strict_news_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -21,13 +22,62 @@ from tools.web_search import (
     _google_search,
     _looks_realtime_news,
     _mojeek_search,
+    _mwmbl_search,
+    _youcom_search,
     _yahoo_search,
 )
 
 logger = logging.getLogger(__name__)
 
+
+def _provider_family(provider: str) -> str:
+    """Collapse aliases from the same search company into one independent source."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    # Count underlying indexes, not branded front ends. Yahoo Search states
+    # Microsoft is its exclusive algorithmic search provider; DuckDuckGo also
+    # relies on Bing's index. Google News shares Google's index.
+    if "google" in name:
+        return "google"
+    if "bing" in name or "microsoft" in name or "yahoo" in name:
+        return "bing"
+    if "duckduckgo" in name or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "youcom" in name or "you.com" in name:
+        return "youcom"
+    if "cl0q" in name:
+        return "cl0q"
+    # Wikipedia is a content corpus, not an independent web-search index.
+    if "wikipedia" in name:
+        return ""
+    return name
+
+def _requires_research_contrast(query: str) -> bool:
+    """Require two distinct publisher domains for research and comparison tasks."""
+    return bool(re.search(
+        r"\b(?:investiga(?:r|ci[oó]n)?|research|contrasta(?:r)?|contrast|"
+        r"compara(?:r|ci[oó]n)?|compare|an[aá]lisis comparativo|comparative analysis)\b",
+        str(query or ""),
+        re.IGNORECASE,
+    ))
+
+
+
+def _bounded_env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 PROVIDER_TOTAL_SECONDS = 2.5
-GLOBAL_BUDGET_SECONDS = 5.0
+GLOBAL_BUDGET_SECONDS = _bounded_env_float("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", 5.0, 1.0, 5.0)
 FALLBACK_DELAY_SECONDS = 0.35
 STANDARD_CORROBORATION_WINDOW_SECONDS = 0.20
 CIRCUIT_FAILURE_THRESHOLD = 5
@@ -271,7 +321,7 @@ def _commercial_technology_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "WOM Chile internet tecnología empresas servicios digitales"),
         ("cl0q", "Movistar Empresas Chile tecnología servicios digitales"),
         ("mojeek", "empresas tecnológicas Chile software telecomunicaciones SONDA Entel WOM Movistar"),
-        ("yahoo", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
+        ("cl0q", "sitios oficiales empresas tecnología Chile software telecomunicaciones"),
     )
 
 
@@ -283,7 +333,7 @@ def _academic_ai_research_queries() -> tuple[tuple[str, str], ...]:
         ("duckduckgo", "site:csail.mit.edu artificial intelligence research paper"),
         ("cl0q", "site:berkeley.edu artificial intelligence research machine learning paper"),
         ("mojeek", "site:cmu.edu artificial intelligence research publications"),
-        ("yahoo", "university artificial intelligence research papers academic labs"),
+        ("cl0q", "university artificial intelligence research papers academic labs"),
     )
 
 
@@ -293,13 +343,13 @@ class WebOrchestrator:
     def __init__(
         self,
         *,
-        max_results: int = 5,
+        max_results: int = 8,
         provider_total_seconds: float = PROVIDER_TOTAL_SECONDS,
         global_budget_seconds: float = GLOBAL_BUDGET_SECONDS,
         fallback_delay_seconds: float = FALLBACK_DELAY_SECONDS,
         cache_ttl_seconds: float = CACHE_TTL_SECONDS,
     ) -> None:
-        self.max_results = max(1, min(8, int(max_results)))
+        self.max_results = max(1, min(12, int(max_results)))
         # Permit short deterministic test budgets while keeping production caps.
         self.provider_total_seconds = max(0.05, min(2.5, float(provider_total_seconds)))
         self.global_budget_seconds = max(0.05, min(5.0, float(global_budget_seconds)))
@@ -315,6 +365,8 @@ class WebOrchestrator:
             "mojeek": CircuitState(),
             "duckduckgo": CircuitState(),
             "yahoo": CircuitState(),
+            "mwmbl": CircuitState(),
+            "youcom": CircuitState(),
         }
         self.providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
             "bing": self._bing,
@@ -324,8 +376,15 @@ class WebOrchestrator:
             "mojeek": self._mojeek,
             "duckduckgo": self._duckduckgo,
         }
-        # Yahoo is a last-resort general-web fallback, not part of every request fan-out.
+        if os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+            self.providers.pop("mojeek", None)
+        # You.com offers a keyless free MCP search profile (100 queries/day).
+        # Mwmbl is also independent but its anonymous endpoint is limited to
+        # 1,000 requests/month and 1 req/s, so keep it as a secondary recovery.
+        # Yahoo is only a Bing-family coverage fallback, never corroboration.
         self.fallback_providers: dict[str, Callable[[str, float, int], Awaitable[list[dict]]]] = {
+            "youcom": self._youcom,
+            "mwmbl": self._mwmbl,
             "yahoo": self._yahoo,
         }
 
@@ -341,7 +400,7 @@ class WebOrchestrator:
 
     async def _google(self, query: str, timeout: float, limit: int) -> list[dict]:
         # Direct adapter callers keep strict legacy behavior; orchestration keeps
-        # candidates so independent results can be ranked against the original query.
+        # candidates so independent results can be ranked against the compact semantic query.
         return await _google_search(query, timeout, limit, preserve_candidates=True)
 
     async def _google_news(self, query: str, timeout: float, limit: int) -> list[dict]:
@@ -368,6 +427,12 @@ class WebOrchestrator:
     async def _duckduckgo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _duckduckgo_search(query, timeout, limit)
 
+    async def _mwmbl(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _mwmbl_search(query, timeout, limit)
+
+    async def _youcom(self, query: str, timeout: float, limit: int) -> list[dict]:
+        return await _youcom_search(query, timeout, limit)
+
     async def _yahoo(self, query: str, timeout: float, limit: int) -> list[dict]:
         return await _yahoo_search(query, timeout, limit, preserve_candidates=True)
 
@@ -377,10 +442,32 @@ class WebOrchestrator:
 
     @staticmethod
     def _provider_query(query: str) -> str:
-        """Reduce provider-side noise without changing the user's ranking query."""
+        """Remove instruction noise to build the compact retrieval and ranking query."""
         cleaned = " ".join(str(query or "").split()).strip()
         if not cleaned:
             return cleaned
+        provider_source = re.sub(
+            r"\b(?:no\s+(?:uses|utilices|consultes)|do\s+not\s+use|don't\s+use)\s+"
+            r"(?:la\s+)?(?:memoria|memory)(?:\s+(?:ni|or|and)\s+(?:los\s+)?"
+            r"(?:datos?\s+almacenados|stored\s+data))?\b",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        provider_source = re.sub(
+            r"\b(?:ejecuta|realiza|haz)\s+(?:una\s+)?(?:b[uú]squeda|search)\s+"
+            r"(?:web\s+)?(?:real\s+)?(?:sobre|de|para)\b",
+            " ",
+            provider_source,
+            flags=re.IGNORECASE,
+        )
+        provider_source = re.sub(
+            r"\b(?:consulta|contrasta|verifica|cita|incluye)\s+(?:las?\s+)?"
+            r"(?:fuentes?|sources?|enlaces?|links?)\b.*$",
+            " ",
+            provider_source,
+            flags=re.IGNORECASE,
+        )
         lowered = cleaned.casefold()
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
@@ -420,7 +507,7 @@ class WebOrchestrator:
             # Realtime questions must retain their topical entities, not their
             # full conversational instructions. The raw Spanish prompt often
             # causes search providers to return a completely different topic.
-            normalized_lookup = _normalise_lookup_query(cleaned)
+            normalized_lookup = _normalise_lookup_query(provider_source)
             realtime_tokens = list(dict.fromkeys(_topic_tokens(normalized_lookup)))
             if "chile" in lowered and "chile" not in {token.casefold() for token in realtime_tokens}:
                 realtime_tokens.append("Chile")
@@ -475,7 +562,7 @@ class WebOrchestrator:
                 "Chile commercial technology companies official websites software telecom digital services "
                 "SONDA Entel WOM Movistar"
             )
-        topic_tokens = list(_topic_tokens(cleaned))
+        topic_tokens = list(_topic_tokens(provider_source))
         website_intent = any(
             term in lowered
             for term in (
@@ -577,7 +664,7 @@ class WebOrchestrator:
             return "Python asyncio"
 
         # Reframe generic current smartphone/product queries into common web-search
-        # vocabulary. Results are still ranked against the untouched original query.
+        # vocabulary. Results are ranked against the compact semantic query derived from the request.
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
             "teléfono móvil", "telefono movil", "celular",
@@ -604,7 +691,7 @@ class WebOrchestrator:
             if "chile" in lowered:
                 # Public indexes can pollute a generic "economy/markets" query.
                 # Use Chilean economic vocabulary plus independent publishers;
-                # final ranking still evaluates candidates against the original query.
+                # final ranking still evaluates candidates against the compact semantic query.
                 return (
                     "Chile economía mercados finanzas Banco Central Diario Financiero "
                     "Pulso Emol economía actualidad"
@@ -714,10 +801,25 @@ class WebOrchestrator:
         except Exception as exc:
             state.failure(time.monotonic())
             name = type(exc).__name__.upper()
+            raw_detail = " ".join(str(exc).split()).upper()
+            # WebSearchError messages are stable diagnostic codes (for example
+            # HTTP_403). Expose only those code-shaped details, never URLs,
+            # queries, headers, or credentials.
+            safe_detail = (
+                raw_detail
+                if re.fullmatch(r"[A-Z0-9_:-]{1,120}", raw_detail)
+                else name
+            )
+            logger.warning(
+                "web_search_provider_error provider=%s error_type=%s detail=%s",
+                provider,
+                name,
+                safe_detail,
+            )
             return ProviderOutcome(
                 provider=provider,
                 ok=False,
-                error_code=f"PROVIDER_ERROR:{name}",
+                error_code=f"PROVIDER_ERROR:{name}:{safe_detail}",
                 latency_ms=round((time.perf_counter() - started) * 1000.0, 2),
             )
 
@@ -845,8 +947,27 @@ class WebOrchestrator:
             deadline,
             loop.time() + max(0.05, effective_budget * 0.55),
         )
+        # Use the same compact semantic query for provider retrieval and ranking;
+        # instruction boilerplate must not become relevance anchors.
         provider_query = self._provider_query(cleaned)
         lowered_cleaned = cleaned.casefold()
+        strict_news_request = is_strict_news_query(cleaned)
+        research_contrast_request = _requires_research_contrast(cleaned)
+
+        def relevant_provider_names(candidate_outcomes: list[ProviderOutcome]) -> set[str]:
+            # Provider success only counts when that provider independently
+            # returned evidence relevant to the compact semantic query derived from the user's request.
+            return {
+                _provider_family(outcome.provider)
+                for outcome in candidate_outcomes
+                if outcome.ok
+                and outcome.results
+                and rank_results(
+                    provider_query,
+                    outcome.results,
+                    realtime=is_realtime_query(cleaned),
+                )
+            }
         chile_public_info_intent = (
             "chile" in lowered_cleaned
             and any(term in lowered_cleaned for term in (
@@ -937,6 +1058,33 @@ class WebOrchestrator:
                 "noticia", "noticias", "today", "latest", "news", "actualidad",
             ))
         )
+        strict_news_request = (
+            strict_news_request
+            or chile_current_events_intent
+            or chile_general_news_intent
+            or chile_economic_news_intent
+            or broad_ai_news_intent
+        )
+        research_contrast_request = research_contrast_request or academic_ai_research_intent
+        # General web answers require two independent index families. For explicit
+        # research contrast or official public-information discovery, two distinct
+        # publisher domains are the controlling quorum; strict news always needs two indexes.
+        required_provider_count = (
+            1 if not strict_news_request and (
+                research_contrast_request or chile_public_info_intent or commercial_technology_site_intent
+            )
+            else 2
+        )
+        required_domain_count = 3 if strict_news_request else 2
+        minimum_coverage = required_domain_count
+        if (
+            chile_public_info_intent
+            or who_dengue_source_intent
+            or commercial_technology_site_intent
+            or academic_ai_research_intent
+            or chile_economic_news_intent
+        ):
+            minimum_coverage = max(minimum_coverage, min(3, self.max_results))
         tasks = {
             asyncio.create_task(
                 self._delayed_provider(provider, provider_query)
@@ -949,12 +1097,12 @@ class WebOrchestrator:
         # Keep a deterministic live-search path when public indexes are
         # rate-limited. These are still real Bing/Google-News queries; no result
         # is synthesized locally and every candidate is ranked against the
-        # untouched user query.
+        # compact semantic query derived from the untouched user request.
         if chile_economic_news_intent:
             # Economy queries were depending on one Bing SERP and could collapse
             # to two domains. Fan out publisher-specific discovery across Bing and
             # Google News in the primary wave; all candidates are still ranked
-            # against the untouched user query and no evidence is synthesized.
+            # against the compact semantic query derived from the user request; no evidence is synthesized.
             economic_queries = (
                 ("google_news", "site:df.cl Chile economía mercados noticias hoy"),
                 ("google_news", "site:latercera.com Chile Pulso economía mercados hoy"),
@@ -964,9 +1112,9 @@ class WebOrchestrator:
                 ("bing", "site:bcentral.cl Chile economía mercado informe"),
                 # Direct-web fallbacks reduce dependence on opaque Google News RSS
                 # wrappers and give the fetch/extractor real publisher URLs.
-                ("yahoo", "site:df.cl Chile economía mercados noticias hoy"),
-                ("yahoo", "site:latercera.com/pulso Chile economía mercados hoy"),
-                ("yahoo", "site:emol.com/economia Chile economía mercados hoy"),
+                ("cl0q", "site:df.cl Chile economía mercados noticias hoy"),
+                ("cl0q", "site:latercera.com/pulso Chile economía mercados hoy"),
+                ("cl0q", "site:emol.com/economia Chile economía mercados hoy"),
                 ("google", "site:bcentral.cl Chile economía mercado informe"),
                 # Prefer direct article/category URLs from newsrooms that are
                 # readable by the production fetcher; this avoids opaque Google
@@ -975,7 +1123,7 @@ class WebOrchestrator:
                 ("bing", "site:meganoticias.cl economía Chile noticias hoy"),
                 ("google", "site:24horas.cl economía Chile noticias hoy"),
                 ("bing", "site:biobiochile.cl economía Chile noticias hoy"),
-                ("yahoo", "site:cooperativa.cl economía Chile noticias hoy"),
+                ("cl0q", "site:cooperativa.cl economía Chile noticias hoy"),
                 ("google", "site:chvnoticias.cl economía Chile noticias hoy"),
                 # Brand-name queries recover direct newsroom URLs when public
                 # indexes ignore or mishandle site: filters.
@@ -1020,7 +1168,7 @@ class WebOrchestrator:
                 ("google_news", "BioBioChile Chile últimas noticias hoy"),
                 ("bing", "Cooperativa Chile últimas noticias hoy"),
                 ("google", "La Tercera Chile últimas noticias hoy"),
-                ("yahoo", "24Horas Chile últimas noticias hoy"),
+                ("cl0q", "24Horas Chile últimas noticias hoy"),
                 ("google_news", "Emol Chile últimas noticias hoy"),
                 ("bing", "CNN Chile últimas noticias hoy"),
             )
@@ -1035,12 +1183,12 @@ class WebOrchestrator:
         if chile_current_events_intent:
             # Generic current-events queries can collapse to one search index and
             # two publishers. Discover independent Chilean newsrooms in parallel;
-            # final ranking still uses the untouched user query.
+            # final ranking uses the compact semantic query derived from the user request.
             current_events_queries = (
                 ("google_news", "site:biobiochile.cl Chile noticias hoy actualidad"),
                 ("bing", "site:cooperativa.cl Chile noticias hoy actualidad"),
                 ("google", "site:latercera.com Chile noticias hoy actualidad"),
-                ("yahoo", "site:24horas.cl Chile noticias hoy actualidad"),
+                ("cl0q", "site:24horas.cl Chile noticias hoy actualidad"),
                 ("google_news", "site:emol.com Chile noticias hoy actualidad"),
                 ("bing", "site:cnnchile.com Chile noticias hoy actualidad"),
             )
@@ -1060,9 +1208,9 @@ class WebOrchestrator:
                 ("google", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteochile.gob.cl Santiago Chile clima pronóstico temperatura"),
                 ("google", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
-                ("yahoo", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
+                ("cl0q", "site:meteored.cl Santiago Chile clima pronóstico temperatura"),
                 ("bing", "site:meteoblue.com Santiago Chile weather forecast temperature"),
-                ("yahoo", "site:accuweather.com Santiago Chile weather forecast temperature"),
+                ("cl0q", "site:accuweather.com Santiago Chile weather forecast temperature"),
             )
             tasks.update({
                 asyncio.create_task(
@@ -1083,17 +1231,17 @@ class WebOrchestrator:
                 # is not sufficient when the publisher URL must be fetched.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
@@ -1159,7 +1307,7 @@ class WebOrchestrator:
         if academic_ai_research_intent:
             # Broad academic wording can collapse to one university in public SERPs.
             # Query independent real research domains in parallel, then rank every
-            # returned candidate against the untouched user query.
+            # returned candidate against the compact semantic query derived from the user request.
             academic_queries = _academic_ai_research_queries()
             tasks.update({
                 asyncio.create_task(
@@ -1208,19 +1356,17 @@ class WebOrchestrator:
                     if outcome.ok
                     for item in outcome.results
                 ]
-                ranked_now = rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned))
+                ranked_now = rank_results(provider_query, merged_now, realtime=is_realtime_query(cleaned))
                 selected_now = deduplicate(ranked_now, self.max_results)
                 distinct_domains = {
                     item.get("source_domain") or ""
                     for item in selected_now
                     if item.get("source_domain")
                 }
-                distinct_providers = {
-                    outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                }
+                distinct_providers = relevant_provider_names(outcomes)
                 enough_sources = (
-                    len(selected_now) >= min(3, self.max_results)
-                    and len(distinct_domains) >= min(3, len(selected_now))
+                    len(selected_now) >= minimum_coverage
+                    and len(distinct_domains) >= required_domain_count
                     and (
                         not who_dengue_source_intent
                         or _has_who_dengue_item(selected_now)
@@ -1242,7 +1388,7 @@ class WebOrchestrator:
                 )
                 if (
                     enough_sources
-                    and len(distinct_providers) >= min(2, len(self.providers))
+                    and len(distinct_providers) >= required_provider_count
                 ):
                     break
                 if (
@@ -1272,8 +1418,81 @@ class WebOrchestrator:
             if outcome.ok
             for item in outcome.results
         ]
-        ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+        ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
         selected = deduplicate(ranked, self.max_results)
+
+        # You.com is a separate live-search index with a keyless free
+        # profile capped at 100 queries/day. Try it before the slower, lower-cap
+        # Mwmbl fallback whenever the primary wave has not met independent quorum.
+        youcom_available = (
+            len(relevant_provider_names(outcomes)) < required_provider_count
+            and "youcom" in self.fallback_providers
+            and "youcom" in self.circuits
+            and not any(outcome.provider == "youcom" for outcome in outcomes)
+        )
+        if youcom_available:
+            remaining = deadline - loop.time()
+            if remaining >= 0.25:
+                try:
+                    youcom_outcome = await asyncio.wait_for(
+                        self._bounded_call_provider("youcom", provider_query or cleaned),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    youcom_outcome = ProviderOutcome(
+                        provider="youcom", ok=False, error_code="PROVIDER_TIMEOUT"
+                    )
+                outcomes.append(youcom_outcome)
+                if youcom_outcome.ok and youcom_outcome.results:
+                    merged = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked = rank_results(
+                        provider_query, merged, realtime=is_realtime_query(cleaned)
+                    )
+                    selected = deduplicate(ranked, self.max_results)
+
+        # Mwmbl is an independent index (unlike DuckDuckGo/Yahoo, which share
+        # Bing's index). Try its anonymous free endpoint immediately after the
+        # primary wave when the provider quorum is still missing. Running it
+        # here preserves the reserved time budget; the old tail fallback often
+        # never ran because the preceding recovery waves consumed the deadline.
+        # Keep it out of strict-news searches, where its small index cannot
+        # establish publication freshness.
+        mwmbl_available = (
+            not strict_news_request
+            and len(relevant_provider_names(outcomes)) < required_provider_count
+            and "mwmbl" in self.fallback_providers
+            and "mwmbl" in self.circuits
+            and not any(outcome.provider == "mwmbl" for outcome in outcomes)
+        )
+        if mwmbl_available:
+            remaining = deadline - loop.time()
+            if remaining >= 0.25:
+                try:
+                    mwmbl_outcome = await asyncio.wait_for(
+                        self._bounded_call_provider("mwmbl", provider_query or cleaned),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    mwmbl_outcome = ProviderOutcome(
+                        provider="mwmbl", ok=False, error_code="PROVIDER_TIMEOUT"
+                    )
+                outcomes.append(mwmbl_outcome)
+                if mwmbl_outcome.ok and mwmbl_outcome.results:
+                    merged = [
+                        {**item, "provider": outcome.provider}
+                        for outcome in outcomes
+                        if outcome.ok
+                        for item in outcome.results
+                    ]
+                    ranked = rank_results(
+                        provider_query, merged, realtime=is_realtime_query(cleaned)
+                    )
+                    selected = deduplicate(ranked, self.max_results)
 
         # Official/public-information discovery is a special case where one broad
         # SERP often collapses every result onto gob.cl. If primary coverage is
@@ -1292,7 +1511,7 @@ class WebOrchestrator:
         ):
             official_queries = (
                 ("mojeek", "site:chileatiende.gob.cl Chile servicios trámites información pública"),
-                ("yahoo", "site:datos.gob.cl Chile datos abiertos información pública"),
+                ("cl0q", "site:datos.gob.cl Chile datos abiertos información pública"),
                 ("google", "site:cplt.cl Chile transparencia información pública"),
                 ("duckduckgo", "site:bcn.cl/leychile Chile ley transparencia información pública"),
             )
@@ -1335,7 +1554,7 @@ class WebOrchestrator:
                         for item in outcome.results
                     ]
                     selected_now = deduplicate(
-                        rank_results(cleaned, merged_now, realtime=is_realtime_query(cleaned)),
+                        rank_results(provider_query, merged_now, realtime=is_realtime_query(cleaned)),
                         self.max_results,
                     )
                     distinct_domains_now = {
@@ -1360,7 +1579,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
 
         recovery_query = self._recovery_query(cleaned)
@@ -1374,20 +1593,16 @@ class WebOrchestrator:
             for term in ("noticia", "noticias", "última hora", "ultima hora", "actualidad", "breaking", "latest news", "news")
         )
         needs_news_source_diversity = (
-            is_realtime_query(cleaned)
-            and news_intent
-            and len(selected_domains) < min(5, self.max_results)
+            strict_news_request
+            and len(selected_domains) < required_domain_count
         )
-        successful_providers = {
-            outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-        }
+        successful_providers = relevant_provider_names(outcomes)
         needs_provider_diversity = (
-            (is_realtime_query(cleaned) or news_intent)
-            and len(successful_providers) < min(2, len(self.providers))
+            len(successful_providers) < required_provider_count
         )
         needs_recovery = (
-            len(selected) < min(3, self.max_results)
-            or len(selected_domains) < min(3, max(1, len(selected)))
+            len(selected) < minimum_coverage
+            or len(selected_domains) < required_domain_count
             or needs_news_source_diversity
             or needs_provider_diversity
             or (who_dengue_source_intent and not _has_who_dengue_item(selected))
@@ -1464,13 +1679,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("source_domain")
                     }
-                    distinct_providers_now = {
-                        outcome.provider for outcome in outcomes if outcome.ok and outcome.results
-                    }
+                    distinct_providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(distinct_domains_now) >= min(3, len(selected_now))
-                        and len(distinct_providers_now) >= min(2, len(self.providers))
+                        and len(distinct_providers_now) >= required_provider_count
                         and (
                             not who_dengue_source_intent
                             or _has_who_dengue_item(selected_now)
@@ -1490,7 +1703,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
             if selected:
                 provider_query = recovery_query
@@ -1515,16 +1728,16 @@ class WebOrchestrator:
                 # finish with a single editorial domain.
                 ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
                 ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("yahoo", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
+                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
                 ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
                 ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
             )
@@ -1576,15 +1789,11 @@ class WebOrchestrator:
                         for item in selected_now
                         if item.get("url")
                     } - {""}
-                    providers_now = {
-                        outcome.provider
-                        for outcome in outcomes
-                        if outcome.ok and outcome.results
-                    }
+                    providers_now = relevant_provider_names(outcomes)
                     if (
                         len(selected_now) >= min(3, self.max_results)
                         and len(domains_now) >= min(3, self.max_results)
-                        and len(providers_now) >= min(2, len(self.providers))
+                        and len(providers_now) >= required_provider_count
                     ):
                         break
             finally:
@@ -1600,7 +1809,7 @@ class WebOrchestrator:
                 if outcome.ok
                 for item in outcome.results
             ]
-            ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+            ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
             selected = deduplicate(ranked, self.max_results)
 
             # The strict relevance ranker can legitimately prefer two headlines
@@ -1699,57 +1908,73 @@ class WebOrchestrator:
         }
         insufficient_evidence = (
             len(selected) < minimum_coverage
-            or len(selected_domains - {""}) < minimum_coverage
+            or len(selected_domains - {""}) < required_domain_count
         )
-        selected_providers = {
-            str(item.get("provider") or "").strip()
-            for item in selected
-            if str(item.get("provider") or "").strip()
-        }
-        insufficient_provider_diversity = bool(selected) and len(selected_providers) < 2
-        yahoo_available = (
-            "yahoo" in self.fallback_providers
-            and "yahoo" in self.circuits
+        selected_providers = relevant_provider_names(outcomes)
+        insufficient_provider_diversity = (
+            len(selected_providers) < required_provider_count
+        )
+        fallback_order = []
+        if (
+            (insufficient_provider_diversity or insufficient_evidence)
+            and "mwmbl" in self.fallback_providers
+            and "mwmbl" in self.circuits
+            and not any(outcome.provider == "mwmbl" for outcome in outcomes)
+        ):
+            fallback_order.append("mwmbl")
+        # Yahoo is powered by Bing's algorithmic index. Use it only when no
+        # Bing-family result exists; it may improve coverage but cannot add quorum.
+        yahoo_already_completed = any(outcome.provider == "yahoo" for outcome in outcomes)
+        bing_family_has_candidates = any(
+            _provider_family(outcome.provider) == "bing"
+            and outcome.ok
+            and bool(outcome.results)
+            for outcome in outcomes
         )
         if (
-            yahoo_available
-            and (insufficient_evidence or insufficient_provider_diversity)
-            and loop.time() < deadline
+            "yahoo" in self.fallback_providers
+            and "yahoo" in self.circuits
+            and not yahoo_already_completed
+            and not bing_family_has_candidates
         ):
-            # Reserve one independent general-web fallback when either evidence
-            # coverage OR provider diversity is incomplete. Several domains from
-            # one index are useful, but they are not independent provider failover.
-            # This preserves the latency-first primary wave while guaranteeing a
-            # second provider attempt only when the final evidence still needs it.
+            fallback_order.append("yahoo")
+
+        for fallback_name in fallback_order:
+            if loop.time() >= deadline:
+                break
+            if (
+                len(selected) >= minimum_coverage
+                and len(selected_domains - {""}) >= minimum_coverage
+                and len(selected_providers) >= required_provider_count
+            ):
+                break
             remaining = deadline - loop.time()
-            # Reuse the normalized, broadened query already sent to the primary
-            # providers. The user's raw phrasing can be too narrow or noisy for a
-            # fallback index, especially for official/non-news sources.
             fallback_query = provider_query or cleaned
             try:
-                yahoo_outcome = await asyncio.wait_for(
-                    self._bounded_call_provider("yahoo", fallback_query),
+                fallback_outcome = await asyncio.wait_for(
+                    self._bounded_call_provider(fallback_name, fallback_query),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
-                yahoo_outcome = ProviderOutcome(
-                    provider="yahoo", ok=False, error_code="PROVIDER_TIMEOUT"
+                fallback_outcome = ProviderOutcome(
+                    provider=fallback_name, ok=False, error_code="PROVIDER_TIMEOUT"
                 )
-            outcomes.append(yahoo_outcome)
-            if yahoo_outcome.ok and yahoo_outcome.results:
+            outcomes.append(fallback_outcome)
+            if fallback_outcome.ok and fallback_outcome.results:
                 merged = [
                     {**item, "provider": outcome.provider}
                     for outcome in outcomes
                     if outcome.ok
                     for item in outcome.results
                 ]
-                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains = {
                     str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold()
                     for item in selected
                     if item.get("url")
                 }
+                selected_providers = relevant_provider_names(outcomes)
                 if selected:
                     provider_query = fallback_query
 
@@ -1792,7 +2017,7 @@ class WebOrchestrator:
             # If a valid WHO fact sheet was found, preserve it in the final set even
             # when higher-volume CDC/PAHO results otherwise occupy every slot.
             who_candidates = [
-                item for item in rank_results(cleaned, merged, realtime=False)
+                item for item in rank_results(provider_query, merged, realtime=False)
                 if _is_who_dengue_item(item)
             ]
             if who_candidates:
@@ -1816,8 +2041,8 @@ class WebOrchestrator:
                         and urlparse(str(item.get("url") or "")).path in {"", "/"}
                     )
                 ]
-                merged.extend(dict(item) for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
-                ranked = rank_results(cleaned, merged, realtime=is_realtime_query(cleaned))
+                merged.extend({**dict(item), "navigation_only": True} for item in _CHILE_PUBLIC_INFO_NAVIGATION_CANDIDATES)
+                ranked = rank_results(provider_query, merged, realtime=is_realtime_query(cleaned))
                 selected = deduplicate(ranked, self.max_results)
                 selected_domains_after_portal_fallback = {
                     str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or "")).casefold().removeprefix("www.")
@@ -1846,7 +2071,7 @@ class WebOrchestrator:
                 # fetcher extracts their actual page text.
                 navigation_candidates: list[dict] = []
                 seen_company_hosts: set[str] = set()
-                for item in [*selected, *[dict(candidate) for candidate in _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES]]:
+                for item in selected:
                     if not _is_chile_commercial_technology_item(item):
                         continue
                     host = str(
@@ -1860,6 +2085,22 @@ class WebOrchestrator:
                     navigation_candidates.append(item)
                     if len(navigation_candidates) >= self.max_results:
                         break
+                if len(navigation_candidates) < self.max_results:
+                    for item in _CHILE_TECH_COMPANY_NAVIGATION_CANDIDATES:
+                        candidate = {**dict(item), "navigation_only": True}
+                        if not _is_chile_commercial_technology_item(candidate):
+                            continue
+                        host = str(
+                            candidate.get("source_domain")
+                            or (urlparse(str(candidate.get("url") or "")).hostname or "")
+                        ).casefold().rstrip(".").removeprefix("www.")
+                        url = str(candidate.get("url") or "").strip()
+                        if not host or not url or host in seen_company_hosts:
+                            continue
+                        seen_company_hosts.add(host)
+                        navigation_candidates.append(candidate)
+                        if len(navigation_candidates) >= self.max_results:
+                            break
                 if len(navigation_candidates) >= min(3, self.max_results):
                     selected = navigation_candidates
                 logger.warning(
@@ -1938,26 +2179,87 @@ class WebOrchestrator:
         executed_query: str | None = None,
     ) -> dict:
         selected = list(results or [])
-        providers_used = list(dict.fromkeys(o.provider for o in outcomes if o.ok))
-        attempted = list(dict.fromkeys(o.provider for o in outcomes))
-        winner = next((o.provider for o in outcomes if o.ok and o.results), None)
         realtime = is_realtime_query(query)
+        ranking_query = executed_query or query
+        relevant_outcomes = [
+            outcome
+            for outcome in outcomes
+            if outcome.ok
+            and outcome.results
+            and rank_results(ranking_query, outcome.results, realtime=realtime)
+        ]
+        providers_used = list(dict.fromkeys(o.provider for o in relevant_outcomes))
+        provider_families = {_provider_family(o.provider) for o in relevant_outcomes}
+        attempted = list(dict.fromkeys(o.provider for o in outcomes))
+        winner = next((o.provider for o in relevant_outcomes), None)
+        strict_news_request = is_strict_news_query(query)
+        research_contrast_request = _requires_research_contrast(query)
+        lowered_query = str(query or "").casefold()
+        chile_public_info_request = (
+            "chile" in lowered_query
+            and any(term in lowered_query for term in (
+                "sitio gubernamental", "sitio oficial", "información pública",
+                "informacion publica", "public information", "portal del gobierno",
+                "portal gubernamental", "datos abiertos", "transparencia",
+            ))
+        )
+        commercial_technology_site_request = (
+            "chile" in lowered_query
+            and any(term in lowered_query for term in ("comercial", "commercial", "empresa", "company"))
+            and any(term in lowered_query for term in ("tecnología", "tecnologia", "technology", "tech"))
+            and any(term in lowered_query for term in ("sitio", "website", "web site", "página", "pagina", "portal"))
+        )
+        required_providers = (
+            1 if not strict_news_request and (
+                research_contrast_request or chile_public_info_request or commercial_technology_site_request
+            )
+            else 2
+        )
+        provider_quorum_met = len(provider_families) >= required_providers
         domains = sorted({
-            (urlparse(str(item.get("url") or "")).hostname or "").casefold()
+            (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
             for item in selected
             if str(item.get("url") or "").strip()
         } - {""})
+        required_domains = 3 if strict_news_request else 2
+        required_results = 3 if strict_news_request else 1
+        domain_quorum_met = len(domains) >= required_domains
+        navigation_candidates_present = any(
+            bool(item.get("navigation_only")) for item in selected
+        )
+        navigation_only = (
+            not strict_news_request
+            and not provider_quorum_met
+            and domain_quorum_met
+            and navigation_candidates_present
+        )
+        final_ok = (
+            len(selected) >= required_results
+            and domain_quorum_met
+            and (provider_quorum_met or navigation_only)
+        )
+        final_status = (
+            "PARTIAL"
+            if navigation_only
+            else status
+            if final_ok or not selected
+            else "INSUFFICIENT_PROVIDER_QUORUM"
+            if not provider_quorum_met
+            else "INSUFFICIENT_EXTERNAL_EVIDENCE"
+        )
         verification_level = (
-            "multi-source"
+            "navigation-only"
+            if navigation_only
+            else "multi-source"
             if len(domains) >= 2
             else "single-source"
             if selected
             else "none"
         )
         return {
-            "ok": bool(selected),
-            "status": status,
-            "diagnostic_code": None if selected else status,
+            "ok": final_ok,
+            "status": final_status,
+            "diagnostic_code": "INSUFFICIENT_PROVIDER_QUORUM" if navigation_only else None if final_ok else final_status,
             "engine": "DEEP33 Search Engine",
             "engine_version": "1.4.0",
             "provider_independent": True,
@@ -1973,7 +2275,7 @@ class WebOrchestrator:
             "providers_attempted": attempted,
             "provider": (
                 providers_used[0]
-                if len(providers_used) == 1
+                if len(provider_families) == 1
                 else "multi"
                 if providers_used
                 else None
@@ -1982,7 +2284,19 @@ class WebOrchestrator:
             "verification": {
                 "level": verification_level,
                 "distinct_domains": len(domains),
-                "distinct_providers": len(set(providers_used)),
+                "distinct_providers": len(provider_families),
+                "required_domains": required_domains,
+                "required_providers": required_providers,
+                "domain_quorum_met": domain_quorum_met,
+                "provider_quorum_met": provider_quorum_met,
+                "navigation_only": navigation_only,
+                "navigation_candidates_present": navigation_candidates_present,
+                "evidence_status": (
+                    "NAVIGATION_ONLY" if navigation_only else
+                    "MIXED_NAVIGATION" if navigation_candidates_present else
+                    "VERIFIED" if provider_quorum_met and domain_quorum_met else
+                    "INSUFFICIENT"
+                ),
                 "corroborated_results": 0,
             },
             "errors": errors[:8],
@@ -1997,7 +2311,7 @@ class WebOrchestrator:
 _default_orchestrator: WebOrchestrator | None = None
 
 
-def get_web_orchestrator(max_results: int = 5) -> WebOrchestrator:
+def get_web_orchestrator(max_results: int = 8) -> WebOrchestrator:
     global _default_orchestrator
     if _default_orchestrator is None or _default_orchestrator.max_results != max_results:
         _default_orchestrator = WebOrchestrator(max_results=max_results)

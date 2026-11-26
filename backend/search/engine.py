@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from backend.search.resilience import DiagnosticCode, controller
 
 
-ENGINE_VERSION = "1.3.0"
+ENGINE_VERSION = "1.4.0"
 TOKEN_RE = re.compile(r"[\wáéíóúüñÁÉÍÓÚÜÑ]{2,}", re.UNICODE)
 DEEP_TERMS = (
     "investiga", "investigar", "investigación", "analiza", "analizar",
@@ -161,6 +161,29 @@ TOTAL_SEARCH_TIMEOUT_SECONDS = max(
     3.0,
     min(5.0, float(os.getenv("WEB_SEARCH_TOTAL_TIMEOUT_SECONDS", "5"))),
 )
+
+
+def _independent_provider_family(provider: str) -> str:
+    """Normalize provider aliases to the underlying independent search family."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    if "google" in name:
+        return "google"
+    if any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "mwmbl" in name:
+        return "mwmbl"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    # Wikipedia is a content corpus, not an independent web-search index.
+    if "wikipedia" in name:
+        return ""
+    return name
 
 
 def _requires_realtime_multidomain(query: str) -> bool:
@@ -514,6 +537,23 @@ _REALTIME_MARKERS = (
     "en vivo", "última hora", "ultima hora", "today", "right now",
     "latest", "current", "breaking", "this week", "recent",
 )
+
+# Strict publisher-article quorum applies only to explicit news/current-events
+# intent. Product releases, documentation updates and generic "situación actual"
+# questions remain realtime searches but do not require three news articles.
+_STRICT_NEWS_SIGNALS = (
+    "noticia", "noticias", "news", "breaking", "última hora", "ultima hora",
+    "actualidad", "qué pasó", "que paso", "qué está pasando", "que esta pasando",
+    "qué ocurre", "que ocurre", "qué pasa", "que pasa", "current events",
+    "current affairs", "acontecimientos actuales", "acontecimiento actual",
+    "eventos actuales", "eventos recientes", "últimos acontecimientos",
+    "ultimos acontecimientos", "hechos recientes",
+)
+
+
+def is_strict_news_query(query: str) -> bool:
+    lowered = " ".join(str(query or "").split()).casefold()
+    return bool(lowered) and any(signal in lowered for signal in _STRICT_NEWS_SIGNALS)
 
 
 def is_realtime_news_query(query: str) -> bool:
@@ -1040,6 +1080,45 @@ def rank_results(
     return ranked
 
 
+def validate_realtime_evidence(query: str, items: list[dict]) -> dict:
+    """Validate freshness, relevance, editorial domains, and independent indexes."""
+    fresh = [
+        item
+        for item in rank_results(query, items, realtime=True)
+        if _is_recently_published(item, query)
+        and float(item.get("score") or 0.0) >= 0.28
+    ]
+    domains = {
+        str(item.get("source_domain") or _host(str(item.get("url") or ""))).casefold().removeprefix("www.")
+        for item in fresh
+    } - {""}
+    provider_families = set()
+    for item in fresh:
+        names = item.get("providers")
+        if not isinstance(names, list) or not names:
+            names = [item.get("provider")]
+        provider_families.update(
+            family
+            for family in (_independent_provider_family(str(name or "")) for name in names)
+            if family
+        )
+    return {
+        "fresh_items": fresh,
+        "domains": len(domains),
+        "providers": len(provider_families),
+        "ok": len(fresh) >= 3 and len(domains) >= 3 and len(provider_families) >= 2,
+    }
+
+
+def _requires_research_contrast(query: str) -> bool:
+    return bool(re.search(
+        r"\\b(?:investiga(?:r|ci[oó]n)?|research|contrasta(?:r)?|contrast|"
+        r"compara(?:r|ci[oó]n)?|compare|an[aá]lisis comparativo|comparative analysis)\\b",
+        str(query or ""),
+        re.IGNORECASE,
+    ))
+
+
 def _text_score(query_tokens: list[str], item: dict) -> float:
     title = str(item.get("title") or "").lower()
     snippet = str(item.get("snippet") or "").lower()
@@ -1051,14 +1130,76 @@ def _text_score(query_tokens: list[str], item: dict) -> float:
 
 
 def deduplicate(results: list[dict], limit: int) -> list[dict]:
+    # Preserve every independent provider that returned the same canonical URL.
+    # The selected result remains a single fetch target, but provenance must not
+    # disappear when duplicate URLs are collapsed.
+    providers_by_url: dict[str, list[str]] = {}
+    for item in results:
+        url = _canonical_url(str(item.get("url") or ""))
+        if not url:
+            continue
+        existing = item.get("providers")
+        names = [*(existing if isinstance(existing, list) else []), item.get("provider")]
+        bucket = providers_by_url.setdefault(url, [])
+        for name in names:
+            provider = str(name or "").strip()
+            if provider and provider not in bucket:
+                bucket.append(provider)
+
+    def preserve_provenance(item: dict, url: str) -> dict:
+        selected = {**item, "url": url}
+        providers = providers_by_url.get(url, [])
+        if providers:
+            selected["providers"] = list(providers)
+        return selected
+
     seen_urls = set()
     seen_title_domain = set()
     seen_domains = set()
+    seen_provider_families: set[str] = set()
     output = []
+    deferred_same_provider: list[dict] = []
 
-    # Pass 1: guarantee source-domain diversity where possible. Identical titles
-    # from different domains are retained because they are evidence of corroboration.
+    def provider_families(item: dict) -> set[str]:
+        names = item.get("providers")
+        if not isinstance(names, list):
+            names = [item.get("provider")]
+        families = set()
+        for raw_name in names:
+            family = _independent_provider_family(str(raw_name or ""))
+            if family:
+                families.add(family)
+        return families
+
+    # Pass 1: prefer one source from each independent provider family while
+    # retaining editorial-domain diversity. Repeated results from one index are
+    # deferred, not discarded; the next pass fills remaining slots.
     for item in results:
+        url = _canonical_url(str(item.get("url") or ""))
+        title = " ".join(str(item.get("title") or "").lower().split())
+        domain = _source_host(item).removeprefix("www.")
+        title_key = (domain, title) if title else None
+        if not url or url in seen_urls or (title_key and title_key in seen_title_domain):
+            continue
+        if domain and domain in seen_domains:
+            continue
+        families = provider_families(item)
+        if families and families.issubset(seen_provider_families):
+            deferred_same_provider.append(item)
+            continue
+        seen_urls.add(url)
+        if title_key:
+            seen_title_domain.add(title_key)
+        if domain:
+            seen_domains.add(domain)
+        seen_provider_families.update(families)
+        output.append(preserve_provenance(item, url))
+        if len(output) >= limit:
+            return output
+
+    # Fill the first-pass slots with other editorial domains even when the
+    # independent provider did not return enough fetchable candidates.
+    for item in deferred_same_provider:
         url = _canonical_url(str(item.get("url") or ""))
         title = " ".join(str(item.get("title") or "").lower().split())
         domain = _source_host(item).removeprefix("www.")
@@ -1072,7 +1213,7 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
             seen_title_domain.add(title_key)
         if domain:
             seen_domains.add(domain)
-        output.append({**item, "url": url})
+        output.append(preserve_provenance(item, url))
         if len(output) >= limit:
             return output
 
@@ -1095,17 +1236,16 @@ def deduplicate(results: list[dict], limit: int) -> list[dict]:
         if title_key:
             seen_title_domain.add(title_key)
         domain_counts[domain] = domain_counts.get(domain, 0) + 1
-        output.append({**item, "url": url})
+        output.append(preserve_provenance(item, url))
         if len(output) >= limit:
             break
     return output
-
 
 class SearchEngine:
     """Provider-agnostic DEEP33 web-search orchestration layer."""
 
     def __init__(self, *, max_results: int = 5, max_queries: int = 3) -> None:
-        self.max_results = max(1, min(8, int(max_results)))
+        self.max_results = max(1, min(12, int(max_results)))
         self.max_queries = max(1, min(3, int(max_queries)))
 
     def plan(self, query: str) -> SearchPlan:
@@ -1269,6 +1409,18 @@ class SearchEngine:
             if fast_mode:
                 return bool(ranked)
             if plan_depth == "realtime":
+                if is_strict_news_query(planned_query):
+                    # Three domains from one index are not an independent news quorum.
+                    # Keep collecting until two underlying provider families contribute.
+                    provider_families = {
+                        _independent_provider_family(name)
+                        for name, _batch in successful
+                        if _independent_provider_family(name)
+                    }
+                    return (
+                        len(provider_families) >= 2
+                        and len(domains) >= min(3, self.max_results)
+                    )
                 if _requires_realtime_multidomain(planned_query):
                     return len(domains) >= min(3, self.max_results)
                 return bool(ranked)
@@ -1473,13 +1625,24 @@ class SearchEngine:
                 else min(MIN_VERIFIED_RESULTS, self.max_results)
             )
             if plan.depth == "realtime":
-                if _requires_realtime_multidomain(plan.original_query):
-                    first_domains = {
-                        _host(str(item.get("url") or ""))
-                        for _name, items in first_relevant_by_provider
-                        for item in items
-                        if _host(str(item.get("url") or ""))
+                first_domains = {
+                    _host(str(item.get("url") or ""))
+                    for _name, items in first_relevant_by_provider
+                    for item in items
+                    if _host(str(item.get("url") or ""))
+                }
+                if is_strict_news_query(plan.original_query):
+                    first_provider_families = {
+                        _independent_provider_family(name)
+                        for name, _items in first_relevant_by_provider
+                        if _independent_provider_family(name)
                     }
+                    sufficiently_verified = (
+                        len(first_provider_families) >= 2
+                        and len(first_domains) >= min(3, self.max_results)
+                        and first_result_count >= min(3, self.max_results)
+                    )
+                elif _requires_realtime_multidomain(plan.original_query):
                     sufficiently_verified = len(first_domains) >= min(3, self.max_results)
                 else:
                     sufficiently_verified = first_provider_count >= 1 and first_result_count >= 1
@@ -1547,10 +1710,7 @@ class SearchEngine:
                     successful.append((rescue, provider_used, items))
 
         merged = []
-        providers_used = []
         for planned_query, name, items in successful:
-            if name not in providers_used:
-                providers_used.append(name)
             for item in items:
                 merged.append({
                     **item,
@@ -1564,11 +1724,46 @@ class SearchEngine:
             realtime=plan.depth == "realtime",
         )
         selected = deduplicate(ranked, self.max_results)
+        strict_news_request = is_strict_news_query(plan.original_query)
+        research_contrast_request = _requires_research_contrast(plan.original_query)
+        realtime_evidence = (
+            validate_realtime_evidence(plan.original_query, selected)
+            if strict_news_request
+            else None
+        )
+        if realtime_evidence is not None:
+            selected = realtime_evidence["fresh_items"]
         distinct_domains = sorted({
-            _host(str(item.get("url") or ""))
+            _host(str(item.get("url") or "")).removeprefix("www.")
             for item in selected
             if _host(str(item.get("url") or ""))
         })
+        relevant_provider_names = []
+        relevant_provider_families = set()
+        for item in selected:
+            names = item.get("providers")
+            if not isinstance(names, list) or not names:
+                names = [item.get("provider")]
+            for name in names:
+                raw_name = str(name or "").strip()
+                family = _independent_provider_family(raw_name)
+                if raw_name and raw_name not in relevant_provider_names:
+                    relevant_provider_names.append(raw_name)
+                if family:
+                    relevant_provider_families.add(family)
+        providers_used = relevant_provider_names
+        required_domains = 3 if strict_news_request else 2 if research_contrast_request else 1
+        domain_quorum_met = len(distinct_domains) >= required_domains
+        provider_quorum_met = (
+            realtime_evidence["ok"]
+            if realtime_evidence is not None
+            else bool(relevant_provider_families)
+        )
+        result_quorum_met = (
+            realtime_evidence["ok"]
+            if realtime_evidence is not None
+            else bool(selected) and domain_quorum_met
+        )
         corroborated = sum(1 for item in selected if item.get("corroborated"))
         if corroborated:
             verification_level = "corroborated"
@@ -1580,7 +1775,7 @@ class SearchEngine:
             verification_level = "none"
 
         return {
-            "ok": bool(selected),
+            "ok": result_quorum_met,
             "realtime": plan.depth == "realtime",
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "engine": "DEEP33 Search Engine",
@@ -1601,7 +1796,11 @@ class SearchEngine:
             "verification": {
                 "level": verification_level,
                 "distinct_domains": len(distinct_domains),
-                "distinct_providers": len(providers_used),
+                "distinct_providers": len(relevant_provider_families),
+                "required_domains": required_domains,
+                "domain_quorum_met": domain_quorum_met,
+                "provider_quorum_met": provider_quorum_met,
+                "fresh_news_items": len(realtime_evidence["fresh_items"]) if realtime_evidence is not None else 0,
                 "corroborated_results": corroborated,
             },
             "errors": errors[:8],

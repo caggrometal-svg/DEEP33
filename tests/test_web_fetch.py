@@ -507,7 +507,7 @@ def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch)
 
     class Client:
         async def get(self, url, **kwargs):
-            assert url == "https://news.google.com/rss/articles/TEST_ARTICLE_ID"
+            assert url == "https://news.google.com/rss/articles/TEST_ARTICLE_ID?oc=5"
             assert "CONSENT=PENDING+987" in kwargs["headers"]["Cookie"]
             return Response(
                 200,
@@ -542,6 +542,40 @@ def test_google_news_wrapper_decoder_returns_verified_publisher_url(monkeypatch)
     assert resolved == target
 
 
+
+def test_google_news_wrapper_accepts_validated_direct_publisher_redirect(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/REDIRECT_ID?oc=5"
+    target = "https://www.cooperativa.cl/noticias/pais/2026/11/24/article.shtml"
+
+    class Response:
+        status_code = 302
+        text = ""
+        headers = {"location": target}
+
+    class Client:
+        async def get(self, url, **kwargs):
+            assert url == wrapper
+            return Response()
+
+        async def post(self, *_args, **_kwargs):
+            raise AssertionError("RPC must not run after a validated publisher redirect")
+
+    async def client():
+        return Client()
+
+    monkeypatch.setattr(web_fetch, "_fetch_http_client", client)
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda value: value)
+
+    resolved = asyncio.run(
+        web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
+    )
+
+    assert resolved == target
+
+
 def test_google_news_wrapper_decoder_fails_closed_without_signed_params(monkeypatch) -> None:
     import asyncio
     import pytest
@@ -567,3 +601,38 @@ def test_google_news_wrapper_decoder_fails_closed_without_signed_params(monkeypa
         asyncio.run(
             web_fetch._resolve_google_news_wrapper(wrapper, timeout_seconds=2.0)
         )
+
+
+def test_fetch_page_uses_bounded_reader_path_when_google_news_resolution_fails(monkeypatch) -> None:
+    import asyncio
+    from tools import web_fetch
+
+    wrapper = "https://news.google.com/rss/articles/OPAQUE_ID?oc=5"
+    publisher = "https://www.cooperativa.cl/noticias/pais/2026/11/24/article.shtml"
+    seen = {}
+
+    monkeypatch.setattr(web_fetch, "validate_public_url", lambda value: value)
+
+    async def broken_resolver(_url, *, timeout_seconds):
+        raise web_fetch.WebFetchError("GOOGLE_NEWS_WRAPPER_PARAMS_MISSING")
+
+    async def fake_total_budget(**kwargs):
+        seen["original_url"] = kwargs["original_url"]
+        seen["current_url"] = kwargs["current_url"]
+        return {
+            "ok": True,
+            "url": kwargs["original_url"],
+            "final_url": publisher,
+            "title": "Noticia reciente de Chile",
+            "text": "Información periodística actual de Chile. " * 8,
+            "published_at": "2026-11-24T00:30:00+00:00",
+        }
+
+    monkeypatch.setattr(web_fetch, "_resolve_google_news_wrapper", broken_resolver)
+    monkeypatch.setattr(web_fetch, "_fetch_with_total_budget", fake_total_budget)
+
+    result = asyncio.run(web_fetch.fetch_page(wrapper, fresh=True))
+
+    assert seen["original_url"] == wrapper
+    assert seen["current_url"] == wrapper
+    assert result["final_url"] == publisher

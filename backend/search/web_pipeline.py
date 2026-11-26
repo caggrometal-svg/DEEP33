@@ -42,7 +42,7 @@ class FetchPolicy(BaseModel):
     global_budget_seconds: float = Field(default=4.8, ge=1.0, le=15.0)
     concurrency: int = Field(default=4, ge=1, le=8)
     target_sources: int = Field(default=3, ge=1, le=5)
-    max_sources: int = Field(default=5, ge=1, le=5)
+    max_sources: int = Field(default=5, ge=1, le=8)
     min_text_chars: int = Field(default=240, ge=1, le=5000)
     min_total_chars: int = Field(default=2400, ge=240, le=50000)
     ewma_alpha: float = Field(default=0.35, ge=0.05, le=0.95)
@@ -628,7 +628,7 @@ async def fetch_many(
         base_timeout_seconds=timeout_seconds,
         concurrency=concurrency,
         target_sources=max(1, min(5, target_sources)),
-        max_sources=max(1, min(5, max_sources)),
+        max_sources=max(1, min(8, max_sources)),
         global_budget_seconds=global_budget_seconds,
         min_text_chars=max(1, min_text_chars),
         min_total_chars=max(240, min_total_chars),

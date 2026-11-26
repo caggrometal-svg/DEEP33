@@ -399,10 +399,10 @@ def test_chat_stream_honors_skip_web_tools_header(monkeypatch) -> None:
 def test_web_search_result_limit_expands_only_for_realtime_chile_news() -> None:
     from backend.main import _web_search_result_limit
 
-    assert _web_search_result_limit("política Chile hoy últimas noticias", 5) == 8
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 5) == 12
     assert _web_search_result_limit("sitio gubernamental Chile información pública", 5) == 5
     assert _web_search_result_limit("Python asyncio documentation", 5) == 5
-    assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 8
+    assert _web_search_result_limit("política Chile hoy últimas noticias", 8) == 12
 
 
 def test_generate_claim_failure_preserves_original_error_without_a_lease(monkeypatch) -> None:
@@ -652,6 +652,7 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "errors": [],
             "providers": ["google_news", "bing"],
             "providers_attempted": ["google_news", "bing"],
+            "verification": {"provider_quorum_met": True, "distinct_providers": 2},
             "winner_provider": "multi",
         }
 
@@ -669,8 +670,12 @@ def test_web_search_endpoint_preserves_editorial_domain_and_returns_resolved_url
             "text_chars": 360,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(
@@ -715,15 +720,22 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             ],
             "errors": [],
             "providers": ["google_news", "bing", "duckduckgo"],
+            "verification": {"provider_quorum_met": True, "distinct_providers": 2},
         }
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
         assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
         assert kwargs["direct_timeout_seconds"] == 0.85
+        resolved_url = (
+            "https://www.emol.com/noticias/actualidad/chile-hoy.html"
+            if source["url"] == wrapper
+            else source["url"]
+        )
         return {
             "title": source["title"],
-            "url": source["url"],
+            "url": resolved_url,
+            "final_url": resolved_url,
             "text": "Texto editorial directo verificable. " * 8,
             "provider": source["provider"],
             "domain": source["source_domain"],
@@ -732,8 +744,12 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
             "text_chars": 280,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     started = time.perf_counter()
@@ -880,8 +896,12 @@ def test_web_search_rejects_unrelated_direct_pages_for_relevant_news_wrapper(mon
             "text_chars": 390,
         }
 
+    async def no_recent_candidates(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(main, "enforce_client_controls", allow_controls)
     monkeypatch.setattr(main, "search_web", fake_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_recent_candidates)
     monkeypatch.setattr(main, "_fetch_web_source", fake_fetch_source)
 
     response = client.get(

@@ -110,6 +110,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return json({ ok: true });
   if (req.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
 
+  const requestId = req.headers.get("x-request-id")?.trim().slice(0, 128) || crypto.randomUUID();
   try {
     const body = await req.json();
     const action = String(body.action || "");
@@ -139,8 +140,18 @@ Deno.serve(async (req) => {
         p_rrf_k: 60,
       });
       if (error) {
-        console.error("search_deep33_chunks", error);
-        return json({ error: "HYBRID_SEARCH_DATABASE_ERROR" }, 502);
+        const safeError = error instanceof Error ? error.name + ": " + error.message : String(error);
+        console.error(JSON.stringify({
+          event: "deep33_hybrid_search_database_error",
+          request_id: requestId,
+          error: safeError.slice(0, 2000),
+          timestamp: new Date().toISOString(),
+        }));
+        return json({
+          ok: false,
+          error: "HYBRID_SEARCH_DATABASE_ERROR",
+          request_id: requestId,
+        }, 502);
       }
       return json(Array.isArray(data) ? data : [], 200, {
         "x-deep33-search-mode": query && embeddingValues ? "hybrid" : "vector",
@@ -167,8 +178,18 @@ Deno.serve(async (req) => {
         p_chunks: embeddedChunks,
       });
       if (error) {
-        console.error("index_deep33_chunks", error);
-        return json({ error: "HYBRID_INDEX_DATABASE_ERROR" }, 502);
+        const safeError = error instanceof Error ? error.name + ": " + error.message : String(error);
+        console.error(JSON.stringify({
+          event: "deep33_hybrid_index_database_error",
+          request_id: requestId,
+          error: safeError.slice(0, 2000),
+          timestamp: new Date().toISOString(),
+        }));
+        return json({
+          ok: false,
+          error: "HYBRID_INDEX_DATABASE_ERROR",
+          request_id: requestId,
+        }, 502);
       }
       return json(Array.isArray(data) ? data : data ?? { indexed_chunks: chunks.length });
     }
@@ -189,10 +210,19 @@ Deno.serve(async (req) => {
 
     return json({ error: "ACTION_NOT_SUPPORTED" }, 400);
   } catch (error) {
-    console.error(error);
-    return json(
-      { error: error instanceof Error ? error.message : "HYBRID_INTERNAL_ERROR" },
-      500,
-    );
+    const safeError = error instanceof Error
+      ? error.name + ": " + error.message
+      : String(error);
+    console.error(JSON.stringify({
+      event: "deep33_hybrid_internal_error",
+      request_id: requestId,
+      error: safeError.slice(0, 2000),
+      timestamp: new Date().toISOString(),
+    }));
+    return json({
+      ok: false,
+      error: "HYBRID_INTERNAL_ERROR",
+      request_id: requestId,
+    }, 500);
   }
 });

@@ -59,7 +59,7 @@ object Deep33Api {
     private const val GLOBAL_TIMEOUT_MS = 180_000
     @Volatile private var authContext: Context? = null
     @Volatile private var e2eBackendUrl: String? = null
-    @Volatile private var e2eVercelOidcToken: String? = null
+    @Volatile private var e2eVercelProtectionBypassSecret: String? = null
 
     fun configureAuth(context: Context) {
         authContext = context.applicationContext
@@ -67,26 +67,28 @@ object Deep33Api {
 
     /**
      * Routes a debug/instrumentation run to the exact tested Vercel deployment.
-     * The preview OIDC token is supplied at test runtime; it is never compiled into
-     * BuildConfig and this method cannot affect a release build.
+     * The Vercel protection bypass is supplied only at instrumentation runtime; it is
+     * never compiled into BuildConfig and this method cannot affect a release build.
      */
-    fun configureE2EBackend(baseUrl: String, oidcToken: String? = null) {
+    fun configureE2EBackend(baseUrl: String, protectionBypassSecret: String? = null) {
         check(BuildConfig.DEBUG) { "E2E backend override is debug-only" }
         val endpoint = validateEndpoint(baseUrl)
             ?: throw IllegalArgumentException("Invalid E2E backend URL")
         val host = URI(endpoint).host.orEmpty().lowercase()
         val isCanonicalProduction = host == "deep33-backend.vercel.app"
-        val isDEEP33Preview = host.endsWith(".vercel.app") &&
-            host.contains("deep33-backend-git-fix-vercel-android-route-221026")
+        val isDEEP33Preview = host.endsWith("-iac33.vercel.app") && (
+            host == "deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app" ||
+                host.startsWith("deep33-backend-git-fix-phase1-routing-provider-quo-")
+            )
         require(isCanonicalProduction || isDEEP33Preview) {
             "E2E backend must be the canonical DEEP33 Vercel production or approved PR preview"
         }
-        val token = oidcToken?.trim().orEmpty()
-        require(isCanonicalProduction || token.isNotBlank()) {
-            "Protected Vercel preview requires a short-lived OIDC token"
+        val bypassSecret = protectionBypassSecret?.trim().orEmpty()
+        require(isCanonicalProduction || bypassSecret.isNotBlank()) {
+            "Protected Vercel preview requires the automation protection bypass secret"
         }
         e2eBackendUrl = endpoint
-        e2eVercelOidcToken = token.ifBlank { null }
+        e2eVercelProtectionBypassSecret = bypassSecret.ifBlank { null }
     }
 
     fun e2eEndpointUrl(): String =
@@ -95,8 +97,8 @@ object Deep33Api {
 
     private fun applyE2EAccessHeader(connection: HttpsURLConnection, endpoint: String) {
         if (!BuildConfig.DEBUG || endpoint != e2eBackendUrl) return
-        e2eVercelOidcToken?.takeIf { it.isNotBlank() }?.let {
-            connection.setRequestProperty("x-vercel-trusted-oidc-idp-token", it)
+        e2eVercelProtectionBypassSecret?.takeIf { it.isNotBlank() }?.let {
+            connection.setRequestProperty("x-vercel-protection-bypass", it)
         }
     }
 
@@ -113,7 +115,8 @@ object Deep33Api {
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
-    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 12_000
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_280L
+    private const val STREAM_HEARTBEAT_GRACE_MS = 1_500L
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
@@ -435,15 +438,25 @@ object Deep33Api {
                         throw Deep33ApiException(Deep33ApiException.Kind.BAD_RESPONSE, code)
                     }
 
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                        lines.forEach { line ->
-                            if (isCancelled()) throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                        SseTextParser.readEvents(
+                            reader = reader,
+                            onHeartbeat = {
+                                if (!emitted) {
+                                    val remainingMs =
+                                        ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                                    connection.readTimeout =
+                                        minOf(STREAM_HEARTBEAT_GRACE_MS, remainingMs).toInt()
+                                }
+                            },
+                        ) { currentEventType, data ->
+                            if (isCancelled()) {
+                                throw Deep33ApiException(Deep33ApiException.Kind.CANCELLED)
+                            }
                             val nowNanos = System.nanoTime()
                             if (nowNanos >= deadline) {
                                 throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
                             }
-                            // Bound time-to-first-visible-text, not just socket inactivity:
-                            // heartbeats/status events must not mask a stalled inference.
                             if (!emitted && nowNanos >= firstTextDeadlineNanos) {
                                 android.util.Log.w(
                                     "DEEP33_PERF",
@@ -451,41 +464,44 @@ object Deep33Api {
                                 )
                                 throw Deep33ApiException(Deep33ApiException.Kind.TIMEOUT)
                             }
-                            // [DONE] marks the end of content, not the end of the HTTP body.
-                            // Drain to EOF before closing the reader; returning early can
-                            // reset the socket while the edge gateway is still closing SSE.
-                            if (sawDone) return@forEach
-                            if (line.startsWith("event:")) {
-                                eventType = line.substringAfter(":", "").trim()
-                                return@forEach
-                            }
-                            if (line.isBlank()) {
-                                eventType = null
-                                return@forEach
-                            }
-                            if (!line.startsWith("data:")) return@forEach
-                            val data = line.removePrefix("data:").trim()
-                            if (data.isBlank()) return@forEach
-                            if (eventType == "error") throw mapStreamError(data)
-                            if (data == "[DONE]") {
-                                sawDone = true
-                                return@forEach
-                            }
-                            val chunk = SseTextParser.extractText(data).orEmpty()
-                            if (chunk.isNotEmpty()) {
-                                if (!emitted) {
-                                    val remainingAfterFirstTextMs =
-                                        ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
-                                    connection.readTimeout = minOf(remainingAfterFirstTextMs, Int.MAX_VALUE.toLong()).toInt()
+                            if (!sawDone) {
+                                if (currentEventType.equals("error", ignoreCase = true)) {
+                                    throw mapStreamError(data)
                                 }
-                                emitted = true
-                                output.append(chunk)
-                                onText(chunk)
+                                if (data == "[DONE]") {
+                                    sawDone = true
+                                } else {
+                                    val chunk = SseTextParser.extractText(data, currentEventType).orEmpty()
+                                    if (chunk.isNotBlank()) {
+                                        if (!emitted) {
+                                            val remainingAfterFirstTextMs =
+                                                ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                                            connection.readTimeout =
+                                                minOf(remainingAfterFirstTextMs, Int.MAX_VALUE.toLong()).toInt()
+                                        }
+                                        emitted = true
+                                        output.append(chunk)
+                                        onText(chunk)
+                                    } else if (!emitted) {
+                                        val remainingMs =
+                                            ((deadline - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
+                                        connection.readTimeout =
+                                            minOf(STREAM_HEARTBEAT_GRACE_MS, remainingMs).toInt()
+                                    }
+                                }
                             }
                         }
                     }
-                    // clean SSE termination: a valid stream may end by EOF without an explicit
-                    // [DONE] after text has been received; an actually empty answer remains invalid.
+
+                    // A clean SSE termination is valid even when the server omits the optional [DONE] frame.
+                    val hasVisibleOutput = emitted && output.toString().isNotBlank()
+                    if (!hasVisibleOutput) {
+                        throw Deep33ApiException(
+                            Deep33ApiException.Kind.BAD_RESPONSE,
+                            statusCode = 502,
+                            partialOutput = emitted,
+                        )
+                    }
                     return output.toString()
                 } catch (e: Deep33ApiException) {
                     lastError = e
@@ -733,49 +749,116 @@ object Deep33Api {
 }
 
 object SseTextParser {
-    fun extractText(data: String): String? {
+    private val nonVisibleEvents = setOf(
+        "thinking",
+        "searching",
+        "sources_ready",
+        "status",
+        "heartbeat",
+        "metadata",
+        "reasoning",
+    )
+
+    fun readEvents(
+        reader: java.io.BufferedReader,
+        onHeartbeat: () -> Unit = {},
+        onEvent: (eventType: String?, data: String) -> Unit,
+    ) {
+        var eventType: String? = null
+        val dataLines = mutableListOf<String>()
+
+        fun dispatch() {
+            if (eventType != null || dataLines.isNotEmpty()) {
+                onEvent(eventType, dataLines.joinToString("\n"))
+            }
+            eventType = null
+            dataLines.clear()
+        }
+
+        while (true) {
+            val line = reader.readLine() ?: break
+            when {
+                line.isEmpty() -> dispatch()
+                line.startsWith(":") -> onHeartbeat()
+                line.startsWith("event:") -> eventType = line.substringAfter(":").trim()
+                line.startsWith("data:") -> dataLines.add(line.substringAfter(":").removePrefix(" "))
+                else -> Unit
+            }
+        }
+        if (eventType != null || dataLines.isNotEmpty()) dispatch()
+    }
+
+    fun extractText(data: String, eventType: String? = null): String? {
+        if (eventType?.trim()?.lowercase() in nonVisibleEvents) return null
         return runCatching {
             val root = JSONObject(data)
+            val rootType = root.optString("type").trim().lowercase()
+            val rootEvent = root.optString("event").trim().lowercase()
+            val rootStatus = root.optString("status").trim().lowercase()
+            if (rootType in nonVisibleEvents || rootEvent in nonVisibleEvents || rootStatus in nonVisibleEvents) {
+                return@runCatching null
+            }
+            if (root.has("reasoning") || root.has("analysis") || root.has("thinking")) {
+                return@runCatching null
+            }
+
+            fun visibleString(value: String): String? =
+                value.takeIf { it.isNotBlank() && !it.trimStart().startsWith("<") }
 
             fun contentValue(value: Any?): String? {
                 when (value) {
-                    is String -> return value
+                    is String -> return visibleString(value)
                     is JSONArray -> {
                         val out = StringBuilder()
                         for (i in 0 until value.length()) {
                             val item = value.opt(i)
                             val piece = when (item) {
-                                is String -> item
-                                is JSONObject -> item.optString("text").ifBlank {
-                                    item.optString("content")
-                                }
-                                else -> ""
+                                is String -> visibleString(item)
+                                is JSONObject -> visibleString(
+                                    item.optString("text").ifBlank { item.optString("content") }
+                                )
+                                else -> null
                             }
-                            if (piece.isNotBlank()) out.append(piece)
+                            if (!piece.isNullOrBlank()) out.append(piece)
                         }
                         return out.toString().ifBlank { null }
                     }
                     is JSONObject -> {
-                        return value.optString("text").ifBlank {
-                            value.optString("content")
-                        }.ifBlank { null }
+                        return visibleString(
+                            value.optString("text").ifBlank { value.optString("content") }
+                        )
                     }
                 }
                 return null
             }
 
             val rootContent = contentValue(root.opt("content"))
-            if (!rootContent.isNullOrBlank()) return rootContent
+            if (!rootContent.isNullOrBlank()) return@runCatching rootContent
 
-            val choices = root.optJSONArray("choices") ?: return null
-            val first = choices.optJSONObject(0) ?: return null
+            val choices = root.optJSONArray("choices") ?: return@runCatching null
+            val first = choices.optJSONObject(0) ?: return@runCatching null
+            val delta = first.optJSONObject("delta")
+            if (
+                delta?.has("reasoning") == true ||
+                delta?.has("analysis") == true ||
+                delta?.has("thinking") == true
+            ) {
+                return@runCatching null
+            }
 
-            val deltaContent = contentValue(first.optJSONObject("delta")?.opt("content"))
-            if (!deltaContent.isNullOrBlank()) return deltaContent
+            val deltaContent = contentValue(delta?.opt("content"))
+            if (!deltaContent.isNullOrBlank()) return@runCatching deltaContent
 
             val message = first.optJSONObject("message")
+            if (
+                message?.has("reasoning") == true ||
+                message?.has("analysis") == true ||
+                message?.has("thinking") == true
+            ) {
+                return@runCatching null
+            }
             val messageContent = contentValue(message?.opt("content"))
-            if (!messageContent.isNullOrBlank()) return messageContent
+            if (!messageContent.isNullOrBlank()) return@runCatching messageContent
 
             contentValue(first.opt("content"))
         }.getOrNull()

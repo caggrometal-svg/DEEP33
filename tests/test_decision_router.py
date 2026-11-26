@@ -31,6 +31,44 @@ def test_classifier_routes_explicit_web_request_to_web():
     assert classify_query("Busca en internet quién ganó la elección hoy").route == DecisionRoute.WEB
 
 
+def test_classifier_routes_named_people_and_organizations_to_web_without_currentness_words():
+    queries = (
+        "¿Quién es Donald Trump?",
+        "¿Qué sabemos de OpenAI?",
+        "qué es openai",
+        "Información sobre el Hospital Veterinario de Santiago",
+        "¿Dónde queda el Museo Nacional de Bellas Artes?",
+        "¿Qué hospitales públicos están operativos?",
+        "¿Qué empresas venden paneles solares en Chile?",
+    )
+    assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
+
+
+def test_classifier_routes_products_companies_and_technical_docs_to_web():
+    queries = (
+        "Compara Samsung Galaxy S26 con iPhone 17",
+        "¿Cuánto cuesta un Toyota Corolla?",
+        "Documentación de Python asyncio",
+        "¿Qué versión de Android tiene el Samsung Galaxy?",
+        "Tesla",
+    )
+    assert all(classify_query(query).route == DecisionRoute.WEB for query in queries)
+
+
+def test_classifier_routes_standalone_named_entities_to_web():
+    for query in ("Tesla", "¿Nvidia?", "Codelco"):
+        assert classify_query(query).route == DecisionRoute.WEB, query
+
+
+def test_classifier_routes_conversation_and_own_product_name_internally():
+    for query in ("Hola", "Hola DEEP33", "Gracias", "OK", "OK?"):
+        assert classify_query(query).route == DecisionRoute.INTERNAL, query
+
+
+def test_classifier_keeps_stable_general_knowledge_internal():
+    assert classify_query("¿Por qué el cielo se ve azul?").route == DecisionRoute.INTERNAL
+
+
 def test_validation_rejects_missing_metadata():
     evidence = Evidence(ok=True, route=DecisionRoute.FINANCE, data={"value": 900, "date": "2026-10-15"})
     validated = __import__("asyncio").run(validate_evidence(evidence))
@@ -116,3 +154,19 @@ def test_finance_answer_uses_the_validated_value_verbatim():
     assert "965,50 pesos chilenos" in answer
     assert "Fuentes consultadas:" in answer
     assert "https://query1.finance.yahoo.com/v8/finance/chart/CLP=X" in answer
+
+
+
+def test_backend_forces_web_evidence_for_every_external_entity_route():
+    import backend.main as main
+
+    queries = (
+        "¿Quién es Donald Trump?",
+        "¿Qué sabemos de OpenAI?",
+        "¿Qué empresas venden paneles solares en Chile?",
+        "Compara Samsung Galaxy S26 con iPhone 17",
+        "Documentación de Python asyncio",
+    )
+    for query in queries:
+        assert classify_query(query).route == DecisionRoute.WEB, query
+        assert main.should_force_web([{"role": "user", "content": query}]) is True, query

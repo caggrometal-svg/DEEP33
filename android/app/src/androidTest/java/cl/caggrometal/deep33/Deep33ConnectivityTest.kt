@@ -29,8 +29,8 @@ class Deep33ConnectivityTest {
         val args = InstrumentationRegistry.getArguments()
         val e2eUrl = args.getString("deep33_e2e_vercel_url").orEmpty().trim()
         if (e2eUrl.isNotBlank()) {
-            val oidcToken = args.getString("deep33_e2e_vercel_oidc_token")
-            Deep33Api.configureE2EBackend(e2eUrl, oidcToken)
+            val bypassSecret = args.getString("deep33_e2e_vercel_bypass_secret")
+            Deep33Api.configureE2EBackend(e2eUrl, bypassSecret)
             println("ANDROID_E2E_BACKEND_CONFIGURED host=" + java.net.URL(e2eUrl).host)
         }
     }

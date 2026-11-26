@@ -91,6 +91,18 @@ def _provider_url_is_secure(value: str) -> bool:
         return False
 
 
+def _is_kilo_free_model(model: str) -> bool:
+    normalized = str(model or "").strip().casefold()
+    return normalized == "kilo-auto/free" or normalized.endswith(":free")
+
+
+def _provider_hostname(value: str) -> str:
+    try:
+        return (urlsplit(str(value or "").strip()).hostname or "").casefold()
+    except (TypeError, ValueError):
+        return ""
+
+
 @dataclass(frozen=True)
 class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
@@ -104,18 +116,30 @@ class GatewayConfig:
 
     @classmethod
     def from_env(cls) -> "GatewayConfig":
+        primary_url = os.getenv(
+            "AI_GATEWAY_URL",
+            "https://api.kilo.ai/api/gateway/chat/completions",
+        ).strip()
+        primary_model = os.getenv(
+            "AI_GATEWAY_MODEL",
+            "dots-studio/dots-3-note-preview:free",
+        ).strip()
+        primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
+        primary_host = _provider_hostname(primary_url)
+        if primary_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(primary_model):
+            # Kilo permits anonymous access to free models. Avoid sending a stale
+            # account token that can turn an otherwise available free model into HTTP 401.
+            primary_api_key = ""
+
         primary = GatewayProvider(
             name=os.getenv("AI_GATEWAY_PROVIDER", "kilo").strip() or "kilo",
-            url=os.getenv(
-                "AI_GATEWAY_URL",
-                "https://api.kilo.ai/api/gateway/chat/completions",
-            ).strip(),
+            url=primary_url,
             health_url=os.getenv(
                 "AI_GATEWAY_HEALTH_URL",
                 "https://api.kilo.ai/api/gateway/models",
             ).strip(),
-            api_key=os.getenv("AI_GATEWAY_API_KEY", "").strip(),
-            model=os.getenv("AI_GATEWAY_MODEL", "dots-studio/dots-3-note-preview:free").strip(),
+            api_key=primary_api_key,
+            model=primary_model,
         )
 
         providers = [primary]
@@ -132,13 +156,19 @@ class GatewayConfig:
                     raise ValueError(
                         f"AI_GATEWAY_FALLBACKS_JSON item {index} must be an object"
                     )
+                fallback_url = str(item.get("url", "")).strip()
+                fallback_model = str(item.get("model", "")).strip()
+                fallback_api_key = str(item.get("api_key", "")).strip()
+                fallback_host = _provider_hostname(fallback_url)
+                if fallback_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(fallback_model):
+                    fallback_api_key = ""
                 providers.append(
                     GatewayProvider(
                         name=str(item.get("name", f"fallback-{index}")).strip(),
-                        url=str(item.get("url", "")).strip(),
+                        url=fallback_url,
                         health_url=str(item.get("health_url", "")).strip(),
-                        api_key=str(item.get("api_key", "")).strip(),
-                        model=str(item.get("model", "")).strip(),
+                        api_key=fallback_api_key,
+                        model=fallback_model,
                     )
                 )
 
@@ -163,18 +193,23 @@ class GatewayConfig:
             ),
             None,
         )
-        has_laguna_fallback = any(
-            "poolside/laguna-s-2.1" in provider.model.casefold()
+        has_free_text_fallback = any(
+            "baidu/ernie-5.5-flash-preview:free" in provider.model.casefold()
             for provider in secure_providers
         )
-        if kilo_provider is not None and not has_laguna_fallback:
+        if kilo_provider is not None and not has_free_text_fallback:
+            # Keep the deterministic fallback on a model currently listed as
+            # free by Kilo. The former Laguna fallback is no longer present in
+            # the live model catalog and can silently turn failover into a dead end.
             secure_providers += (
                 GatewayProvider(
-                    name="kilo-laguna-fallback",
+                    name="kilo-free-text-fallback",
                     url=kilo_provider.url,
                     health_url=kilo_provider.health_url,
-                    api_key=kilo_provider.api_key,
-                    model="poolside/laguna-s-2.1:free",
+                    # Kilo explicitly permits anonymous access to :free models.
+                    # Do not forward a rejected/expired primary credential to the fallback.
+                    api_key="",
+                    model="baidu/ernie-5.5-flash-preview:free",
                 ),
             )
         return cls(

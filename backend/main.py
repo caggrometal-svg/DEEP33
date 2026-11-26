@@ -41,7 +41,7 @@ from backend.memory import (
 from tools.web_fetch import fetch_page
 from tools.web_search import search_web, search_recent_news_candidates, web_search_status
 from backend.search.hybrid import HybridSearchClient, HybridSearchUnavailableError
-from backend.search.engine import is_realtime_query, is_realtime_news_query, _is_recently_published, rank_results
+from backend.search.engine import is_realtime_query, is_realtime_news_query, is_strict_news_query, _is_recently_published, _normalise_lookup_query, rank_results
 from backend.search.web_pipeline import FetchPolicy, fetch_source_quorum, score_result
 from backend.search.resilience import DiagnosticCode, graceful_payload, structured_observation
 from backend.weather import (build_weather_evidence, fetch_named_location_weather, fetch_weather_forecast, is_forecast_weather_query, is_weather_query, resolve_gps_weather)
@@ -90,17 +90,18 @@ def _is_publishable_realtime_news_source(
     if not isinstance(source, dict) or not isinstance(fetched_page, dict):
         return False
 
-    published_at = fetched_page.get("published_at") or source.get("published_at")
+    # A SERP timestamp describes the index candidate, not necessarily the page
+    # opened by DEEP33. Only publisher metadata extracted from that page qualifies.
+    published_at = fetched_page.get("published_at")
     if not published_at or not _is_recently_published(
-        {**source, "published_at": published_at},
+        {"published_at": published_at},
         query,
     ):
         return False
 
     page_url = str(
-        fetched_page.get("url")
-        or fetched_page.get("final_url")
-        or source.get("url")
+        fetched_page.get("final_url")
+        or fetched_page.get("url")
         or ""
     ).strip()
     parsed = urlparse(page_url)
@@ -116,7 +117,8 @@ def _is_publishable_realtime_news_source(
         "/", "/lo-ultimo", "/ultimas-noticias", "/ultimas-noticias-de-chile",
         "/noticias", "/chile", "/actualidad", "/politica", "/política",
         "/economia", "/deportes", "/mundo", "/news", "/latest",
-        "/latest-news", "/breaking-news", "/ultimo-momento",
+        "/latest-news", "/breaking-news", "/ultimo-momento", "/ultimas",
+        "/ultima", "/últimas", "/últimas-noticias",
     }
     if path in landing_paths:
         return False
@@ -143,6 +145,40 @@ def _is_publishable_realtime_news_source(
         "snippet": page_text[:2000],
         "text": page_text[:2000],
     }
+    # Chat prompts often append output constraints after the actual search intent.
+    # Score the publisher article against the normalized topic, not those instructions.
+    evidence_query = _normalise_lookup_query(query) or query
+    query_tokens = {
+        token
+        for token in re.findall(r"[a-záéíóúüñ]+", evidence_query.casefold())
+        if token not in {
+            "chile", "noticia", "noticias", "ultima", "ultimas", "última",
+            "últimas", "hoy", "actualidad", "de", "del", "en", "el", "la",
+        }
+    }
+    broad_chile_news = (
+        "chile" in str(query or "").casefold()
+        and not query_tokens
+    )
+    if broad_chile_news:
+        # For a country-wide "latest news" query, a fresh article from a
+        # Chilean publisher can be relevant without repeating the word Chile.
+        # Require concrete local institutions or geography, not just a .cl host.
+        local_context = " ".join((title, page_text)).casefold()
+        chile_context_markers = (
+            "hualpén", "hualpen", "san miguel", "santiago", "valparaíso",
+            "valparaiso", "concepción", "concepcion", "biobío", "biobio",
+            "antofagasta", "temuco", "iquique", "copiapó", "copiapo",
+            "puerto montt", "valdivia", "rancagua", "talca", "chillán",
+            "chillan", "carabineros", "policía de investigaciones", "pdi",
+            "congreso", "diputados", "senadores", "gobierno de chile",
+            "presidente de chile", "ministerio", "seremi", "municipalidad",
+            "fiscalía", "fiscalia", "alcalde", "alcaldesa", "región del",
+            "region del", "subsecretaría", "subsecretaria",
+        )
+        if any(marker in local_context for marker in chile_context_markers):
+            return True
+
     try:
         minimum_relevance_score = max(
             0.18,
@@ -150,7 +186,78 @@ def _is_publishable_realtime_news_source(
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
-    return score_result(query, relevance_item) >= minimum_relevance_score
+    return score_result(evidence_query, relevance_item) >= minimum_relevance_score
+
+
+def _independent_search_provider_family(provider: str) -> str:
+    """Count underlying search indexes, not aliases or front ends."""
+    name = str(provider or "").strip().casefold().replace("-", "_")
+    if not name or name in {"unknown", "none", "null"}:
+        return ""
+    # Publisher RSS is a direct-source feed, not an independent search index.
+    # It may enrich source diversity but must never satisfy provider quorum.
+    if name in {"publisher_rss", "publisher_feed"}:
+        return ""
+    if "google" in name:
+        return "google"
+    if any(alias in name for alias in ("bing", "microsoft", "yahoo", "duckduckgo")) or name.startswith("ddg"):
+        return "bing"
+    if "mojeek" in name:
+        return "mojeek"
+    if "mwmbl" in name:
+        return "mwmbl"
+    if "marginalia" in name:
+        return "marginalia"
+    if "tavily" in name:
+        return "tavily"
+    if "cl0q" in name:
+        return "cl0q"
+    return name
+
+
+def _recent_news_quorum_summary(
+    query: str,
+    pages: list[dict[str, Any]],
+    search_result: dict[str, Any],
+) -> dict[str, Any]:
+    if not is_strict_news_query(query):
+        return {"required": False, "met": True, "articles": len(pages), "domains": 0, "providers": 0}
+    valid_pages = [
+        page for page in pages
+        if isinstance(page, dict)
+        and _is_publishable_realtime_news_source(query, page, page)
+    ]
+    domains = {
+        str(page.get("domain") or (urlparse(str(page.get("final_url") or page.get("url") or "")).hostname or ""))
+        .casefold().removeprefix("www.")
+        for page in valid_pages
+    } - {""}
+    verification = search_result.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    reported_provider_count = verification.get("distinct_providers")
+    try:
+        reported_provider_count = int(reported_provider_count or 0)
+    except (TypeError, ValueError):
+        reported_provider_count = 0
+    # Provider independence is verified by the search orchestrator before
+    # extraction. Publisher RSS pages add editorial diversity, but their adapter
+    # label is not a search-index provider and must not erase a valid quorum.
+    provider_quorum = (
+        verification.get("provider_quorum_met") is True
+        and reported_provider_count >= 2
+    )
+    provider_count = reported_provider_count
+    article_count = len(valid_pages)
+    domain_count = len(domains)
+    return {
+        "required": True,
+        "met": article_count >= 3 and domain_count >= 3 and provider_quorum,
+        "articles": article_count,
+        "domains": domain_count,
+        "providers": provider_count,
+        "provider_quorum_met": provider_quorum,
+    }
+
 
 NETWORK_CHECK_URL = os.getenv("NETWORK_CHECK_URL", "https://www.google.com/generate_204").strip()
 NETWORK_TIMEOUT = float(os.getenv("NETWORK_TIMEOUT_SECONDS", "8"))
@@ -1333,6 +1440,51 @@ WEB_NAVIGATION_PROMPT = (
     "Do not dump raw source metadata or internal retrieval JSON. When the user requests sources, or current/research claims need traceability, include concise source names and direct URLs present in retrieved evidence; never invent links."
 )
 
+def _compact_model_web_evidence(evidence: dict[str, Any], *, strict_news: bool) -> dict[str, Any]:
+    """Bound inference input without weakening server-side retrieval or source quorum."""
+    compact = dict(evidence)
+    if not strict_news:
+        return compact
+
+    # Free inference providers have a tight latency budget. Keep the three
+    # independently fetched publisher articles, but send only the fields needed
+    # to synthesize them. Full validated source metadata remains in the separate
+    # response source list; this does not weaken the retrieval quorum.
+    pages = evidence.get("fetched_pages")
+    if isinstance(pages, list):
+        compact["fetched_pages"] = [
+            {
+                "title": str(page.get("title") or "")[:160],
+                "url": str(page.get("url") or "")[:500],
+                "domain": str(page.get("domain") or "")[:120],
+                "published_at": page.get("published_at"),
+                "provider": page.get("provider"),
+                "provider_sources": _candidate_provider_names(
+                    page,
+                    str(page.get("provider") or "unknown"),
+                ),
+                "text": str(page.get("text") or "")[:500],
+            }
+            for page in pages[:3]
+            if isinstance(page, dict)
+        ]
+    results = evidence.get("search_results")
+    if isinstance(results, list):
+        compact["search_results"] = [
+            {
+                "title": str(item.get("title") or "")[:160],
+                "url": str(item.get("url") or "")[:500],
+                "source_domain": str(item.get("source_domain") or "")[:120],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:160],
+            }
+            for item in results[:3]
+            if isinstance(item, dict)
+        ]
+    compact["model_context_compacted"] = True
+    return compact
+
+
 WEB_EVIDENCE_SYNTHESIS_PROMPT = (
     "Server-side retrieval has already completed for this request. No web tools or function-call interface are available in this inference. "
     "Do not attempt to invoke, simulate, or print internal tool-call markup. "
@@ -1408,6 +1560,10 @@ def should_force_web(messages):
     query = latest_user_query(messages)
     if not query:
         return False
+    # The decision router's WEB route is itself an explicit external-evidence
+    # requirement. Keep the router and evidence acquisition contract aligned.
+    if classify_query(query).route == DecisionRoute.WEB:
+        return True
     if is_realtime_query(query):
         return True
     lowered = query.lower()
@@ -1540,6 +1696,121 @@ def _tool_calls_from_message(message):
     calls=message.get("tool_calls")
     return [c for c in calls if isinstance(c,dict)] if isinstance(calls,list) else []
 
+def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
+    """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
+    items = [item for item in candidates if isinstance(item, dict)]
+    ranked = rank_results(query, items, realtime=True)
+    if "chile" not in str(query or "").casefold():
+        return ranked
+
+    seen_urls = {
+        str(item.get("url") or "").strip()
+        for item in ranked
+        if str(item.get("url") or "").strip()
+    }
+    for item in items:
+        provider = str(item.get("provider") or "").casefold()
+        if provider not in {"publisher_rss", "mwmbl", "google_news"}:
+            continue
+        url = str(item.get("url") or "").strip()
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").casefold().removeprefix("www.")
+        source_domain = str(
+            item.get("source_domain") or host
+        ).casefold().removeprefix("www.")
+        path_parts = [part for part in parsed.path.split("/") if part]
+        publication_is_recent = (
+            _is_recently_published(item, query)
+            if item.get("published_at")
+            else provider in {"mwmbl", "google_news"}
+        )
+        is_google_news_wrapper = host in {"news.google.com", "google.com"}
+        domain_matches = (
+            is_google_news_wrapper
+            if provider == "google_news"
+            else host == source_domain or host.endswith("." + source_domain)
+        )
+        if (
+            not url
+            or url in seen_urls
+            or parsed.scheme.lower() != "https"
+            or not host
+            or not source_domain
+            or not domain_matches
+            or len(path_parts) < 2
+            or not publication_is_recent
+            or len(str(item.get("title") or "").strip()) < 12
+            or (
+                provider == "publisher_rss"
+                and len(str(item.get("snippet") or item.get("content") or "").strip()) < 30
+            )
+        ):
+            continue
+        retained = dict(item)
+        retained["relevance_score"] = score_result(query, retained)
+        ranked.append(retained)
+        seen_urls.add(url)
+    return ranked
+
+
+def _candidate_provider_names(raw: dict[str, Any], default_provider: str) -> list[str]:
+    """Return non-empty provider provenance, falling back to the candidate's source."""
+    names = raw.get("provider_sources")
+    if not isinstance(names, list) or not names:
+        names = raw.get("providers")
+    if not isinstance(names, list) or not names:
+        names = [default_provider]
+    return list(dict.fromkeys(
+        str(name).strip()
+        for name in names
+        if str(name or "").strip()
+    ))
+
+
+def _merge_recovered_provider_provenance(
+    search_result: dict[str, Any],
+    recovered_candidates: list[dict[str, Any]],
+) -> None:
+    """Merge only verified independent-index provenance into search quorum metadata."""
+    if not isinstance(search_result, dict):
+        return
+    existing = search_result.get("providers")
+    provider_names = {
+        str(name).strip()
+        for name in (existing if isinstance(existing, list) else [search_result.get("provider")])
+        if str(name or "").strip()
+    }
+    for candidate in recovered_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        provider_names.update(
+            _candidate_provider_names(
+                candidate,
+                str(candidate.get("provider") or ""),
+            )
+        )
+    families = {
+        family
+        for family in (
+            _independent_search_provider_family(name)
+            for name in provider_names
+        )
+        if family
+    }
+    search_result["providers"] = sorted(provider_names)
+    verification = search_result.get("verification")
+    if not isinstance(verification, dict):
+        verification = {}
+    try:
+        previous_count = int(verification.get("distinct_providers") or 0)
+    except (TypeError, ValueError):
+        previous_count = 0
+    verification["distinct_providers"] = max(previous_count, len(families))
+    if len(families) >= 2:
+        verification["provider_quorum_met"] = True
+    search_result["verification"] = verification
+
+
 def _source_from_result(result):
     items=result.get("results")
     if isinstance(items,list):
@@ -1555,8 +1826,8 @@ async def execute_web_tool(name, arguments, *, request_id: str = "unknown", prov
         try:
             return await search_web(
                 query,
-                timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","8")),
-                max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","5")),
+                timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS","5")),
+                max_results=int(os.getenv("WEB_SEARCH_MAX_RESULTS","8")),
                 fast=not is_realtime_query(query),
                 fresh=True,
             )
@@ -1896,14 +2167,24 @@ async def _fetch_web_source(
         request_id or "unknown", final_url, provider, final_host or "unknown",
         len(page_text), (time.perf_counter() - started) * 1000,
     )
+    page_providers = _candidate_provider_names(
+        source,
+        str(source.get("provider") or provider),
+    )
+    if provider and provider not in page_providers:
+        page_providers.append(provider)
     return {
         "title": str(result.get("title") or source.get("title") or final_url)[:300],
         "url": final_url,
         "text": page_text[:5000],
         "provider": provider,
+        "providers": sorted(set(page_providers)),
         "domain": final_host,
         "retrieved_at": result.get("retrieved_at"),
-        "published_at": result.get("published_at") or source.get("published_at"),
+        # Publication timestamp remains page-derived; SERP dates are discovery
+        # hints only and must not be promoted to verified article metadata.
+        "published_at": result.get("published_at"),
+        "final_url": final_url,
         "text_chars": len(page_text),
     }
 
@@ -1915,20 +2196,21 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     if deep is None:
         deep = complexity_profile(messages)[2] == "DEEP"
 
-    # Explicit browsing/current-information requests must read at least one URL.
-    # Research/contrast intent requires extracted text from two independent domains.
+    # Explicit external lookups must enter web retrieval. Independent-provider
+    # quorum is enforced by the search engine; page extraction scales with the
+    # requested depth so simple factual lookups remain responsive.
     must_fetch = bool(explicitly_forced or deep or realtime)
     contrast_required = bool(should_deep_web(messages) or (deep and not realtime))
-    required_pages = 2 if contrast_required else 1
+    required_pages = 3 if is_strict_news_query(query) else 2 if contrast_required else 1
     performance.mark(str(request_id or ""), "T4_SEARCH_STARTED")
     search_started = time.perf_counter()
     try:
         search_result = await search_web(
             query,
-            timeout_seconds=min(6.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
+            timeout_seconds=min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5"))),
             max_results=max(
                 required_pages,
-                _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+                _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))),
             ),
             fast=not (deep or realtime or contrast_required),
             fresh=True,
@@ -1942,23 +2224,54 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
-    if not isinstance(search_result, dict) or search_result.get("ok") is not True:
-        errors = search_result.get("errors") if isinstance(search_result, dict) else None
+    if not isinstance(search_result, dict):
         logger.warning(
-            "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
+            "required_web_search_invalid_result request_id=%s elapsed_ms=%.2f",
             request_id, (time.perf_counter() - search_started) * 1000,
-            search_result.get("providers_attempted") if isinstance(search_result, dict) else None,
-            errors,
         )
         performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
         return None, [], [], []
 
     raw_sources = _source_from_result(search_result)
+    strict_news_request = is_strict_news_query(query)
+    search_verification = search_result.get("verification")
+    search_verification = (
+        search_verification if isinstance(search_verification, dict) else {}
+    )
+    try:
+        reported_search_providers = int(
+            search_verification.get("distinct_providers") or 0
+        )
+    except (TypeError, ValueError):
+        reported_search_providers = 0
+    discovery_provider_quorum = (
+        search_verification.get("provider_quorum_met") is True
+        and reported_search_providers >= 2
+    )
+    search_usable = (
+        search_result.get("ok") is True
+        or (strict_news_request and discovery_provider_quorum)
+    )
+    if not search_usable:
+        errors = search_result.get("errors")
+        logger.warning(
+            "required_web_search_no_results request_id=%s elapsed_ms=%.2f providers=%s errors=%s",
+            request_id, (time.perf_counter() - search_started) * 1000,
+            search_result.get("providers_attempted") or search_result.get("providers"),
+            errors,
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
+
     sources: dict[str, dict[str, Any]] = {}
     for source in raw_sources:
         url = str(source.get("url") or "").strip()
         if not url:
             continue
+        provider_sources = _candidate_provider_names(
+            source,
+            str(source.get("provider") or search_result.get("winner_provider") or search_result.get("provider") or "unknown"),
+        )
         sources[url] = {
             "title": str(source.get("title") or url)[:300],
             "url": url[:2000],
@@ -1969,6 +2282,8 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
                 or search_result.get("provider")
                 or "unknown"
             ),
+            "provider_sources": provider_sources,
+            "providers": provider_sources,
             "source_domain": str(
                 source.get("source_domain")
                 or (urlparse(url).hostname or "")
@@ -1983,10 +2298,95 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "snippet": str(item.get("snippet") or "")[:700],
             "published_at": item.get("published_at"),
             "provider": item.get("provider"),
+            "provider_sources": _candidate_provider_names(
+                item,
+                str(item.get("provider") or search_result.get("winner_provider") or search_result.get("provider") or "unknown"),
+            ),
         }
         for item in list(search_result.get("results") or [])[:5]
         if isinstance(item, dict)
     ]
+    if is_strict_news_query(query):
+        recent_domains = {
+            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in sources.values()
+            if item.get("published_at") and _is_recently_published(item, query)
+        } - {""}
+        try:
+            rescue_query = (
+                "Chile noticias hoy actualidad acontecimientos recientes"
+                if "chile" in query.casefold()
+                else query
+            )
+            recent_candidates = await search_recent_news_candidates(
+                rescue_query,
+                timeout_seconds=1.8,
+                max_results=8,
+            )
+            recent_candidates = _rank_recent_news_candidates(query, recent_candidates)
+            recovered_provider_candidates: list[dict[str, Any]] = []
+            for raw in recent_candidates:
+                if not isinstance(raw, dict):
+                    continue
+                published_at = raw.get("published_at")
+                recovered_provider = str(raw.get("provider") or "unknown")
+                if published_at:
+                    if not _is_recently_published(raw, query):
+                        continue
+                elif recovered_provider not in {"mwmbl", "google_news"}:
+                    continue
+                url = str(raw.get("url") or "").strip()
+                domain = str(
+                    raw.get("source_domain")
+                    or (urlparse(url).hostname or "")
+                ).casefold().removeprefix("www.")
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or url in sources
+                ):
+                    continue
+                recovered_provider = str(raw.get("provider") or "google_news")
+                recovered_providers = _candidate_provider_names(raw, recovered_provider)
+                recovered = {
+                    "title": str(raw.get("title") or url)[:300],
+                    "url": url[:2000],
+                    "snippet": str(raw.get("snippet") or "")[:1000],
+                    "provider": recovered_provider,
+                    "providers": list(dict.fromkeys(
+                        str(name).strip()
+                        for name in recovered_providers
+                        if str(name or "").strip()
+                    )),
+                    "source_domain": domain[:255],
+                    "published_at": published_at,
+                }
+                sources[url] = recovered
+                recovered_provider_candidates.append(recovered)
+                compact_search_results.append({
+                    "title": recovered["title"],
+                    "url": recovered["url"],
+                    "snippet": recovered["snippet"][:700],
+                    "published_at": published_at,
+                    "provider": recovered["provider"],
+                })
+                recent_domains.add(domain)
+            _merge_recovered_provider_provenance(search_result, recovered_provider_candidates)
+            logger.info(
+                "chat_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s",
+                request_id or "unknown",
+                len(recent_domains),
+                len(sources),
+                search_result.get("providers", []),
+            )
+        except Exception as rescue_exc:
+            logger.warning(
+                "chat_recent_news_diversity_recovery_failed request_id=%s error=%s",
+                request_id or "unknown",
+                type(rescue_exc).__name__,
+            )
+
     snippets_sufficient = (
         len(compact_search_results) >= 2
         and sum(
@@ -2003,7 +2403,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         if str(item.get("url") or "").strip()
         and len(str(item.get("snippet") or "").strip()) >= 80
         and (
-            not is_realtime_news_query(query)
+            not is_strict_news_query(query)
             or _is_recently_published(item, query)
         )
     ]
@@ -2012,19 +2412,67 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         for item in snippet_evidence
     } - {""}
 
-    candidate_limit = max(
-        required_pages,
-        _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))),
+    candidate_limit = min(
+        8,
+        max(
+            5,
+            required_pages + 2,
+            _web_search_result_limit(query, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))),
+        ),
     )
     candidates: list[dict[str, Any]] = []
+    seen_candidate_urls: set[str] = set()
     seen_candidate_domains: set[str] = set()
-    for source in sources.values():
-        host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
-        if not host:
-            host = (urlparse(str(source.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-        if not host or host in seen_candidate_domains:
+    source_candidates = list(sources.values())
+    if is_strict_news_query(query):
+        def _chat_news_provider_priority(source: dict[str, Any]) -> int:
+            names = (
+                source.get("providers")
+                if isinstance(source.get("providers"), list)
+                else [source.get("provider")]
+            )
+            normalized = {str(name or "").casefold() for name in names}
+            if "publisher_rss" in normalized:
+                return 0
+            if "mwmbl" in normalized:
+                return 1
+            if "google_news" in normalized or "google" in normalized:
+                return 2
+            if "bing" in normalized:
+                return 3
+            return 4
+        source_candidates.sort(key=_chat_news_provider_priority)
+        publisher_sources = [
+            source for source in source_candidates
+            if _chat_news_provider_priority(source) == 0
+        ]
+        search_sources = [
+            source for source in source_candidates
+            if _chat_news_provider_priority(source) != 0
+        ]
+        source_candidates = (
+            publisher_sources[:2]
+            + search_sources[:2]
+            + publisher_sources[2:]
+            + search_sources[2:]
+        )
+
+    for source in source_candidates:
+        source_url = str(source.get("url") or "").strip()
+        source_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
+        if not source_host:
+            source_host = (urlparse(source_url).hostname or "").casefold().removeprefix("www.")
+        strict_news = is_strict_news_query(query)
+        if (
+            not source_url
+            or source_url in seen_candidate_urls
+            or not source_host
+            or (not strict_news and source_host in seen_candidate_domains)
+            or (strict_news and urlparse(source_url).scheme.lower() != "https")
+        ):
             continue
-        seen_candidate_domains.add(host)
+        seen_candidate_urls.add(source_url)
+        seen_candidate_domains.add(source_host)
         candidates.append(source)
         if len(candidates) >= candidate_limit:
             break
@@ -2039,6 +2487,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     # Non-explicit internal calls may retain adequate snippets; explicit requests may not.
     fetched_pages: list[dict[str, Any]] = []
+    news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
     if must_fetch or not snippets_sufficient:
         fast_path = required_pages == 1 and not contrast_required
         configured_target = int(os.getenv(
@@ -2060,11 +2509,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             global_budget_seconds=(
                 max(2.0, min(5.0, float(os.getenv("WEB_EVIDENCE_FAST_FETCH_BUDGET_SECONDS", "3.6"))))
                 if fast_path
-                else max(3.5, min(9.0, float(os.getenv("WEB_EVIDENCE_FETCH_BUDGET_SECONDS", "6.2"))))
+                else max(
+                    3.5,
+                    min(
+                        9.0,
+                        float(os.getenv(
+                            "WEB_EVIDENCE_FETCH_BUDGET_SECONDS",
+                            "8.5" if is_strict_news_query(query) else "6.2",
+                        )),
+                    ),
+                )
             ),
             concurrency=4 if fast_path else 5,
             target_sources=min(target_sources, max(1, len(candidates))),
-            max_sources=min(5, max(1, len(candidates))),
+            max_sources=min(
+                8 if is_strict_news_query(query) else 5,
+                max(1, len(candidates)),
+            ),
             min_text_chars=80,
             min_total_chars=360 if fast_path else 720,
         )
@@ -2080,11 +2541,23 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             if (
                 page is not None
+                and is_strict_news_query(query)
+                and not _is_publishable_realtime_news_source(query, source, page)
+            ):
+                logger.info(
+                    "web_evidence_news_article_rejected request_id=%s url=%s reason=stale_generic_or_unreadable",
+                    request_id or "unknown",
+                    str(page.get("url") or source.get("url") or "")[:500],
+                )
+                return None
+            if (
+                page is not None
                 and is_realtime_news_query(query)
+                and not is_strict_news_query(query)
                 and not _is_recently_published(page, query)
             ):
                 logger.info(
-                    "web_evidence_publication_date_rejected request_id=%s url=%s reason=missing_stale_or_future",
+                    "web_evidence_current_page_rejected request_id=%s url=%s reason=missing_stale_or_future",
                     request_id or "unknown",
                     str(page.get("url") or source.get("url") or "")[:500],
                 )
@@ -2097,6 +2570,21 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             policy=fetch_policy,
         )
         fetched_pages = list(fetch_batch.documents)
+        # Page extraction may add an independent resolver provider (for example
+        # Bing resolving a Google News publisher wrapper). Preserve that evidence
+        # in the aggregate verification before evaluating the final quorum.
+        _merge_recovered_provider_provenance(search_result, fetched_pages)
+        news_quorum = _recent_news_quorum_summary(query, fetched_pages, search_result)
+        if is_strict_news_query(query) and not news_quorum["met"]:
+            logger.warning(
+                "web_evidence_recent_news_quorum_not_met request_id=%s articles=%s domains=%s providers=%s",
+                request_id or "unknown",
+                news_quorum["articles"],
+                news_quorum["domains"],
+                news_quorum["providers"],
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
         logger.info(
             "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
             "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
@@ -2112,25 +2600,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Realtime/current-event searches must not claim that web search failed
-        # merely because publisher pages reject automated readers. Require at
-        # least two independently hosted live search results before degrading to
-        # snippet evidence; otherwise keep the strict refusal path.
-        if realtime and len(snippet_evidence) >= 2 and len(snippet_evidence_domains) >= 2:
-            snippet_fallback_used = True
-            logger.warning(
-                "web_evidence_snippet_fallback request_id=%s required=%s extracted=%s "
-                "snippet_sources=%s snippet_domains=%s",
-                request_id or "unknown", required_pages, len(fetched_pages),
-                len(snippet_evidence), len(snippet_evidence_domains),
-            )
-        else:
-            logger.warning(
-                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-                request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
-            )
-            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-            return None, [], [], []
+        # Search snippets are discovery hints, never verified page evidence.
+        # General lookups need one extracted page, research needs two domains,
+        # and current-news requests need three extracted articles.
+        logger.warning(
+            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
+            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        )
+        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+        return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -2145,13 +2623,30 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
     ]
     # Current-news candidates without a verified recent publication time never
     # reach the model through raw SERP metadata.
-    verified_search_results = [
-        item for item in compact_search_results
-        if (
-            not is_realtime_news_query(query)
-            or _is_recently_published(item, query)
-        )
-    ]
+    verified_search_results = (
+        [
+            {
+                "title": page.get("title"),
+                "url": page.get("url"),
+                "snippet": str(page.get("text") or "")[:700],
+                "published_at": page.get("published_at"),
+                "provider": page.get("provider"),
+                "provider_sources": _candidate_provider_names(
+                    page,
+                    str(page.get("provider") or "unknown"),
+                ),
+            }
+            for page in compact_fetched_pages
+        ]
+        if is_strict_news_query(query)
+        else [
+            item for item in compact_search_results
+            if (
+                not is_realtime_news_query(query)
+                or _is_recently_published(item, query)
+            )
+        ]
+    )
     evidence_fragments = [
         str(item.get("snippet") or "")
         for item in (snippet_evidence if snippet_fallback_used else [])
@@ -2171,12 +2666,15 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         extracted_domains | (snippet_evidence_domains if snippet_fallback_used else set())
     )
     evidence = {
+        "query": query,
         "realtime": realtime,
+        "contrast_required": contrast_required,
         "fresh_request": bool(search_result.get("fresh_request")),
         "retrieved_at": search_result.get("retrieved_at"),
         "queries_executed": search_result.get("queries") or [],
         "providers_attempted": search_result.get("providers_attempted") or [],
         "verification": search_result.get("verification") or {},
+        "news_quorum": news_quorum,
         "search_results": verified_search_results,
         "fetched_pages": compact_fetched_pages,
         "domains_used": domains_used,
@@ -2185,16 +2683,19 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         "snippet_fallback": snippet_fallback_used,
     }
     compact_web_evidence = {
+        "query": query,
+        "contrast_required": contrast_required,
         "search_results": [
             {**item, "snippet": str(item.get("snippet") or "")[:300]}
             for item in verified_search_results[:4]
         ],
         "fetched_pages": [
             {**item, "text": str(item.get("text") or "")[:1200]}
-            for item in compact_fetched_pages[:2]
+            for item in compact_fetched_pages[:3 if is_strict_news_query(query) else 2]
         ],
         "domains_used": domains_used,
         "extracted_text_chars": extracted_text_chars,
+        "news_quorum": news_quorum,
         "snippet_fallback": snippet_fallback_used,
     }
 
@@ -2219,7 +2720,14 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "Prefer the newest independently corroborated evidence. Explicitly stale evidence must not support a current claim. "
             "If publication time is unavailable, do not invent one and do not describe that source as freshly published; use it only when other current evidence corroborates the claim. "
             "Write an original synthesis grounded in the retrieved evidence. Use the newest publication dates available, distinguish confirmed facts from uncertainty, and never state a current fact that the evidence does not support. Do not copy source phrasing or reproduce paragraphs or generate source URLs; DEEP33 will append verified direct source links from retrieval metadata.\n"
-            + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(
+                _compact_model_web_evidence(
+                    evidence,
+                    strict_news=is_strict_news_query(query),
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         ),
     })
     # Expose URLs that actually contributed fetched text. Only use result snippets
@@ -2270,7 +2778,11 @@ async def run_web_tool_loop(
     if force_web:
         # GPS-aware weather goes through a dedicated current-weather provider first.
         # Generic web search remains the fallback and the transport layer is untouched.
-        if weather is None and not is_forecast_weather_query(latest_user_query(messages)):
+        if (
+            weather is None
+            and is_weather_query(latest_user_query(messages))
+            and not is_forecast_weather_query(latest_user_query(messages))
+        ):
             try:
                 weather = await resolve_gps_weather(
                     messages,
@@ -2545,6 +3057,18 @@ def sanitize_stream_delta(text: str) -> str:
         value,
     )
     return value
+
+
+def visible_stream_delta(delta: dict) -> str:
+    """Return only user-visible assistant text; metadata and reasoning never stream."""
+    if not isinstance(delta, dict) or "reasoning" in delta or "analysis" in delta or "thinking" in delta:
+        return ""
+    content = delta.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return ""
+    if content.lstrip().startswith("<"):
+        return ""
+    return sanitize_stream_delta(content)
 
 
 _INTERNAL_TOOL_MARKERS = (
@@ -3088,17 +3612,19 @@ async def web_status() -> dict:
     return status
 
 def _web_search_result_limit(query: str, configured_limit: int) -> int:
-    limit = max(1, min(8, int(configured_limit)))
+    limit = max(1, min(12, int(configured_limit)))
     folded = str(query or "").casefold()
-    # Current news needs a wider candidate pool because readable pages can block
-    # automation. Search up to eight independent candidates, without changing the
-    # five-source default for ordinary queries or the endpoint contract.
+    # Strict current-news synthesis needs more candidates than the final quorum:
+    # publisher landing pages, redirects, and blocked articles must be rejected
+    # without leaving fewer than three verified, independent articles.
+    if is_strict_news_query(query):
+        return max(limit, 12)
     chile_current_news = (
         is_realtime_query(query)
         and "chile" in folded
         and any(term in folded for term in ("noticia", "actualidad", "breaking", "latest news", "news"))
     )
-    return max(limit, 8) if chile_current_news else limit
+    return max(limit, 12) if chile_current_news else limit
 
 
 @app.get("/v1/web/search")
@@ -3127,15 +3653,37 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             q,
             timeout_seconds=max(3.0, min(5.0, float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")))),
             max_results=_web_search_result_limit(
-                q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))
+                q, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "8"))
             ),
             fresh=True,
         )
         if not isinstance(result, dict):
             result = {"ok": False, "results": [], "sources": [], "errors": ["INVALID_SEARCH_RESULT"]}
 
-        search_ok = result.get("ok") is True
         raw_sources = _source_from_result(result)
+        strict_news_request = is_strict_news_query(q)
+        # A strict-news search may have a valid two-index discovery quorum but
+        # fewer than three dated publishers on its first pass. That is not final
+        # evidence; it is permission to run the independent RSS recovery below.
+        # Final success still requires three fresh, extracted publisher articles.
+        search_verification = result.get("verification")
+        search_verification = (
+            search_verification if isinstance(search_verification, dict) else {}
+        )
+        try:
+            reported_search_providers = int(
+                search_verification.get("distinct_providers") or 0
+            )
+        except (TypeError, ValueError):
+            reported_search_providers = 0
+        discovery_provider_quorum = (
+            search_verification.get("provider_quorum_met") is True
+            and reported_search_providers >= 2
+        )
+        search_ok = (
+            result.get("ok") is True
+            or (strict_news_request and discovery_provider_quorum)
+        )
         normalized_sources: dict[str, dict[str, Any]] = {}
         for source in raw_sources:
             url = str(source.get("url") or "").strip()
@@ -3152,6 +3700,15 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     or result.get("provider")
                     or "unknown"
                 ),
+                "providers": list(dict.fromkeys(
+                    str(name).strip()
+                    for name in (
+                        source.get("providers")
+                        if isinstance(source.get("providers"), list)
+                        else [source.get("provider") or result.get("winner_provider") or result.get("provider")]
+                    )
+                    if str(name or "").strip()
+                )),
                 # Preserve editorial provenance from RSS/search adapters. Without
                 # this field Google News wrapper URLs lose the publisher identity
                 # before _fetch_web_source can resolve them to the original article.
@@ -3228,7 +3785,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # fewer than three editorial domains even though the recent-news feed contains
         # additional dated publishers. Recover only dated, ranked news candidates and
         # merge them by editorial domain; all normal lexical/staleness filters remain.
-        if search_ok and is_realtime_news_query(q):
+        if strict_news_request:
             candidate_domains = {
                 str(
                     item.get("source_domain")
@@ -3239,90 +3796,192 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and item.get("published_at")
                 and _is_recently_published(item, q)
             } - {""}
-            if len(candidate_domains) < 3:
-                try:
-                    rescue_query = (
-                        "Chile noticias hoy actualidad acontecimientos recientes"
-                        if "chile" in q.casefold()
-                        else q
-                    )
-                    recent_candidates = await search_recent_news_candidates(
-                        rescue_query,
-                        timeout_seconds=1.8,
-                        max_results=8,
-                    )
-                    recent_candidates = rank_results(
-                        q,
-                        recent_candidates,
-                        realtime=True,
-                    )
-                    for raw in recent_candidates:
-                        if not isinstance(raw, dict):
+            try:
+                rescue_query = (
+                    "Chile noticias hoy actualidad acontecimientos recientes"
+                    if "chile" in q.casefold()
+                    else q
+                )
+                recent_candidates = await search_recent_news_candidates(
+                    rescue_query,
+                    timeout_seconds=1.8,
+                    max_results=8,
+                )
+                recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
+                recovered_provider_candidates: list[dict[str, Any]] = []
+                for raw in recent_candidates:
+                    if not isinstance(raw, dict):
+                        continue
+                    published_at = raw.get("published_at")
+                    recovered_provider = str(raw.get("provider") or "unknown")
+                    if published_at:
+                        if not _is_recently_published(raw, q):
                             continue
-                        published_at = raw.get("published_at")
-                        if not published_at or not _is_recently_published(raw, q):
-                            continue
-                        url = str(raw.get("url") or "").strip()
-                        domain = str(
-                            raw.get("source_domain")
-                            or (urlparse(url).hostname or "")
-                        ).casefold().removeprefix("www.")
-                        if not url.startswith("https://") or not domain:
-                            continue
-                        if any(
-                            str(existing.get("url") or "").strip() == url
-                            for existing in candidate_sources
-                        ):
-                            continue
-                        candidate = {
-                            "title": str(raw.get("title") or url)[:300],
-                            "url": url[:2000],
-                            "snippet": str(raw.get("snippet") or "")[:1000],
-                            "provider": "google_news",
-                            "source_domain": domain[:255],
-                            "published_at": published_at,
-                        }
-                        candidate["relevance_score"] = score_result(q, candidate)
-                        candidate_sources.append(candidate)
-                        candidate_domains.add(domain)
-                        if len(candidate_domains) >= 5:
-                            break
-                    logger.info(
-                        "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s",
-                        request_id,
-                        len(candidate_domains),
-                        len(candidate_sources),
-                    )
-                except Exception as rescue_exc:
-                    logger.warning(
-                        "web_search_recent_news_diversity_recovery_failed request_id=%s error=%s",
-                        request_id,
-                        type(rescue_exc).__name__,
-                    )
+                    elif recovered_provider not in {"mwmbl", "google_news"}:
+                        continue
+                    url = str(raw.get("url") or "").strip()
+                    domain = str(
+                        raw.get("source_domain")
+                        or (urlparse(url).hostname or "")
+                    ).casefold().removeprefix("www.")
+                    parsed_candidate = urlparse(url)
+                    candidate_path_parts = [
+                        part for part in parsed_candidate.path.split("/") if part
+                    ]
+                    # A category/homepage URL is not a news article, even if
+                    # an RSS/search provider assigns it a recent timestamp.
+                    if (
+                        parsed_candidate.scheme.lower() != "https"
+                        or not parsed_candidate.hostname
+                        or not domain
+                        or len(candidate_path_parts) < 2
+                    ):
+                        continue
+                    if any(
+                        str(existing.get("url") or "").strip() == url
+                        for existing in candidate_sources
+                    ):
+                        continue
+                    candidate_provider = str(raw.get("provider") or "google_news")
+                    candidate_providers = _candidate_provider_names(raw, candidate_provider)
+                    candidate = {
+                        "title": str(raw.get("title") or url)[:300],
+                        "url": url[:2000],
+                        "snippet": str(raw.get("snippet") or "")[:1000],
+                        "provider": candidate_provider,
+                        "providers": candidate_providers,
+                        "source_domain": domain[:255],
+                        "published_at": published_at,
+                    }
+                    candidate["relevance_score"] = score_result(q, candidate)
+                    candidate_sources.append(candidate)
+                    recovered_provider_candidates.append(candidate)
+                    candidate_domains.add(domain)
+                _merge_recovered_provider_provenance(result, recovered_provider_candidates)
+                recovery_providers = sorted({
+                    str(item.get("provider") or "unknown")
+                    for item in recent_candidates
+                    if isinstance(item, dict)
+                })
+                recovery_samples = [
+                    {
+                        "provider": str(item.get("provider") or "unknown"),
+                        "url": str(item.get("url") or "")[:240],
+                        "source_domain": str(item.get("source_domain") or ""),
+                        "published_at": str(item.get("published_at") or ""),
+                    }
+                    for item in recent_candidates[:8]
+                    if isinstance(item, dict)
+                ]
+                logger.info(
+                    "web_search_recent_news_diversity_recovery request_id=%s domains=%s candidates=%s providers=%s samples=%s",
+                    request_id,
+                    len(candidate_domains),
+                    len(candidate_sources),
+                    recovery_providers,
+                    recovery_samples,
+                )
+            except Exception:
+                logger.exception(
+                    "web_search_recent_news_diversity_recovery_failed request_id=%s",
+                    request_id,
+                )
+        def _news_provider_priority(item: dict[str, Any]) -> int:
+            names = (
+                item.get("providers")
+                if isinstance(item.get("providers"), list)
+                else [item.get("provider")]
+            )
+            normalized = {str(name or "").casefold() for name in names}
+            if "publisher_rss" in normalized:
+                return 0
+            if "mwmbl" in normalized:
+                return 1
+            if "google_news" in normalized or "google" in normalized:
+                return 2
+            if "bing" in normalized:
+                return 3
+            return 4
+
         ordered_sources = sorted(
             candidate_sources,
-            key=lambda item: (-item["relevance_score"], _fetch_priority(item)),
+            key=lambda item: (
+                _news_provider_priority(item) if strict_news_request else 0,
+                -item["relevance_score"],
+                _fetch_priority(item),
+            ),
         )
-        max_fetch_candidates = max(3, min(6, int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "5"))))
-        direct_sources = [
-            item for item in ordered_sources
-            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            != "news.google.com"
+        if strict_news_request:
+            publisher_sources = [
+                item for item in ordered_sources
+                if _news_provider_priority(item) == 0
+            ]
+            search_sources = [
+                item for item in ordered_sources
+                if _news_provider_priority(item) != 0
+            ]
+            # Fetch both discovery families early; otherwise three valid
+            # publisher-RSS pages can satisfy the article count before any
+            # independent search-index page is attempted.
+            ordered_sources = (
+                publisher_sources[:2]
+                + search_sources[:2]
+                + publisher_sources[2:]
+                + search_sources[2:]
+            )
+        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "8"))
+        max_fetch_candidates = (
+            max(3, min(8, configured_fetch_candidates))
+            if strict_news_request
+            else max(3, min(6, configured_fetch_candidates))
+        )
+        # Reserve fetch slots by discovery provider before filling the pool.
+        # Otherwise direct publisher RSS and Bing URLs can consume the entire
+        # candidate cap while Google News wrapper URLs are never opened, leaving
+        # the extracted pages with only one independent search-index family.
+        preferred_sources: list[dict[str, Any]] = []
+        preferred_urls: set[str] = set()
+        provider_quotas = (
+            ("publisher_rss", 2),
+            ("bing", 1),
+            ("mwmbl", 1),
+            ("google_news", 1),
+            ("mojeek", 1),
+            ("cl0q", 1),
+            ("tavily", 1),
+        )
+        for provider_name, quota in provider_quotas:
+            added = 0
+            for item in ordered_sources:
+                names = (
+                    item.get("providers")
+                    if isinstance(item.get("providers"), list)
+                    else [item.get("provider")]
+                )
+                normalized_names = {
+                    str(name or "").strip().casefold()
+                    for name in names
+                }
+                source_url = str(item.get("url") or "").strip()
+                if (
+                    provider_name not in normalized_names
+                    or not source_url
+                    or source_url in preferred_urls
+                ):
+                    continue
+                preferred_sources.append(item)
+                preferred_urls.add(source_url)
+                added += 1
+                if added >= quota:
+                    break
+
+        candidate_pool = [
+            *preferred_sources,
+            *(
+                item for item in ordered_sources
+                if str(item.get("url") or "").strip() not in preferred_urls
+            ),
         ]
-        wrapper_sources = [
-            item for item in ordered_sources
-            if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-            == "news.google.com"
-        ]
-        direct_editorial_domains = {
-            str(item.get("source_domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
-            .casefold().removeprefix("www.")
-            for item in direct_sources
-        } - {""}
-        # Keep direct publisher URLs first, but retain wrapper candidates as a
-        # bounded fallback. A current-news quorum cannot be certified from two
-        # readable pages when the third editorial domain is behind a wrapper.
-        candidate_pool = [*direct_sources, *wrapper_sources]
         for source in candidate_pool:
             editorial_host = str(source.get("source_domain") or "").casefold().removeprefix("www.")
             if not editorial_host:
@@ -3381,12 +4040,22 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "reason": "FETCH_OR_EXTRACTION_FAILED",
                 })
                 continue
-            fetched_pages.append(fetched)
+            source_provider_names = _candidate_provider_names(
+                source,
+                str(source.get("provider") or "unknown"),
+            )
+            fetched_with_provenance = {
+                **fetched,
+                "provider": str(source.get("provider") or (source_provider_names[0] if source_provider_names else "unknown")),
+                "provider_sources": source_provider_names,
+                "providers": source_provider_names,
+            }
+            fetched_pages.append(fetched_with_provenance)
             original_source_url = str(source.get("url") or "").strip()
-            resolved_source_url = str(fetched.get("url") or "").strip()
+            resolved_source_url = str(fetched_with_provenance.get("url") or "").strip()
             if original_source_url and resolved_source_url and resolved_source_url.startswith("https://"):
                 resolved_urls[original_source_url] = resolved_source_url
-                fetched_by_source_url[original_source_url] = fetched
+                fetched_by_source_url[original_source_url] = fetched_with_provenance
 
         # Surface verified direct publisher URLs to callers. Keep the wrapper in
         # original_url for diagnostics, but never make clients navigate a Google
@@ -3405,7 +4074,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             if not direct_url or not fetched_page:
                 continue
 
-            if is_realtime_news_query(q):
+            if is_strict_news_query(q):
                 if not _is_publishable_realtime_news_source(q, item, fetched_page):
                     continue
                 published_at = fetched_page.get("published_at") or item.get("published_at")
@@ -3430,7 +4099,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
 
         evidence_fetched_pages = (
             list(valid_news_pages_by_url.values())
-            if is_realtime_news_query(q)
+            if is_strict_news_query(q)
             else fetched_pages
         )
         fetched_domains = {
@@ -3453,7 +4122,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # underlying page was fetched: callers can distinguish evidence_type and
         # fetched=false from fully extracted pages.
         snippet_fallback_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and not has_extracted_content:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and not has_extracted_content:
             for item in candidate_sources:
                 snippet = str(item.get("snippet") or "").strip()
                 url = str(item.get("url") or "").strip()
@@ -3461,7 +4130,12 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     item.get("source_domain")
                     or (urlparse(url).hostname or "")
                 ).casefold().removeprefix("www.")
-                if not url.startswith("https://") or not domain or len(snippet) < 24:
+                if (
+                    not url.startswith("https://")
+                    or not domain
+                    or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
+                ):
                     continue
                 snippet_fallback_results.append({
                     **item,
@@ -3478,7 +4152,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # already-ranked live snippets from distinct domains. They are explicitly
         # marked as non-fetched evidence and never replace extracted page text.
         supplemental_snippet_results: list[dict[str, Any]] = []
-        if search_ok and is_realtime_query(q) and not is_realtime_news_query(q) and has_extracted_content and len(resolved_results) < 3:
+        if search_ok and is_realtime_query(q) and not is_strict_news_query(q) and has_extracted_content and len(resolved_results) < 3:
             extracted_result_domains = {
                 (urlparse(str(item.get("url") or "")).hostname or "")
                 .casefold().removeprefix("www.")
@@ -3501,6 +4175,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     not url.startswith("https://")
                     or not domain
                     or len(snippet) < 24
+                    or (is_realtime_news_query(q) and not _is_recently_published(item, q))
                     or url in extracted_result_urls
                     or domain in extracted_result_domains
                 ):
@@ -3531,21 +4206,17 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             for item in resolved_results
             if str(item.get("url") or "").startswith("https://")
         }
-        # The orchestrator reports providers that successfully returned a
-        # response. Editorial independence is proven separately by three dated,
-        # extracted publisher domains; article metadata may retain one feed's
-        # adapter label even when multiple search providers contributed to discovery.
-        valid_news_providers = {
-            str(provider).strip().casefold()
-            for provider in (result.get("providers") or [])
-            if str(provider).strip().casefold() not in {"unknown", "multi", "none"}
-        }
+        # The search orchestrator already verifies two independent provider
+        # families against relevant live candidates. Publisher RSS contributes
+        # additional dated, extracted articles but is not itself a search index;
+        # requiring two provider labels again on the fetched pages incorrectly
+        # rejects valid three-publisher evidence discovered by a verified quorum.
         news_quorum_met = (
-            not is_realtime_news_query(q)
+            not strict_news_request
             or (
                 len(resolved_results) >= 3
                 and len(valid_news_domains) >= 3
-                and len(valid_news_providers) >= 2
+                and discovery_provider_quorum
             )
         )
         final_ok = (
@@ -3565,7 +4236,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             status = "success"
 
         errors = list(result.get("errors") or [])
-        if is_realtime_news_query(q) and not news_quorum_met:
+        if is_strict_news_query(q) and not news_quorum_met:
             errors.append("REALTIME_NEWS_QUORUM_NOT_MET")
         if not search_ok:
             errors.append("SEARCH_RESULT_NOT_OK")
@@ -3610,6 +4281,10 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                     "title": page.get("title"),
                     "url": page.get("url"),
                     "provider": page.get("provider"),
+                    "provider_sources": _candidate_provider_names(
+                        page,
+                        str(page.get("provider") or "unknown"),
+                    ),
                     "text_chars": page.get("text_chars"),
                     "text": str(page.get("text") or "")[:2200],
                     "published_at": page.get("published_at"),
@@ -3814,6 +4489,8 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
     deadline = time.monotonic() + GLOBAL_AI_TIMEOUT
     last_timeout = False
     transport_failed = False
+    last_gateway_attempts: list[dict] = []
+    last_error_type: str | None = None
 
     for attempt in range(2):
         remaining = deadline - time.monotonic()
@@ -3846,7 +4523,10 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 await asyncio.sleep(0.15)
                 continue
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -3856,7 +4536,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 attempt + 1,
             )
             break
-        except GatewayInvalidResponseError:
+        except GatewayInvalidResponseError as exc:
+            last_error_type = type(exc).__name__
+            last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -3866,6 +4548,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except (GatewayHTTPError, HTTPException) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayHTTPError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -3875,6 +4560,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             )
             break
         except Exception as exc:
+            last_error_type = type(exc).__name__
             transport_failed = True
             logger.warning(
                 "inference_check_failed request_id=%s diagnostic_id=%s error=%s",
@@ -3906,7 +4592,10 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 len(text_value),
             )
             return "FAIL", data, text_value
-        except (asyncio.TimeoutError, GatewayTimeoutError):
+        except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, GatewayTimeoutError):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -3914,6 +4603,9 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 stream_id,
             )
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
+            last_error_type = type(exc).__name__
+            if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
+                last_gateway_attempts = [dict(item) for item in exc.attempts]
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -3921,6 +4613,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
         except Exception as exc:
+            last_error_type = type(exc).__name__
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -3928,19 +4621,32 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
                 type(exc).__name__,
             )
 
-    return ("TIMEOUT" if last_timeout else "FAIL"), None, None
+    diagnostic_data = (
+        {"_deep33_gateway": {
+            "attempts": last_gateway_attempts,
+            "error_type": last_error_type,
+        }}
+        if last_gateway_attempts or last_error_type
+        else None
+    )
+    return ("TIMEOUT" if last_timeout else "FAIL"), diagnostic_data, None
 
 
 @app.get("/v1/ai/inference-check")
 async def inference_check(request: Request) -> dict:
     request_id = request_id_from_request(request)
     status, data, text = await run_inference_check(request_id)
+    gateway_meta = data.get("_deep33_gateway", {}) if isinstance(data, dict) else {}
+    attempts = gateway_meta.get("attempts", []) if isinstance(gateway_meta, dict) else []
+    last_attempt = attempts[-1] if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else {}
     return {
         "status": status,
         "request_id": request_id,
-        "model": data.get("_deep33_gateway", {}).get("model") if isinstance(data, dict) else None,
-        "provider": data.get("_deep33_gateway", {}).get("provider") if isinstance(data, dict) else None,
+        "model": gateway_meta.get("model") or last_attempt.get("model"),
+        "provider": gateway_meta.get("provider") or last_attempt.get("provider"),
         "text_ok": "DEEP33_DIAGNOSTIC_OK" in (text or ""),
+        "attempts": attempts if isinstance(attempts, list) else [],
+        "error_type": gateway_meta.get("error_type"),
         "timestamp": utc_now(),
     }
 
@@ -4835,8 +5541,8 @@ async def _parse_stream_payload(raw: bytes) -> tuple[str, bool]:
         choices = event.get("choices")
         if choices and isinstance(choices[0], dict):
             delta = choices[0].get("delta") or {}
-            content = delta.get("content")
-            if isinstance(content, str):
+            content = visible_stream_delta(delta)
+            if content:
                 assistant_parts.append(content)
     return "".join(assistant_parts), saw_done
 
@@ -4907,6 +5613,221 @@ async def _finalize_stream(
             )
 
 
+
+def _web_evidence_from_payload(payload: dict[str, Any]) -> tuple[int, dict[str, Any], str] | None:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return None
+    marker = "Server-side web evidence for this request follows."
+    decoder = json.JSONDecoder()
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        marker_at = content.find(marker)
+        if marker_at < 0:
+            continue
+        json_start = content.find("{", marker_at + len(marker))
+        if json_start < 0:
+            continue
+        try:
+            evidence, _consumed = decoder.raw_decode(content[json_start:])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(evidence, dict):
+            return index, evidence, content[:json_start]
+    return None
+
+
+def _compact_web_synthesis_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    message_index, evidence, prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+
+    compact_pages = []
+    for page in pages[:3]:
+        if not isinstance(page, dict):
+            continue
+        compact_pages.append({
+            "title": str(page.get("title") or "")[:180],
+            "url": str(page.get("url") or "")[:1000],
+            "domain": str(page.get("domain") or "")[:180],
+            "provider": str(page.get("provider") or "")[:80],
+            "provider_sources": _candidate_provider_names(
+                page,
+                str(page.get("provider") or "unknown"),
+            ),
+            "published_at": page.get("published_at"),
+            "text": str(page.get("text") or "")[:450],
+        })
+    if not compact_pages:
+        return None
+
+    results = evidence.get("search_results")
+    compact_results = []
+    if isinstance(results, list):
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            compact_results.append({
+                "title": str(item.get("title") or "")[:180],
+                "url": str(item.get("url") or "")[:1000],
+                "provider": str(item.get("provider") or "")[:80],
+                "published_at": item.get("published_at"),
+                "snippet": str(item.get("snippet") or "")[:180],
+            })
+
+    compact_verification = {
+        key: verification.get(key)
+        for key in (
+            "provider_quorum_met",
+            "distinct_providers",
+            "distinct_domains",
+            "relevant_results",
+        )
+        if key in verification
+    }
+    compact_evidence = {
+        "query": str(evidence.get("query") or "")[:500],
+        "realtime": bool(evidence.get("realtime")),
+        "contrast_required": bool(evidence.get("contrast_required")),
+        "retrieved_at": evidence.get("retrieved_at"),
+        "providers_attempted": list(evidence.get("providers_attempted") or [])[:8],
+        "verification": compact_verification,
+        "news_quorum": news_quorum,
+        "search_results": compact_results,
+        "fetched_pages": compact_pages,
+        "domains_used": evidence.get("domains_used"),
+        "extracted_text_chars": evidence.get("extracted_text_chars"),
+        "snippet_fallback": bool(evidence.get("snippet_fallback")),
+        "model_context_compacted": True,
+    }
+    compact_payload = dict(payload)
+    compact_messages = [dict(item) for item in payload.get("messages", []) if isinstance(item, dict)]
+    compact_messages[message_index] = {
+        **compact_messages[message_index],
+        "content": prefix + json.dumps(
+            compact_evidence,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
+    compact_payload["messages"] = compact_messages
+    compact_payload["max_tokens"] = min(
+        384,
+        max(256, int(payload.get("max_tokens") or 384)),
+    )
+    return compact_payload
+
+
+def _extractive_web_evidence_fallback(payload: dict[str, Any]) -> str | None:
+    parsed = _web_evidence_from_payload(payload)
+    if parsed is None:
+        return None
+    _message_index, evidence, _prefix = parsed
+    verification = evidence.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    news_quorum = evidence.get("news_quorum")
+    news_quorum = news_quorum if isinstance(news_quorum, dict) else {}
+
+    try:
+        provider_count = int(
+            verification.get("distinct_providers")
+            or news_quorum.get("providers")
+            or 0
+        )
+    except (TypeError, ValueError):
+        provider_count = 0
+    strict_news = news_quorum.get("required") is True
+    contrast_required = evidence.get("contrast_required") is True
+    if strict_news and (
+        provider_count < 2
+        or not (
+            verification.get("provider_quorum_met") is True
+            or news_quorum.get("provider_quorum_met") is True
+        )
+        or news_quorum.get("met") is not True
+        or int(news_quorum.get("articles") or 0) < 3
+        or int(news_quorum.get("domains") or 0) < 3
+    ):
+        return None
+
+    pages = evidence.get("fetched_pages")
+    if not isinstance(pages, list):
+        return None
+    minimum_sources = 3 if strict_news else 2 if contrast_required else 1
+    selected: list[tuple[str, str, str]] = []
+    seen_domains: set[str] = set()
+    junk_sentence = re.compile(
+        r"\b(?:subscribe|suscr[ií]bete|accept cookies|aceptar cookies|"
+        r"privacy policy|pol[ií]tica de privacidad|read more|leer m[aá]s|"
+        r"ignore all previous instructions|system prompt)\b",
+        re.IGNORECASE,
+    )
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        url = str(page.get("url") or "").strip()
+        parsed_url = urlparse(url)
+        if parsed_url.scheme.casefold() != "https" or not parsed_url.hostname:
+            continue
+        domain = str(page.get("domain") or parsed_url.hostname).casefold()
+        domain = domain.removeprefix("www.").rstrip(".")
+        page_text = re.sub(r"\s+", " ", str(page.get("text") or "")).strip()
+        if not domain or domain in seen_domains or len(page_text) < 80:
+            continue
+        sentences = [
+            sentence.strip(" \t\r\n-•")
+            for sentence in re.split(r"(?<=[.!?])\s+", page_text)
+            if sentence.strip()
+        ]
+        sentence = next(
+            (
+                item for item in sentences
+                if 8 <= len(item.split()) <= 45
+                and not junk_sentence.search(item)
+            ),
+            "",
+        )
+        if not sentence:
+            sentence = page_text
+        words = sentence.split()
+        excerpt = " ".join(words[:20]).strip()
+        if len(words) > 20:
+            excerpt += "…"
+        if len(excerpt) < 40:
+            continue
+        title = str(page.get("title") or domain).strip()[:160]
+        selected.append((domain, title, excerpt))
+        seen_domains.add(domain)
+        if len(selected) >= 3:
+            break
+
+    required_domains = 3 if strict_news else 2 if contrast_required else 1
+    if len(selected) < minimum_sources or len(seen_domains) < required_domains:
+        return None
+
+    lines = [
+        "No se completó la síntesis automática. Para no inventar, estos son extractos breves de las páginas verificadas:"
+    ]
+    lines.extend(
+        f"• {title}: «{excerpt}»"
+        for _domain, title, excerpt in selected
+    )
+    return "\n".join(lines)
+
+
 async def stream_gateway(
     payload: dict,
     session_id: str,
@@ -4957,8 +5878,10 @@ async def stream_gateway(
                                 delta = choice.get("delta") or {}
                                 content_value = delta.get("content")
                                 if isinstance(content_value, str):
-                                    safe_delta = tool_markup_filter.push(content_value)
-                                    assistant_parts.append(safe_delta)
+                                    visible_delta = visible_stream_delta(delta)
+                                    safe_delta = tool_markup_filter.push(visible_delta)
+                                    if safe_delta:
+                                        assistant_parts.append(safe_delta)
                                     if safe_delta != content_value:
                                         delta["content"] = safe_delta
                                         frame_changed = True
@@ -5030,6 +5953,108 @@ async def stream_gateway(
             request_id,
             len(collected),
         )
+
+    nonstream_complete = getattr(gateway, "complete", None)
+    if (
+        not assistant_parts
+        and not tool_markup_filter.suppressed
+        and callable(nonstream_complete)
+    ):
+        compact_payload = _compact_web_synthesis_payload(payload)
+        candidates = []
+        if compact_payload is not None:
+            candidates.append((compact_payload, "compact"))
+        candidates.append((payload, "standard"))
+
+        for candidate_payload, fallback_kind in candidates:
+            try:
+                fallback_data = await nonstream_complete(
+                    candidate_payload,
+                    request_id=request_id,
+                    idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
+                    deadline=deadline,
+                )
+                fallback_message = _choice_message(fallback_data)
+                raw_fallback_text = fallback_message.get("content")
+                if not isinstance(raw_fallback_text, str) or not raw_fallback_text.strip():
+                    logger.warning(
+                        "stream_nonstream_fallback_empty request_id=%s mode=%s",
+                        request_id,
+                        fallback_kind,
+                    )
+                    continue
+                fallback_filter = _InternalToolMarkupStreamFilter()
+                fallback_text = (
+                    fallback_filter.push(raw_fallback_text)
+                    + fallback_filter.finish()
+                )
+                if not fallback_text or fallback_filter.suppressed:
+                    logger.warning(
+                        "stream_nonstream_fallback_filtered request_id=%s mode=%s",
+                        request_id,
+                        fallback_kind,
+                    )
+                    continue
+
+                assistant_parts.append(fallback_text)
+                saw_done = True
+                gateway_failure = None
+                if first_output_at is None:
+                    first_output_at = time.perf_counter()
+                    performance.mark(request_id, "T7_FIRST_TOKEN")
+                    _metric_latency["chat_stream_ttft_ms"].append(
+                        (first_output_at - stream_started) * 1000
+                    )
+                for piece in _sse_text_chunks(fallback_text):
+                    yield _sse_delta(piece)
+                gateway_meta = fallback_data.get("_deep33_gateway", {})
+                logger.info(
+                    "stream_nonstream_fallback_success request_id=%s mode=%s provider=%s model=%s chars=%s",
+                    request_id,
+                    fallback_kind,
+                    gateway_meta.get("provider"),
+                    gateway_meta.get("model"),
+                    len(fallback_text),
+                )
+                break
+            except (asyncio.TimeoutError, GatewayTimeoutError, GatewayHTTPError, GatewayInvalidResponseError) as exc:
+                safe_attempts = [
+                    {
+                        key: attempt.get(key)
+                        for key in ("provider", "model", "status_code", "outcome")
+                        if attempt.get(key) is not None
+                    }
+                    for attempt in getattr(exc, "attempts", [])
+                    if isinstance(attempt, dict)
+                ]
+                logger.warning(
+                    "stream_nonstream_fallback_failed request_id=%s mode=%s error=%s attempts=%s",
+                    request_id,
+                    fallback_kind,
+                    type(exc).__name__,
+                    json.dumps(safe_attempts[:6], ensure_ascii=False, separators=(",", ":")),
+                )
+                gateway_failure = gateway_failure or "nonstream_fallback_failed"
+
+    if not assistant_parts and not tool_markup_filter.suppressed:
+        extractive_fallback = _extractive_web_evidence_fallback(payload)
+        if extractive_fallback:
+            assistant_parts.append(extractive_fallback)
+            saw_done = True
+            gateway_failure = None
+            if first_output_at is None:
+                first_output_at = time.perf_counter()
+                performance.mark(request_id, "T7_FIRST_TOKEN")
+                _metric_latency["chat_stream_ttft_ms"].append(
+                    (first_output_at - stream_started) * 1000
+                )
+            for piece in _sse_text_chunks(extractive_fallback):
+                yield _sse_delta(piece)
+            logger.warning(
+                "stream_extractive_web_evidence_fallback request_id=%s sources=%s",
+                request_id,
+                3 if "extractos breves" in extractive_fallback else 2,
+            )
 
     if tool_markup_filter.suppressed:
         logger.warning("stream_internal_tool_markup_suppressed request_id=%s", request_id)

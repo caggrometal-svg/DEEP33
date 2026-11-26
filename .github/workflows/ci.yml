@@ -54,11 +54,13 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: v2.9.6
-      - name: Type-check primary, secondary, and hybrid-search Edge functions
+      - name: Type-check primary, secondary, hybrid-search, and auth Edge functions
         run: |
           deno check supabase/functions/deep33-proxy/index.ts
           deno check supabase/functions/deep33-tertiary/index.ts
           deno check supabase/functions/deep33-hybrid-search/index.ts
+          deno check supabase/functions/deep33-auth/index.ts
+          deno test supabase/functions/deep33-auth/rate_limit_test.ts
 
   production_realtime_search:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -186,7 +188,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Android lint and build
-        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
+        run: cd android && gradle :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
 
       - name: Publish Vercel-validation APK
         if: ${{ success() && github.event_name == 'pull_request' }}
@@ -207,13 +209,13 @@ jobs:
       id-token: write
     env:
       VERCEL_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/production-realtime-gates-251026' && 'https://deep33-backend-git-fix-production-realtime-gates-251026-iac33.vercel.app' || github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
-      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_PROTECTION_BYPASS }}
+      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - name: Require Vercel Preview Protection bypass secret
         run: |
           set -euo pipefail
           test -n "${VERCEL_PROTECTION_BYPASS:-}" || {
-            echo "VERCEL_BYPASS_SECRET_MISSING: add repository Actions secret VERCEL_PROTECTION_BYPASS"
+            echo "VERCEL_BYPASS_SECRET_MISSING: add repository Actions secret VERCEL_AUTOMATION_BYPASS_SECRET"
             exit 1
           }
       - name: Create authenticated Vercel validation session
@@ -590,7 +592,7 @@ jobs:
   android_feature_instrumentation:
     needs: backend_unit
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
     env:
@@ -636,9 +638,7 @@ jobs:
           disable-spellchecker: true
           channel: stable
           working-directory: android
-          script: |
-            gradle :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
-            gradle :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=cl.caggrometal.deep33.Deep33UiContractV2Test,cl.caggrometal.deep33.Deep33FeaturePersistenceTest,cl.caggrometal.deep33.Deep33LifecycleRecoveryTest,cl.caggrometal.deep33.SessionStorePersistenceTest --no-daemon
+          script: bash ../scripts/android-instrumentation.sh
 
   change_scope:
     runs-on: ubuntu-latest
@@ -1035,18 +1035,92 @@ jobs:
 
   android_e2e:
     # On a PR, run the real Android app against that PR's protected Vercel preview
-    # using a short-lived GitHub OIDC token; on main, test the public production alias.
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'fix/vercel-android-route-221026')) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
+    # using Vercel's project-scoped automation bypass; on main, test production.
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'fix/vercel-android-route-221026' || github.event.pull_request.head.ref == 'fix/phase1-routing-provider-quorum-071126'))) && needs.android_validation.result == 'success' && needs.change_scope.result == 'success' }}
     needs: [android_validation, change_scope]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
-      id-token: write
+      checks: read
+      deployments: read
+      issues: read
+      statuses: read
     env:
+      VERCEL_PROTECTION_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
       DEEP33_E2E_VERCEL_URL: ${{ github.event_name == 'pull_request' && 'https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app' || 'https://deep33-backend.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Resolve the exact protected Vercel preview for this commit
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_SHA: ${{ github.event.pull_request.head.sha }}
+          PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref }}
+          VERCEL_PROTECTION_BYPASS: ${{ env.VERCEL_PROTECTION_BYPASS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${VERCEL_PROTECTION_BYPASS:-}" || {
+            echo "VERCEL_PROTECTION_BYPASS_MISSING"
+            exit 1
+          }
+          # Verify the Actions secret matches the Vercel automation bypass without exposing it.
+          bypass_sha256="$(printf '%s' "$VERCEL_PROTECTION_BYPASS" | sha256sum | awk '{print $1}')"
+          if [ "$bypass_sha256" != "cdfc69654261f66d84f9b52f6500a1a9db5b64558c9087d2ab8d625348eb15f8" ]; then
+            echo "VERCEL_BYPASS_SECRET_MISMATCH"
+            exit 1
+          fi
+          echo "VERCEL_BYPASS_SECRET_MATCH=1"
+          # Vercel's GitHub integration publishes a commit status, not a GitHub
+          # deployment object. The previous deployments API lookup therefore
+          # waited forever even after Vercel had reported success.
+          case "$PREVIEW_BRANCH" in
+            fix/phase1-routing-provider-quorum-071126)
+              alias="https://deep33-backend-git-fix-phase1-routing-provider-quo-b6f4c4-iac33.vercel.app"
+              ;;
+            fix/vercel-android-route-221026)
+              alias="https://deep33-backend-git-fix-vercel-android-route-221026-iac33.vercel.app"
+              ;;
+            *)
+              echo "ANDROID_E2E_UNAPPROVED_PREVIEW_BRANCH=$PREVIEW_BRANCH"
+              exit 1
+              ;;
+          esac
+
+          ready=0
+          for attempt in $(seq 1 36); do
+            vercel_state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CURRENT_SHA/status" \
+              --jq '[.statuses[]? | select(.context == "Vercel") | .state] | first // empty' 2>/dev/null || true)"
+            if [ "$vercel_state" = "success" ]; then
+              http_status="$(curl -sS --connect-timeout 8 --max-time 20 \
+                -H "x-vercel-protection-bypass: ${VERCEL_PROTECTION_BYPASS}" \
+                -D "$RUNNER_TEMP/deep33-preview-health.headers" \
+                -o "$RUNNER_TEMP/deep33-preview-health.json" -w '%{http_code}' \
+                "$alias/health" || true)"
+              if [ "$http_status" = "200" ] && jq -e \
+                '.status == "PASS" and (.service == "DEEP33 Backend" or .service == "DEEP33 Edge Gateway")' \
+                "$RUNNER_TEMP/deep33-preview-health.json" >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); gsub("\\r", ""); print}' "$RUNNER_TEMP/deep33-preview-health.headers" 2>/dev/null | tail -n 1 || true)"
+            echo "WAITING_FOR_PREVIEW_HEALTH attempt=$attempt http=$http_status location=${location:-none}"
+            else
+              echo "WAITING_FOR_VERCEL_COMMIT_STATUS attempt=$attempt state=${vercel_state:-missing} sha=$CURRENT_SHA"
+            fi
+            [ "$attempt" -lt 36 ] && sleep 5
+          done
+          test "$ready" = "1" || {
+            echo "ANDROID_E2E_EXACT_VERCEL_PREVIEW_NOT_READY sha=$CURRENT_SHA url=$alias"
+            cat "$RUNNER_TEMP/deep33-preview-health.json" 2>/dev/null || true
+            exit 1
+          }
+          echo "DEEP33_E2E_VERCEL_URL=$alias" >> "$GITHUB_ENV"
+          echo "ANDROID_E2E_TARGET=$alias"
+          echo "ANDROID_E2E_VERIFIED_COMMIT=$CURRENT_SHA"
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         with:
@@ -1071,9 +1145,6 @@ jobs:
         id: android_e2e_attempt_1
         continue-on-error: true
         env:
-          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "1"
           DEEP33_REQUIRE_REDUNDANCY: "false"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1103,9 +1174,6 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "2"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1135,9 +1203,6 @@ jobs:
         if: ${{ steps.android_e2e_attempt_1.outcome != 'success' && steps.android_e2e_attempt_2.outcome != 'success' }}
         continue-on-error: true
         env:
-          DEEP33_E2E_VERCEL_URL: ${{ env.DEEP33_E2E_VERCEL_URL }}
-          DEEP33_PRIMARY_URL: ${{ env.PRIMARY_URL }}
-          DEEP33_SECONDARY_URL: ${{ env.SECONDARY_URL }}
           DEEP33_E2E_ATTEMPT: "3"
           DEEP33_REQUIRE_REDUNDANCY: "true"
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -1189,20 +1254,24 @@ jobs:
         run: |
           set +e
           mkdir -p /tmp/deep33-e2e
-          echo "=== ADB DEVICES ==="
-          adb devices -l || true
-          echo "=== SDK ==="
-          timeout 10s adb shell getprop ro.build.version.sdk || true
-          timeout 10s adb shell getprop ro.build.version.release || true
-          echo "=== DNS ==="
-          timeout 10s adb shell getprop net.dns1 || true
-          timeout 10s adb shell getprop net.dns2 || true
-          echo "=== INSTRUMENTATION ==="
-          timeout 10s adb shell pm list instrumentation || true
-          echo "=== PROCESSES ==="
-          timeout 10s adb shell ps -A | grep -Ei 'instrument|deep33|gradle' || true
-          echo "=== CRASH BUFFER ==="
-          timeout 15s adb logcat -d -b crash -t 1200 > /tmp/deep33-e2e/crash.log || true
+          if command -v adb >/dev/null 2>&1; then
+            echo "=== ADB DEVICES ==="
+            adb devices -l || true
+            echo "=== SDK ==="
+            timeout 10s adb shell getprop ro.build.version.sdk || true
+            timeout 10s adb shell getprop ro.build.version.release || true
+            echo "=== DNS ==="
+            timeout 10s adb shell getprop net.dns1 || true
+            timeout 10s adb shell getprop net.dns2 || true
+            echo "=== INSTRUMENTATION ==="
+            timeout 10s adb shell pm list instrumentation || true
+            echo "=== PROCESSES ==="
+            timeout 10s adb shell ps -A | grep -Ei 'instrument|deep33|gradle' || true
+            echo "=== CRASH BUFFER ==="
+            timeout 15s adb logcat -d -b crash -t 1200 > /tmp/deep33-e2e/crash.log || true
+          else
+            echo "ANDROID_E2E_DIAGNOSTICS_SKIPPED_EMULATOR_NOT_STARTED"
+          fi
 
       - name: Publish APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

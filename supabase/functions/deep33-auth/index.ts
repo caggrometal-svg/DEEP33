@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { IpWindowRateLimiter } from "./rate_limit.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_KEY =
@@ -13,15 +14,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-request-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Cache-Control": "no-store",
+  "Access-Control-Expose-Headers": "Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining",
   "Content-Type": "application/json; charset=utf-8",
 };
 
+// Android CI, multi-profile devices and mobile carrier NAT can legitimately share
+// one public IP. Keep abuse protection while allowing normal bursts of session setup.
 const WINDOW_MS = 60_000;
-const BURST_LIMIT = 5;
-const ipBuckets = new Map<string, { start: number; count: number }>();
+const BURST_LIMIT = 30;
+const ipRateLimiter = new IpWindowRateLimiter(WINDOW_MS, BURST_LIMIT, 5000);
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: corsHeaders });
+function json(
+  body: unknown,
+  status = 200,
+  additionalHeaders: Record<string, string> = {},
+) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, ...additionalHeaders },
+  });
 }
 
 function clientIp(req: Request): string {
@@ -32,22 +43,8 @@ function clientIp(req: Request): string {
   ).trim();
 }
 
-function allowRequest(req: Request): boolean {
-  const ip = clientIp(req);
-  const now = Date.now();
-  const current = ipBuckets.get(ip);
-  if (!current || now - current.start >= WINDOW_MS) {
-    ipBuckets.set(ip, { start: now, count: 1 });
-    if (ipBuckets.size > 5000) {
-      for (const [key, bucket] of ipBuckets) {
-        if (now - bucket.start >= WINDOW_MS) ipBuckets.delete(key);
-      }
-    }
-    return true;
-  }
-  if (current.count >= BURST_LIMIT) return false;
-  current.count += 1;
-  return true;
+function allowRequest(req: Request) {
+  return ipRateLimiter.consume(clientIp(req));
 }
 
 function validProfileId(value: string): boolean {
@@ -78,7 +75,7 @@ const RPC_RETRY_DELAYS_MS = [150, 350, 750];
 
 async function rpcWithBackoff<T>(
   operation: string,
-  invoke: () => Promise<RpcResponse<T>>,
+  invoke: () => PromiseLike<RpcResponse<T>>,
 ): Promise<RpcResponse<T>> {
   let last: RpcResponse<T> = { data: null, error: new Error("RPC_NOT_ATTEMPTED") };
   for (let attempt = 0; attempt <= RPC_RETRY_DELAYS_MS.length; attempt += 1) {
@@ -116,7 +113,21 @@ async function rpcWithBackoff<T>(
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "METHOD_NOT_ALLOWED" }, 405);
-  if (!allowRequest(req)) return json({ error: "AUTH_RATE_LIMITED" }, 429);
+  const rateLimit = allowRequest(req);
+  if (!rateLimit.allowed) {
+    return json(
+      {
+        error: "AUTH_RATE_LIMITED",
+        retry_after_seconds: rateLimit.retryAfterSeconds,
+      },
+      429,
+      {
+        "Retry-After": String(rateLimit.retryAfterSeconds),
+        "X-RateLimit-Limit": String(BURST_LIMIT),
+        "X-RateLimit-Remaining": "0",
+      },
+    );
+  }
 
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     return json({ error: "AUTH_PROVIDER_NOT_CONFIGURED" }, 503);

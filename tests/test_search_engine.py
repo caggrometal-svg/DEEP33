@@ -4,6 +4,12 @@ import asyncio
 from datetime import datetime, timezone
 
 from backend.search.engine import SearchEngine, deduplicate, rank_results, is_realtime_query
+from tools.web_search import web_search_status
+
+
+def test_search_engine_accepts_expanded_live_news_candidate_limit():
+    assert SearchEngine(max_results=12).max_results == 12
+    assert SearchEngine(max_results=99).max_results == 12
 
 
 def test_search_plan_strips_conversational_web_instructions():
@@ -86,6 +92,53 @@ def test_deduplicate_normalizes_url_and_guarantees_domain_diversity():
     }
 
 
+def test_deduplicate_preserves_provider_provenance_for_duplicate_urls():
+    results = deduplicate(
+        [
+            {
+                "title": "Python asyncio documentation",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+                "provider": "bing",
+            },
+            {
+                "title": "Python asyncio documentation",
+                "url": "https://docs.python.org/3/library/asyncio.html#tasks",
+                "provider": "mojeek",
+            },
+        ],
+        5,
+    )
+
+    assert len(results) == 1
+    assert results[0]["providers"] == ["bing", "mojeek"]
+
+
+def test_deduplicate_prioritizes_independent_provider_families():
+    results = deduplicate(
+        [
+            {
+                "title": "Chile noticia uno",
+                "url": "https://medio-a.example/noticia-uno",
+                "provider": "bing",
+            },
+            {
+                "title": "Chile noticia dos",
+                "url": "https://medio-b.example/noticia-dos",
+                "provider": "bing",
+            },
+            {
+                "title": "Chile noticia tres",
+                "url": "https://medio-c.example/noticia-tres",
+                "provider": "google_news",
+            },
+        ],
+        2,
+    )
+
+    assert len(results) == 2
+    assert {item["provider"] for item in results} == {"bing", "google_news"}
+
+
 def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BING_ENABLED", "false")
 
@@ -110,12 +163,23 @@ def test_engine_merges_planned_searches_without_provider_coupling(monkeypatch):
     )
     assert result["ok"] is True
     assert result["engine"] == "DEEP33 Search Engine"
-    assert result["engine_version"] == "1.3.0"
+    assert result["engine_version"] == "1.4.0"
+    assert web_search_status()["engine_version"] == "1.4.0"
     assert result["provider_independent"] is True
     assert result["depth"] == "deep"
     assert len(result["queries"]) == 3
     assert len(result["results"]) == 2
     assert result["provider"] == "tavily"
+
+
+
+
+def test_web_search_status_reflects_web_tools_enabled_flag(monkeypatch):
+    monkeypatch.setenv("DEEP33_WEB_TOOLS_ENABLED", "false")
+    assert web_search_status()["enabled"] is False
+
+    monkeypatch.setenv("DEEP33_WEB_TOOLS_ENABLED", "true")
+    assert web_search_status()["enabled"] is True
 
 
 def test_auto_provider_plan_includes_optional_mojeek_fallback(monkeypatch):
@@ -688,8 +752,8 @@ def test_realtime_search_uses_multiple_providers(monkeypatch):
     assert result["realtime"] is True
     assert result["depth"] == "realtime"
     assert len(result["queries"]) == 3
-    assert len(result["providers"]) == 2
-    assert result["verification"]["distinct_providers"] == 2
+    assert {"bing", "tavily"} <= set(result["providers"])
+    assert result["verification"]["distinct_providers"] >= 2
 
 
 def test_realtime_search_does_not_wait_for_a_dead_secondary_provider(monkeypatch):
@@ -832,7 +896,46 @@ def test_realtime_news_anchor_ignores_prompt_boilerplate_and_calendar_date():
     assert len(ranked) == 1
 
 
-def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
+def test_realtime_strict_news_waits_for_two_independent_provider_families(monkeypatch):
+    async def fast_google_news(query, timeout_seconds, max_results):
+        return [
+            {
+                "title": f"Noticias recientes de Chile {index}",
+                "url": f"https://medio-{index}.example/noticia-chile-{index}",
+                "snippet": "Noticias recientes de Chile con información publicada hoy.",
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for index in range(1, 4)
+        ]
+
+    async def delayed_bing(query, timeout_seconds, max_results):
+        await asyncio.sleep(0.03)
+        return [{
+            "title": "Noticias recientes de Chile desde otro proveedor",
+            "url": "https://otro-medio.example/noticia-chile",
+            "snippet": "Noticias recientes de Chile con información publicada hoy.",
+            "published_at": datetime.now(timezone.utc).isoformat(),
+        }]
+
+    monkeypatch.setattr("tools.web_search._google_news_search", fast_google_news)
+    monkeypatch.setattr("tools.web_search._bing_search", delayed_bing)
+
+    results, errors, attempted = asyncio.run(
+        SearchEngine(max_results=5)._run_query(
+            ["google_news", "bing"],
+            "noticias recientes en Chile",
+            plan_depth="realtime",
+            timeout_seconds=1,
+            api_key="",
+            fast_mode=False,
+        )
+    )
+
+    assert {provider for provider, _items in results} == {"google_news", "bing"}
+    assert set(attempted) == {"google_news", "bing"}
+
+
+def test_realtime_strict_news_does_not_accept_one_provider_as_quorum(monkeypatch):
     queries = []
 
     async def fake_run_query(self, providers, planned_query, **kwargs):
@@ -866,9 +969,13 @@ def test_realtime_search_stops_after_a_relevant_provider_result(monkeypatch):
             fallback_ddg=True,
         )
     )
-    assert result["ok"] is True
-    assert len(queries) == 1
-    assert result["queries_executed"] == [queries[0]]
+    # One provider and two SERP snippets are not a verified three-article news quorum.
+    assert result["ok"] is False
+    assert len(queries) > 1
+    assert result["verification"]["distinct_providers"] == 1
+    assert result["verification"]["provider_quorum_met"] is False
+    assert result["verification"]["fresh_news_items"] == 2
+    assert result["queries_executed"] == queries
 
 
 def test_rank_results_normalizes_ai_and_technology_synonyms():
@@ -960,14 +1067,17 @@ def test_standard_orchestrator_does_not_wait_for_slow_second_provider_after_thre
                 cancelled["count"] += 1
                 raise
 
-        orchestrator.providers = {"bing": fast, "google": slow, "duckduckgo": slow}
+        orchestrator.providers = {"bing": fast, "google": fast, "duckduckgo": slow}
         orchestrator.circuits = {name: orchestrator.circuits[name] for name in orchestrator.providers}
         started = asyncio.get_running_loop().time()
         result = await orchestrator.search("Python asyncio official documentation", fresh=True)
         elapsed = asyncio.get_running_loop().time() - started
 
-        assert result["ok"] is True
-        assert len({item["source_domain"] for item in result["results"]}) >= 3
+        # Two independent providers with three relevant domains satisfy the
+        # evidence contract; the slower third provider must be cancelled.
+        assert result["ok"] is True, result
+        assert result["verification"]["distinct_providers"] == 2
+        assert result["verification"]["provider_quorum_met"] is True
         assert elapsed < 0.8
         assert cancelled["count"] >= 1
 
@@ -1064,7 +1174,11 @@ def test_chile_public_info_uses_live_fetchable_portal_candidates_when_indexes_co
             "https://www.bcn.cl/leychile",
             "https://www.consejotransparencia.cl/",
         }
+        # A general official-information lookup needs valid pages, not a
+        # second search index when the returned sources are independently distinct.
         assert result["ok"] is True, result
+        assert result["diagnostic_code"] is None
+        assert result["verification"]["provider_quorum_met"] is True
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.gob.cl/" not in urls
@@ -1115,6 +1229,11 @@ def test_chile_commercial_site_fallback_returns_official_navigation_candidates_w
             "https://ww2.movistar.cl/empresas/",
         }
         assert result["ok"] is True, result
+        assert result["status"] == "PARTIAL"
+        assert result["diagnostic_code"] == "INSUFFICIENT_PROVIDER_QUORUM"
+        assert result["verification"]["provider_quorum_met"] is False
+        assert result["verification"]["navigation_only"] is True
+        assert result["verification"]["evidence_status"] == "NAVIGATION_ONLY"
         assert len(domains - {""}) >= 3, result
         assert len(urls & expected) >= 3, result
         assert "https://www.encuentraempresas.cl/categoria-tecnologia.html" not in urls
@@ -1177,11 +1296,12 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
         calls["count"] += 1
         return [
             {
-                "title": "DEEP33 noticias actuales",
-                "url": f"https://news.example/item-{calls['count']}",
-                "snippet": "DEEP33 noticias actualidad hoy",
+                "title": f"DEEP33 noticias actuales {index}",
+                "url": f"https://news{index}.example/item-{calls['count']}",
+                "snippet": "DEEP33 noticias actualidad hoy con información reciente",
                 "published_at": datetime.now(timezone.utc).isoformat(),
             }
+            for index in range(1, 4)
         ]
 
     async def exercise():
@@ -1192,20 +1312,264 @@ def test_realtime_orchestrator_never_reads_or_writes_cache():
             fallback_delay_seconds=0,
             cache_ttl_seconds=120,
         )
-        orchestrator.providers = {"bing": provider}
+        orchestrator.providers = {"bing": provider, "mojeek": provider}
         orchestrator.fallback_providers = {}
-        orchestrator.circuits = {"bing": orchestrator.circuits["bing"]}
+        orchestrator.circuits = {
+            "bing": orchestrator.circuits["bing"],
+            "mojeek": orchestrator.circuits["mojeek"],
+        }
 
         first = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
+        first_call_count = calls["count"]
         second = await orchestrator.search("DEEP33 noticias hoy", fresh=False)
-        return first, second, orchestrator
+        return first, second, orchestrator, first_call_count, calls["count"]
 
-    first, second, orchestrator = asyncio.run(exercise())
+    first, second, orchestrator, first_call_count, second_call_count = asyncio.run(exercise())
     assert first["ok"] is True
     assert second["ok"] is True
-    # Each top-level realtime search executes two planned query variants. Both
-    # variants must execute again on the second call because realtime is cache-free.
-    assert calls["count"] == 4
+    # The second realtime request must issue fresh provider calls instead of
+    # reusing the first request's result, regardless of early-stop query count.
+    assert first_call_count >= 2
+    assert second_call_count > first_call_count
     assert first["cache_hit"] is False
     assert second["cache_hit"] is False
     assert orchestrator.cache.get(orchestrator._cache_key("DEEP33 noticias hoy")) is None
+
+
+def test_general_search_accepts_one_relevant_provider_result(monkeypatch):
+    from backend.search.engine import SearchEngine
+
+    async def one_provider(self, _providers, query, **kwargs):
+        return (
+            [("bing", [{
+                "title": "Official overview of the Eiffel Tower",
+                "url": "https://www.toureiffel.paris/en/the-monument",
+                "snippet": "Official information about the Eiffel Tower in Paris.",
+            }])],
+            [],
+            ["bing"],
+        )
+
+    monkeypatch.setattr(SearchEngine, "_run_query", one_provider)
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "Eiffel Tower official website",
+            provider="auto",
+            api_key="",
+            timeout_seconds=2,
+            fallback_ddg=False,
+        )
+    )
+    assert result["ok"] is True
+    assert result["verification"]["distinct_domains"] == 1
+    assert result["verification"]["distinct_providers"] == 1
+
+
+def test_research_contrast_requires_two_distinct_domains_not_two_providers(monkeypatch):
+    from backend.search.engine import SearchEngine
+
+    async def one_provider_two_domains(self, _providers, query, **kwargs):
+        return (
+            [("mojeek", [
+                {
+                    "title": "Investigación comparativa sobre reciclaje de baterías",
+                    "url": "https://research-a.example/battery-recycling",
+                    "snippet": "Estudio comparativo sobre tecnologías de reciclaje de baterías y sus resultados.",
+                },
+                {
+                    "title": "Segundo estudio sobre reciclaje de baterías",
+                    "url": "https://research-b.example/battery-recycling",
+                    "snippet": "Una segunda investigación compara métodos y tecnologías de reciclaje de baterías.",
+                },
+            ])],
+            [],
+            ["mojeek"],
+        )
+
+    monkeypatch.setattr(SearchEngine, "_run_query", one_provider_two_domains)
+    result = asyncio.run(
+        SearchEngine(max_results=5).search(
+            "compara e investiga tecnologías de reciclaje de baterías",
+            provider="auto",
+            api_key="",
+            timeout_seconds=2,
+            fallback_ddg=False,
+        )
+    )
+    assert result["ok"] is True
+    assert result["verification"]["distinct_domains"] >= 2
+    assert result["verification"]["distinct_providers"] == 1
+
+
+def test_realtime_news_validator_requires_three_domains_and_two_provider_families():
+    from backend.search.engine import validate_realtime_evidence
+
+    now = datetime.now(timezone.utc).isoformat()
+    items = [
+        {
+            "title": f"Noticias de Chile hoy: actualización {index}",
+            "url": f"https://medio{index}.example/noticias/chile-{index}",
+            "snippet": "Noticias de Chile hoy con información reciente y confirmada.",
+            "published_at": now,
+            "provider": provider,
+        }
+        for index, provider in enumerate(("bing", "mojeek", "google_news"), start=1)
+    ]
+    accepted = validate_realtime_evidence("noticias de Chile hoy", items)
+    assert accepted["ok"] is True
+    assert accepted["domains"] == 3
+    assert accepted["providers"] == 3
+    assert len(accepted["fresh_items"]) == 3
+
+    rejected = validate_realtime_evidence(
+        "noticias de Chile hoy",
+        [{**item, "provider": "bing"} for item in items],
+    )
+    assert rejected["ok"] is False
+    assert rejected["providers"] == 1
+
+
+def test_mwmbl_independent_fallback_runs_before_search_budget_expires():
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario():
+        calls = {"mwmbl": 0}
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+
+        async def bing(query, timeout, limit):
+            return [
+                {
+                    "title": f"Python official documentation result {index}",
+                    "url": f"https://python{index}.example.org/releases/",
+                    "snippet": "Python stable release documentation and downloads.",
+                }
+                for index in range(1, 4)
+            ]
+
+        async def ddg(query, timeout, limit):
+            return []
+
+        async def mwmbl(query, timeout, limit):
+            calls["mwmbl"] += 1
+            return [{
+                "title": "Python documentation — stable release",
+                "url": "https://docs.python.org/3/whatsnew/",
+                "snippet": "Official Python release notes and documentation.",
+            }]
+
+        orchestrator.providers = {"bing": bing, "duckduckgo": ddg}
+        orchestrator.fallback_providers = {"mwmbl": mwmbl}
+        result = await orchestrator.search(
+            "latest stable Python release official documentation",
+            fresh=True,
+        )
+        return result, calls
+
+    result, calls = asyncio.run(scenario())
+    assert calls["mwmbl"] == 1
+    assert result["ok"] is True, result
+    assert "mwmbl" in result["providers"], result
+    assert result["verification"]["distinct_providers"] == 2, result
+    assert result["verification"]["provider_quorum_met"] is True, result
+
+
+def test_youcom_independent_fallback_runs_before_mwmbl_when_quorum_is_missing():
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario():
+        calls = {"youcom": 0, "mwmbl": 0}
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+
+        async def bing(query, timeout, limit):
+            return [
+                {
+                    "title": f"Python official documentation result {index}",
+                    "url": f"https://python{index}.example.org/releases/",
+                    "snippet": "Python stable release documentation and downloads.",
+                }
+                for index in range(1, 4)
+            ]
+
+        async def ddg(query, timeout, limit):
+            return []
+
+        async def youcom(query, timeout, limit):
+            calls["youcom"] += 1
+            return [{
+                "title": "Python documentation — stable release",
+                "url": "https://docs.python.org/3/whatsnew/",
+                "snippet": "Official Python release notes and documentation.",
+            }]
+
+        async def mwmbl(query, timeout, limit):
+            calls["mwmbl"] += 1
+            return []
+
+        orchestrator.providers = {"bing": bing, "duckduckgo": ddg}
+        orchestrator.fallback_providers = {"youcom": youcom, "mwmbl": mwmbl}
+        result = await orchestrator.search(
+            "latest stable Python release official documentation",
+            fresh=True,
+        )
+        return result, calls
+
+    result, calls = asyncio.run(scenario())
+    assert calls["youcom"] == 1
+    assert calls["mwmbl"] == 0
+    assert result["ok"] is True, result
+    assert "youcom" in result["providers"], result
+    assert result["verification"]["distinct_providers"] == 2, result
+    assert result["verification"]["provider_quorum_met"] is True, result
+
+
+def test_youcom_mcp_adapter_parses_structured_search_results(monkeypatch):
+    from tools.web_search import _youcom_search
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "structuredContent": {
+                        "results": {
+                            "web": [{
+                                "title": "Python release notes",
+                                "url": "https://docs.python.org/3/whatsnew/",
+                                "description": "Official Python release documentation.",
+                            }],
+                            "news": [],
+                        }
+                    }
+                },
+            }
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr("tools.web_search._search_http_client", fake_client)
+    results = asyncio.run(_youcom_search(
+        "latest stable Python release official documentation",
+        1.0,
+        5,
+    ))
+    assert len(results) == 1
+    assert results[0]["url"] == "https://docs.python.org/3/whatsnew/"
+    assert "Official Python release documentation" in results[0]["snippet"]
