@@ -1476,3 +1476,100 @@ def test_mwmbl_independent_fallback_runs_before_search_budget_expires():
     assert "mwmbl" in result["providers"], result
     assert result["verification"]["distinct_providers"] == 2, result
     assert result["verification"]["provider_quorum_met"] is True, result
+
+
+def test_youcom_independent_fallback_runs_before_mwmbl_when_quorum_is_missing():
+    from backend.search.resilient import WebOrchestrator
+
+    async def scenario():
+        calls = {"youcom": 0, "mwmbl": 0}
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.12,
+            global_budget_seconds=0.8,
+            fallback_delay_seconds=0,
+        )
+
+        async def bing(query, timeout, limit):
+            return [
+                {
+                    "title": f"Python official documentation result {index}",
+                    "url": f"https://python{index}.example.org/releases/",
+                    "snippet": "Python stable release documentation and downloads.",
+                }
+                for index in range(1, 4)
+            ]
+
+        async def ddg(query, timeout, limit):
+            return []
+
+        async def youcom(query, timeout, limit):
+            calls["youcom"] += 1
+            return [{
+                "title": "Python documentation — stable release",
+                "url": "https://docs.python.org/3/whatsnew/",
+                "snippet": "Official Python release notes and documentation.",
+            }]
+
+        async def mwmbl(query, timeout, limit):
+            calls["mwmbl"] += 1
+            return []
+
+        orchestrator.providers = {"bing": bing, "duckduckgo": ddg}
+        orchestrator.fallback_providers = {"youcom": youcom, "mwmbl": mwmbl}
+        result = await orchestrator.search(
+            "latest stable Python release official documentation",
+            fresh=True,
+        )
+        return result, calls
+
+    result, calls = asyncio.run(scenario())
+    assert calls["youcom"] == 1
+    assert calls["mwmbl"] == 0
+    assert result["ok"] is True, result
+    assert "youcom" in result["providers"], result
+    assert result["verification"]["distinct_providers"] == 2, result
+    assert result["verification"]["provider_quorum_met"] is True, result
+
+
+def test_youcom_mcp_adapter_parses_structured_search_results(monkeypatch):
+    from tools.web_search import _youcom_search
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "structuredContent": {
+                        "results": {
+                            "web": [{
+                                "title": "Python release notes",
+                                "url": "https://docs.python.org/3/whatsnew/",
+                                "description": "Official Python release documentation.",
+                            }],
+                            "news": [],
+                        }
+                    }
+                },
+            }
+
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr("tools.web_search._search_http_client", fake_client)
+    results = asyncio.run(_youcom_search(
+        "latest stable Python release official documentation",
+        1.0,
+        5,
+    ))
+    assert len(results) == 1
+    assert results[0]["url"] == "https://docs.python.org/3/whatsnew/"
+    assert "Official Python release documentation" in results[0]["snippet"]
