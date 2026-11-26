@@ -122,7 +122,7 @@ class GatewayConfig:
         ).strip()
         primary_model = os.getenv(
             "AI_GATEWAY_MODEL",
-            "kilo-auto/free",
+            "baidu/ernie-5.5-flash-preview:free",
         ).strip()
         primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
         primary_host = _provider_hostname(primary_url)
