@@ -5835,7 +5835,7 @@ async def stream_gateway(
             payload,
             request_id=request_id,
             idempotency_key=idempotency_key,
-            deadline=synthesis_retry_deadline,
+            deadline=deadline,
         ):
             collected.extend(chunk)
             frame_buffer.extend(chunk)
@@ -5953,7 +5953,7 @@ async def stream_gateway(
                     candidate_payload,
                     request_id=request_id,
                     idempotency_key=f"{idempotency_key}:nonstream-fallback:{fallback_kind}",
-                    deadline=deadline,
+                    deadline=synthesis_retry_deadline,
                 )
                 fallback_message = _choice_message(fallback_data)
                 raw_fallback_text = fallback_message.get("content")
