@@ -7,6 +7,7 @@ import backend.main as main
 from backend.main import (
     _compact_web_synthesis_payload,
     _extractive_web_evidence_fallback,
+    _normalize_web_search_query,
 )
 
 
@@ -93,3 +94,13 @@ def test_inference_diagnostic_returns_structured_failure_instead_of_http_500(mon
     assert result["request_id"] == "diagnostic-test"
     assert result["error_type"] == "RuntimeError"
     assert result["attempts"] == []
+
+
+
+def test_news_search_query_drops_answer_instructions_before_provider_search() -> None:
+    query = (
+        "Busca las últimas noticias de Chile hoy. "
+        "Resume cada historia distinta con evidencia suficiente y termina con NEWS_STREAM_PASS."
+    )
+
+    assert _normalize_web_search_query(query) == "últimas noticias de Chile hoy"
