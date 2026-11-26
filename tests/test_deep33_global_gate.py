@@ -1011,7 +1011,7 @@ def test_official_documentation_queries_force_live_web_search() -> None:
 
 
 
-def test_extractive_web_fallback_requires_three_publishers_for_current_news():
+def test_extractive_web_fallback_is_disabled_for_verified_news():
     import json
     import backend.main as main
 
@@ -1057,11 +1057,8 @@ def test_extractive_web_fallback_requires_three_publishers_for_current_news():
     payload = {"messages": [{"role": "system", "content": evidence_message}]}
 
     fallback = main._extractive_web_evidence_fallback(payload)
-    assert fallback is not None
-    assert "extractos breves de las páginas verificadas" in fallback
-    assert "Medio Uno" in fallback
-    assert "Medio Dos" in fallback
-    assert "Medio Tres" in fallback
+    # Source excerpts are context for AI synthesis, never the user-facing answer.
+    assert fallback is None
 
     insufficient = json.loads(json.dumps(evidence))
     insufficient["news_quorum"]["met"] = False
