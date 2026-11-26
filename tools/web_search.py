@@ -708,7 +708,7 @@ async def _youcom_search(query, timeout_seconds, max_results):
     else:
         messages = []
         raw = response.text.replace("\r\n", "\n")
-        for event in raw.split("\\n\\n"):
+        for event in raw.split("\n\n"):
             data_lines = [
                 line[5:].lstrip()
                 for line in event.splitlines()
@@ -716,7 +716,7 @@ async def _youcom_search(query, timeout_seconds, max_results):
             ]
             if data_lines:
                 try:
-                    messages.append(json.loads("\\n".join(data_lines)))
+                    messages.append(json.loads("\n".join(data_lines)))
                 except ValueError as exc:
                     raise WebSearchError("WEB_SEARCH_YOUCOM_INVALID_SSE") from exc
 
