@@ -828,3 +828,22 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
 
     assert config.providers[0].api_key == "paid-test-token"
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
+
+
+
+def test_gateway_extracts_text_from_openai_content_blocks() -> None:
+    content = [
+        {"type": "text", "text": "Respuesta "},
+        {"type": "text", "text": {"value": "verificada."}},
+    ]
+    assert AIGateway._content_text(content) == "Respuesta verificada."
+
+
+def test_stream_extractors_accept_text_block_content() -> None:
+    frame = (
+        b'data: {"choices":[{"delta":{"content":['
+        b'{"type":"text","text":"DEEP33 "},'
+        b'{"type":"text","text":"STREAM_TEXT_PASS"}]}}]}\n\n'
+    )
+    assert AIGateway._stream_has_visible_content(frame)
+    assert AIGateway._stream_text_content(frame) == "DEEP33 STREAM_TEXT_PASS"
