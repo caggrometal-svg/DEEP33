@@ -61,7 +61,7 @@ def test_complete_fails_over_once_after_primary_5xx_without_retrying_primary() -
         httpx.AsyncClient = original
 
     assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
-    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert result["_deep33_gateway"]["provider"] == "kilo-free-text-fallback"
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
@@ -120,7 +120,7 @@ def test_complete_fails_over_once_after_ambiguous_timeout_without_retrying_prima
         httpx.AsyncClient = original
 
     assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
-    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert result["_deep33_gateway"]["provider"] == "kilo-free-text-fallback"
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
@@ -276,7 +276,7 @@ def test_stream_provider_order_prefers_ttft_after_learning():
     for value in (20.0, 25.0, 30.0):
         gateway_instance._record_ttft(fallback, value)
 
-    assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "fallback"
+    assert gateway_instance._ordered_providers(prefer_ttft=True)[0].name == "kilo-free-text-fallback"
 
 
 def test_stream_fails_over_on_provider_policy_block_text_before_emitting_it() -> None:
