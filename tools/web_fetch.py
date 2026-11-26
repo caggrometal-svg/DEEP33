@@ -45,7 +45,7 @@ async def _fetch_http_client() -> httpx.AsyncClient:
                 connect=min(1.0, DEFAULT_TIMEOUT_SECONDS),
                 read=min(1.5, DEFAULT_TIMEOUT_SECONDS),
                 write=min(1.5, DEFAULT_TIMEOUT_SECONDS),
-                pool=1.0,
+                pool=2.0,
             ),
             follow_redirects=False,
             limits=httpx.Limits(
