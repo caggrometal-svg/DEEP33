@@ -21,7 +21,8 @@ def test_tertiary_delegates_child_backend_idempotency_key() -> None:
 
 def test_tertiary_names_the_canonical_render_backend_only() -> None:
     assert '"render-backend-primary"' in TERTIARY
-    assert TERTIARY.count('"https://deep33-backend.onrender.com"') == 1
+    assert TERTIARY.count('"https://deep33-backend.onrender.com"') == 2
+    assert 'const EDGE_AI_UPSTREAM_URLS = [\n  "https://deep33-backend.onrender.com",\n] as const;' in TERTIARY
     # Canonical Render is the sole internal backend; retired hosts stay forbidden.
     assert ".railway.app" not in TERTIARY
     assert "replit.app" not in TERTIARY
