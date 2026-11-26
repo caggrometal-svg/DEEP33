@@ -251,7 +251,7 @@ class GatewayConfig:
             timeout_seconds=max(5.0, float(os.getenv("AI_TIMEOUT_SECONDS", "25"))),
             provider_timeout_seconds=max(
                 3.0,
-                min(12.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "10"))),
+                min(30.0, float(os.getenv("AI_PROVIDER_TIMEOUT_SECONDS", "20"))),
             ),
             first_visible_timeout_seconds=max(
                 0.8, min(
@@ -661,7 +661,7 @@ class AIGateway:
             for attempt in range(self.config.max_retries + 1):
                 try:
                     started_request = time.perf_counter()
-                    provider_timeout = min(12.0, self.config.provider_timeout_seconds)
+                    provider_timeout = min(25.0, self.config.provider_timeout_seconds)
                     if deadline is not None:
                         # Every provider attempt must preserve enough wall-clock budget
                         # for a distinct fallback. This prevents a slow primary from
@@ -892,7 +892,7 @@ class AIGateway:
         # reasoning and return HTTP 200 with empty assistant content. Give the
         # diagnostic enough room to emit the sentinel, but cap the whole check so
         # a slow provider cannot hold the production gate open indefinitely.
-        local_deadline = time.monotonic() + 8.0
+        local_deadline = time.monotonic() + 20.0
         effective_deadline = min(deadline, local_deadline) if deadline is not None else local_deadline
         return await self.complete(
             {
