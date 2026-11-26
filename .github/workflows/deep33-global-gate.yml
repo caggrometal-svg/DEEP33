@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       require_live:
-        description: Require live Vercel/Android SSE validation
+        description: Require live Render/Android SSE validation
         required: false
         default: "true"
         type: choice
@@ -32,14 +32,14 @@ permissions:
 
 jobs:
   # Always produce a real gate result. On main this job requires authenticated live
-  # Vercel/Android verification; on PRs it runs the deterministic Global Gate suite
+  # Render/Android verification; on PRs it runs the deterministic Global Gate suite
   # without pretending that an undeployed branch is the live production SHA.
   production_gate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       PYTHONUNBUFFERED: "1"
-      DEEP33_BASE_URL: https://deep33-backend.vercel.app
+      DEEP33_BASE_URL: https://deep33-backend.onrender.com
       DEEP33_TEST_AUTH_TOKEN: ""
       DEEP33_TEST_SESSION_ID: deep33-global-gate
       SUPABASE_URL: https://opocgzydeknuchtrqzfa.supabase.co
@@ -64,7 +64,7 @@ jobs:
 
       - name: Enable canonical live production target
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_BASE_URL == ''
-        run: echo "DEEP33_BASE_URL=https://deep33-backend.vercel.app" >> "$GITHUB_ENV"
+        run: echo "DEEP33_BASE_URL=https://deep33-backend.onrender.com" >> "$GITHUB_ENV"
 
       - name: Prepare authenticated live production session
         if: env.DEEP33_REQUIRE_LIVE_GATE == 'true' && env.DEEP33_TEST_AUTH_TOKEN == ''
@@ -111,7 +111,7 @@ jobs:
           echo "DEEP33_TEST_AUTH_TOKEN=$token" >> "$GITHUB_ENV"
           echo "DEEP33_TEST_SESSION_ID=global-gate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
-      - name: Wait for exact main SHA on canonical Vercel
+      - name: Wait for exact main SHA on canonical Render
         if: ${{ env.DEEP33_REQUIRE_LIVE_GATE == 'true' }}
         run: |
           set -euo pipefail
@@ -119,14 +119,14 @@ jobs:
             code="$(curl -sS --connect-timeout 8 --max-time 20 -o /tmp/vercel-health.json -w "%{http_code}" "$DEEP33_BASE_URL/health" || true)"
             live_sha="$(jq -r '.git_sha // empty' /tmp/vercel-health.json 2>/dev/null || true)"
             status="$(jq -r '.status // empty' /tmp/vercel-health.json 2>/dev/null || true)"
-            echo "VERCEL_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status http=$code"
+            echo "RENDER_SHA_ATTEMPT=$attempt expected=$GITHUB_SHA live=$live_sha status=$status http=$code"
             if [ "$code" = "200" ] && [ "$status" = "PASS" ] && [ "$live_sha" = "$GITHUB_SHA" ]; then
-              echo "VERCEL_EXACT_SHA_PASS=$live_sha"
+              echo "RENDER_EXACT_SHA_PASS=$live_sha"
               exit 0
             fi
             sleep 5
           done
-          echo "VERCEL_EXACT_SHA_FAIL expected=$GITHUB_SHA"
+          echo "RENDER_EXACT_SHA_FAIL expected=$GITHUB_SHA"
           cat /tmp/vercel-health.json 2>/dev/null || true
           exit 1
 
