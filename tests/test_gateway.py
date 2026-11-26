@@ -928,11 +928,11 @@ def test_stream_reaches_nemotron_vl_after_earlier_models_return_empty() -> None:
         model = body.get("model")
         calls.append(str(model))
         if model in {"primary-model", "ernie-model", "nvidia/nemotron-3-ultra-550b-a55b:free"}:
-            content = b"data: [DONE]\\n\\n"
+            content = b"data: [DONE]\n\n"
         else:
             content = (
-                b'data: {"choices":[{"delta":{"content":"NEMOTRON_VL_STREAM_SYNTHESIS_OK"}}]}\\n\\n'
-                b"data: [DONE]\\n\\n"
+                b'data: {"choices":[{"delta":{"content":"NEMOTRON_VL_STREAM_SYNTHESIS_OK"}}]}\n\n'
+                b"data: [DONE]\n\n"
             )
         return httpx.Response(
             200,
