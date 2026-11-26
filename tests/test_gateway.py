@@ -1041,3 +1041,28 @@ async def test_diagnostic_inference_has_bounded_twenty_second_budget() -> None:
     assert budget <= 20.1
     assert budget >= 19.0
     assert result["choices"][0]["message"]["content"] == "DEEP33_DIAGNOSTIC_OK"
+
+
+
+def test_complete_timeout_budget_reserves_twelve_seconds_for_fallback() -> None:
+    gateway = AIGateway(
+        GatewayConfig(
+            providers=(
+                provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+                provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+            ),
+            timeout_seconds=30,
+            provider_timeout_seconds=24,
+        )
+    )
+    primary_deadline = __import__("time").monotonic() + 26.0
+    primary_budget = gateway._complete_provider_timeout_budget(
+        primary_deadline, 0, 2
+    )
+    fallback_deadline = __import__("time").monotonic() + 12.0
+    fallback_budget = gateway._complete_provider_timeout_budget(
+        fallback_deadline, 1, 2
+    )
+
+    assert 13.5 <= primary_budget <= 14.5
+    assert 11.5 <= fallback_budget <= 12.0
