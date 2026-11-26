@@ -690,7 +690,19 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
         laguna,
     )
 
+    nemotron = provider(
+        "kilo-nemotron-free-fallback",
+        "https://api.kilo.ai/api/gateway/chat/completions",
+        "https://api.kilo.ai/api/gateway/models",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    )
+    nemotron_payload = AIGateway._provider_payload(
+        {"messages": [{"role": "user", "content": "hi"}]},
+        nemotron,
+    )
+
     assert dots_payload["reasoning_effort"] == "low"
+    assert nemotron_payload["reasoning_effort"] == "low"
     assert "reasoning_effort" not in laguna_payload
 
 
