@@ -983,8 +983,7 @@ def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
     assert result == []
     assert observed == [
         (
-            "Chile política gobierno Congreso elecciones actualidad noticias "
-            "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile",
+            "Chile política gobierno Congreso noticias hoy",
             0.2,
             5,
         )
