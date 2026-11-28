@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import pytest
 
-from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayProvider
+from backend.gateway import AIGateway, GatewayConfig, GatewayHTTPError, GatewayInvalidResponseError, GatewayProvider
 
 
 def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvider:
@@ -145,8 +145,15 @@ def test_complete_raises_when_all_providers_fail() -> None:
     try:
         import asyncio
 
-        with pytest.raises(GatewayHTTPError):
+        with pytest.raises(GatewayHTTPError) as error:
             asyncio.run(gateway.complete({"messages": [{"role": "user", "content": "hi"}]}))
+        assert isinstance(error.value.attempts, list)
+        assert error.value.attempts == [{
+            "provider": "primary",
+            "model": "primary-model",
+            "outcome": "http_error",
+            "attempt": 1,
+        }]
     finally:
         httpx.AsyncClient = original
 
@@ -981,3 +988,35 @@ def test_stream_visible_budget_gives_each_fallback_a_real_start_window() -> None
     assert [gateway._stream_visible_budget(index, 4) for index in range(4)] == [
         2.0, 2.0, 2.0, 6.0
     ]
+
+
+
+def test_gateway_invalid_response_error_exposes_attempt_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"choices": []})
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),),
+        timeout_seconds=2,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    httpx.AsyncClient = Client
+    try:
+        with pytest.raises(GatewayInvalidResponseError) as error:
+            asyncio.run(gateway.complete({"messages": [{"role": "user", "content": "hi"}]}))
+        assert error.value.attempts == [{
+            "provider": "primary",
+            "model": "primary-model",
+            "outcome": "invalid_response",
+            "attempt": 1,
+        }]
+    finally:
+        httpx.AsyncClient = original
