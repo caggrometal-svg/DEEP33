@@ -1203,7 +1203,7 @@ async def search_recent_news_candidates(
     queries: list[tuple[str, str | None]] = [(cleaned, None)]
     if re.search(r"\bchile\b", cleaned, re.IGNORECASE):
         queries.extend(
-            (f"noticias Chile hoy site:{domain}", domain)
+            (f"{cleaned} site:{domain}", domain)
             for domain in publisher_domains
         )
 

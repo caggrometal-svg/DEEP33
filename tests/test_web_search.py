@@ -1885,3 +1885,35 @@ def test_search_provider_concurrency_limit_is_bounded(monkeypatch):
     assert _bounded_env_float(
         "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
     ) == 8.0
+
+
+def test_recent_news_publisher_queries_preserve_original_topic(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    seen = []
+
+    async def no_results(*_args, **_kwargs):
+        return []
+
+    async def capture_bing(query, _timeout, _limit):
+        seen.append(query)
+        return []
+
+    monkeypatch.setattr(module, "_publisher_rss_search", no_results)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_results)
+    monkeypatch.setattr(module, "_google_news_search", no_results)
+    monkeypatch.setattr(module, "_mwmbl_search", no_results)
+    monkeypatch.setattr(module, "_bing_recent_news_search", capture_bing)
+
+    asyncio.run(module.search_recent_news_candidates(
+        "política Chile hoy últimas noticias",
+        timeout_seconds=2.0,
+        max_results=8,
+    ))
+
+    targeted = [query for query in seen if "site:" in query]
+    assert len(targeted) == 5
+    assert all("política" in query for query in targeted)
+    assert any("site:biobiochile.cl" in query for query in targeted)
+    assert any("site:cooperativa.cl" in query for query in targeted)
