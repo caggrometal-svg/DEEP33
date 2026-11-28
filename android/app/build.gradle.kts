@@ -83,22 +83,22 @@ android {
     val canonicalPrimaryUrl = "https://deep33-backend.onrender.com"
     val canonicalSecondaryUrl = "https://deep33-backup.onrender.com"
     val canonicalTertiaryUrl = "https://deep33-api.onrender.com"
+    // Vercel is the dedicated live-web/AI route; Render remains the normal-chat cluster.
+    val canonicalVercelUrl = "https://deep33-backend.vercel.app"
 
     val suppliedEndpoints = listOf(
         "DEEP33_PRIMARY_URL" to System.getenv("DEEP33_PRIMARY_URL")?.trim().orEmpty(),
         "DEEP33_SECONDARY_URL" to System.getenv("DEEP33_SECONDARY_URL")?.trim().orEmpty(),
         "DEEP33_TERTIARY_URL" to System.getenv("DEEP33_TERTIARY_URL")?.trim().orEmpty(),
+        "DEEP33_VERCEL_URL" to System.getenv("DEEP33_VERCEL_URL")?.trim().orEmpty(),
     )
     val canonicalEndpoints = listOf(
         canonicalPrimaryUrl,
         canonicalSecondaryUrl,
         canonicalTertiaryUrl,
+        canonicalVercelUrl,
     )
-    val endpointByName = listOf(
-        canonicalPrimaryUrl,
-        canonicalSecondaryUrl,
-        canonicalTertiaryUrl,
-    ).withIndex().associate { (index, value) ->
+    val endpointByName = canonicalEndpoints.withIndex().associate { (index, value) ->
         suppliedEndpoints[index].first to value
     }
     val unexpectedOverrides = suppliedEndpoints.filter { (name, value) ->
@@ -118,11 +118,13 @@ android {
     val primaryUrl = canonicalPrimaryUrl
     val secondaryUrl = canonicalSecondaryUrl
     val tertiaryUrl = canonicalTertiaryUrl
+    val vercelUrl = canonicalVercelUrl
 
     buildTypes.all {
         buildConfigField("String", "DEEP33_PRIMARY_URL", quoteBuildConfig(primaryUrl))
         buildConfigField("String", "DEEP33_SECONDARY_URL", quoteBuildConfig(secondaryUrl))
         buildConfigField("String", "DEEP33_TERTIARY_URL", quoteBuildConfig(tertiaryUrl))
+        buildConfigField("String", "DEEP33_VERCEL_URL", quoteBuildConfig(vercelUrl))
     }
 
     compileOptions {
