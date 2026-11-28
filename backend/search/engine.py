@@ -122,7 +122,7 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
     # Otherwise generic accommodation/travel pages mentioning "Las Condes" can
     # satisfy a request about the current situation of that commune.
     locality_scope = re.search(
-        r"\\b(comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\\s+(?:de|del)\\s+",
+        r"\b(comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\\s+(?:de|del)\\s+",
         lookup_query,
         flags=re.IGNORECASE,
     )
