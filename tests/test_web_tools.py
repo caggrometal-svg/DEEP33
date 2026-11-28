@@ -1121,6 +1121,8 @@ def test_bing_realtime_news_merges_rss_when_html_results_are_irrelevant(monkeypa
     monkeypatch.setenv("WEB_SEARCH_FALLBACK_DDG", "false")
     monkeypatch.setenv("WEB_SEARCH_PROVIDER", "bing")
     monkeypatch.setenv("WEB_SEARCH_MAX_QUERIES", "1")
+    # Explicitly enable the independent provider this contract is testing.
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "true")
     monkeypatch.setattr("tools.web_search.validate_public_url", lambda value: value)
     module._SEARCH_CACHE.clear()
     module._SEARCH_INFLIGHT.clear()
