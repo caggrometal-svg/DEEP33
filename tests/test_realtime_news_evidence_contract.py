@@ -567,3 +567,34 @@ def test_python_asyncio_official_query_preserves_taskgroup_entity():
     assert orchestrator._provider_query(
         "Python asyncio TaskGroup documentación oficial"
     ) == "python asyncio taskgroup official"
+
+
+def test_provider_quota_and_rate_limit_responses_open_long_cooldowns():
+    import asyncio
+    import time
+    from backend.search.resilient import WebOrchestrator
+
+    async def run(error_code):
+        orchestrator = WebOrchestrator()
+
+        async def exhausted_provider(*_args, **_kwargs):
+            raise RuntimeError(error_code)
+
+        orchestrator.fallback_providers["youcom"] = exhausted_provider
+        await orchestrator._call_provider("youcom", "test query")
+        return orchestrator.circuits["youcom"].opened_until - time.monotonic()
+
+    quota_cooldown, rate_cooldown = asyncio.run(asyncio.gather(
+        run("WEB_SEARCH_YOUCOM_HTTP_402"),
+        run("WEB_SEARCH_GOOGLE_HTTP_429"),
+    )) if False else (None, None)
+
+    async def both():
+        return await asyncio.gather(
+            run("WEB_SEARCH_YOUCOM_HTTP_402"),
+            run("WEB_SEARCH_GOOGLE_HTTP_429"),
+        )
+
+    quota_cooldown, rate_cooldown = asyncio.run(both())
+    assert quota_cooldown >= 21500
+    assert rate_cooldown >= 170
