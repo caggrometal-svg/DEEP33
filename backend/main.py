@@ -1760,6 +1760,8 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             continue
         retained = dict(item)
         retained["relevance_score"] = score_result(query, retained)
+        if retained["relevance_score"] < 0.38:
+            continue
         ranked.append(retained)
         seen_urls.add(url)
     return ranked
@@ -3897,7 +3899,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # candidates only*. They still become public evidence only after a real page
         # is successfully fetched and extracted below.
         candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
+        if search_ok and ranked_sources and not candidate_sources and not strict_news_request:
             candidate_sources = ranked_sources
             logger.warning(
                 "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
@@ -3925,11 +3927,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and _is_recently_published(item, q)
             } - {""}
             try:
-                rescue_query = (
-                    "Chile noticias hoy actualidad acontecimientos recientes"
-                    if "chile" in q.casefold()
-                    else q
-                )
+                rescue_query = q
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
                     timeout_seconds=1.8,
@@ -4395,6 +4393,25 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             errors.append("PAGE_EXTRACTION_UNAVAILABLE_USING_SEARCH_SNIPPETS")
 
         response_payload = dict(result)
+        verification = dict(result.get("verification") or {})
+        verification["distinct_domains"] = domains_used
+        verification["domain_quorum_met"] = (
+            domains_used >= (3 if strict_news_request else 2)
+        )
+        if not has_extracted_content:
+            verification.update({
+                "level": "none",
+                "evidence_status": "INSUFFICIENT",
+                "corroborated_results": 0,
+                "provider_quorum_met": False,
+            })
+        else:
+            verification["level"] = "multi-source" if domains_used >= 2 else "single-source"
+            verification["evidence_status"] = (
+                "VERIFIED" if final_ok and news_quorum_met else "INSUFFICIENT"
+            )
+            verification["corroborated_results"] = len(evidence_fetched_pages)
+        response_payload["verification"] = verification
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
         public_results = (
