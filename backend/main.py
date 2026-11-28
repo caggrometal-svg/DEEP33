@@ -387,7 +387,10 @@ def _recent_news_quorum_summary(
         str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
         .casefold().removeprefix("www.")
         for page in valid_pages
-        if str(page.get("provider") or "").casefold() in {"publisher_rss", "publisher_feed"}
+        if (
+            str(page.get("provider") or "").casefold() in {"publisher_rss", "publisher_feed"}
+            and page.get("evidence_type") == "publisher_rss_excerpt"
+        )
     } - {""}
     # Three independently attributed publisher feeds can supplement one
     # verified search index when article pages are inaccessible. RSS alone
@@ -2962,7 +2965,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             query,
             candidates,
             fetched_pages,
-            fetch_batch.failures,
+            getattr(fetch_batch, "failures", []),
         )
         if publisher_rss_excerpts:
             fetched_pages.extend(publisher_rss_excerpts)
