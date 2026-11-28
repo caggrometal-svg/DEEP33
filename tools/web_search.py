@@ -639,7 +639,7 @@ async def _mojeek_search(query, timeout_seconds, max_results):
     query_text = str(query or "")
     spanish_query = bool(
         re.search(
-            r"[áéíóúñ¿¡]|\\b(?:chile|noticias|pol[ií]tica|gobierno|hoy|ultimas?)\\b",
+            r"[áéíóúñ¿¡]|\b(?:chile|noticias|pol[ií]tica|gobierno|hoy|ultimas?)\b",
             query_text,
             re.IGNORECASE,
         )
@@ -1325,9 +1325,8 @@ async def search_recent_news_candidates(
         *(run_news_job(job[2]) for job in jobs),
         return_exceptions=True,
     )
-    # Reject dated but stale Google News items here. Otherwise its first batch
-    # can fill the candidate limit and prevent independent Bing RSS recovery
-    # from being considered at all.
+    # Reject dated but stale news items here. Undated Mwmbl/Mojeek candidates
+    # remain provisional until the final article fetch extracts a publication date.
     from backend.search.engine import _is_recently_published
 
     merged: list[dict] = []
