@@ -2987,14 +2987,20 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
             return None, [], [], []
+        evidence_domains = {
+            str(item.get("domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in fetched_pages
+        } - {""}
+        evidence_text_chars = sum(len(str(item.get("text") or "")) for item in fetched_pages)
         logger.info(
             "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
             "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
             request_id or "unknown",
-            fetch_batch.status,
-            fetch_batch.fetched,
-            fetch_batch.distinct_domains,
-            fetch_batch.total_text_chars,
+            "PUBLISHER_RSS_EXCERPT_FALLBACK" if publisher_rss_excerpts else fetch_batch.status,
+            len(fetched_pages),
+            len(evidence_domains),
+            evidence_text_chars,
             fetch_policy.target_sources,
             fetch_batch.cancelled,
             fetch_batch.elapsed_ms,
