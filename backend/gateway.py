@@ -393,16 +393,12 @@ class AIGateway:
         return max(0.5, min(default, remaining))
 
     def _stream_visible_budget(self, provider_index: int, provider_count: int) -> float:
-        """Reserve a sub-3s first-visible envelope across provider failover."""
+        """Give every free provider a useful first-text window within the global deadline."""
         configured = self.config.first_visible_timeout_seconds
         if provider_count <= 1 or configured < 1.0:
             return configured
         if provider_index < provider_count - 1:
-            return min(configured, 0.35)
-        # Honor the configured final-provider window. For a two-provider chain,
-        # the primary's bounded 0.5s connection/read attempt plus this window
-        # must leave room for the visible fallback response inside Android's
-        # sub-3s first-visible contract.
+            return min(configured, max(2.0, configured / provider_count))
         return configured
 
     @staticmethod

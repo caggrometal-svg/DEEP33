@@ -952,15 +952,15 @@ def test_stream_fails_over_when_primary_finishes_without_visible_text() -> None:
                 200,
                 request=request,
                 headers={"content-type": "text/event-stream"},
-                content=b"data: [DONE]\\n\\n",
+                content=b"data: [DONE]\n\n",
             )
         return httpx.Response(
             200,
             request=request,
             headers={"content-type": "text/event-stream"},
             content=(
-                b'data: {"choices":[{"delta":{"content":"STREAM_EMPTY_FALLBACK_PASS"}}]}\\n\\n'
-                b"data: [DONE]\\n\\n"
+                b'data: {"choices":[{"delta":{"content":"STREAM_EMPTY_FALLBACK_PASS"}}]}\n\n'
+                b"data: [DONE]\n\n"
             ),
         )
 
@@ -1002,4 +1002,21 @@ def test_stream_fails_over_when_primary_finishes_without_visible_text() -> None:
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
+    ]
+
+
+def test_stream_visible_budget_gives_each_fallback_a_real_start_window() -> None:
+    config = GatewayConfig(
+        providers=tuple(
+            provider(f"provider-{index}", f"https://p{index}.test/chat", f"https://p{index}.test/models", f"model-{index}")
+            for index in range(4)
+        ),
+        timeout_seconds=45,
+        provider_timeout_seconds=12,
+        first_visible_timeout_seconds=6,
+    )
+    gateway = AIGateway(config)
+
+    assert [gateway._stream_visible_budget(index, 4) for index in range(4)] == [
+        2.0, 2.0, 2.0, 6.0
     ]
