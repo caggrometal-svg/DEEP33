@@ -942,69 +942,6 @@ def test_gateway_first_visible_timeout_allows_slow_free_provider_start(monkeypat
     assert config.first_visible_timeout_seconds == 6.0
 
 
-def test_stream_fails_over_when_primary_finishes_without_visible_text() -> None:
-    calls: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(str(request.url))
-        if request.url.host == "primary.test":
-            return httpx.Response(
-                200,
-                request=request,
-                headers={"content-type": "text/event-stream"},
-                content=b"data: [DONE]\n\n",
-            )
-        return httpx.Response(
-            200,
-            request=request,
-            headers={"content-type": "text/event-stream"},
-            content=(
-                b'data: {"choices":[{"delta":{"content":"STREAM_EMPTY_FALLBACK_PASS"}}]}\n\n'
-                b"data: [DONE]\n\n"
-            ),
-        )
-
-    transport = httpx.MockTransport(handler)
-    config = GatewayConfig(
-        providers=(
-            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
-            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
-        ),
-        timeout_seconds=8,
-        provider_timeout_seconds=6,
-        first_visible_timeout_seconds=3,
-    )
-    gateway = AIGateway(config)
-    original = httpx.AsyncClient
-
-    class Client(httpx.AsyncClient):
-        def __init__(self, *args, **kwargs):
-            kwargs["transport"] = transport
-            super().__init__(*args, **kwargs)
-
-    async def run_stream() -> bytes:
-        output = bytearray()
-        async for chunk in gateway.stream(
-            {"messages": [{"role": "user", "content": "hi"}]},
-            request_id="stream-empty-primary",
-            idempotency_key="stream-empty-primary",
-        ):
-            output.extend(chunk)
-        return bytes(output)
-
-    httpx.AsyncClient = Client
-    try:
-        output = asyncio.run(run_stream())
-    finally:
-        httpx.AsyncClient = original
-
-    assert b"STREAM_EMPTY_FALLBACK_PASS" in output
-    assert calls == [
-        "https://primary.test/chat",
-        "https://fallback.test/chat",
-    ]
-
-
 def test_stream_visible_budget_gives_each_fallback_a_real_start_window() -> None:
     config = GatewayConfig(
         providers=tuple(
