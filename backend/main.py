@@ -73,8 +73,8 @@ def _resolve_git_sha() -> str:
 
 
 GIT_SHA = _resolve_git_sha()
-# Render is the production source of deployment identity. Keep health endpoints
-# deterministic even when optional platform metadata is absent (local/tests).
+# Render and Vercel provide deployment identity in their respective runtimes.
+# Keep health endpoints deterministic when platform metadata is absent (local/tests).
 GIT_BRANCH = (
     os.getenv(
         "RENDER_GIT_BRANCH",
