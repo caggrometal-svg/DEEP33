@@ -2285,6 +2285,31 @@ def _normalize_web_search_query(query: str) -> str:
     return search_query or normalized
 
 
+def _snippet_fallback_allowed(
+    *,
+    query: str,
+    realtime: bool,
+    strict_news_request: bool,
+    snippets_sufficient: bool,
+    snippet_domains: set[str],
+    search_result: dict[str, Any],
+) -> bool:
+    """Allow only substantial multi-domain snippets as degraded non-news evidence."""
+    if (
+        strict_news_request
+        or is_realtime_news_query(query)
+        or not snippets_sufficient
+        or len(snippet_domains) < 2
+    ):
+        return False
+    if realtime and not (
+        search_result.get("fresh_request") is True
+        and bool(search_result.get("retrieved_at"))
+    ):
+        return False
+    return True
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
@@ -2742,15 +2767,13 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
         # Permit a degraded synthesis only from two independently attributed,
         # substantial live-search snippets. Snippets never satisfy strict-news
         # article extraction or publication-time quorum requirements.
-        snippet_fallback_allowed = (
-            not strict_news_request
-            and not is_realtime_news_query(query)
-            and snippets_sufficient
-            and len(snippet_evidence_domains) >= 2
-            and (not realtime or (
-                search_result.get("fresh_request") is True
-                and bool(search_result.get("retrieved_at"))
-            ))
+        snippet_fallback_allowed = _snippet_fallback_allowed(
+            query=query,
+            realtime=realtime,
+            strict_news_request=strict_news_request,
+            snippets_sufficient=snippets_sufficient,
+            snippet_domains=snippet_evidence_domains,
+            search_result=search_result,
         )
         if snippet_fallback_allowed:
             snippet_fallback_used = True
