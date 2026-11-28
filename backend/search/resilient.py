@@ -469,6 +469,12 @@ class WebOrchestrator:
             flags=re.IGNORECASE,
         )
         lowered = cleaned.casefold()
+        if (
+            "python" in lowered
+            and "asyncio" in lowered
+            and re.search(r"\btask\s*group\b|\btaskgroup\b", lowered)
+        ):
+            return "python asyncio taskgroup official"
         smartphone_intent = any(term in lowered for term in (
             "smartphone", "smart phone", "mobile phone", "cell phone",
             "teléfono móvil", "telefono movil", "celular",
@@ -1968,7 +1974,13 @@ class WebOrchestrator:
         bing_family_has_candidates = any(
             _provider_family(outcome.provider) == "bing"
             and outcome.ok
-            and bool(outcome.results)
+            and bool(
+                rank_results(
+                    provider_query,
+                    outcome.results,
+                    realtime=is_realtime_query(cleaned),
+                )
+            )
             for outcome in outcomes
         )
         if (
