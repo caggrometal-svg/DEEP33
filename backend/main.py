@@ -247,8 +247,9 @@ def _publisher_rss_snippet_evidence_pages(
         "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
         "de", "del", "en", "el", "la", "las", "los",
     }
+    normalized_query = _normalise_lookup_query(str(query or ""))
     topic_tokens = {
-        token for token in re.findall(r"[a-záéíóúüñ]+", str(query or "").casefold())
+        token for token in re.findall(r"[a-z0-9]+", normalized_query)
         if token not in generic_terms and len(token) >= 3
     }
     candidates_by_score = sorted(
