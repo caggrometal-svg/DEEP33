@@ -1048,7 +1048,9 @@ class AIGateway:
                                         len(ordered_providers),
                                     )
                                 if 500 <= status <= 599:
-                                    transient_failure = True
+                                    # Never retry the same streaming provider after
+                                    # an ambiguous 5xx; advance to the next provider.
+                                    transient_failure = False
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
                                         self.config.circuit_cooldown_seconds,
