@@ -2085,3 +2085,41 @@ def test_locality_recovery_query_keeps_the_named_commune_and_news_context():
     assert WebOrchestrator._recovery_query(
         "situación actual de la comuna de Las Condes en Chile"
     ) == "Las Condes Chile noticias hoy municipalidad comuna"
+
+
+
+def test_recent_news_recovery_includes_enabled_mojeek_as_independent_undated_source(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    async def empty(*_args, **_kwargs):
+        return []
+
+    async def mojeek(_query, _timeout, _limit):
+        return [{
+            "title": "Gobierno de Chile anuncia medidas políticas",
+            "url": "https://example.com/nacional/politica/gobierno-chile",
+            "snippet": "Información política nacional de Chile.",
+        }]
+
+    async def no_corroboration(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setenv("WEB_SEARCH_MOJEEK_ENABLED", "true")
+    monkeypatch.setattr(module, "_publisher_rss_search", empty)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", empty)
+    monkeypatch.setattr(module, "_mwmbl_search", empty)
+    monkeypatch.setattr(module, "_google_news_search", empty)
+    monkeypatch.setattr(module, "_bing_recent_news_search", empty)
+    monkeypatch.setattr(module, "_mojeek_search", mojeek)
+    monkeypatch.setattr(module, "_corroborate_google_news_candidates_with_indexes", no_corroboration)
+
+    results = asyncio.run(
+        module.search_recent_news_candidates(
+            "política Chile hoy",
+            timeout_seconds=1.0,
+            max_results=6,
+        )
+    )
+
+    assert any(item.get("provider") == "mojeek" for item in results)
