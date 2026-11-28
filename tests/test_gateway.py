@@ -814,6 +814,34 @@ def test_kilo_auto_primary_gets_text_fallback_when_none_configured(monkeypatch) 
     assert config.providers[1].health_url == config.providers[0].health_url
 
 
+def test_registered_kilo_free_models_keep_explicit_key_when_enabled(monkeypatch) -> None:
+    import json
+
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "registered-kilo-test-token")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "kilo-auto/free")
+    monkeypatch.setenv("AI_GATEWAY_AUTH_FREE_MODELS", "true")
+    monkeypatch.setenv(
+        "AI_GATEWAY_FALLBACKS_JSON",
+        json.dumps([{
+            "name": "registered-nemotron",
+            "url": "https://api.kilo.ai/api/gateway/chat/completions",
+            "health_url": "https://api.kilo.ai/api/gateway/models",
+            "api_key": "registered-fallback-test-token",
+            "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        }]),
+    )
+
+    config = GatewayConfig.from_env()
+
+    assert config.providers[0].api_key == "registered-kilo-test-token"
+    assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer registered-kilo-test-token"
+    assert config.providers[1].api_key == "registered-fallback-test-token"
+    assert AIGateway._headers(config.providers[1])["Authorization"] == "Bearer registered-fallback-test-token"
+
+
 def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
     monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
     monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")

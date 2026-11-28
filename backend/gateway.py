@@ -126,9 +126,16 @@ class GatewayConfig:
         ).strip()
         primary_api_key = os.getenv("AI_GATEWAY_API_KEY", "").strip()
         primary_host = _provider_hostname(primary_url)
-        if primary_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(primary_model):
-            # Kilo permits anonymous access to free models. Avoid sending a stale
-            # account token that can turn an otherwise available free model into HTTP 401.
+        auth_free_models = os.getenv(
+            "AI_GATEWAY_AUTH_FREE_MODELS", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if (
+            primary_host in {"api.kilo.ai", "ai-gateway.kilo.ai"}
+            and _is_kilo_free_model(primary_model)
+            and not auth_free_models
+        ):
+            # Anonymous access remains the safe default. Registered Kilo accounts
+            # can opt in to sending an explicitly configured, current API key.
             primary_api_key = ""
 
         primary = GatewayProvider(
@@ -160,7 +167,11 @@ class GatewayConfig:
                 fallback_model = str(item.get("model", "")).strip()
                 fallback_api_key = str(item.get("api_key", "")).strip()
                 fallback_host = _provider_hostname(fallback_url)
-                if fallback_host in {"api.kilo.ai", "ai-gateway.kilo.ai"} and _is_kilo_free_model(fallback_model):
+                if (
+                    fallback_host in {"api.kilo.ai", "ai-gateway.kilo.ai"}
+                    and _is_kilo_free_model(fallback_model)
+                    and not auth_free_models
+                ):
                     fallback_api_key = ""
                 providers.append(
                     GatewayProvider(
