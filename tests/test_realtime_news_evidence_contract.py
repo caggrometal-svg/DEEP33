@@ -574,25 +574,24 @@ def test_provider_quota_and_rate_limit_responses_open_long_cooldowns():
     import time
     from backend.search.resilient import WebOrchestrator
 
-    async def run(error_code):
+    async def run(provider, error_code):
         orchestrator = WebOrchestrator()
 
         async def exhausted_provider(*_args, **_kwargs):
             raise RuntimeError(error_code)
 
-        orchestrator.fallback_providers["youcom"] = exhausted_provider
-        await orchestrator._call_provider("youcom", "test query")
-        return orchestrator.circuits["youcom"].opened_until - time.monotonic()
+        if provider == "youcom":
+            orchestrator.fallback_providers["youcom"] = exhausted_provider
+        else:
+            orchestrator.providers[provider] = exhausted_provider
 
-    quota_cooldown, rate_cooldown = asyncio.run(asyncio.gather(
-        run("WEB_SEARCH_YOUCOM_HTTP_402"),
-        run("WEB_SEARCH_GOOGLE_HTTP_429"),
-    )) if False else (None, None)
+        await orchestrator._call_provider(provider, "test query")
+        return orchestrator.circuits[provider].opened_until - time.monotonic()
 
     async def both():
         return await asyncio.gather(
-            run("WEB_SEARCH_YOUCOM_HTTP_402"),
-            run("WEB_SEARCH_GOOGLE_HTTP_429"),
+            run("youcom", "WEB_SEARCH_YOUCOM_HTTP_402"),
+            run("google", "WEB_SEARCH_GOOGLE_HTTP_429"),
         )
 
     quota_cooldown, rate_cooldown = asyncio.run(both())
