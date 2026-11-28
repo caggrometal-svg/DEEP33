@@ -34,9 +34,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Temporarily disabled: no Vercel traffic during the quota recovery window.
+  # Validate the live Vercel production deployment after backend changes.
+  # Manual dispatch can explicitly skip live traffic with require_live=false.
   vercel-production-gate:
-    if: false
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
