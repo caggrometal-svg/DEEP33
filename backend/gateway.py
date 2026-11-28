@@ -108,7 +108,7 @@ class GatewayConfig:
     providers: tuple[GatewayProvider, ...]
     timeout_seconds: float
     provider_timeout_seconds: float = 10.0
-    first_visible_timeout_seconds: float = 2.2
+    first_visible_timeout_seconds: float = 6.0
     max_retries: int = 0
     backoff_seconds: float = 0.6
     circuit_failure_threshold: int = 3
@@ -221,8 +221,8 @@ class GatewayConfig:
             ),
             first_visible_timeout_seconds=max(
                 0.8, min(
-                    3.0,
-                    float(os.getenv("AI_FIRST_VISIBLE_TIMEOUT_SECONDS", "2.2")),
+                    8.0,
+                    float(os.getenv("AI_FIRST_VISIBLE_TIMEOUT_SECONDS", "6.0")),
                 )
             ),
             max_retries=max(0, min(2, int(os.getenv("AI_PROVIDER_MAX_RETRIES", "0")))),

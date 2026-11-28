@@ -858,13 +858,14 @@ def test_kilo_primary_uses_configured_nemotron_free_fallbacks(monkeypatch) -> No
     monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
     monkeypatch.setenv(
         "AI_GATEWAY_FALLBACKS_JSON",
-        '[{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
+        '[{"name":"dots3-note","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"dots-studio/dots-3-note-preview:free"},{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
     )
 
     config = GatewayConfig.from_env()
 
     assert [provider.model for provider in config.providers] == [
         "baidu/ernie-5.5-flash-preview:free",
+        "dots-studio/dots-3-note-preview:free",
         "nvidia/nemotron-3.5-super-vl:free",
         "nvidia/nemotron-3-ultra:free",
     ]
@@ -923,6 +924,81 @@ def test_stream_fails_over_to_distinct_provider_after_ambiguous_5xx_without_retr
         httpx.AsyncClient = original
 
     assert b"STREAM_FALLBACK_PASS" in output
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
+
+
+def test_gateway_first_visible_timeout_allows_slow_free_provider_start(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", "[]")
+    monkeypatch.setenv("AI_FIRST_VISIBLE_TIMEOUT_SECONDS", "6.0")
+
+    config = GatewayConfig.from_env()
+
+    assert config.first_visible_timeout_seconds == 6.0
+
+
+def test_stream_fails_over_when_primary_finishes_without_visible_text() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(
+                200,
+                request=request,
+                headers={"content-type": "text/event-stream"},
+                content=b"data: [DONE]\\n\\n",
+            )
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"STREAM_EMPTY_FALLBACK_PASS"}}]}\\n\\n'
+                b"data: [DONE]\\n\\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=8,
+        provider_timeout_seconds=6,
+        first_visible_timeout_seconds=3,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> bytes:
+        output = bytearray()
+        async for chunk in gateway.stream(
+            {"messages": [{"role": "user", "content": "hi"}]},
+            request_id="stream-empty-primary",
+            idempotency_key="stream-empty-primary",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(run_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    assert b"STREAM_EMPTY_FALLBACK_PASS" in output
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
