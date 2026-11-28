@@ -2077,3 +2077,12 @@ def test_chile_political_recovery_skips_unregistered_provider_adapters():
         "SEARCH_PROVIDER_NOT_REGISTERED" in str(error)
         for error in result.get("errors", [])
     )
+
+
+
+def test_locality_recovery_query_keeps_the_named_commune_and_news_context():
+    from backend.search.resilient import WebOrchestrator
+
+    assert WebOrchestrator._recovery_query(
+        "situación actual de la comuna de Las Condes en Chile"
+    ) == "Las Condes Chile noticias hoy municipalidad comuna"
