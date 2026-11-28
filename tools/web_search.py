@@ -1250,7 +1250,7 @@ async def search_recent_news_candidates(
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
-    limit = max(1, min(12, int(max_results)))
+    limit = max(1, min(24, int(max_results)))
     budget = min(2.5, max(0.8, float(timeout_seconds)))
     publisher_domains = (
         "biobiochile.cl",
@@ -1271,7 +1271,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "publisher_rss",
             None,
-            _publisher_rss_search(cleaned, budget, min(limit, 8)),
+            _publisher_rss_search(cleaned, budget, min(limit, 24)),
         ))
         # A country-scoped top-stories feed is a separate recovery path from
         # query RSS. It supplies additional publisher domains when Google News
@@ -1280,7 +1280,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "google_news",
             None,
-            _google_news_top_stories_search(budget, min(limit, 8)),
+            _google_news_top_stories_search(budget, min(limit, 24)),
         ))
         # Mwmbl contributes an independent index. Its SERP may be undated;
         # the final article fetch must extract and validate publication time.
