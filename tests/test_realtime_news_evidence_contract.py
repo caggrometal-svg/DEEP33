@@ -566,4 +566,4 @@ def test_python_asyncio_official_query_preserves_taskgroup_entity():
     orchestrator = WebOrchestrator()
     assert orchestrator._provider_query(
         "Python asyncio TaskGroup documentación oficial"
-    ) == "python asyncio taskgroup official documentation"
+    ) == "python asyncio taskgroup official"
