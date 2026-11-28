@@ -570,11 +570,13 @@ def test_every_apk_artifact_workflow_requires_the_current_main_certification() -
 
 
 
-def test_render_is_the_only_runtime_revision_source() -> None:
+def test_render_and_vercel_runtime_revision_sources_are_supported() -> None:
     main = read("backend/main.py")
     assert 'os.getenv("RENDER_GIT_COMMIT"' in main
+    assert 'os.getenv("VERCEL_GIT_COMMIT_SHA"' in main
+    assert 'os.getenv("VERCEL_GIT_COMMIT_REF"' in main
+    assert 'os.getenv("VERCEL_DEPLOYMENT_ID"' in main
     assert 'os.getenv("DEEP33_GIT_SHA"' in main
-    assert "VERCEL_GIT_COMMIT_SHA" not in main
     assert "RAILWAY_GIT_COMMIT_SHA" not in main
 
 
