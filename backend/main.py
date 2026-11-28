@@ -1807,7 +1807,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         publication_is_recent = (
             _is_recently_published(item, query)
             if item.get("published_at")
-            else provider in {"mwmbl", "google_news"}
+            else provider in {"mwmbl", "google_news", "mojeek"}
         )
         is_google_news_wrapper = host in {"news.google.com", "google.com"}
         domain_matches = (
