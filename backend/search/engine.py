@@ -118,6 +118,26 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
         and len(token) >= 3
         and not token.isdigit()
     }
+    # A named locality query needs both the place and its administrative context.
+    # Otherwise generic accommodation/travel pages mentioning "Las Condes" can
+    # satisfy a request about the current situation of that commune.
+    locality_scope = re.search(
+        r"\\b(comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\\s+(?:de|del)\\s+",
+        lookup_query,
+        flags=re.IGNORECASE,
+    )
+    if locality_scope:
+        descriptor = locality_scope.group(1).casefold()
+        descriptor = {
+            "comunas": "comuna",
+            "municipios": "municipio",
+            "municipalidades": "municipalidad",
+            "ciudades": "ciudad",
+            "localidades": "localidad",
+            "barrios": "barrio",
+            "sectores": "sector",
+        }.get(descriptor, descriptor)
+        anchors.add(descriptor)
     # For product/specification requests, product/technology/specification are
     # query-shape terms. The actual entity (smartphone plus any brand/model)
     # is the relevance anchor. This avoids rejecting legitimate comparison and
