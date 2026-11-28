@@ -118,26 +118,6 @@ def _realtime_anchor_tokens(query: str) -> set[str]:
         and len(token) >= 3
         and not token.isdigit()
     }
-    # A named locality query needs both the place and its administrative context.
-    # Otherwise generic accommodation/travel pages mentioning "Las Condes" can
-    # satisfy a request about the current situation of that commune.
-    locality_scope = re.search(
-        r"\b(comunas?|municipios?|municipalidades?|ciudades?|localidades?|barrios?|sectores?)\s+(?:de|del)\s+",
-        lookup_query,
-        flags=re.IGNORECASE,
-    )
-    if locality_scope:
-        descriptor = locality_scope.group(1).casefold()
-        descriptor = {
-            "comunas": "comuna",
-            "municipios": "municipio",
-            "municipalidades": "municipalidad",
-            "ciudades": "ciudad",
-            "localidades": "localidad",
-            "barrios": "barrio",
-            "sectores": "sector",
-        }.get(descriptor, descriptor)
-        anchors.add(descriptor)
     # For product/specification requests, product/technology/specification are
     # query-shape terms. The actual entity (smartphone plus any brand/model)
     # is the relevance anchor. This avoids rejecting legitimate comparison and
@@ -754,6 +734,25 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
+        if realtime and _extract_realtime_locality(query):
+            locality_host = source_host.removeprefix("www.")
+            candidate_title = str(item.get("title") or "").casefold()
+            travel_hosts = {
+                "airbnb.com", "booking.com", "expedia.com", "tripadvisor.com",
+                "hotels.com", "vrbo.com", "kayak.com", "skyscanner.net",
+            }
+            travel_title_markers = (
+                "vacation rental", "vacation rentals", "holiday rental",
+                "holiday rentals", "travel guide", "guía de viaje", "guia de viaje",
+                "alojamiento turístico", "alojamiento turistico", "hospedaje",
+                "apartments for rent", "departamentos en arriendo",
+            )
+            if (
+                locality_host in travel_hosts
+                or locality_host.endswith(".travel")
+                or any(marker in candidate_title for marker in travel_title_markers)
+            ):
+                continue
         if commercial_site_intent and "chile" in _token_set(query):
             # "commercial/site" describes the requested result shape; it is not a
             # lexical topic that every legitimate company page must repeat.
