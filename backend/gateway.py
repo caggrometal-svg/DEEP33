@@ -691,15 +691,15 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # A POST 5xx is ambiguous: the provider may have accepted
-                            # the inference before returning the error. Preserve the
-                            # no-failover contract here; the endpoint layer converts
-                            # the gateway error into a bounded degraded response.
+                            # Do not retry this provider: a 5xx may be returned after
+                            # it accepted the request. Move once to the next distinct
+                            # provider so synthesis can recover without replaying the
+                            # request against the same upstream.
                             circuit.failure(
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            raise GatewayHTTPError
+                            break
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
