@@ -194,7 +194,7 @@ def _is_publishable_realtime_news_source(
     try:
         minimum_relevance_score = max(
             0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            min(0.55, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
@@ -1711,6 +1711,15 @@ def _tool_calls_from_message(message):
 def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
     """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
     items = [item for item in candidates if isinstance(item, dict)]
+    generic_terms = {
+        "chile", "noticia", "noticias", "hoy", "actual", "actualidad",
+        "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
+        "de", "del", "en", "el", "la", "las", "los",
+    }
+    topic_tokens = {
+        token for token in re.findall(r"[a-záéíóúüñ]+", str(query or "").casefold())
+        if token not in generic_terms and len(token) >= 3
+    }
     ranked = rank_results(query, items, realtime=True)
     if "chile" not in str(query or "").casefold():
         return ranked
@@ -1760,6 +1769,8 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             continue
         retained = dict(item)
         retained["relevance_score"] = score_result(query, retained)
+        if topic_tokens and retained["relevance_score"] < 0.45:
+            continue
         ranked.append(retained)
         seen_urls.add(url)
     return ranked
@@ -3876,9 +3887,24 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # (for example a health-insurance login) must not crowd out a matching news
         # article or official document. Filter weak results, then use direct/permalink
         # priority only as a tie-breaker between similarly relevant candidates.
+        news_topic_tokens = {
+            token for token in re.findall(r"[a-záéíóúüñ]+", q.casefold())
+            if token not in {
+                "chile", "noticia", "noticias", "hoy", "actual", "actualidad",
+                "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
+                "de", "del", "en", "el", "la", "las", "los",
+            } and len(token) >= 3
+        }
+        news_relevance_default = "0.45" if strict_news_request and news_topic_tokens else "0.28"
         minimum_relevance_score = max(
             0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            min(
+                0.55,
+                float(os.getenv(
+                    "WEB_SEARCH_NEWS_MIN_RELEVANCE_SCORE" if strict_news_request and news_topic_tokens else "WEB_SEARCH_MIN_RELEVANCE_SCORE",
+                    news_relevance_default,
+                )),
+            ),
         )
         ranked_sources = [
             {**item, "relevance_score": score_result(q, item)}
@@ -3897,7 +3923,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # candidates only*. They still become public evidence only after a real page
         # is successfully fetched and extracted below.
         candidate_sources = relevant_sources
-        if search_ok and ranked_sources and not candidate_sources:
+        if search_ok and ranked_sources and not candidate_sources and not strict_news_request:
             candidate_sources = ranked_sources
             logger.warning(
                 "web_search_fetch_candidate_score_fallback request_id=%s selected=%s "
@@ -3925,11 +3951,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 and _is_recently_published(item, q)
             } - {""}
             try:
-                rescue_query = (
-                    "Chile noticias hoy actualidad acontecimientos recientes"
-                    if "chile" in q.casefold()
-                    else q
-                )
+                rescue_query = q
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
                     timeout_seconds=1.8,
@@ -4395,6 +4417,25 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
             errors.append("PAGE_EXTRACTION_UNAVAILABLE_USING_SEARCH_SNIPPETS")
 
         response_payload = dict(result)
+        verification = dict(result.get("verification") or {})
+        verification["distinct_domains"] = domains_used
+        verification["domain_quorum_met"] = (
+            domains_used >= (3 if strict_news_request else 2)
+        )
+        if not has_extracted_content:
+            verification.update({
+                "level": "none",
+                "evidence_status": "INSUFFICIENT",
+                "corroborated_results": 0,
+                "provider_quorum_met": False,
+            })
+        else:
+            verification["level"] = "multi-source" if domains_used >= 2 else "single-source"
+            verification["evidence_status"] = (
+                "VERIFIED" if final_ok and news_quorum_met else "INSUFFICIENT"
+            )
+            verification["corroborated_results"] = len(evidence_fetched_pages)
+        response_payload["verification"] = verification
         # Keep the public source list aligned with successfully extracted pages.
         # Do not leak raw, unrelated or unreadable search snippets when no page was read.
         public_results = (

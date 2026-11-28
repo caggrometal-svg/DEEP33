@@ -463,3 +463,86 @@ def test_web_search_recent_news_recovery_merges_into_endpoint_result(monkeypatch
 
     assert response["news_recovery_merge_test"] is True
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in response["errors"]
+
+
+def test_recent_news_ranker_rejects_irrelevant_rss_but_keeps_resolvable_google_wrappers():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "política Chile hoy últimas noticias"
+    candidates = [
+        {
+            "provider": "publisher_rss",
+            "title": "Gobierno y Congreso anuncian nueva reforma política en Chile",
+            "snippet": ("El Gobierno y el Congreso informaron hoy nuevas medidas políticas para Chile. " * 4),
+            "url": "https://www.cooperativa.cl/noticias/pais/politica/reforma-chile/2026/11/28/123456.html",
+            "source_domain": "cooperativa.cl",
+            "published_at": now,
+        },
+        {
+            "provider": "publisher_rss",
+            "title": "Indiemov recomienda música nueva para oídos curiosos",
+            "snippet": ("Música nueva y artistas independientes de Chile para escuchar este fin de semana. " * 4),
+            "url": "https://www.publimetro.cl/entretenimiento/2026/11/28/indiemov-musica/",
+            "source_domain": "publimetro.cl",
+            "published_at": now,
+        },
+        {
+            "provider": "google_news",
+            "title": "Gobierno y Congreso anuncian nueva reforma política en Chile",
+            "snippet": ("El Gobierno y el Congreso informaron hoy nuevas medidas políticas para Chile. " * 4),
+            "url": "https://news.google.com/rss/articles/opaque?oc=5",
+            "source_domain": "cooperativa.cl",
+            "published_at": now,
+        },
+    ]
+
+    ranked = main._rank_recent_news_candidates(query, candidates)
+    urls = {item["url"] for item in ranked}
+
+    assert candidates[0]["url"] in urls
+    assert candidates[1]["url"] not in urls
+    assert candidates[2]["url"] in urls
+
+
+def test_web_search_endpoint_preserves_strict_news_topic_in_recovery(monkeypatch):
+    import asyncio
+    import backend.main as main
+
+    captured = {}
+
+    async def no_controls(*_args, **_kwargs):
+        return None
+
+    async def empty_search(query, **_kwargs):
+        captured["query"] = query
+        return {
+            "ok": True,
+            "results": [],
+            "sources": [],
+            "verification": {
+                "provider_quorum_met": True,
+                "distinct_providers": 2,
+                "distinct_domains": 7,
+                "domain_quorum_met": True,
+                "evidence_status": "VERIFIED",
+            },
+            "errors": [],
+        }
+
+    async def no_news(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(main, "DEEP33_WEB_TOOLS_ENABLED", True)
+    monkeypatch.setattr(main, "session_id_from_request", lambda _request: "test-session")
+    monkeypatch.setattr(main, "enforce_client_controls", no_controls)
+    monkeypatch.setattr(main, "request_id_from_request", lambda _request: "strict-news-topic")
+    monkeypatch.setattr(main, "search_web", empty_search)
+    monkeypatch.setattr(main, "search_recent_news_candidates", no_news)
+
+    result = asyncio.run(main.web_search_endpoint(object(), q="política Chile hoy últimas noticias"))
+
+    assert captured["query"] == "política Chile hoy últimas noticias"
+    assert result["verification"]["evidence_status"] == "INSUFFICIENT"
+    assert result["verification"]["distinct_domains"] == 0
+    assert result["verification"]["domain_quorum_met"] is False
