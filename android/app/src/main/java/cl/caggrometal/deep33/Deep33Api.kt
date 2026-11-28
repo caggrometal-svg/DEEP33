@@ -128,7 +128,7 @@ object Deep33Api {
 
     // Current-information requests use Vercel's verified live-web stack first.
     // Ordinary chat keeps Render as primary; Vercel remains a final fallback.
-    private fun orderedEndpoints(
+    internal fun orderedEndpoints(
         endpoints: List<String>,
         preferVercel: Boolean,
     ): List<String> = if (!preferVercel) {
