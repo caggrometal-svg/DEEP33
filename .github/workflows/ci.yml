@@ -64,6 +64,7 @@ jobs:
 
   production_realtime_search:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [backend_unit, production_gate]
     runs-on: ubuntu-latest
     steps:
       - name: Create authenticated production session
