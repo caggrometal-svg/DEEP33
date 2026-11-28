@@ -164,4 +164,27 @@ class Deep33FailoverPolicyTest {
             )
         )
     }
+    @Test
+    fun vercelIsFirstForLiveWebRequestsAndRenderOrderIsPreservedForNormalChat() {
+        val render = listOf(
+            BuildConfig.DEEP33_PRIMARY_URL,
+            BuildConfig.DEEP33_SECONDARY_URL,
+            BuildConfig.DEEP33_TERTIARY_URL
+        )
+        val all = render + BuildConfig.DEEP33_VERCEL_URL
+
+        assertEquals(
+            BuildConfig.DEEP33_VERCEL_URL,
+            Deep33Api.orderedEndpoints(all, preferVercel = true).first()
+        )
+        assertEquals(
+            render,
+            Deep33Api.orderedEndpoints(all, preferVercel = true).drop(1)
+        )
+        assertEquals(
+            all,
+            Deep33Api.orderedEndpoints(all, preferVercel = false)
+        )
+    }
+
 }

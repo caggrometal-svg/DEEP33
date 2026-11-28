@@ -37,13 +37,13 @@ def test_android_manifest_forbids_cleartext_and_keeps_recovery_service_alive() -
     assert 'android:exported="false"' in source
 
 
-def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
+def test_android_endpoint_contract_is_immutable_and_hybrid_render_vercel() -> None:
     source = read("android/app/build.gradle.kts")
     api_source = read("android/app/src/main/java/cl/caggrometal/deep33/Deep33Api.kt")
     assert '"https://deep33-backend.onrender.com"' in source
     assert '"https://deep33-backup.onrender.com"' in source
     assert '"https://deep33-api.onrender.com"' in source
-    assert "vercel.app" not in source
+    assert '"https://deep33-backend.vercel.app"' in source
     assert 'onrender.com' in source.lower()
     assert 'immutable by build environment' in source
     assert 'rejected overrides' in source
@@ -56,6 +56,9 @@ def test_android_endpoint_contract_is_immutable_and_render_only() -> None:
     assert 'BuildConfig.DEEP33_PRIMARY_URL' in api_source
     assert 'BuildConfig.DEEP33_SECONDARY_URL' in api_source
     assert 'BuildConfig.DEEP33_TERTIARY_URL' in api_source
+    assert 'BuildConfig.DEEP33_VERCEL_URL' in api_source
+    assert 'orderedEndpoints' in api_source
+    assert 'preferVercel = requiresVerifiedWebEvidence(messages)' in api_source
     assert 'vercel.app' not in api_source.lower()
     assert 'x-vercel-protection-bypass' not in api_source
 
@@ -602,10 +605,10 @@ def test_render_ai_and_search_budgets_are_explicit_and_bounded() -> None:
     assert "max_connections=20" in fetch and "max_keepalive_connections=10" in fetch
 
 
-def test_android_build_is_versioned_for_render_migration() -> None:
+def test_android_build_is_versioned_for_hybrid_backend_migration() -> None:
     gradle = read("android/app/build.gradle.kts")
-    assert "versionCode = 10" in gradle
-    assert 'versionName = "0.5.2"' in gradle
+    assert "versionCode = 11" in gradle
+    assert 'versionName = "0.5.3"' in gradle
 
 
 def test_valid_stream_text_survives_missing_done_marker() -> None:
