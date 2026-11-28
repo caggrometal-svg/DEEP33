@@ -1866,3 +1866,22 @@ def test_spanish_python_release_query_rejects_off_topic_debian_page():
     assert rank_results(query, [unrelated], realtime=True) == []
     ranked = rank_results(query, [unrelated, relevant], realtime=True)
     assert [item["url"] for item in ranked] == [relevant["url"]]
+
+
+def test_search_provider_concurrency_limit_is_bounded(monkeypatch):
+    from backend.search.resilient import _bounded_env_float
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "8")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 8.0
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "100")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 12.0
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "invalid")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 8.0

@@ -942,6 +942,31 @@ class WebOrchestrator:
                 min(self.global_budget_seconds, float(budget_seconds)),
             )
         deadline = loop.time() + effective_budget
+
+        # Bound provider fan-out per user search. Specialized news recovery can
+        # enqueue dozens of provider/query pairs; launching all at once exhausts
+        # httpx's shared connection pool and causes POOLTIMEOUT across providers.
+        max_concurrent = _bounded_env_float(
+            "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+        )
+        provider_semaphore = asyncio.Semaphore(int(max_concurrent))
+
+        async def run_limited_provider(
+            provider: str,
+            provider_query_value: str,
+            *,
+            delayed: bool = False,
+        ) -> ProviderOutcome:
+            async with provider_semaphore:
+                if loop.time() >= deadline:
+                    return ProviderOutcome(
+                        provider=provider,
+                        ok=False,
+                        error_code="SEARCH_BUDGET_EXHAUSTED",
+                    )
+                if delayed:
+                    return await self._delayed_provider(provider, provider_query_value)
+                return await self._bounded_call_provider(provider, provider_query_value)
         # Reserve time for recovery while honoring the fast-response budget.
         primary_deadline = min(
             deadline,
@@ -1087,7 +1112,7 @@ class WebOrchestrator:
             minimum_coverage = max(minimum_coverage, min(3, self.max_results))
         tasks = {
             asyncio.create_task(
-                self._delayed_provider(provider, provider_query)
+                run_limited_provider(provider, provider_query, delayed=True)
                 if provider == "duckduckgo"
                 else self._bounded_call_provider(provider, provider_query),
                 name=f"search:{provider}",
