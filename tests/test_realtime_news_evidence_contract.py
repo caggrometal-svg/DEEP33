@@ -618,3 +618,159 @@ def test_recent_news_ranker_drops_fresh_foreign_article_from_chilean_publisher()
     }
 
     assert main._rank_recent_news_candidates(query, [unrelated]) == []
+
+
+
+def _publisher_rss_candidate(domain, section, slug, title, snippet, published_at):
+    return {
+        "title": title,
+        "url": f"https://www.{domain}/{section}/{slug}/",
+        "snippet": snippet,
+        "source_domain": domain,
+        "provider": "publisher_rss",
+        "published_at": published_at,
+    }
+
+
+def test_publisher_rss_excerpt_fallback_accepts_three_fresh_relevant_publishers():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "política Chile hoy últimas noticias"
+    candidates = [
+        _publisher_rss_candidate(
+            "cooperativa.cl",
+            "noticias/pais/politica",
+            "gobierno-agenda",
+            "Gobierno de Chile anuncia nueva agenda política para el Congreso",
+            "El Gobierno de Chile presentó hoy nuevas medidas políticas y una agenda legislativa para el Congreso Nacional. " * 2,
+            now,
+        ),
+        _publisher_rss_candidate(
+            "latercera.com",
+            "politica/noticia",
+            "congreso-reforma",
+            "Congreso de Chile debate una reforma política de alcance nacional",
+            "La discusión política en Chile continúa hoy con nuevas propuestas del Congreso y del Gobierno. " * 2,
+            now,
+        ),
+        _publisher_rss_candidate(
+            "biobiochile.cl",
+            "noticias/nacional",
+            "gobierno-medidas",
+            "Gobierno de Chile confirma medidas políticas y legislativas",
+            "Autoridades del Gobierno de Chile informaron hoy cambios políticos y legislativos para el país. " * 2,
+            now,
+        ),
+        _publisher_rss_candidate(
+            "latercera.com",
+            "mundo/noticia",
+            "bolivia-protestas",
+            "Trabajadores protestan en Bolivia por alto costo de la vida",
+            "Miles de trabajadores marcharon en La Paz contra las reformas del presidente Rodrigo Paz. " * 2,
+            now,
+        ),
+    ]
+    failures = [{"url":item["url"],"status":"WEB_FETCH_EMPTY_TEXT"} for item in candidates]
+
+    pages = main._publisher_rss_snippet_evidence_pages(
+        query,
+        candidates,
+        [],
+        failures,
+    )
+
+    assert len(pages) == 3
+    assert {page["domain"] for page in pages} == {
+        "cooperativa.cl",
+        "latercera.com",
+        "biobiochile.cl",
+    }
+    assert all(page["evidence_type"] == "publisher_rss_excerpt" for page in pages)
+
+
+def test_three_publisher_rss_domains_can_supplement_one_independent_search_index():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "política Chile hoy últimas noticias"
+    pages = []
+    for domain, section in [
+        ("cooperativa.cl", "noticias/pais/politica"),
+        ("latercera.com", "politica/noticia"),
+        ("biobiochile.cl", "noticias/nacional"),
+    ]:
+        pages.append({
+            "title": "Gobierno de Chile anuncia nuevas medidas políticas",
+            "url": f"https://www.{domain}/{section}/gobierno-chile/",
+            "final_url": f"https://www.{domain}/{section}/gobierno-chile/",
+            "domain": domain,
+            "source_domain": domain,
+            "provider": "publisher_rss",
+            "published_at": now,
+            "retrieved_at": now,
+            "text": (
+                "El Gobierno de Chile presentó hoy nuevas medidas políticas y una agenda "
+                "legislativa para el Congreso Nacional. " * 2
+            ),
+            "text_chars": 190,
+            "evidence_type": "publisher_rss_excerpt",
+        })
+    search_result = {
+        "providers": ["google_news"],
+        "verification": {
+            "distinct_providers": 1,
+            "provider_quorum_met": False,
+        },
+    }
+
+    quorum = main._recent_news_quorum_summary(query, pages, search_result)
+
+    assert quorum["met"] is True
+    assert quorum["articles"] == 3
+    assert quorum["domains"] == 3
+    assert quorum["providers"] == 2
+    assert search_result["verification"]["provider_quorum_met"] is True
+    assert search_result["verification"]["provider_quorum_method"] == "search_index_plus_three_publisher_rss_domains"
+
+
+def test_two_publisher_rss_domains_cannot_satisfy_strict_news_quorum():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "política Chile hoy últimas noticias"
+    pages = []
+    for domain, section in [
+        ("cooperativa.cl", "noticias/pais/politica"),
+        ("latercera.com", "politica/noticia"),
+    ]:
+        pages.append({
+            "title": "Gobierno de Chile anuncia nuevas medidas políticas",
+            "url": f"https://www.{domain}/{section}/gobierno-chile/",
+            "final_url": f"https://www.{domain}/{section}/gobierno-chile/",
+            "domain": domain,
+            "source_domain": domain,
+            "provider": "publisher_rss",
+            "published_at": now,
+            "retrieved_at": now,
+            "text": (
+                "El Gobierno de Chile presentó hoy nuevas medidas políticas y una agenda "
+                "legislativa para el Congreso Nacional. " * 2
+            ),
+            "text_chars": 190,
+            "evidence_type": "publisher_rss_excerpt",
+        })
+    search_result = {
+        "providers": ["google_news"],
+        "verification": {
+            "distinct_providers": 1,
+            "provider_quorum_met": False,
+        },
+    }
+
+    quorum = main._recent_news_quorum_summary(query, pages, search_result)
+
+    assert quorum["met"] is False
+    assert quorum["articles"] == 2
+    assert quorum["domains"] == 2
+    assert quorum["providers"] == 1
