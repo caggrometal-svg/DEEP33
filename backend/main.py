@@ -1720,11 +1720,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         token for token in re.findall(r"[a-záéíóúüñ]+", str(query or "").casefold())
         if token not in generic_terms and len(token) >= 3
     }
-    ranked = [
-        item for item in rank_results(query, items, realtime=True)
-        if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
-        not in {"news.google.com", "google.com"}
-    ]
+    ranked = rank_results(query, items, realtime=True)
     if "chile" not in str(query or "").casefold():
         return ranked
 
@@ -1762,7 +1758,6 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             or not host
             or not source_domain
             or not domain_matches
-            or (provider == "google_news" and is_google_news_wrapper)
             or len(path_parts) < 2
             or not publication_is_recent
             or len(str(item.get("title") or "").strip()) < 12

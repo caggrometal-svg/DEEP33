@@ -465,7 +465,7 @@ def test_web_search_recent_news_recovery_merges_into_endpoint_result(monkeypatch
     assert "REALTIME_NEWS_QUORUM_NOT_MET" in response["errors"]
 
 
-def test_recent_news_ranker_rejects_irrelevant_rss_and_google_news_wrappers():
+def test_recent_news_ranker_rejects_irrelevant_rss_but_keeps_resolvable_google_wrappers():
     import backend.main as main
 
     now = datetime.now(timezone.utc).isoformat()
@@ -502,7 +502,7 @@ def test_recent_news_ranker_rejects_irrelevant_rss_and_google_news_wrappers():
 
     assert candidates[0]["url"] in urls
     assert candidates[1]["url"] not in urls
-    assert candidates[2]["url"] not in urls
+    assert candidates[2]["url"] in urls
 
 
 def test_web_search_endpoint_preserves_strict_news_topic_in_recovery(monkeypatch):
