@@ -3597,7 +3597,7 @@ async def connectivity_audit() -> dict:
     search: dict[str, Any]
     try:
         search = await search_web(
-            "DEEP33",
+            "Python asyncio official documentation",
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
             fast=True,
