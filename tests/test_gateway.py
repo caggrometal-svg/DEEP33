@@ -11,7 +11,7 @@ def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvide
     return GatewayProvider(name=name, url=url, health_url=health_url, api_key="", model=model)
 
 
-def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
+def test_complete_fails_over_to_distinct_provider_after_ambiguous_primary_5xx() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -36,7 +36,7 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
             provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
-        max_retries=0,
+        max_retries=2,
     )
     gateway = AIGateway(config)
 
@@ -49,18 +49,20 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
 
     httpx.AsyncClient = Client
     try:
-        import asyncio
-
-        with pytest.raises(GatewayHTTPError):
-            asyncio.run(
-                gateway.complete(
-                    {"model": "requested", "messages": [{"role": "user", "content": "hi"}]}
-                )
+        result = asyncio.run(
+            gateway.complete(
+                {"model": "requested", "messages": [{"role": "user", "content": "hi"}]}
             )
+        )
     finally:
         httpx.AsyncClient = original
 
-    assert calls == ["https://primary.test/chat"]
+    assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
+    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
 
 
 
