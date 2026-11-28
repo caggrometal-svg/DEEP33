@@ -597,3 +597,24 @@ def test_provider_quota_and_rate_limit_responses_open_long_cooldowns():
     quota_cooldown, rate_cooldown = asyncio.run(both())
     assert quota_cooldown >= 21500
     assert rate_cooldown >= 170
+
+
+
+def test_recent_news_ranker_drops_fresh_foreign_article_from_chilean_publisher():
+    import backend.main as main
+
+    now = datetime.now(timezone.utc).isoformat()
+    query = "política Chile hoy últimas noticias"
+    unrelated = {
+        "title": "Miles de trabajadores protestan en Bolivia por alto costo de la vida",
+        "url": "https://www.latercera.com/mundo/noticia/miles-de-trabajadores-protestan-en-bolivia/",
+        "snippet": (
+            "Unos 2.000 obreros, mineros, maestros, campesinos y estudiantes "
+            "marcharon por La Paz para rechazar las reformas del presidente Rodrigo Paz."
+        ),
+        "provider": "publisher_rss",
+        "source_domain": "latercera.com",
+        "published_at": now,
+    }
+
+    assert main._rank_recent_news_candidates(query, [unrelated]) == []

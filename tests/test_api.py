@@ -735,7 +735,7 @@ def test_web_search_endpoint_prioritizes_direct_publishers_within_edge_budget(mo
 
     async def fake_fetch_source(source, **kwargs):
         fetched.append(source["url"])
-        assert 3.3 <= kwargs["timeout_seconds"] <= 4.0
+        assert 2.8 <= kwargs["timeout_seconds"] <= 3.4
         assert kwargs["direct_timeout_seconds"] == 0.85
         resolved_url = (
             "https://www.emol.com/noticias/actualidad/chile-hoy.html"

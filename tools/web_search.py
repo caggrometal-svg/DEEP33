@@ -636,9 +636,18 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
 async def _mojeek_search(query, timeout_seconds, max_results):
     """Query Mojeek's public web search as an independent no-key fallback."""
     client = await _search_http_client()
+    query_text = str(query or "")
+    spanish_query = bool(
+        re.search(
+            r"[áéíóúñ¿¡]|\b(?:chile|noticias|pol[ií]tica|gobierno|hoy|ultimas?)\b",
+            query_text,
+            re.IGNORECASE,
+        )
+    )
+    language = "es" if spanish_query else "en"
     response = await client.get(
         "https://www.mojeek.com/search",
-        params={"q": query, "s": "0", "lang": "en", "lb": "en"},
+        params={"q": query_text, "s": "0", "lang": language, "lb": language},
         headers={
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
@@ -1072,10 +1081,11 @@ async def _publisher_rss_search(
 ) -> list[dict]:
     """Recover dated direct publisher articles when general search RSS is sparse."""
     client = await _search_http_client()
-    per_feed_limit = max(1, min(4, int(max_results)))
-    # Start every publisher feed in the same recovery wave. The endpoint's
-    # strict-news recovery budget is shorter than two sequential batches of four;
-    # the old limit starved later feeds behind slow or blocked publishers.
+    # Retain enough headlines per publisher for topic ranking; selecting only
+    # the first item from each general feed often misses relevant stories.
+    per_feed_limit = max(1, min(8, int(max_results)))
+    # Start every publisher feed in the same recovery wave so slow publishers
+    # cannot starve independent feeds within the strict-news recovery budget.
     feed_semaphore = asyncio.Semaphore(max(1, min(8, len(PUBLISHER_NEWS_RSS_FEEDS))))
 
     async def fetch_feed(domain: str, feed_url: str) -> list[dict]:
@@ -1250,7 +1260,7 @@ async def search_recent_news_candidates(
     cleaned = " ".join(str(query or "").split()).strip()
     if not cleaned:
         return []
-    limit = max(1, min(12, int(max_results)))
+    limit = max(1, min(24, int(max_results)))
     budget = min(2.5, max(0.8, float(timeout_seconds)))
     publisher_domains = (
         "biobiochile.cl",
@@ -1271,7 +1281,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "publisher_rss",
             None,
-            _publisher_rss_search(cleaned, budget, min(limit, 8)),
+            _publisher_rss_search(cleaned, budget, min(limit, 24)),
         ))
         # A country-scoped top-stories feed is a separate recovery path from
         # query RSS. It supplies additional publisher domains when Google News
@@ -1280,7 +1290,7 @@ async def search_recent_news_candidates(
         jobs.append((
             "google_news",
             None,
-            _google_news_top_stories_search(budget, min(limit, 8)),
+            _google_news_top_stories_search(budget, min(limit, 24)),
         ))
         # Mwmbl contributes an independent index. Its SERP may be undated;
         # the final article fetch must extract and validate publication time.
@@ -1289,6 +1299,12 @@ async def search_recent_news_candidates(
             None,
             _mwmbl_search(cleaned, budget, min(limit, 2)),
         ))
+        if os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() == "true":
+            jobs.append((
+                "mojeek",
+                None,
+                _mojeek_search(cleaned, budget, min(limit, 8)),
+            ))
     jobs.extend([
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         ("google_news", None, _google_news_search("noticias Chile", budget, min(limit, 3))),
@@ -1309,9 +1325,8 @@ async def search_recent_news_candidates(
         *(run_news_job(job[2]) for job in jobs),
         return_exceptions=True,
     )
-    # Reject dated but stale Google News items here. Otherwise its first batch
-    # can fill the candidate limit and prevent independent Bing RSS recovery
-    # from being considered at all.
+    # Reject dated but stale news items here. Undated Mwmbl/Mojeek candidates
+    # remain provisional until the final article fetch extracts a publication date.
     from backend.search.engine import _is_recently_published
 
     merged: list[dict] = []
@@ -1330,7 +1345,7 @@ async def search_recent_news_candidates(
             if published_at:
                 if not _is_recently_published(item, cleaned):
                     continue
-            elif provider not in {"mwmbl", "google_news"}:
+            elif provider not in {"mwmbl", "google_news", "mojeek"}:
                 continue
             else:
                 parsed_candidate = urlparse(url)

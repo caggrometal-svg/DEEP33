@@ -1717,6 +1717,34 @@ def _tool_calls_from_message(message):
     calls=message.get("tool_calls")
     return [c for c in calls if isinstance(c,dict)] if isinstance(calls,list) else []
 
+def _is_chile_scoped_news_candidate(query: str, item: dict) -> bool:
+    if "chile" not in str(query or "").casefold():
+        return True
+    parsed = urlparse(str(item.get("url") or ""))
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    path_parts = {
+        part.casefold()
+        for part in parsed.path.split("/")
+        if part
+    }
+    if path_parts & {"mundo", "internacional", "world", "international"}:
+        return False
+    title_snippet = " ".join(
+        str(item.get(key) or "")
+        for key in ("title", "snippet", "description")
+    ).casefold()
+    country_markers = (
+        "chile", "chileno", "chilena", "chilenos", "chilenas",
+        "la moneda", "congreso nacional", "gobierno de chile",
+        "presidente de chile",
+    )
+    if any(marker in title_snippet for marker in country_markers):
+        return True
+    if path_parts & {"nacional", "pais", "congreso", "gobierno"}:
+        return True
+    return host.endswith(".cl") and "politica" in path_parts
+
+
 def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
     """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
     items = [item for item in candidates if isinstance(item, dict)]
@@ -1730,6 +1758,33 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         if token not in generic_terms and len(token) >= 3
     }
     ranked = rank_results(query, items, realtime=True)
+    if topic_tokens:
+        # Apply the relevance floor to first-pass results as well as RSS recovery.
+        # A fresh article from an international section must not satisfy a
+        # Chile-scoped political query merely because its publisher is Chilean.
+        relevant_ranked = []
+        for item in ranked:
+            if not _is_chile_scoped_news_candidate(query, item):
+                continue
+            try:
+                relevance = float(item.get("relevance_score", score_result(query, item)))
+            except (TypeError, ValueError):
+                relevance = score_result(query, item)
+            parsed_item_url = urlparse(str(item.get("url") or ""))
+            item_host = (parsed_item_url.hostname or "").casefold().removeprefix("www.")
+            is_google_news_wrapper = (
+                str(item.get("provider") or "").casefold() == "google_news"
+                or item_host == "news.google.com"
+            )
+            item_text = " ".join(
+                str(item.get(key) or "")
+                for key in ("title", "snippet", "description")
+            ).casefold()
+            topic_match = any(token in item_text for token in topic_tokens)
+            google_news_relevant = is_google_news_wrapper and topic_match
+            if relevance >= 0.45 or google_news_relevant:
+                relevant_ranked.append(item)
+        ranked = relevant_ranked
     if "chile" not in str(query or "").casefold():
         return ranked
 
@@ -1752,7 +1807,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         publication_is_recent = (
             _is_recently_published(item, query)
             if item.get("published_at")
-            else provider in {"mwmbl", "google_news"}
+            else provider in {"mwmbl", "google_news", "mojeek"}
         )
         is_google_news_wrapper = host in {"news.google.com", "google.com"}
         domain_matches = (
@@ -1777,6 +1832,8 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         ):
             continue
         retained = dict(item)
+        if not _is_chile_scoped_news_candidate(query, retained):
+            continue
         retained["relevance_score"] = score_result(query, retained)
         if topic_tokens and retained["relevance_score"] < 0.45:
             continue
@@ -2394,7 +2451,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             recovery_candidates = await search_recent_news_candidates(
                 search_query,
                 timeout_seconds=2.5,
-                max_results=12,
+                max_results=24,
             )
             recovery_candidates = _rank_recent_news_candidates(
                 search_query,
@@ -4011,7 +4068,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
                     timeout_seconds=2.5,
-                    max_results=8,
+                    max_results=24,
                 )
                 recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
                 recovered_provider_candidates: list[dict[str, Any]] = []
