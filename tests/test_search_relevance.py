@@ -613,3 +613,32 @@ def test_chile_broad_current_events_preserves_article_candidates_for_page_valida
     assert "https://news.example.mx/politica/mexico" not in urls
     assert "https://noticias.example.cl/" not in urls
     assert "https://www.britannica.com/place/Chile/Politics" not in urls
+
+
+
+def test_realtime_named_comuna_rejects_location_only_travel_results():
+    query = "situación actual de la comuna de Las Condes en Chile"
+    results = [
+        {
+            "title": "Las Condes Vacation Rentals & Homes",
+            "url": "https://www.airbnb.com/las-condes-chile/stays",
+            "snippet": (
+                "Vacation rentals in Las Condes. Find unique accommodations, "
+                "apartments, pools and family-friendly stays."
+            ),
+        },
+        {
+            "title": "Municipalidad de Las Condes informa medidas para la comuna",
+            "url": "https://www.lascondes.cl/noticias/actualidad-comunal",
+            "snippet": (
+                "La Municipalidad de Las Condes informó medidas para la comuna, "
+                "con novedades sobre seguridad, servicios municipales y tránsito."
+            ),
+        },
+    ]
+
+    ranked = rank_results(query, results, realtime=True)
+
+    assert [item["url"] for item in ranked] == [
+        "https://www.lascondes.cl/noticias/actualidad-comunal"
+    ]
