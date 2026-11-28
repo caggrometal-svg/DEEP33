@@ -429,6 +429,25 @@ class AIGateway:
         return result
 
     @staticmethod
+    def _content_text(value: object) -> str:
+        """Normalize string and structured text-block content to visible assistant text."""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            text_value = value.get("text")
+            if isinstance(text_value, str):
+                return text_value
+            if isinstance(text_value, dict) and isinstance(text_value.get("value"), str):
+                return text_value["value"]
+            nested = value.get("content")
+            return AIGateway._content_text(nested) if nested is not None else ""
+        if isinstance(value, list):
+            return "".join(
+                part for part in (AIGateway._content_text(item) for item in value) if part
+            )
+        return ""
+
+    @staticmethod
     def _stream_has_visible_content(buffer: bytes) -> bool:
         """Return true once an SSE frame contains non-empty assistant text."""
         for line in buffer.splitlines():
@@ -457,7 +476,7 @@ class AIGateway:
                     else message.get("content") if isinstance(message, dict)
                     else None
                 )
-                if isinstance(content, str) and content.strip():
+                if AIGateway._content_text(content).strip():
                     return True
         return False
 
@@ -491,8 +510,9 @@ class AIGateway:
                     else message.get("content") if isinstance(message, dict)
                     else None
                 )
-                if isinstance(content, str):
-                    parts.append(content)
+                text_value = AIGateway._content_text(content)
+                if text_value:
+                    parts.append(text_value)
         return "".join(parts)
 
     @staticmethod
@@ -671,15 +691,15 @@ class AIGateway:
                             self._provider_error_hint(response),
                         )
                         if 500 <= status <= 599:
-                            # A POST 5xx is ambiguous: the provider may have accepted
-                            # the inference before returning the error. Preserve the
-                            # no-failover contract here; the endpoint layer converts
-                            # the gateway error into a bounded degraded response.
+                            # Do not retry this provider: a 5xx may be returned after
+                            # it accepted the request. Move once to the next distinct
+                            # provider so synthesis can recover without replaying the
+                            # request against the same upstream.
                             circuit.failure(
                                 self.config.circuit_failure_threshold,
                                 self.config.circuit_cooldown_seconds,
                             )
-                            raise GatewayHTTPError
+                            break
                         if provider_failed_transiently and attempt < self.config.max_retries:
                             delay = self._sleep_budget(attempt, deadline)
                             if delay > 0:
@@ -713,7 +733,9 @@ class AIGateway:
                     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
                         message = choices[0].get("message")
                         if isinstance(message, dict):
-                            provider_text = str(message.get("content") or "")
+                            provider_text = self._content_text(message.get("content"))
+                            if provider_text and not isinstance(message.get("content"), str):
+                                message["content"] = provider_text
                             has_tool_calls = bool(
                                 message.get("tool_calls") or message.get("function_call")
                             )
@@ -1026,7 +1048,9 @@ class AIGateway:
                                         len(ordered_providers),
                                     )
                                 if 500 <= status <= 599:
-                                    transient_failure = True
+                                    # Never retry the same streaming provider after
+                                    # an ambiguous 5xx; advance to the next provider.
+                                    transient_failure = False
                                     circuit.failure(
                                         self.config.circuit_failure_threshold,
                                         self.config.circuit_cooldown_seconds,

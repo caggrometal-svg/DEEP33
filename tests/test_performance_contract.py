@@ -274,9 +274,12 @@ def test_android_stream_timeout_bounds_first_visible_text_and_global_deadline():
         ROOT / "android" / "app" / "src" / "main" / "java" /
         "cl" / "caggrometal" / "deep33" / "Deep33Api.kt"
     ).read_text(encoding="utf-8")
-    # Bound absolute time-to-first-token; periodic SSE status/heartbeat frames
-    # must not keep a stalled inference alive until the 180-second global deadline.
-    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 5_280L" in source
+    # Render can spend up to 45 seconds on provider failover before its first token.
+    # Android must wait longer than that backend budget, while still bounding the
+    # first visible token independently from the 180-second total generation deadline.
+    assert "STREAM_FIRST_TEXT_TIMEOUT_MS = 60_000L" in source
+    # Heartbeat frames must keep the stream alive across provider latency and mobile jitter.
+    assert "STREAM_HEARTBEAT_GRACE_MS = 20_000L" in source
     assert "firstTextDeadlineNanos = minOf(" in source
     assert "if (!emitted && nowNanos >= firstTextDeadlineNanos)" in source
     assert "FIRST_TEXT_TIMEOUT request_id=" in source
@@ -402,7 +405,7 @@ def test_edge_web_navigation_tries_alternative_readable_sources() -> None:
     assert "sources.length < requiredReadableSources" in source
     assert "readableProviderNames.length < requiredProviderCount" in source
     assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
-    assert 'fallback_path: "vercel-backend-recovery"' in source
+    assert 'fallback_path: "render-backend-recovery"' in source
     assert '"clima"' in source
     assert '"búsqueda"' in source
 

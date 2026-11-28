@@ -1602,7 +1602,7 @@ def test_edge_web_navigation_requires_multiple_readable_independent_sources() ->
         assert "readableProviderNames.length < requiredProviderCount" in source
         assert "readableDomains.size < requiredProviderCount" in source
         assert "WEB_SEARCH_PROVIDER_QUORUM_NOT_MET" in source
-        expected_recovery = "vercel-backend-recovery"
+        expected_recovery = "render-backend-recovery"
         assert f'fallback_path: "{expected_recovery}"' in source
         assert "async function buildNavigatedWebEvidence(" in source
 

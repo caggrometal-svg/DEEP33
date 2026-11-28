@@ -96,23 +96,33 @@ def test_health() -> None:
     assert response.json()["status"] == "PASS"
 
 
-def test_vercel_deployment_sha_has_priority_for_exact_release_gate(monkeypatch) -> None:
-    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "vercel-tested-sha")
+def test_render_deployment_sha_has_priority_for_exact_release_gate(monkeypatch) -> None:
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-tested-sha")
+    monkeypatch.setenv("VERCEL_GIT_COMMIT_SHA", "vercel-stale-sha")
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railway-stale-sha")
-    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-stale-sha")
     monkeypatch.setenv("DEEP33_GIT_SHA", "manually-configured-stale-sha")
 
-    assert main._resolve_git_sha() == "vercel-tested-sha"
+    assert main._resolve_git_sha() == "render-tested-sha"
 
 
-def test_other_runtime_sha_fallbacks_remain_available(monkeypatch) -> None:
+def test_configured_sha_fallback_remains_available(monkeypatch) -> None:
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
     monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
-    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "railway-sha")
-    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-sha")
-    assert main._resolve_git_sha() == "railway-sha"
-
     monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("DEEP33_GIT_SHA", "configured-sha")
+
+    assert main._resolve_git_sha() == "configured-sha"
+
+
+def test_render_sha_falls_back_to_configured_revision(monkeypatch) -> None:
+    monkeypatch.delenv("VERCEL_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "render-sha")
+    monkeypatch.setenv("DEEP33_GIT_SHA", "configured-sha")
     assert main._resolve_git_sha() == "render-sha"
+
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    assert main._resolve_git_sha() == "configured-sha"
 
 
 def test_ready(monkeypatch) -> None:

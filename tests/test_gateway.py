@@ -11,7 +11,7 @@ def provider(name: str, url: str, health_url: str, model: str) -> GatewayProvide
     return GatewayProvider(name=name, url=url, health_url=health_url, api_key="", model=model)
 
 
-def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
+def test_complete_fails_over_to_distinct_provider_after_ambiguous_primary_5xx() -> None:
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -36,7 +36,7 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
             provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
         ),
         timeout_seconds=2,
-        max_retries=0,
+        max_retries=2,
     )
     gateway = AIGateway(config)
 
@@ -49,18 +49,20 @@ def test_complete_does_not_fail_over_after_ambiguous_primary_5xx() -> None:
 
     httpx.AsyncClient = Client
     try:
-        import asyncio
-
-        with pytest.raises(GatewayHTTPError):
-            asyncio.run(
-                gateway.complete(
-                    {"model": "requested", "messages": [{"role": "user", "content": "hi"}]}
-                )
+        result = asyncio.run(
+            gateway.complete(
+                {"model": "requested", "messages": [{"role": "user", "content": "hi"}]}
             )
+        )
     finally:
         httpx.AsyncClient = original
 
-    assert calls == ["https://primary.test/chat"]
+    assert result["choices"][0]["message"]["content"] == "FALLBACK_PASS"
+    assert result["_deep33_gateway"]["provider"] == "fallback"
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
 
 
 
@@ -828,3 +830,100 @@ def test_paid_kilo_model_keeps_configured_api_key(monkeypatch) -> None:
 
     assert config.providers[0].api_key == "paid-test-token"
     assert AIGateway._headers(config.providers[0])["Authorization"] == "Bearer paid-test-token"
+
+
+def test_gateway_extracts_text_from_openai_content_blocks() -> None:
+    content = [
+        {"type": "text", "text": "Respuesta "},
+        {"type": "text", "text": {"value": "verificada."}},
+    ]
+    assert AIGateway._content_text(content) == "Respuesta verificada."
+
+
+def test_stream_extractors_accept_text_block_content_without_done_marker() -> None:
+    frame = (
+        b'data: {"choices":[{"delta":{"content":['
+        b'{"type":"text","text":"DEEP33 "},'
+        b'{"type":"text","text":"STREAM_TEXT_PASS"}]}}]}\n\n'
+    )
+    assert AIGateway._stream_has_visible_content(frame)
+    assert AIGateway._stream_text_content(frame) == "DEEP33 STREAM_TEXT_PASS"
+
+
+def test_kilo_primary_uses_configured_nemotron_free_fallbacks(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_PROVIDER", "kilo")
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "stale-primary-token")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
+    monkeypatch.setenv(
+        "AI_GATEWAY_FALLBACKS_JSON",
+        '[{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
+    )
+
+    config = GatewayConfig.from_env()
+
+    assert [provider.model for provider in config.providers] == [
+        "baidu/ernie-5.5-flash-preview:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+        "nvidia/nemotron-3-ultra:free",
+    ]
+    assert all(provider.api_key == "" for provider in config.providers)
+    assert all("Authorization" not in AIGateway._headers(provider) for provider in config.providers)
+
+
+def test_stream_fails_over_to_distinct_provider_after_ambiguous_5xx_without_retrying_primary() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(503, request=request, json={"error": "upstream unavailable"})
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"STREAM_FALLBACK_PASS"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=2,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> bytes:
+        output = bytearray()
+        async for chunk in gateway.stream(
+            {"messages": [{"role": "user", "content": "hi"}]},
+            request_id="stream-5xx-failover",
+            idempotency_key="stream-5xx-failover",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(run_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    assert b"STREAM_FALLBACK_PASS" in output
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]

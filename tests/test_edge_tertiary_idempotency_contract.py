@@ -15,15 +15,16 @@ def test_tertiary_uses_shared_generation_idempotency_contract() -> None:
 
 def test_tertiary_delegates_child_backend_idempotency_key() -> None:
     assert "delegatedIdempotencyKey" in TERTIARY
-    assert '"edge-vercel:" + await sha256("deep33|vercel-fallback|" + idempotencyKey)' in TERTIARY
+    assert '"edge-render:" + await sha256("deep33|render-fallback|" + idempotencyKey)' in TERTIARY
     assert '"X-Idempotency-Key": delegatedIdempotencyKey' in TERTIARY
 
 
-def test_tertiary_names_the_canonical_vercel_backend_only() -> None:
-    assert '"vercel-backend-primary"' in TERTIARY
-    assert '"https://deep33-backend.vercel.app"' in TERTIARY
+def test_tertiary_names_the_canonical_render_backend_only() -> None:
+    assert '"render-backend-primary"' in TERTIARY
+    assert TERTIARY.count('"https://deep33-backend.onrender.com"') == 2
+    assert 'const EDGE_AI_UPSTREAM_URLS = [\n  "https://deep33-backend.onrender.com",\n] as const;' in TERTIARY
+    # Canonical Render is the sole internal backend; retired hosts stay forbidden.
     assert ".railway.app" not in TERTIARY
-    assert ".onrender.com" not in TERTIARY
     assert "replit.app" not in TERTIARY
 
 def test_edge_realtime_news_keeps_publisher_provenance_and_ignores_time_fillers() -> None:
