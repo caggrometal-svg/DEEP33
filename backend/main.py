@@ -194,13 +194,7 @@ def _is_publishable_realtime_news_source(
     try:
         minimum_relevance_score = max(
             0.18,
-            min(
-                0.55,
-                float(os.getenv(
-                    "WEB_SEARCH_NEWS_MIN_RELEVANCE_SCORE" if strict_news_request else "WEB_SEARCH_MIN_RELEVANCE_SCORE",
-                    "0.45" if strict_news_request else "0.28",
-                )),
-            ),
+            min(0.55, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
@@ -1717,6 +1711,15 @@ def _tool_calls_from_message(message):
 def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
     """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
     items = [item for item in candidates if isinstance(item, dict)]
+    generic_terms = {
+        "chile", "noticia", "noticias", "hoy", "actual", "actualidad",
+        "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
+        "de", "del", "en", "el", "la", "las", "los",
+    }
+    topic_tokens = {
+        token for token in re.findall(r"[a-záéíóúüñ]+", str(query or "").casefold())
+        if token not in generic_terms and len(token) >= 3
+    }
     ranked = [
         item for item in rank_results(query, items, realtime=True)
         if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
@@ -1771,7 +1774,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             continue
         retained = dict(item)
         retained["relevance_score"] = score_result(query, retained)
-        if retained["relevance_score"] < 0.45:
+        if topic_tokens and retained["relevance_score"] < 0.45:
             continue
         ranked.append(retained)
         seen_urls.add(url)
@@ -3889,9 +3892,24 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # (for example a health-insurance login) must not crowd out a matching news
         # article or official document. Filter weak results, then use direct/permalink
         # priority only as a tie-breaker between similarly relevant candidates.
+        news_topic_tokens = {
+            token for token in re.findall(r"[a-záéíóúüñ]+", q.casefold())
+            if token not in {
+                "chile", "noticia", "noticias", "hoy", "actual", "actualidad",
+                "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
+                "de", "del", "en", "el", "la", "las", "los",
+            } and len(token) >= 3
+        }
+        news_relevance_default = "0.45" if strict_news_request and news_topic_tokens else "0.28"
         minimum_relevance_score = max(
             0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            min(
+                0.55,
+                float(os.getenv(
+                    "WEB_SEARCH_NEWS_MIN_RELEVANCE_SCORE" if strict_news_request and news_topic_tokens else "WEB_SEARCH_MIN_RELEVANCE_SCORE",
+                    news_relevance_default,
+                )),
+            ),
         )
         ranked_sources = [
             {**item, "relevance_score": score_result(q, item)}
