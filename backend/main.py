@@ -2739,15 +2739,39 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Search snippets are discovery hints, never verified page evidence.
-        # General lookups need one extracted page, research needs two domains,
-        # and current-news requests need three extracted articles.
-        logger.warning(
-            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        # Permit a degraded synthesis only from two independently attributed,
+        # substantial live-search snippets. Snippets never satisfy strict-news
+        # article extraction or publication-time quorum requirements.
+        snippet_fallback_allowed = (
+            not strict_news_request
+            and not is_realtime_news_query(query)
+            and snippets_sufficient
+            and len(snippet_evidence_domains) >= 2
+            and (not realtime or (
+                search_result.get("fresh_request") is True
+                and bool(search_result.get("retrieved_at"))
+            ))
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if snippet_fallback_allowed:
+            snippet_fallback_used = True
+            logger.warning(
+                "web_evidence_snippet_fallback request_id=%s extracted=%s required=%s domains=%s",
+                request_id or "unknown",
+                len(fetched_pages),
+                required_pages,
+                len(snippet_evidence_domains),
+            )
+        else:
+            logger.warning(
+                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s snippet_domains=%s",
+                request_id or "unknown",
+                required_pages,
+                len(fetched_pages),
+                len(compact_search_results),
+                len(snippet_evidence_domains),
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
 
     compact_fetched_pages = [
         {
