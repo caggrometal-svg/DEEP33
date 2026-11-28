@@ -2285,6 +2285,31 @@ def _normalize_web_search_query(query: str) -> str:
     return search_query or normalized
 
 
+def _snippet_fallback_allowed(
+    *,
+    query: str,
+    realtime: bool,
+    strict_news_request: bool,
+    snippets_sufficient: bool,
+    snippet_domains: set[str],
+    search_result: dict[str, Any],
+) -> bool:
+    """Allow only substantial multi-domain snippets as degraded non-news evidence."""
+    if (
+        strict_news_request
+        or is_realtime_news_query(query)
+        or not snippets_sufficient
+        or len(snippet_domains) < 2
+    ):
+        return False
+    if realtime and not (
+        search_result.get("fresh_request") is True
+        and bool(search_result.get("retrieved_at"))
+    ):
+        return False
+    return True
+
+
 async def prepare_web_evidence(messages, request_id: str | None = None, deep: bool | None = None):
     query = latest_user_query(messages)
     realtime = is_realtime_query(query)
@@ -2739,15 +2764,37 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
 
     snippet_fallback_used = False
     if must_fetch and len(fetched_pages) < required_pages:
-        # Search snippets are discovery hints, never verified page evidence.
-        # General lookups need one extracted page, research needs two domains,
-        # and current-news requests need three extracted articles.
-        logger.warning(
-            "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s",
-            request_id or "unknown", required_pages, len(fetched_pages), len(compact_search_results),
+        # Permit a degraded synthesis only from two independently attributed,
+        # substantial live-search snippets. Snippets never satisfy strict-news
+        # article extraction or publication-time quorum requirements.
+        snippet_fallback_allowed = _snippet_fallback_allowed(
+            query=query,
+            realtime=realtime,
+            strict_news_request=strict_news_request,
+            snippets_sufficient=snippets_sufficient,
+            snippet_domains=snippet_evidence_domains,
+            search_result=search_result,
         )
-        performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
-        return None, [], [], []
+        if snippet_fallback_allowed:
+            snippet_fallback_used = True
+            logger.warning(
+                "web_evidence_snippet_fallback request_id=%s extracted=%s required=%s domains=%s",
+                request_id or "unknown",
+                len(fetched_pages),
+                required_pages,
+                len(snippet_evidence_domains),
+            )
+        else:
+            logger.warning(
+                "web_evidence_insufficient_extracted_pages request_id=%s required=%s extracted=%s search_results=%s snippet_domains=%s",
+                request_id or "unknown",
+                required_pages,
+                len(fetched_pages),
+                len(compact_search_results),
+                len(snippet_evidence_domains),
+            )
+            performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
+            return None, [], [], []
 
     compact_fetched_pages = [
         {
@@ -4660,6 +4707,14 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
 
 
 
+def _gateway_attempts(exc: BaseException) -> list[dict]:
+    """Read gateway attempt metadata safely across legacy and current errors."""
+    value = getattr(exc, "attempts", None)
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
     # Preserve the deterministic completion probe and its semantic retry. If the
     # non-stream transport itself is unavailable, verify the streaming production
@@ -4704,7 +4759,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -4716,7 +4771,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             break
         except GatewayInvalidResponseError as exc:
             last_error_type = type(exc).__name__
-            last_gateway_attempts = [dict(item) for item in exc.attempts]
+            last_gateway_attempts = _gateway_attempts(exc)
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -4728,7 +4783,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayHTTPError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -4773,7 +4828,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -4783,7 +4838,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -4846,7 +4901,20 @@ async def ai_diagnostics(request: Request) -> dict:
     request_id = request_id_from_request(request)
     network = await network_probe()
     gateway_status = await gateway_probe()
-    inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    try:
+        inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    except Exception as exc:
+        logger.exception(
+            "ai_diagnostics_inference_failed request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        inference_status, inference_data, inference_text = "FAIL", {
+            "_deep33_gateway": {
+                "error_type": type(exc).__name__,
+                "attempts": _gateway_attempts(exc),
+            }
+        }, None
     model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
 
     return {

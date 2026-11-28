@@ -28,15 +28,34 @@ _PROVIDER_POLICY_BLOCK_PHRASES = (
 )
 
 
-class GatewayTimeoutError(Exception):
+class GatewayError(Exception):
+    """Base gateway failure with stable provider-attempt metadata."""
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        attempts: list[dict] | None = None,
+        status_code: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        super().__init__(message or self.__class__.__name__)
+        self.attempts = [dict(item) for item in (attempts or []) if isinstance(item, dict)]
+        self.status_code = status_code
+        self.provider = provider
+        self.model = model
+
+
+class GatewayTimeoutError(GatewayError):
     pass
 
 
-class GatewayHTTPError(Exception):
+class GatewayHTTPError(GatewayError):
     pass
 
 
-class GatewayInvalidResponseError(Exception):
+class GatewayInvalidResponseError(GatewayError):
     pass
 
 
@@ -632,6 +651,7 @@ class AIGateway:
         saw_timeout = False
         saw_http_error = False
         saw_invalid_response = False
+        attempts: list[dict] = []
 
         ordered_providers = self._ordered_providers(prefer_ttft=prefer_ttft)
         for provider_index, provider in enumerate(ordered_providers):
@@ -852,6 +872,17 @@ class AIGateway:
                     )
                     break
 
+            if not provider_succeeded:
+                attempts.append({
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "outcome": (
+                        "timeout" if saw_timeout and not saw_http_error
+                        else "http_error" if saw_http_error
+                        else "invalid_response"
+                    ),
+                    "attempt": attempt + 1,
+                })
             if not provider_succeeded and provider_failed_transiently:
                 circuit.failure(
                     self.config.circuit_failure_threshold,
@@ -859,10 +890,10 @@ class AIGateway:
                 )
 
         if saw_timeout and not saw_http_error and not saw_invalid_response:
-            raise GatewayTimeoutError
+            raise GatewayTimeoutError(attempts=attempts)
         if saw_http_error:
-            raise GatewayHTTPError
-        raise GatewayInvalidResponseError
+            raise GatewayHTTPError(attempts=attempts)
+        raise GatewayInvalidResponseError(attempts=attempts)
 
     async def diagnostic_inference(
         self,
