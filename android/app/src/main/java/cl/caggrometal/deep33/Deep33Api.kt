@@ -123,7 +123,21 @@ object Deep33Api {
         BuildConfig.DEEP33_PRIMARY_URL,
         BuildConfig.DEEP33_SECONDARY_URL,
         BuildConfig.DEEP33_TERTIARY_URL,
+        BuildConfig.DEEP33_VERCEL_URL,
     ).mapNotNull(::validateEndpoint).distinct()
+
+    // Current-information requests use Vercel's verified live-web stack first.
+    // Ordinary chat keeps Render as primary; Vercel remains a final fallback.
+    private fun orderedEndpoints(
+        endpoints: List<String>,
+        preferVercel: Boolean,
+    ): List<String> = if (!preferVercel) {
+        endpoints
+    } else {
+        val vercel = validateEndpoint(BuildConfig.DEEP33_VERCEL_URL)
+        if (vercel == null || vercel !in endpoints) endpoints
+        else listOf(vercel) + endpoints.filterNot { it == vercel }
+    }
 
     private fun normalizedEndpoints(overrides: List<String>? = null): List<String> {
         val canonical = canonicalEndpoints()
@@ -315,7 +329,11 @@ object Deep33Api {
         val deadline = deadlineAtNanos ?: (System.nanoTime() + GLOBAL_TIMEOUT_MS * 1_000_000L)
         var lastError: Deep33ApiException? = null
 
-        for (endpoint in normalizedEndpoints(endpointOverride)) {
+        val endpoints = orderedEndpoints(
+            normalizedEndpoints(endpointOverride),
+            preferVercel = requiresVerifiedWebEvidence(messages),
+        )
+        for (endpoint in endpoints) {
             var attempt = 0
             var authRetryUsed = false
             while (attempt < ENDPOINT_ATTEMPTS) {
@@ -582,7 +600,9 @@ object Deep33Api {
         val deadline = System.nanoTime() + timeoutMs * 1_000_000L
         var lastError: Deep33ApiException? = null
 
-        for (endpoint in normalizedEndpoints(endpointOverride)) {
+        val preferVercel = path.startsWith("/v1/web/") || path.startsWith("/v1/ai/")
+        val endpoints = orderedEndpoints(normalizedEndpoints(endpointOverride), preferVercel)
+        for (endpoint in endpoints) {
             var attempt = 0
             var authRetryUsed = false
             while (attempt < ENDPOINT_ATTEMPTS) {
