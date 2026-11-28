@@ -2451,7 +2451,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             recovery_candidates = await search_recent_news_candidates(
                 search_query,
                 timeout_seconds=2.5,
-                max_results=12,
+                max_results=24,
             )
             recovery_candidates = _rank_recent_news_candidates(
                 search_query,
@@ -4068,7 +4068,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
                     timeout_seconds=2.5,
-                    max_results=8,
+                    max_results=24,
                 )
                 recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
                 recovered_provider_candidates: list[dict[str, Any]] = []
