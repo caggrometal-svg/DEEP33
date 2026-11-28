@@ -642,7 +642,8 @@ def test_backend_connectivity_audit_uses_representative_search_probe(monkeypatch
 
     result = asyncio.run(main.connectivity_audit())
 
-    assert captured["query"] == "Python asyncio official documentation"
+    assert captured["query"] == "Python asyncio TaskGroup documentación oficial"
     assert captured["fresh"] is True
-    assert captured["fast"] is True
+    assert captured["fast"] is False
+    assert captured["timeout_seconds"] == 8.0
     assert result["search"]["ok"] is True

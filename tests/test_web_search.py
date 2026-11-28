@@ -1959,3 +1959,36 @@ def test_search_orchestrator_caps_active_provider_calls(monkeypatch):
 
     assert peak <= 4
     assert result["providers_attempted"]
+
+
+def test_bounded_async_client_caps_global_outbound_concurrency():
+    import asyncio
+    from tools.web_search import _BoundedAsyncClient
+
+    class FakeClient:
+        def __init__(self):
+            self.active = 0
+            self.peak = 0
+
+        async def request(self, method, url, **kwargs):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                return {"method": method, "url": url}
+            finally:
+                self.active -= 1
+
+        async def aclose(self):
+            return None
+
+    async def run():
+        raw = FakeClient()
+        client = _BoundedAsyncClient(raw, asyncio.Semaphore(3))
+        await asyncio.gather(*(
+            client.get(f"https://example-{index}.test")
+            for index in range(20)
+        ))
+        return raw.peak
+
+    assert asyncio.run(run()) <= 3

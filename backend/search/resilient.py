@@ -831,6 +831,16 @@ class WebOrchestrator:
                 if re.fullmatch(r"[A-Z0-9_:-]{1,120}", raw_detail)
                 else name
             )
+            # A quota response is not a transient transport failure. Avoid
+            # retrying an exhausted free tier on every user request.
+            if "HTTP_402" in safe_detail:
+                state.opened_until = time.monotonic() + _bounded_env_float(
+                    "WEB_SEARCH_QUOTA_COOLDOWN_SECONDS", 21600.0, 60.0, 86400.0
+                )
+            elif "HTTP_429" in safe_detail:
+                state.opened_until = time.monotonic() + _bounded_env_float(
+                    "WEB_SEARCH_RATE_LIMIT_COOLDOWN_SECONDS", 180.0, 30.0, 1800.0
+                )
             logger.warning(
                 "web_search_provider_error provider=%s error_type=%s detail=%s",
                 provider,

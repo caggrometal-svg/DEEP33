@@ -11,6 +11,8 @@ import logging
 import os
 import re
 import time
+import weakref
+from threading import Lock
 from html.parser import HTMLParser
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -32,8 +34,10 @@ SEARCH_CACHE_TTL_SECONDS = max(
 )
 _SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
 _SEARCH_INFLIGHT: dict[str, asyncio.Task] = {}
-_SEARCH_HTTP_CLIENT: httpx.AsyncClient | None = None
+_SEARCH_HTTP_CLIENT = None
 _SEARCH_HTTP_LOOP: asyncio.AbstractEventLoop | None = None
+_SEARCH_HTTP_SEMAPHORES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_SEARCH_HTTP_SEMAPHORES_LOCK = Lock()
 
 
 def _http_timeout(seconds: float) -> httpx.Timeout:
@@ -48,18 +52,61 @@ def _http_timeout(seconds: float) -> httpx.Timeout:
     )
 
 
-async def _search_http_client() -> httpx.AsyncClient:
+class _BoundedAsyncClient:
+    """Apply one process-wide per-event-loop limit to every outbound search request."""
+
+    def __init__(self, client: httpx.AsyncClient, semaphore: asyncio.Semaphore):
+        self._client = client
+        self._semaphore = semaphore
+
+    async def request(self, method, url, **kwargs):
+        async with self._semaphore:
+            return await self._client.request(method, url, **kwargs)
+
+    async def get(self, url, **kwargs):
+        return await self.request("GET", url, **kwargs)
+
+    async def post(self, url, **kwargs):
+        return await self.request("POST", url, **kwargs)
+
+    async def head(self, url, **kwargs):
+        return await self.request("HEAD", url, **kwargs)
+
+    async def aclose(self):
+        await self._client.aclose()
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
+def _search_http_semaphore(loop: asyncio.AbstractEventLoop) -> asyncio.Semaphore:
+    with _SEARCH_HTTP_SEMAPHORES_LOCK:
+        semaphore = _SEARCH_HTTP_SEMAPHORES.get(loop)
+        if semaphore is None:
+            limit = max(
+                4,
+                min(32, int(os.getenv("WEB_SEARCH_HTTP_CONCURRENCY", "24"))),
+            )
+            semaphore = asyncio.Semaphore(limit)
+            _SEARCH_HTTP_SEMAPHORES[loop] = semaphore
+        return semaphore
+
+
+async def _search_http_client():
     global _SEARCH_HTTP_CLIENT, _SEARCH_HTTP_LOOP
     loop = asyncio.get_running_loop()
     if _SEARCH_HTTP_CLIENT is None or _SEARCH_HTTP_LOOP is not loop:
-        _SEARCH_HTTP_CLIENT = httpx.AsyncClient(
-            timeout=_http_timeout(DEFAULT_TIMEOUT_SECONDS),
-            follow_redirects=True,
-            limits=httpx.Limits(
-                max_connections=40,
-                max_keepalive_connections=20,
-                keepalive_expiry=30.0,
+        _SEARCH_HTTP_CLIENT = _BoundedAsyncClient(
+            httpx.AsyncClient(
+                timeout=_http_timeout(DEFAULT_TIMEOUT_SECONDS),
+                follow_redirects=True,
+                limits=httpx.Limits(
+                    max_connections=40,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=30.0,
+                ),
             ),
+            _search_http_semaphore(loop),
         )
         _SEARCH_HTTP_LOOP = loop
     return _SEARCH_HTTP_CLIENT

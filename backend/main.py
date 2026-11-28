@@ -3608,10 +3608,10 @@ async def connectivity_audit() -> dict:
     search: dict[str, Any]
     try:
         search = await search_web(
-            "Python asyncio official documentation",
+            "Python asyncio TaskGroup documentación oficial",
             timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "8")),
             max_results=max(1, int(os.getenv("WEB_SEARCH_AUDIT_MAX_RESULTS", "3"))),
-            fast=True,
+            fast=False,
             fresh=True,
         )
     except Exception as exc:
