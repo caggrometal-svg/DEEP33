@@ -210,6 +210,129 @@ def _is_publishable_realtime_news_source(
     return score_result(evidence_query, relevance_item) >= minimum_relevance_score
 
 
+def _publisher_rss_snippet_evidence_pages(
+    query: str,
+    candidates: list[dict[str, Any]],
+    existing_pages: list[dict[str, Any]],
+    fetch_failures: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Use fresh publisher-owned RSS excerpts only when article extraction failed."""
+    if not is_strict_news_query(query):
+        return []
+
+    failed_urls = {
+        str(item.get("url") or "").strip()
+        for item in fetch_failures
+        if isinstance(item, dict) and str(item.get("url") or "").strip()
+    }
+    if not failed_urls:
+        return []
+
+    existing_urls = {
+        str(item.get("final_url") or item.get("url") or "").strip()
+        for item in existing_pages
+        if isinstance(item, dict)
+    }
+    existing_domains = {
+        str(
+            item.get("domain")
+            or (urlparse(str(item.get("final_url") or item.get("url") or "")).hostname or "")
+        ).casefold().removeprefix("www.")
+        for item in existing_pages
+        if isinstance(item, dict)
+    } - {""}
+
+    generic_terms = {
+        "chile", "noticia", "noticias", "hoy", "actual", "actualidad",
+        "ultima", "ultimas", "última", "últimas", "reciente", "recientes",
+        "de", "del", "en", "el", "la", "las", "los",
+    }
+    normalized_query = _normalise_lookup_query(str(query or ""))
+    topic_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", normalized_query)
+        if token not in generic_terms and len(token) >= 3
+    }
+    candidates_by_score = sorted(
+        (item for item in candidates if isinstance(item, dict)),
+        key=lambda item: score_result(query, item),
+        reverse=True,
+    )
+
+    accepted: list[dict[str, Any]] = []
+    for source in candidates_by_score:
+        if str(source.get("provider") or "").casefold() not in {"publisher_rss", "publisher_feed"}:
+            continue
+        url = str(source.get("url") or "").strip()
+        if not url or url not in failed_urls or url in existing_urls:
+            continue
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").casefold().removeprefix("www.")
+        source_domain = str(
+            source.get("source_domain") or source.get("domain") or ""
+        ).casefold().removeprefix("www.")
+        if (
+            parsed.scheme.casefold() != "https"
+            or not host
+            or not source_domain
+            or (host != source_domain and not host.endswith("." + source_domain))
+            or source_domain in existing_domains
+            or not _is_chile_scoped_news_candidate(query, source)
+        ):
+            continue
+
+        published_at = source.get("published_at")
+        if not published_at or not _is_recently_published(source, query):
+            continue
+        title = str(source.get("title") or "").strip()
+        snippet = str(
+            source.get("snippet") or source.get("description") or source.get("content") or ""
+        ).strip()
+        if len(title) < 12 or len(snippet) < 80:
+            continue
+
+        item_text = _normalise_lookup_query(f"{title} {snippet}")
+        item_tokens = set(re.findall(r"[a-z0-9]+", item_text))
+        topic_match = bool(topic_tokens & item_tokens)
+        if topic_tokens & {"politica", "politico"}:
+            topic_match = topic_match or bool(
+                item_tokens & {
+                    "gobierno", "congreso", "presidente", "ministro", "elecciones",
+                    "partido", "senado", "diputados", "parlamentario", "reforma",
+                    "legislativo", "ley",
+                }
+            )
+        if topic_tokens and not topic_match:
+            continue
+
+        text = f"{title}. {snippet}".strip()
+        page = {
+            "title": title,
+            "url": url,
+            "final_url": url,
+            "domain": source_domain,
+            "source_domain": source_domain,
+            "provider": "publisher_rss",
+            "published_at": published_at,
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "text": text,
+            "text_chars": len(text),
+            "evidence_type": "publisher_rss_excerpt",
+            "extraction_status": "RSS_VERIFIED_EXCERPT",
+        }
+        if score_result(query, page) < 0.28:
+            continue
+        if not _is_publishable_realtime_news_source(query, source, page):
+            continue
+
+        accepted.append(page)
+        existing_urls.add(url)
+        existing_domains.add(source_domain)
+        if len(accepted) >= 6:
+            break
+
+    return accepted
+
+
 def _independent_search_provider_family(provider: str) -> str:
     """Count underlying search indexes, not aliases or front ends."""
     name = str(provider or "").strip().casefold().replace("-", "_")
@@ -260,14 +383,29 @@ def _recent_news_quorum_summary(
         reported_provider_count = int(reported_provider_count or 0)
     except (TypeError, ValueError):
         reported_provider_count = 0
-    # Provider independence is verified by the search orchestrator before
-    # extraction. Publisher RSS pages add editorial diversity, but their adapter
-    # label is not a search-index provider and must not erase a valid quorum.
+    rss_domains = {
+        str(page.get("domain") or (urlparse(str(page.get("url") or "")).hostname or ""))
+        .casefold().removeprefix("www.")
+        for page in valid_pages
+        if (
+            str(page.get("provider") or "").casefold() in {"publisher_rss", "publisher_feed"}
+            and page.get("evidence_type") == "publisher_rss_excerpt"
+        )
+    } - {""}
+    # Three independently attributed publisher feeds can supplement one
+    # verified search index when article pages are inaccessible. RSS alone
+    # never satisfies the quorum.
+    publisher_rss_supplement = reported_provider_count >= 1 and len(rss_domains) >= 3
     provider_quorum = (
-        verification.get("provider_quorum_met") is True
-        and reported_provider_count >= 2
+        (verification.get("provider_quorum_met") is True and reported_provider_count >= 2)
+        or publisher_rss_supplement
     )
-    provider_count = reported_provider_count
+    provider_count = max(reported_provider_count, 2 if publisher_rss_supplement else 0)
+    if publisher_rss_supplement:
+        verification["distinct_providers"] = provider_count
+        verification["provider_quorum_met"] = True
+        verification["provider_quorum_method"] = "search_index_plus_three_publisher_rss_domains"
+        search_result["verification"] = verification
     article_count = len(valid_pages)
     domain_count = len(domains)
     return {
@@ -1757,32 +1895,40 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         token for token in re.findall(r"[a-záéíóúüñ]+", str(query or "").casefold())
         if token not in generic_terms and len(token) >= 3
     }
-    ranked = rank_results(query, items, realtime=True)
+    ranked = [
+        item for item in rank_results(query, items, realtime=True)
+        if _is_chile_scoped_news_candidate(query, item)
+    ]
     if topic_tokens:
-        # Apply the relevance floor to first-pass results as well as RSS recovery.
-        # A fresh article from an international section must not satisfy a
-        # Chile-scoped political query merely because its publisher is Chilean.
+        # Keep relevant RSS excerpts as provisional evidence when their article
+        # pages are blocked, but reject fresh unrelated items from publisher feeds.
         relevant_ranked = []
         for item in ranked:
-            if not _is_chile_scoped_news_candidate(query, item):
-                continue
             try:
                 relevance = float(item.get("relevance_score", score_result(query, item)))
             except (TypeError, ValueError):
                 relevance = score_result(query, item)
             parsed_item_url = urlparse(str(item.get("url") or ""))
             item_host = (parsed_item_url.hostname or "").casefold().removeprefix("www.")
-            is_google_news_wrapper = (
-                str(item.get("provider") or "").casefold() == "google_news"
-                or item_host == "news.google.com"
+            provider = str(item.get("provider") or "").casefold()
+            is_google_news_wrapper = provider == "google_news" or item_host == "news.google.com"
+            is_publisher_rss = provider in {"publisher_rss", "publisher_feed"}
+            item_text = _normalise_lookup_query(
+                " ".join(str(item.get(key) or "") for key in ("title", "snippet", "description"))
             )
-            item_text = " ".join(
-                str(item.get(key) or "")
-                for key in ("title", "snippet", "description")
-            ).casefold()
-            topic_match = any(token in item_text for token in topic_tokens)
+            item_tokens = set(re.findall(r"[a-z0-9]+", item_text))
+            topic_match = bool(topic_tokens & item_tokens)
+            if topic_tokens & {"politica", "politico"}:
+                topic_match = topic_match or bool(
+                    item_tokens & {
+                        "gobierno", "congreso", "presidente", "ministro", "elecciones",
+                        "partido", "senado", "diputados", "parlamentario", "reforma",
+                        "legislativo", "ley",
+                    }
+                )
             google_news_relevant = is_google_news_wrapper and topic_match
-            if relevance >= 0.45 or google_news_relevant:
+            rss_relevant = is_publisher_rss and relevance >= 0.28 and topic_match
+            if relevance >= 0.45 or google_news_relevant or rss_relevant:
                 relevant_ranked.append(item)
         ranked = relevant_ranked
     if "chile" not in str(query or "").casefold():
@@ -1835,8 +1981,23 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         if not _is_chile_scoped_news_candidate(query, retained):
             continue
         retained["relevance_score"] = score_result(query, retained)
-        if topic_tokens and retained["relevance_score"] < 0.45:
-            continue
+        if topic_tokens:
+            retained_text = _normalise_lookup_query(
+                " ".join(str(retained.get(key) or "") for key in ("title", "snippet", "description"))
+            )
+            retained_tokens = set(re.findall(r"[a-z0-9]+", retained_text))
+            topic_match = bool(topic_tokens & retained_tokens)
+            if topic_tokens & {"politica", "politico"}:
+                topic_match = topic_match or bool(
+                    retained_tokens & {
+                        "gobierno", "congreso", "presidente", "ministro", "elecciones",
+                        "partido", "senado", "diputados", "parlamentario", "reforma",
+                        "legislativo", "ley",
+                    }
+                )
+            rss_relevant = provider in {"publisher_rss", "publisher_feed"} and retained["relevance_score"] >= 0.28 and topic_match
+            if retained["relevance_score"] < 0.45 and not rss_relevant:
+                continue
         ranked.append(retained)
         seen_urls.add(url)
     return ranked
@@ -2800,6 +2961,20 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             policy=fetch_policy,
         )
         fetched_pages = list(fetch_batch.documents)
+        publisher_rss_excerpts = _publisher_rss_snippet_evidence_pages(
+            query,
+            candidates,
+            fetched_pages,
+            getattr(fetch_batch, "failures", []),
+        )
+        if publisher_rss_excerpts:
+            fetched_pages.extend(publisher_rss_excerpts)
+            logger.warning(
+                "web_evidence_publisher_rss_excerpt_fallback request_id=%s added=%s domains=%s",
+                request_id or "unknown",
+                len(publisher_rss_excerpts),
+                len({item.get("domain") for item in publisher_rss_excerpts}),
+            )
         # Page extraction may add an independent resolver provider (for example
         # Bing resolving a Google News publisher wrapper). Preserve that evidence
         # in the aggregate verification before evaluating the final quorum.
@@ -2815,14 +2990,20 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             )
             performance.mark(str(request_id or ""), "T5_SEARCH_FINISHED")
             return None, [], [], []
+        evidence_domains = {
+            str(item.get("domain") or (urlparse(str(item.get("url") or "")).hostname or ""))
+            .casefold().removeprefix("www.")
+            for item in fetched_pages
+        } - {""}
+        evidence_text_chars = sum(len(str(item.get("text") or "")) for item in fetched_pages)
         logger.info(
             "web_evidence_quorum request_id=%s status=%s fetched=%s domains=%s "
             "total_text_chars=%s target=%s cancelled=%s elapsed_ms=%.2f",
             request_id or "unknown",
-            fetch_batch.status,
-            fetch_batch.fetched,
-            fetch_batch.distinct_domains,
-            fetch_batch.total_text_chars,
+            "PUBLISHER_RSS_EXCERPT_FALLBACK" if publisher_rss_excerpts else fetch_batch.status,
+            len(fetched_pages),
+            len(evidence_domains),
+            evidence_text_chars,
             fetch_policy.target_sources,
             fetch_batch.cancelled,
             fetch_batch.elapsed_ms,
@@ -2869,6 +3050,7 @@ async def prepare_web_evidence(messages, request_id: str | None = None, deep: bo
             "provider": item.get("provider"),
             "published_at": item.get("published_at"),
             "text_chars": item.get("text_chars"),
+            "evidence_type": item.get("evidence_type") or "extracted_article_page",
             "text": str(item.get("text") or "")[:2200],
         }
         for item in fetched_pages[:5]
