@@ -1072,10 +1072,11 @@ async def _publisher_rss_search(
 ) -> list[dict]:
     """Recover dated direct publisher articles when general search RSS is sparse."""
     client = await _search_http_client()
-    per_feed_limit = max(1, min(4, int(max_results)))
-    # Start every publisher feed in the same recovery wave. The endpoint's
-    # strict-news recovery budget is shorter than two sequential batches of four;
-    # the old limit starved later feeds behind slow or blocked publishers.
+    # Retain enough headlines per publisher for topic ranking; selecting only
+    # the first item from each general feed often misses relevant stories.
+    per_feed_limit = max(1, min(8, int(max_results)))
+    # Start every publisher feed in the same recovery wave so slow publishers
+    # cannot starve independent feeds within the strict-news recovery budget.
     feed_semaphore = asyncio.Semaphore(max(1, min(8, len(PUBLISHER_NEWS_RSS_FEEDS))))
 
     async def fetch_feed(domain: str, feed_url: str) -> list[dict]:
