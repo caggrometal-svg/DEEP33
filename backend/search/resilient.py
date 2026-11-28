@@ -13,7 +13,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from backend.search.engine import _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, is_strict_news_query, rank_results
+from backend.search.engine import _extract_realtime_locality, _normalise_lookup_query, _tokens, _topic_tokens, deduplicate, is_realtime_query, is_strict_news_query, rank_results
 from tools.web_search import (
     _bing_search,
     _cl0q_search,
@@ -624,6 +624,10 @@ class WebOrchestrator:
         compact = " ".join(dict.fromkeys(topics))
         lowered = cleaned.casefold()
 
+        locality = _extract_realtime_locality(cleaned)
+        if locality and "chile" in lowered:
+            return f"{locality} Chile noticias hoy municipalidad comuna"
+
         academic_ai_research_intent = (
             any(term in lowered for term in ("universidad", "university", "universities"))
             and any(term in lowered for term in ("investigación", "investigacion", "research", "paper"))
@@ -995,6 +999,12 @@ class WebOrchestrator:
             delayed: bool = False,
         ) -> ProviderOutcome:
             async with provider_semaphore:
+                if provider not in self.providers and provider not in self.fallback_providers:
+                    return ProviderOutcome(
+                        provider=provider,
+                        ok=False,
+                        error_code="PROVIDER_DISABLED",
+                    )
                 if loop.time() >= deadline:
                     return ProviderOutcome(
                         provider=provider,
