@@ -4001,7 +4001,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 rescue_query = q
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
-                    timeout_seconds=1.8,
+                    timeout_seconds=2.5,
                     max_results=8,
                 )
                 recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
