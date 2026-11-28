@@ -496,6 +496,21 @@ class WebOrchestrator:
                 "what is happening", "current events",
             ))
         )
+        chile_political_intent = (
+            "chile" in lowered
+            and any(term in lowered for term in (
+                "política", "politica", "presidente", "elecciones", "elección",
+                "eleccion", "gobierno", "congreso", "senado", "ministro",
+                "politics", "political", "president", "election", "government",
+                "congress", "senate", "minister",
+            ))
+        )
+        if chile_political_intent:
+            # Chilean political coverage is indexed predominantly in Spanish.
+            # Keep the cleaned user wording instead of translating it to generic
+            # English anchors such as "politics Chile latest", which lose local
+            # publisher coverage and produce opaque Google News wrappers.
+            return provider_source
         if chile_current_events_intent:
             # Generic "current events in Chile" wording is semantically news-like,
             # but several public indexes treat the literal phrase as a country
