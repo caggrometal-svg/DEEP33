@@ -558,3 +558,12 @@ def test_provider_query_preserves_spanish_for_chile_political_topics():
     assert orchestrator._provider_query(
         "Presidente actual de Chile"
     ) == "Presidente actual de Chile"
+
+
+def test_python_asyncio_official_query_preserves_taskgroup_entity():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator()
+    assert orchestrator._provider_query(
+        "Python asyncio TaskGroup documentación oficial"
+    ) == "python asyncio taskgroup official documentation"
