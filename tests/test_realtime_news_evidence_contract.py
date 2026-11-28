@@ -546,3 +546,15 @@ def test_web_search_endpoint_preserves_strict_news_topic_in_recovery(monkeypatch
     assert result["verification"]["evidence_status"] == "INSUFFICIENT"
     assert result["verification"]["distinct_domains"] == 0
     assert result["verification"]["domain_quorum_met"] is False
+
+
+def test_provider_query_preserves_spanish_for_chile_political_topics():
+    from backend.search.resilient import WebOrchestrator
+
+    orchestrator = WebOrchestrator()
+    assert orchestrator._provider_query(
+        "política Chile hoy últimas noticias"
+    ) == "política Chile hoy últimas noticias"
+    assert orchestrator._provider_query(
+        "Presidente actual de Chile"
+    ) == "Presidente actual de Chile"
