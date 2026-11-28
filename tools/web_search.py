@@ -1129,16 +1129,14 @@ async def _corroborate_google_news_candidates_with_indexes(
         # Google-style site: operator; constrain its results by publisher host
         # after retrieval instead.
         jobs.append((item, "mwmbl", _mwmbl_search(title_query, timeout_seconds, 2)))
-    # This recovery path bypasses the main orchestrator; bound its parallel
-    # RSS/search calls to protect the shared HTTPX connection pool.
-    job_semaphore = asyncio.Semaphore(6)
+    corroboration_semaphore = asyncio.Semaphore(4)
 
-    async def run_news_job(coroutine):
-        async with job_semaphore:
+    async def run_corroboration_job(coroutine):
+        async with corroboration_semaphore:
             return await coroutine
 
     settled = await asyncio.gather(
-        *(run_news_job(job[2]) for job in jobs),
+        *(run_corroboration_job(job[2]) for job in jobs),
         return_exceptions=True,
     )
     stopwords = {"chile", "noticia", "noticias", "hoy", "ultima", "ultimas", "actualidad", "de", "del", "en", "el", "la"}
@@ -1248,14 +1246,16 @@ async def search_recent_news_candidates(
             for search_query, expected_domain in queries
         ),
     ])
-    corroboration_semaphore = asyncio.Semaphore(4)
+    # This recovery path bypasses the main orchestrator; bound its parallel
+    # RSS/search calls to protect the shared HTTPX connection pool.
+    job_semaphore = asyncio.Semaphore(6)
 
-    async def run_corroboration_job(coroutine):
-        async with corroboration_semaphore:
+    async def run_news_job(coroutine):
+        async with job_semaphore:
             return await coroutine
 
     settled = await asyncio.gather(
-        *(run_corroboration_job(job[2]) for job in jobs),
+        *(run_news_job(job[2]) for job in jobs),
         return_exceptions=True,
     )
     # Reject dated but stale Google News items here. Otherwise its first batch
