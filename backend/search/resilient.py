@@ -1114,7 +1114,7 @@ class WebOrchestrator:
             asyncio.create_task(
                 run_limited_provider(provider, provider_query, delayed=True)
                 if provider == "duckduckgo"
-                else self._bounded_call_provider(provider, provider_query),
+                else run_limited_provider(provider, provider_query),
                 name=f"search:{provider}",
             )
             for provider in self.providers
@@ -1164,7 +1164,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-economy-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(economic_queries)
@@ -1172,7 +1172,7 @@ class WebOrchestrator:
         if broad_ai_news_intent:
             tasks.add(
                 asyncio.create_task(
-                    self._bounded_call_provider(
+                    run_limited_provider(
                         "google_news",
                         "artificial intelligence AI technology research latest news",
                     ),
@@ -1199,7 +1199,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-general-news:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(general_news_queries)
@@ -1219,7 +1219,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-current-events:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(current_events_queries)
@@ -1239,7 +1239,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-weather:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(weather_queries)
@@ -1281,7 +1281,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-political-primary:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_primary_queries)
@@ -1299,7 +1299,7 @@ class WebOrchestrator:
             )
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    run_limited_provider(provider, official_query),
                     name=f"search:official-primary:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1311,7 +1311,7 @@ class WebOrchestrator:
             who_query = "site:who.int/news-room/fact-sheets/detail dengue and severe dengue"
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, who_query),
+                    run_limited_provider(provider, who_query),
                     name=f"search:who-dengue:{provider}",
                 )
                 for provider in ("bing", "google", "duckduckgo", "cl0q")
@@ -1324,7 +1324,7 @@ class WebOrchestrator:
             company_queries = _commercial_technology_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, company_query),
+                    run_limited_provider(provider, company_query),
                     name=f"search:commercial-tech:{provider}:{index}",
                 )
                 for index, (provider, company_query) in enumerate(company_queries)
@@ -1336,7 +1336,7 @@ class WebOrchestrator:
             academic_queries = _academic_ai_research_queries()
             tasks.update({
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, academic_query),
+                    run_limited_provider(provider, academic_query),
                     name=f"search:academic-ai:{provider}:{index}",
                 )
                 for index, (provider, academic_query) in enumerate(academic_queries)
@@ -1460,7 +1460,7 @@ class WebOrchestrator:
             if remaining >= 0.25:
                 try:
                     youcom_outcome = await asyncio.wait_for(
-                        self._bounded_call_provider("youcom", provider_query or cleaned),
+                        run_limited_provider("youcom", provider_query or cleaned),
                         timeout=remaining,
                     )
                 except asyncio.TimeoutError:
@@ -1499,7 +1499,7 @@ class WebOrchestrator:
             if remaining >= 0.25:
                 try:
                     mwmbl_outcome = await asyncio.wait_for(
-                        self._bounded_call_provider("mwmbl", provider_query or cleaned),
+                        run_limited_provider("mwmbl", provider_query or cleaned),
                         timeout=remaining,
                     )
                 except asyncio.TimeoutError:
@@ -1542,7 +1542,7 @@ class WebOrchestrator:
             )
             official_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, official_query),
+                    run_limited_provider(provider, official_query),
                     name=f"search-official:{provider}:{index}",
                 )
                 for index, (provider, official_query) in enumerate(official_queries)
@@ -1646,7 +1646,7 @@ class WebOrchestrator:
             # The same end-to-end deadline covers the primary and recovery phases.
             recovery_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, recovery_query),
+                    run_limited_provider(provider, recovery_query),
                     name=f"search-recovery:{provider}",
                 )
                 for provider in self.providers
@@ -1768,7 +1768,7 @@ class WebOrchestrator:
             )
             political_tasks = {
                 asyncio.create_task(
-                    self._bounded_call_provider(provider, targeted_query),
+                    run_limited_provider(provider, targeted_query),
                     name=f"search:chile-political-diversity:{provider}:{index}",
                 )
                 for index, (provider, targeted_query) in enumerate(political_source_queries)
@@ -1977,7 +1977,7 @@ class WebOrchestrator:
             fallback_query = provider_query or cleaned
             try:
                 fallback_outcome = await asyncio.wait_for(
-                    self._bounded_call_provider(fallback_name, fallback_query),
+                    run_limited_provider(fallback_name, fallback_query),
                     timeout=remaining,
                 )
             except asyncio.TimeoutError:
