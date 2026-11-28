@@ -52,8 +52,12 @@ logger = logging.getLogger(__name__)
 APP_NAME = "DEEP33 Backend"
 APP_VERSION = "0.2.0"
 def _resolve_git_sha() -> str:
-    # Render provides the immutable source revision for the live service.
-    runtime_sha = os.getenv("RENDER_GIT_COMMIT", "").strip()
+    # Both hosting targets expose immutable Git metadata. Prefer the platform
+    # value for the running deployment, then the explicit build-time override.
+    runtime_sha = (
+        os.getenv("RENDER_GIT_COMMIT", "").strip()
+        or os.getenv("VERCEL_GIT_COMMIT_SHA", "").strip()
+    )
     if runtime_sha:
         return runtime_sha
     env_sha = os.getenv("DEEP33_GIT_SHA", "").strip()
@@ -72,11 +76,16 @@ GIT_SHA = _resolve_git_sha()
 # Render is the production source of deployment identity. Keep health endpoints
 # deterministic even when optional platform metadata is absent (local/tests).
 GIT_BRANCH = (
-    os.getenv("RENDER_GIT_BRANCH", os.getenv("DEEP33_GIT_BRANCH", "unknown")).strip()
+    os.getenv(
+        "RENDER_GIT_BRANCH",
+        os.getenv("VERCEL_GIT_COMMIT_REF", os.getenv("DEEP33_GIT_BRANCH", "unknown")),
+    ).strip()
     or "unknown"
 )
 BUILD_ID = (
-    os.getenv("RENDER_GIT_COMMIT", os.getenv("DEEP33_GIT_SHA", GIT_SHA)).strip()
+    os.getenv("RENDER_GIT_COMMIT", "").strip()
+    or os.getenv("VERCEL_DEPLOYMENT_ID", "").strip()
+    or os.getenv("DEEP33_BUILD_ID", os.getenv("DEEP33_GIT_SHA", GIT_SHA)).strip()
     or GIT_SHA
 )
 
