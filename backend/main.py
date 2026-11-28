@@ -194,7 +194,13 @@ def _is_publishable_realtime_news_source(
     try:
         minimum_relevance_score = max(
             0.18,
-            min(0.45, float(os.getenv("WEB_SEARCH_MIN_RELEVANCE_SCORE", "0.28"))),
+            min(
+                0.55,
+                float(os.getenv(
+                    "WEB_SEARCH_NEWS_MIN_RELEVANCE_SCORE" if strict_news_request else "WEB_SEARCH_MIN_RELEVANCE_SCORE",
+                    "0.45" if strict_news_request else "0.28",
+                )),
+            ),
         )
     except (TypeError, ValueError):
         minimum_relevance_score = 0.28
@@ -1711,7 +1717,11 @@ def _tool_calls_from_message(message):
 def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dict]:
     """Rank search results while retaining fresh articles from trusted Chilean RSS feeds."""
     items = [item for item in candidates if isinstance(item, dict)]
-    ranked = rank_results(query, items, realtime=True)
+    ranked = [
+        item for item in rank_results(query, items, realtime=True)
+        if (urlparse(str(item.get("url") or "")).hostname or "").casefold().removeprefix("www.")
+        not in {"news.google.com", "google.com"}
+    ]
     if "chile" not in str(query or "").casefold():
         return ranked
 
@@ -1749,6 +1759,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             or not host
             or not source_domain
             or not domain_matches
+            or (provider == "google_news" and is_google_news_wrapper)
             or len(path_parts) < 2
             or not publication_is_recent
             or len(str(item.get("title") or "").strip()) < 12
@@ -1760,7 +1771,7 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
             continue
         retained = dict(item)
         retained["relevance_score"] = score_result(query, retained)
-        if retained["relevance_score"] < 0.38:
+        if retained["relevance_score"] < 0.45:
             continue
         ranked.append(retained)
         seen_urls.add(url)
