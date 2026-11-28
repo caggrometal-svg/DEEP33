@@ -611,3 +611,38 @@ def test_valid_stream_text_survives_missing_done_marker() -> None:
     assert "stream_gateway_text_without_done_marker" in main
     assert "if not saw_done or not assistant_text" not in main
     assert "gateway._content_text(content_value)" in main
+
+
+def test_backend_connectivity_audit_uses_representative_search_probe(monkeypatch) -> None:
+    import asyncio
+    import backend.main as main
+
+    captured = {}
+
+    async def fake_network_probe():
+        return {"internet_available": True}
+
+    async def fake_gateway_probe():
+        return {"gateway": "PASS", "model": "test-model"}
+
+    async def fake_search(query, **kwargs):
+        captured["query"] = query
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "results": [{
+                "title": "asyncio — Asynchronous I/O",
+                "url": "https://docs.python.org/3/library/asyncio.html",
+            }],
+        }
+
+    monkeypatch.setattr(main, "network_probe", fake_network_probe)
+    monkeypatch.setattr(main, "gateway_probe", fake_gateway_probe)
+    monkeypatch.setattr(main, "search_web", fake_search)
+
+    result = asyncio.run(main.connectivity_audit())
+
+    assert captured["query"] == "Python asyncio official documentation"
+    assert captured["fresh"] is True
+    assert captured["fast"] is True
+    assert result["search"]["ok"] is True
