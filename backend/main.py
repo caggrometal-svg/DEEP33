@@ -1730,6 +1730,30 @@ def _rank_recent_news_candidates(query: str, candidates: list[dict]) -> list[dic
         if token not in generic_terms and len(token) >= 3
     }
     ranked = rank_results(query, items, realtime=True)
+    if topic_tokens:
+        # Apply the same relevance floor to first-pass results and RSS recovery
+        # candidates. Previously only recovered items were filtered, allowing a
+        # fresh but unrelated article from a Chilean publisher through.
+        relevant_ranked = []
+        for item in ranked:
+            try:
+                relevance = float(item.get("relevance_score", score_result(query, item)))
+            except (TypeError, ValueError):
+                relevance = score_result(query, item)
+            parsed_item_url = urlparse(str(item.get("url") or ""))
+            path_parts = [
+                part.casefold()
+                for part in parsed_item_url.path.split("/")
+                if part
+            ]
+            international_section = bool(
+                "chile" in str(query or "").casefold()
+                and path_parts
+                and path_parts[0] in {"mundo", "internacional", "world", "international"}
+            )
+            if relevance >= 0.45 and not international_section:
+                relevant_ranked.append(item)
+        ranked = relevant_ranked
     if "chile" not in str(query or "").casefold():
         return ranked
 
