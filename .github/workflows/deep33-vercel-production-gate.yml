@@ -37,7 +37,6 @@ jobs:
   # Temporarily disabled: no Vercel traffic during the quota recovery window.
   vercel-production-gate:
     if: false
-    if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/cert-green-live-search-161026')) || (github.event_name == 'workflow_dispatch' && inputs.require_live == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
