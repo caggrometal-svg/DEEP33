@@ -4660,6 +4660,14 @@ async def web_fetch_endpoint(request: Request, url: str) -> dict:
 
 
 
+def _gateway_attempts(exc: BaseException) -> list[dict]:
+    """Read gateway attempt metadata safely across legacy and current errors."""
+    value = getattr(exc, "attempts", None)
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | None]:
     # Preserve the deterministic completion probe and its semantic retry. If the
     # non-stream transport itself is unavailable, verify the streaming production
@@ -4704,7 +4712,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             last_timeout = True
             transport_failed = True
             logger.warning(
@@ -4716,7 +4724,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
             break
         except GatewayInvalidResponseError as exc:
             last_error_type = type(exc).__name__
-            last_gateway_attempts = [dict(item) for item in exc.attempts]
+            last_gateway_attempts = _gateway_attempts(exc)
             transport_failed = True
             logger.warning(
                 "inference_check_invalid_provider_response request_id=%s diagnostic_id=%s attempt=%s",
@@ -4728,7 +4736,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayHTTPError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             transport_failed = True
             logger.warning(
                 "inference_check_provider_http request_id=%s diagnostic_id=%s error=%s",
@@ -4773,7 +4781,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (asyncio.TimeoutError, GatewayTimeoutError) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, GatewayTimeoutError):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             last_timeout = True
             logger.warning(
                 "inference_stream_check_timeout request_id=%s diagnostic_id=%s",
@@ -4783,7 +4791,7 @@ async def run_inference_check(request_id: str) -> tuple[str, dict | None, str | 
         except (GatewayInvalidResponseError, GatewayHTTPError, HTTPException) as exc:
             last_error_type = type(exc).__name__
             if isinstance(exc, (GatewayInvalidResponseError, GatewayHTTPError)):
-                last_gateway_attempts = [dict(item) for item in exc.attempts]
+                last_gateway_attempts = _gateway_attempts(exc)
             logger.warning(
                 "inference_stream_check_failed request_id=%s diagnostic_id=%s error=%s",
                 request_id,
@@ -4846,7 +4854,20 @@ async def ai_diagnostics(request: Request) -> dict:
     request_id = request_id_from_request(request)
     network = await network_probe()
     gateway_status = await gateway_probe()
-    inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    try:
+        inference_status, inference_data, inference_text = await run_inference_check(request_id)
+    except Exception as exc:
+        logger.exception(
+            "ai_diagnostics_inference_failed request_id=%s error=%s",
+            request_id,
+            type(exc).__name__,
+        )
+        inference_status, inference_data, inference_text = "FAIL", {
+            "_deep33_gateway": {
+                "error_type": type(exc).__name__,
+                "attempts": _gateway_attempts(exc),
+            }
+        }, None
     model_pass = inference_status == "PASS" and "DEEP33_DIAGNOSTIC_OK" in (inference_text or "")
 
     return {
