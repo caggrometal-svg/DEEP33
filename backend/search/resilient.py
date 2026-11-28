@@ -787,7 +787,11 @@ class WebOrchestrator:
         try:
             provider_function = self.providers.get(provider) or self.fallback_providers.get(provider)
             if provider_function is None:
-                raise RuntimeError("SEARCH_PROVIDER_NOT_REGISTERED")
+                return ProviderOutcome(
+                    provider=provider,
+                    ok=False,
+                    error_code="PROVIDER_DISABLED",
+                )
             results = await asyncio.wait_for(
                 provider_function(
                     query,
