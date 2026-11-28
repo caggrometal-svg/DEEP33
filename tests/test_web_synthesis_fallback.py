@@ -52,22 +52,45 @@ def evidence_payload() -> dict:
     }
 
 
-def test_snippet_fallback_requires_multiple_substantial_independent_sources() -> None:
-    snippets = [
-        {"url": "https://one.example/a", "snippet": "A" * 140},
-        {"url": "https://two.example/b", "snippet": "B" * 140},
-    ]
-    assert len(snippets) == 2
-    assert len({
-        (main.urlparse(item["url"]).hostname or "").removeprefix("www.")
-        for item in snippets
-    }) == 2
-    assert all(len(item["snippet"]) >= 120 for item in snippets)
+def test_snippet_fallback_requires_substantial_independent_sources() -> None:
+    search_result = {"fresh_request": True, "retrieved_at": "2026-11-28T00:00:00Z"}
+    assert main._snippet_fallback_allowed(
+        query="what is a distributed system",
+        realtime=False,
+        strict_news_request=False,
+        snippets_sufficient=True,
+        snippet_domains={"one.example", "two.example"},
+        search_result=search_result,
+    )
+    assert not main._snippet_fallback_allowed(
+        query="what is a distributed system",
+        realtime=False,
+        strict_news_request=False,
+        snippets_sufficient=True,
+        snippet_domains={"one.example"},
+        search_result=search_result,
+    )
 
 
-def test_strict_news_never_uses_search_snippets_as_verified_articles() -> None:
+def test_snippet_fallback_rejects_strict_news_and_unverified_realtime() -> None:
     query = "últimas noticias de Chile hoy"
-    assert main.is_strict_news_query(query)
+    search_result = {"fresh_request": True, "retrieved_at": "2026-11-28T00:00:00Z"}
+    assert not main._snippet_fallback_allowed(
+        query=query,
+        realtime=True,
+        strict_news_request=True,
+        snippets_sufficient=True,
+        snippet_domains={"one.example", "two.example"},
+        search_result=search_result,
+    )
+    assert not main._snippet_fallback_allowed(
+        query="current exchange rate",
+        realtime=True,
+        strict_news_request=False,
+        snippets_sufficient=True,
+        snippet_domains={"one.example", "two.example"},
+        search_result={"fresh_request": False},
+    )
 
 
 def test_web_evidence_is_never_emitted_as_extractive_answer() -> None:
