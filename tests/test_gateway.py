@@ -870,3 +870,60 @@ def test_kilo_primary_uses_configured_nemotron_free_fallbacks(monkeypatch) -> No
     ]
     assert all(provider.api_key == "" for provider in config.providers)
     assert all("Authorization" not in AIGateway._headers(provider) for provider in config.providers)
+
+
+def test_stream_fails_over_to_distinct_provider_after_ambiguous_5xx_without_retrying_primary() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if request.url.host == "primary.test":
+            return httpx.Response(503, request=request, json={"error": "upstream unavailable"})
+        return httpx.Response(
+            200,
+            request=request,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                b'data: {"choices":[{"delta":{"content":"STREAM_FALLBACK_PASS"}}]}\\n\\n'
+                b"data: [DONE]\\n\\n"
+            ),
+        )
+
+    transport = httpx.MockTransport(handler)
+    config = GatewayConfig(
+        providers=(
+            provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model"),
+            provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model"),
+        ),
+        timeout_seconds=2,
+        max_retries=2,
+    )
+    gateway = AIGateway(config)
+    original = httpx.AsyncClient
+
+    class Client(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    async def run_stream() -> bytes:
+        output = bytearray()
+        async for chunk in gateway.stream(
+            {"messages": [{"role": "user", "content": "hi"}]},
+            request_id="stream-5xx-failover",
+            idempotency_key="stream-5xx-failover",
+        ):
+            output.extend(chunk)
+        return bytes(output)
+
+    httpx.AsyncClient = Client
+    try:
+        output = asyncio.run(run_stream())
+    finally:
+        httpx.AsyncClient = original
+
+    assert b"STREAM_FALLBACK_PASS" in output
+    assert calls == [
+        "https://primary.test/chat",
+        "https://fallback.test/chat",
+    ]
