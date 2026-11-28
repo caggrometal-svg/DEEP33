@@ -884,8 +884,8 @@ def test_stream_fails_over_to_distinct_provider_after_ambiguous_5xx_without_retr
             request=request,
             headers={"content-type": "text/event-stream"},
             content=(
-                b'data: {"choices":[{"delta":{"content":"STREAM_FALLBACK_PASS"}}]}\\n\\n'
-                b"data: [DONE]\\n\\n"
+                b'data: {"choices":[{"delta":{"content":"STREAM_FALLBACK_PASS"}}]}\n\n'
+                b"data: [DONE]\n\n"
             ),
         )
 
