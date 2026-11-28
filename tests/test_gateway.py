@@ -693,7 +693,7 @@ def test_dots_fallback_uses_low_reasoning_effort_without_changing_other_models()
     assert "reasoning_effort" not in laguna_payload
 
 
-def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
+def test_stream_visible_budget_allocates_useful_window_to_each_provider() -> None:
     primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
     fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
     gateway = AIGateway(
@@ -708,12 +708,8 @@ def test_stream_visible_budget_reserves_fallback_inside_three_seconds() -> None:
 
     first = gateway._stream_visible_budget(0, 2)
     second = gateway._stream_visible_budget(1, 2)
-    assert first == pytest.approx(0.35)
-    assert second == pytest.approx(2.20)
-    assert first + second < 3.0
-    assert max(0.50, first + 0.15) + second < 3.0
-
-
+    assert first == pytest.approx(2.0)
+    assert second == pytest.approx(2.2)
 def test_stream_small_test_budget_remains_exact() -> None:
     primary = provider("primary", "https://primary.test/chat", "https://primary.test/models", "primary-model")
     fallback = provider("fallback", "https://fallback.test/chat", "https://fallback.test/models", "fallback-model")
@@ -858,13 +854,14 @@ def test_kilo_primary_uses_configured_nemotron_free_fallbacks(monkeypatch) -> No
     monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
     monkeypatch.setenv(
         "AI_GATEWAY_FALLBACKS_JSON",
-        '[{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
+        '[{"name":"dots3-note","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"dots-studio/dots-3-note-preview:free"},{"name":"nemotron-3.5","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"nemotron-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]',
     )
 
     config = GatewayConfig.from_env()
 
     assert [provider.model for provider in config.providers] == [
         "baidu/ernie-5.5-flash-preview:free",
+        "dots-studio/dots-3-note-preview:free",
         "nvidia/nemotron-3.5-super-vl:free",
         "nvidia/nemotron-3-ultra:free",
     ]
@@ -926,4 +923,33 @@ def test_stream_fails_over_to_distinct_provider_after_ambiguous_5xx_without_retr
     assert calls == [
         "https://primary.test/chat",
         "https://fallback.test/chat",
+    ]
+
+
+def test_gateway_first_visible_timeout_allows_slow_free_provider_start(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_URL", "https://api.kilo.ai/api/gateway/chat/completions")
+    monkeypatch.setenv("AI_GATEWAY_HEALTH_URL", "https://api.kilo.ai/api/gateway/models")
+    monkeypatch.setenv("AI_GATEWAY_MODEL", "baidu/ernie-5.5-flash-preview:free")
+    monkeypatch.setenv("AI_GATEWAY_FALLBACKS_JSON", "[]")
+    monkeypatch.setenv("AI_FIRST_VISIBLE_TIMEOUT_SECONDS", "6.0")
+
+    config = GatewayConfig.from_env()
+
+    assert config.first_visible_timeout_seconds == 6.0
+
+
+def test_stream_visible_budget_gives_each_fallback_a_real_start_window() -> None:
+    config = GatewayConfig(
+        providers=tuple(
+            provider(f"provider-{index}", f"https://p{index}.test/chat", f"https://p{index}.test/models", f"model-{index}")
+            for index in range(4)
+        ),
+        timeout_seconds=45,
+        provider_timeout_seconds=12,
+        first_visible_timeout_seconds=6,
+    )
+    gateway = AIGateway(config)
+
+    assert [gateway._stream_visible_budget(index, 4) for index in range(4)] == [
+        2.0, 2.0, 2.0, 6.0
     ]

@@ -26,13 +26,13 @@ services:
       - key: AI_GATEWAY_MODEL
         value: "baidu/ernie-5.5-flash-preview:free"
       - key: AI_GATEWAY_FALLBACKS_JSON
-        value: '[{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
+        value: '[{"name":"kilo-dots3-note","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"dots-studio/dots-3-note-preview:free"},{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
       - key: AI_TIMEOUT_SECONDS
         value: "45"
       - key: AI_PROVIDER_TIMEOUT_SECONDS
         value: "12"
       - key: AI_FIRST_VISIBLE_TIMEOUT_SECONDS
-        value: "2.2"
+        value: "6.0"
       - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
         value: "20"
       - key: WEB_SEARCH_BING_ENABLED
@@ -85,13 +85,13 @@ services:
       - key: AI_GATEWAY_MODEL
         value: "baidu/ernie-5.5-flash-preview:free"
       - key: AI_GATEWAY_FALLBACKS_JSON
-        value: '[{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
+        value: '[{"name":"kilo-dots3-note","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"dots-studio/dots-3-note-preview:free"},{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
       - key: AI_TIMEOUT_SECONDS
         value: "45"
       - key: AI_PROVIDER_TIMEOUT_SECONDS
         value: "12"
       - key: AI_FIRST_VISIBLE_TIMEOUT_SECONDS
-        value: "2.2"
+        value: "6.0"
       - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
         value: "20"
       - key: WEB_SEARCH_PROVIDER
@@ -144,13 +144,13 @@ services:
       - key: AI_GATEWAY_MODEL
         value: "baidu/ernie-5.5-flash-preview:free"
       - key: AI_GATEWAY_FALLBACKS_JSON
-        value: '[{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
+        value: '[{"name":"kilo-dots3-note","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"dots-studio/dots-3-note-preview:free"},{"name":"kilo-nemotron-3.5-super-vl","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3.5-super-vl:free"},{"name":"kilo-nemotron-3-ultra","url":"https://api.kilo.ai/api/gateway/chat/completions","health_url":"https://api.kilo.ai/api/gateway/models","model":"nvidia/nemotron-3-ultra:free"}]'
       - key: AI_TIMEOUT_SECONDS
         value: "45"
       - key: AI_PROVIDER_TIMEOUT_SECONDS
         value: "12"
       - key: AI_FIRST_VISIBLE_TIMEOUT_SECONDS
-        value: "2.2"
+        value: "6.0"
       - key: DEEP33_NON_STREAM_AI_TIMEOUT_SECONDS
         value: "20"
       - key: WEB_SEARCH_PROVIDER
