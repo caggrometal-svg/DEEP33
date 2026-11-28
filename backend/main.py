@@ -4010,7 +4010,7 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 rescue_query = q
                 recent_candidates = await search_recent_news_candidates(
                     rescue_query,
-                    timeout_seconds=1.8,
+                    timeout_seconds=2.5,
                     max_results=8,
                 )
                 recent_candidates = _rank_recent_news_candidates(q, recent_candidates)
@@ -4135,11 +4135,11 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
                 + publisher_sources[2:]
                 + search_sources[2:]
             )
-        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "8"))
+        configured_fetch_candidates = int(os.getenv("WEB_SEARCH_FETCH_CANDIDATES", "4"))
         max_fetch_candidates = (
-            max(3, min(8, configured_fetch_candidates))
+            max(3, min(6, configured_fetch_candidates))
             if strict_news_request
-            else max(3, min(6, configured_fetch_candidates))
+            else max(3, min(4, configured_fetch_candidates))
         )
         # Reserve fetch slots by discovery provider before filling the pool.
         # Otherwise direct publisher RSS and Bing URLs can consume the entire
@@ -4202,8 +4202,8 @@ async def web_search_endpoint(request: Request, q: str) -> dict:
         # 1.2s cap cancelled the shared deadline before any usable page text arrived.
         # Candidates run concurrently; bound the whole per-page fetch at 3.3–4.0s.
         fetch_timeout = max(
-            3.3,
-            min(4.0, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.3"))),
+            2.8,
+            min(3.4, float(os.getenv("WEB_SEARCH_FETCH_TIMEOUT_SECONDS", "3.0"))),
         )
         fetch_results = await asyncio.gather(
             *(

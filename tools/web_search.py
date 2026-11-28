@@ -85,7 +85,7 @@ def _search_http_semaphore(loop: asyncio.AbstractEventLoop) -> asyncio.Semaphore
         if semaphore is None:
             limit = max(
                 4,
-                min(32, int(os.getenv("WEB_SEARCH_HTTP_CONCURRENCY", "24"))),
+                min(32, int(os.getenv("WEB_SEARCH_HTTP_CONCURRENCY", "32"))),
             )
             semaphore = asyncio.Semaphore(limit)
             _SEARCH_HTTP_SEMAPHORES[loop] = semaphore
@@ -1055,6 +1055,7 @@ async def _bing_recent_news_search(
 
 PUBLISHER_NEWS_RSS_FEEDS = (
     ("latercera.com", "https://www.latercera.com/arcio/rss/"),
+    ("biobiochile.cl", "https://feeds.feedburner.com/radiobiobio/NNeJ"),
     ("eldesconcierto.cl", "https://eldesconcierto.cl/rss"),
     ("theclinic.cl", "https://www.theclinic.cl/feed/"),
     ("ciperchile.cl", "https://www.ciperchile.cl/feed/"),
@@ -1072,7 +1073,10 @@ async def _publisher_rss_search(
     """Recover dated direct publisher articles when general search RSS is sparse."""
     client = await _search_http_client()
     per_feed_limit = max(1, min(4, int(max_results)))
-    feed_semaphore = asyncio.Semaphore(4)
+    # Start every publisher feed in the same recovery wave. The endpoint's
+    # strict-news recovery budget is shorter than two sequential batches of four;
+    # the old limit starved later feeds behind slow or blocked publishers.
+    feed_semaphore = asyncio.Semaphore(max(1, min(8, len(PUBLISHER_NEWS_RSS_FEEDS))))
 
     async def fetch_feed(domain: str, feed_url: str) -> list[dict]:
         try:

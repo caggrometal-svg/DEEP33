@@ -426,7 +426,7 @@ def test_current_chile_politics_search_requires_independent_provider_quorum():
 
     async def provider(query, timeout, limit):
         recovered_queries.append(query)
-        if "gobierno Congreso elecciones actualidad" in query:
+        if "Chile política gobierno Congreso noticias hoy" in query:
             return [
                 news_item("gobierno.example", "Gobierno y Congreso"),
                 news_item("radio.example", "Actualidad política"),
@@ -583,7 +583,7 @@ def test_primary_search_reserves_deadline_for_multisource_recovery():
 
     async def provider_for(name):
         async def provider(query, timeout, limit):
-            if "BioBioChile Cooperativa Emol" not in query:
+            if "Chile política gobierno Congreso noticias hoy" not in query:
                 if name == "bing":
                     return [item("solo.example", "Política Chile última noticia")]
                 await asyncio.sleep(0.6)
@@ -983,8 +983,7 @@ def test_google_news_fallback_uses_expanded_provider_query(monkeypatch):
     assert result == []
     assert observed == [
         (
-            "Chile política gobierno Congreso elecciones actualidad noticias "
-            "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile",
+            "Chile política gobierno Congreso noticias hoy",
             0.2,
             5,
         )
@@ -1992,3 +1991,97 @@ def test_bounded_async_client_caps_global_outbound_concurrency():
         return raw.peak
 
     assert asyncio.run(run()) <= 3
+
+
+
+def test_publisher_rss_search_starts_all_feeds_in_one_recovery_wave(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    active = 0
+    peak = 0
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, domain):
+            self.text = (
+                "<rss><channel><item>"
+                f"<title>Política de Chile hoy en {domain}</title>"
+                f"<link>https://{domain}/noticias/politica-chile</link>"
+                f"<description>Información política actual de Chile publicada por {domain}. "
+                "Detalles de gobierno y actualidad nacional.</description>"
+                "<pubDate>Sat, 28 Nov 2026 07:00:00 GMT</pubDate>"
+                "</item></channel></rss>"
+            )
+            self.content = self.text.encode()
+
+    class FakeClient:
+        async def get(self, url, **_kwargs):
+            nonlocal active, peak
+            domain = next(
+                domain for domain, feed_url in module.PUBLISHER_NEWS_RSS_FEEDS
+                if feed_url == url
+            )
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.02)
+            active -= 1
+            return FakeResponse(domain)
+
+    async def fake_client():
+        return FakeClient()
+
+    monkeypatch.setattr(module, "_search_http_client", fake_client)
+    results = asyncio.run(
+        module._publisher_rss_search(
+            "política Chile hoy",
+            timeout_seconds=2.5,
+            max_results=12,
+        )
+    )
+
+    expected_domains = {domain for domain, _url in module.PUBLISHER_NEWS_RSS_FEEDS}
+    assert peak == len(expected_domains)
+    assert {item["source_domain"] for item in results} == expected_domains
+
+
+def test_chile_political_recovery_skips_unregistered_provider_adapters():
+    from backend.search.resilient import WebOrchestrator
+
+    async def empty_provider(_query, _timeout, _limit):
+        return []
+
+    async def exercise():
+        orchestrator = WebOrchestrator(
+            max_results=5,
+            provider_total_seconds=0.1,
+            global_budget_seconds=0.5,
+            fallback_delay_seconds=0,
+        )
+        orchestrator.providers = {
+            "bing": empty_provider,
+            "google": empty_provider,
+            "cl0q": empty_provider,
+            "duckduckgo": empty_provider,
+        }
+        orchestrator.fallback_providers = {}
+        return await orchestrator.search(
+            "política Chile hoy últimas noticias",
+            fresh=True,
+        )
+
+    result = asyncio.run(exercise())
+    assert not any(
+        "SEARCH_PROVIDER_NOT_REGISTERED" in str(error)
+        for error in result.get("errors", [])
+    )
+
+
+
+def test_locality_recovery_query_keeps_the_named_commune_and_news_context():
+    from backend.search.resilient import WebOrchestrator
+
+    assert WebOrchestrator._recovery_query(
+        "situación actual de la comuna de Las Condes en Chile"
+    ) == "Las Condes Chile noticias hoy municipalidad comuna"

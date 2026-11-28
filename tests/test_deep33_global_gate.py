@@ -449,7 +449,7 @@ def test_web_search_success_requires_real_extracted_page_text(monkeypatch, caplo
     # The route must leave enough total time for a bounded Reader fallback,
     # while keeping the direct request short so it cannot starve the fallback.
     assert fetch_timeouts
-    assert all(3.3 <= timeout <= 4.0 for timeout in fetch_timeouts)
+    assert all(2.8 <= timeout <= 3.4 for timeout in fetch_timeouts)
     assert direct_timeouts
     assert all(timeout == 0.85 for timeout in direct_timeouts)
 

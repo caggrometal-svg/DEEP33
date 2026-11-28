@@ -734,6 +734,25 @@ def rank_results(
             + " "
             + parsed_url.path.replace("-", " ").replace("_", " ").replace("/", " ")
         )
+        if realtime and _extract_realtime_locality(query):
+            locality_host = source_host.removeprefix("www.")
+            candidate_title = str(item.get("title") or "").casefold()
+            travel_hosts = {
+                "airbnb.com", "booking.com", "expedia.com", "tripadvisor.com",
+                "hotels.com", "vrbo.com", "kayak.com", "skyscanner.net",
+            }
+            travel_title_markers = (
+                "vacation rental", "vacation rentals", "holiday rental",
+                "holiday rentals", "travel guide", "guía de viaje", "guia de viaje",
+                "alojamiento turístico", "alojamiento turistico", "hospedaje",
+                "apartments for rent", "departamentos en arriendo",
+            )
+            if (
+                locality_host in travel_hosts
+                or locality_host.endswith(".travel")
+                or any(marker in candidate_title for marker in travel_title_markers)
+            ):
+                continue
         if commercial_site_intent and "chile" in _token_set(query):
             # "commercial/site" describes the requested result shape; it is not a
             # lexical topic that every legitimate company page must repeat.
