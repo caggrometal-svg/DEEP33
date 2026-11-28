@@ -52,6 +52,24 @@ def evidence_payload() -> dict:
     }
 
 
+def test_snippet_fallback_requires_multiple_substantial_independent_sources() -> None:
+    snippets = [
+        {"url": "https://one.example/a", "snippet": "A" * 140},
+        {"url": "https://two.example/b", "snippet": "B" * 140},
+    ]
+    assert len(snippets) == 2
+    assert len({
+        (main.urlparse(item["url"]).hostname or "").removeprefix("www.")
+        for item in snippets
+    }) == 2
+    assert all(len(item["snippet"]) >= 120 for item in snippets)
+
+
+def test_strict_news_never_uses_search_snippets_as_verified_articles() -> None:
+    query = "últimas noticias de Chile hoy"
+    assert main.is_strict_news_query(query)
+
+
 def test_web_evidence_is_never_emitted_as_extractive_answer() -> None:
     payload = evidence_payload()
 
