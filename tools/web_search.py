@@ -636,9 +636,18 @@ async def _tavily_search(query, api_key, timeout_seconds, max_results):
 async def _mojeek_search(query, timeout_seconds, max_results):
     """Query Mojeek's public web search as an independent no-key fallback."""
     client = await _search_http_client()
+    query_text = str(query or "")
+    spanish_query = bool(
+        re.search(
+            r"[áéíóúñ¿¡]|\\b(?:chile|noticias|pol[ií]tica|gobierno|hoy|ultimas?)\\b",
+            query_text,
+            re.IGNORECASE,
+        )
+    )
+    language = "es" if spanish_query else "en"
     response = await client.get(
         "https://www.mojeek.com/search",
-        params={"q": query, "s": "0", "lang": "en", "lb": "en"},
+        params={"q": query_text, "s": "0", "lang": language, "lb": language},
         headers={
             "User-Agent": "DEEP33-WebSearch/1.0",
             "Accept": "text/html,application/xhtml+xml",
@@ -1290,6 +1299,12 @@ async def search_recent_news_candidates(
             None,
             _mwmbl_search(cleaned, budget, min(limit, 2)),
         ))
+        if os.getenv("WEB_SEARCH_MOJEEK_ENABLED", "true").strip().lower() == "true":
+            jobs.append((
+                "mojeek",
+                None,
+                _mojeek_search(cleaned, budget, min(limit, 8)),
+            ))
     jobs.extend([
         ("google_news", None, _google_news_search(cleaned, budget, limit)),
         ("google_news", None, _google_news_search("noticias Chile", budget, min(limit, 3))),
@@ -1331,7 +1346,7 @@ async def search_recent_news_candidates(
             if published_at:
                 if not _is_recently_published(item, cleaned):
                     continue
-            elif provider not in {"mwmbl", "google_news"}:
+            elif provider not in {"mwmbl", "google_news", "mojeek"}:
                 continue
             else:
                 parsed_candidate = urlparse(url)
