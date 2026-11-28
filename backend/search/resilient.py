@@ -472,7 +472,7 @@ class WebOrchestrator:
         if (
             "python" in lowered
             and "asyncio" in lowered
-            and re.search(r"\\btask\\s*group\\b|\\btaskgroup\\b", lowered)
+            and re.search(r"\btask\s*group\b|\btaskgroup\b", lowered)
         ):
             return "python asyncio taskgroup official documentation"
         smartphone_intent = any(term in lowered for term in (
