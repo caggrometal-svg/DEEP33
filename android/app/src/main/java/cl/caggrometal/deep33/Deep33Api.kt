@@ -76,8 +76,12 @@ object Deep33Api {
         !authorizationToken(forceRefresh = true).isNullOrBlank()
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val STREAM_CONNECT_TIMEOUT_MS = 4_000
-    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 5_280L
-    private const val STREAM_HEARTBEAT_GRACE_MS = 1_500L
+    // Render may spend up to 45 seconds across provider failover before its first token.
+    // Keep the client budget above that backend budget instead of aborting a valid inference.
+    private const val STREAM_FIRST_TEXT_TIMEOUT_MS = 60_000L
+    // SSE heartbeats are liveness signals, not a reason to close the stream. Allow
+    // normal heartbeat intervals and transient mobile-network jitter.
+    private const val STREAM_HEARTBEAT_GRACE_MS = 20_000L
     private const val FAST_HEALTH_TIMEOUT_MS = 20_000
     private const val FAST_HEALTH_CONNECT_TIMEOUT_MS = 4_000
     // Generation recovery is centralized in Deep33GenerationService. Each API call
