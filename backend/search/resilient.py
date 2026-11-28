@@ -746,10 +746,9 @@ class WebOrchestrator:
             # The first phrase is too close to the user's wording and tends to
             # return the same small publisher set. Broaden the provider query;
             # every candidate is still ranked against the original user query.
-            return (
-                "Chile política gobierno Congreso elecciones actualidad noticias "
-                "BioBioChile Cooperativa Emol La Tercera 24Horas CNN Chile"
-            )
+            # Keep recovery compact. Publisher names and excess topic terms
+            # overconstrain public indexes and reduce useful result coverage.
+            return "Chile política gobierno Congreso noticias hoy"
         if news_intent and "chile" in lowered:
             if current_events_intent:
                 # Generic current-events phrasing ("acontecimientos actuales",
@@ -1292,22 +1291,22 @@ class WebOrchestrator:
                 # Prefer direct-web engines for publisher-specific recovery. Google
                 # News can preserve editorial provenance but its opaque RSS wrapper
                 # is not sufficient when the publisher URL must be fetched.
-                ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:emol.com Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:biobiochile.cl Chile política"),
+                ("bing", "site:biobiochile.cl Chile política"),
+                ("cl0q", "site:biobiochile.cl Chile política"),
+                ("duckduckgo", "site:biobiochile.cl Chile política"),
+                ("google", "site:cooperativa.cl Chile política"),
+                ("bing", "site:cooperativa.cl Chile política"),
+                ("cl0q", "site:cooperativa.cl Chile política"),
+                ("mojeek", "site:cooperativa.cl Chile política"),
+                ("google", "site:latercera.com Chile política"),
+                ("bing", "site:latercera.com Chile política"),
+                ("google_news", "site:latercera.com Chile política"),
+                ("google", "site:24horas.cl Chile política"),
+                ("cl0q", "site:24horas.cl Chile política"),
+                ("google", "site:emol.com Chile política"),
+                ("google_news", "site:emol.com Chile política"),
+                ("cl0q", "site:emol.com Chile política"),
                 # These publishers have already produced fetchable pages in the
                 # live production gate. Keep them in the primary wave so a slow
                 # recovery tail cannot leave political coverage at two domains.
@@ -1789,20 +1788,27 @@ class WebOrchestrator:
                 # Reserve the recovery budget for direct publisher discovery.
                 # Avoid spending the tail on one broad recovery query that can
                 # finish with a single editorial domain.
-                ("google", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("duckduckgo", "site:biobiochile.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("mojeek", "site:cooperativa.cl Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("bing", "site:latercera.com Chile política gobierno Congreso noticias hoy"),
-                ("google", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:24horas.cl Chile política gobierno Congreso noticias hoy"),
-                ("google_news", "site:emol.com Chile política gobierno Congreso noticias hoy"),
-                ("cl0q", "site:emol.com Chile política gobierno Congreso noticias hoy"),
+                ("google", "site:biobiochile.cl Chile política"),
+                ("bing", "site:biobiochile.cl Chile política"),
+                ("cl0q", "site:biobiochile.cl Chile política"),
+                ("duckduckgo", "site:biobiochile.cl Chile política"),
+                ("google", "site:cooperativa.cl Chile política"),
+                ("bing", "site:cooperativa.cl Chile política"),
+                ("cl0q", "site:cooperativa.cl Chile política"),
+                ("mojeek", "site:cooperativa.cl Chile política"),
+                ("google", "site:latercera.com Chile política"),
+                ("bing", "site:latercera.com Chile política"),
+                ("google", "site:24horas.cl Chile política"),
+                ("cl0q", "site:24horas.cl Chile política"),
+                ("google_news", "site:emol.com Chile política"),
+                ("cl0q", "site:emol.com Chile política"),
+            )
+            # Some providers are disabled by Render configuration. Never schedule
+            # an adapter that is intentionally absent from this instance.
+            political_source_queries = tuple(
+                (provider, targeted_query)
+                for provider, targeted_query in political_source_queries
+                if provider in self.providers or provider in self.fallback_providers
             )
             political_tasks = {
                 asyncio.create_task(
