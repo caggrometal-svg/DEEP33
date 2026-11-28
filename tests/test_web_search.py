@@ -1866,3 +1866,96 @@ def test_spanish_python_release_query_rejects_off_topic_debian_page():
     assert rank_results(query, [unrelated], realtime=True) == []
     ranked = rank_results(query, [unrelated, relevant], realtime=True)
     assert [item["url"] for item in ranked] == [relevant["url"]]
+
+
+def test_search_provider_concurrency_limit_is_bounded(monkeypatch):
+    from backend.search.resilient import _bounded_env_float
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "8")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 8.0
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "100")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 12.0
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "invalid")
+    assert _bounded_env_float(
+        "WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", 8.0, 4.0, 12.0
+    ) == 8.0
+
+
+def test_recent_news_publisher_queries_preserve_original_topic(monkeypatch):
+    import asyncio
+    import tools.web_search as module
+
+    seen = []
+
+    async def no_results(*_args, **_kwargs):
+        return []
+
+    async def capture_bing(query, _timeout, _limit):
+        seen.append(query)
+        return []
+
+    monkeypatch.setattr(module, "_publisher_rss_search", no_results)
+    monkeypatch.setattr(module, "_google_news_top_stories_search", no_results)
+    monkeypatch.setattr(module, "_google_news_search", no_results)
+    monkeypatch.setattr(module, "_mwmbl_search", no_results)
+    monkeypatch.setattr(module, "_bing_recent_news_search", capture_bing)
+
+    asyncio.run(module.search_recent_news_candidates(
+        "política Chile hoy últimas noticias",
+        timeout_seconds=2.0,
+        max_results=8,
+    ))
+
+    targeted = [query for query in seen if "site:" in query]
+    assert len(targeted) == 5
+    assert all("política" in query for query in targeted)
+    assert any("site:biobiochile.cl" in query for query in targeted)
+    assert any("site:cooperativa.cl" in query for query in targeted)
+
+
+def test_search_orchestrator_caps_active_provider_calls(monkeypatch):
+    import asyncio
+    from backend.search.resilient import WebOrchestrator
+
+    monkeypatch.setenv("WEB_SEARCH_MAX_CONCURRENT_PROVIDER_CALLS", "4")
+    orchestrator = WebOrchestrator(
+        max_results=5,
+        provider_total_seconds=0.5,
+        global_budget_seconds=1.5,
+        fallback_delay_seconds=0,
+    )
+    active = 0
+    peak = 0
+
+    async def provider(query, _timeout, _limit):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.04)
+            return [{
+                "title": "Chile noticias hoy: reporte de actualidad",
+                "url": f"https://{query.replace(' ', '-')}.example/noticia",
+                "snippet": "Noticias de Chile hoy con información reciente y actualidad.",
+                "published_at": "2026-11-28T00:00:00Z",
+            }]
+        finally:
+            active -= 1
+
+    orchestrator.providers = {
+        f"index{index}": provider for index in range(12)
+    }
+    result = asyncio.run(orchestrator.search(
+        "noticias Chile hoy",
+        fresh=True,
+        budget_seconds=1.5,
+    ))
+
+    assert peak <= 4
+    assert result["providers_attempted"]
