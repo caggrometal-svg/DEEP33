@@ -841,7 +841,7 @@ class WebOrchestrator:
                 state.opened_until = time.monotonic() + _bounded_env_float(
                     "WEB_SEARCH_RATE_LIMIT_COOLDOWN_SECONDS", 180.0, 30.0, 1800.0
                 )
-            elif re.search(r"HTTP_5\\d{2}", safe_detail):
+            elif re.search(r"HTTP_5\d{2}", safe_detail):
                 # Provider-side 5xx responses are not useful to retry on every
                 # query. Open the circuit briefly and let independent indexes
                 # serve the request instead of repeatedly hitting a failing host.
