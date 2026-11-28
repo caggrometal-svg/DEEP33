@@ -85,7 +85,7 @@ def _search_http_semaphore(loop: asyncio.AbstractEventLoop) -> asyncio.Semaphore
         if semaphore is None:
             limit = max(
                 4,
-                min(32, int(os.getenv("WEB_SEARCH_HTTP_CONCURRENCY", "24"))),
+                min(32, int(os.getenv("WEB_SEARCH_HTTP_CONCURRENCY", "32"))),
             )
             semaphore = asyncio.Semaphore(limit)
             _SEARCH_HTTP_SEMAPHORES[loop] = semaphore
